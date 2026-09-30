@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag (for example v1.0.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate the release tag and notes
+    runs-on: windows-latest
+    steps:
+      - name: Validate tag format
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
+            throw 'Use an existing vMAJOR.MINOR.PATCH tag.'
+          }
+
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Match the tag to the project version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $source = Get-Content -LiteralPath CMakeLists.txt -Raw
+          if ($source -notmatch 'project\(Easnap\s+VERSION\s+(\d+\.\d+\.\d+)') {
+            throw 'Cannot read the CMake project version.'
+          }
+          if ($env:RELEASE_TAG -ne "v$($matches[1])") {
+            throw 'The tag does not match the CMake project version.'
+          }
+          $notes = "docs/releases/$env:RELEASE_TAG.md"
+          if (-not (Test-Path -LiteralPath $notes -PathType Leaf)) {
+            throw "Missing release notes: $notes"
+          }
+
+  build:
+    name: Build, test and package
+    needs: validate
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: refs/tags/${{ inputs.tag }}
+    permissions:
+      contents: read
+
+  draft:
+    name: Create a draft release
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out release notes
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Download the tested Release package
+        uses: actions/download-artifact@v4
+        with:
+          name: easnap-windows-x64
+          path: dist/releases
+
+      - name: Verify checksum and create draft
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $archive = "dist/releases/Easnap-$env:RELEASE_TAG-windows-x64.zip"
+          $checksum = "$archive.sha256"
+          $line = (Get-Content -LiteralPath $checksum -Raw).Trim()
+          $name = Split-Path -Leaf $archive
+          if ($line -notmatch '^([a-f0-9]{64})  (.+)$' -or $matches[2] -ne $name) {
+            throw 'Invalid checksum file.'
+          }
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $matches[1]) {
+            throw 'The downloaded package does not match its checksum.'
+          }
+          gh release create $env:RELEASE_TAG $archive $checksum --verify-tag --draft --title "Easnap $env:RELEASE_TAG" --notes-file "docs/releases/$env:RELEASE_TAG.md"
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release creation failed.' }
+
+      - name: Report the remaining publication review
+        shell: pwsh
+        run: |
+          @'
+          ### Draft release created
+          The ZIP passed the hosted build, test and packaging checks.
+          Physical desktop tests are pending outside this hosted workflow.
+          Review local desktop evidence, compatibility limits and release notes
+          before publishing the draft. The binaries are unsigned.
+          '@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+

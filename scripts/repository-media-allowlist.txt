@@ -1,0 +1,6 @@
+# Vetted product assets and public demonstrations; exact paths only.
+apps/easnap-desktop/resources/easnap-logo.png
+apps/easnap-desktop/resources/easnap-mark.png
+docs/images/editor.png
+docs/images/recording.png
+docs/images/trim.png

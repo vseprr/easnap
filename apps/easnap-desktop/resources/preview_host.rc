@@ -1,0 +1,7 @@
+#include <windows.h>
+#include "easnap_version.h"
+
+#define EASNAP_FILE_DESCRIPTION "Easnap video preview helper"
+#define EASNAP_INTERNAL_NAME "EasnapPreviewHost"
+#define EASNAP_ORIGINAL_FILENAME "EasnapPreviewHost.exe"
+#include "version_info.rc2"

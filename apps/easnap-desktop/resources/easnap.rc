@@ -1,0 +1,19 @@
+// Easnap - Win32 resource script (icon and version information).
+#include <windows.h>
+
+#include "resource.h"
+
+/////////////////////////////////////////////////////////////////////////////
+// Application icon.
+//
+// easnap.ico is generated from the brand mark in easnap-logo.png. Regenerate it
+// with an icon tool if the logo changes;
+// keep at least the 16/32/48/256 px frames so the notification area, Alt+Tab and
+// Explorer all get a crisp image.
+/////////////////////////////////////////////////////////////////////////////
+IDI_EASNAP_APP ICON "easnap.ico"
+
+#define EASNAP_FILE_DESCRIPTION "Easnap screen capture and recording tool"
+#define EASNAP_INTERNAL_NAME "easnap-desktop"
+#define EASNAP_ORIGINAL_FILENAME "Easnap.exe"
+#include "version_info.rc2"

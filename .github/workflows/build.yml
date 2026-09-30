@@ -1,0 +1,143 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: false
+        type: string
+        default: ''
+
+# Easnap only ever builds on Windows: the product is a Win32 desktop
+# application and the CMake project rejects other platforms on purpose.
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.configuration }} (windows-latest)
+    runs-on: windows-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Show toolchain versions
+        shell: pwsh
+        run: |
+          cmake --version
+          Write-Host "Runner image: $env:ImageOS"
+
+      - name: Configure
+        shell: pwsh
+        run: >
+          cmake -S . -B build
+          -G "Visual Studio 17 2022" -A x64
+          -DEASNAP_WARNINGS_AS_ERRORS=ON
+          -DEASNAP_BUILD_TESTS=ON
+
+      # Warnings are errors for project code, so this step is also the
+      # static-quality gate required by the delivery plan.
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config ${{ matrix.configuration }} --parallel
+
+      - name: Test on the hosted runner
+        shell: pwsh
+        working-directory: build
+        run: >-
+          ctest --build-config ${{ matrix.configuration }}
+          --output-on-failure --parallel 4 --no-tests=error
+          --label-exclude "interactive-desktop|desktop-visual"
+
+      - name: Report pending physical desktop validation
+        if: always()
+        shell: pwsh
+        run: |
+          @'
+          ### Physical desktop validation is pending
+          Hosted CI excludes tests labeled interactive-desktop or desktop-visual.
+          These remain registered and must be run on an unlocked Windows desktop:
+          ./scripts/build.ps1 -Configuration Release -TestMode Full
+          A passing hosted run is not a full desktop or hardware compatibility result.
+          '@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Verify the application and preview helper were produced
+        shell: pwsh
+        run: |
+          foreach ($name in @('Easnap.exe', 'EasnapPreviewHost.exe')) {
+            $exe = "build/bin/${{ matrix.configuration }}/$name"
+            if (-not (Test-Path -LiteralPath $exe)) { throw "Missing build output: $exe" }
+            Get-Item -LiteralPath $exe | Select-Object Name, Length, VersionInfo | Format-List
+          }
+
+      - name: Package the Release build
+        if: matrix.configuration == 'Release'
+        shell: pwsh
+        run: ./scripts/package-release.ps1 -BuildDir build -OutputDir dist/releases
+
+      - name: Upload artifact
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: easnap-windows-x64
+          path: |
+            dist/releases/*.zip
+            dist/releases/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      # Exact vetted assets/evidence are listed alongside the shared predicate.
+      # New captures remain rejected even inside documentation/resource folders.
+      - name: Reject committed capture files
+        shell: bash
+        run: |
+          python3 scripts/check_repository_hygiene.py
+          python3 scripts/test_repository_hygiene.py
+
+      - name: Require the core documents
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            README.md \
+            LICENSE \
+            SECURITY.md \
+            CONTRIBUTING.md \
+            docs/architecture.md \
+            docs/user-flows.md \
+            docs/project-status.md \
+            docs/decisions/ADR-001-overlay-rendering-gdi-not-d3d.md \
+            docs/decisions/ADR-002-explicit-region-confirmation.md \
+            docs/decisions/ADR-003-editor-window-and-export-model.md \
+            docs/decisions/ADR-004-per-output-capture-fallback.md; do
+            test -f "$file" || { echo "Missing required document: $file"; exit 1; }
+          done
+          echo "All required documents are present."

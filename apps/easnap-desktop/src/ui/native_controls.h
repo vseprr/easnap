@@ -1,0 +1,101 @@
+#pragma once
+
+#include "ui/paint_buffer.h"
+
+#include "ui/ui_theme.h"
+
+namespace easnap::ui {
+
+// Geometry icons shared by GDI native buttons. No font-dependent pictographs.
+enum class Icon { None, Record, Pause, Play, Stop, SystemAudio, Microphone, Cursor,
+                  Copy, Save, Discard, Appearance, Sun, Moon, Pen, Arrow,
+                  Rectangle, Ellipse, Text, Mosaic, Undo, Redo, Clear, Check, Line, Droplet, Tag, Spotlight, Watermark,
+                  TextFill, TextOutline, Hand, Region, RoundedRectangle, ChevronDown, Minimize, Maximize };
+enum class ButtonRole { Standard, Primary, Destructive, Success };
+struct ButtonStyle {
+    Icon icon{Icon::None};
+    ButtonRole role{ButtonRole::Standard};
+    bool icon_only{false};
+    bool swatch{false};
+    COLORREF content_color{0}; // Annotation data, never a theme token.
+    int sample{0}; // 1 = stroke width, 2 = mosaic footprint.
+    float sample_size{0};
+    bool segmented{false};
+    bool preserve_disabled_visual{false}; // Keep a fading surface visually stable.
+    bool hide_focus_line{false};
+    bool dropdown{false}; // One icon button with an inset trailing chevron.
+    bool circular{false}; // Round compact action with room for a soft drop shadow.
+};
+
+// Native controls can draw synchronously from input/state messages, outside
+// WM_PAINT. Suspend that drawing while retaining USER32 input and accessibility.
+class NativeRedrawGuard final {
+public:
+    explicit NativeRedrawGuard(HWND window, bool enabled = true);
+    ~NativeRedrawGuard();
+    NativeRedrawGuard(const NativeRedrawGuard&) = delete;
+    NativeRedrawGuard& operator=(const NativeRedrawGuard&) = delete;
+    static void VisibilityChanged(HWND window, bool visible);
+private:
+    HWND window_{};
+    bool visible_{true};
+};
+
+inline constexpr int kWindowChromeHeight = 40;
+[[nodiscard]] bool StyleWindowChrome(HWND window, bool resizable);
+
+void DrawIcon(HDC dc, const RECT& rect, Icon icon, COLORREF color, float scale);
+// Subclasses the real BUTTON, retaining its original role, radio/check behavior,
+// focus, enabled state and Windows accessibility provider.
+[[nodiscard]] bool StyleButton(HWND button, ButtonStyle style = {});
+void UpdateButtonStyle(HWND button, ButtonStyle style);
+[[nodiscard]] bool StyleSlider(HWND slider);
+[[nodiscard]] bool StyleInput(HWND input);
+[[nodiscard]] bool StyleLabel(HWND label);
+void RoundWindow(HWND window, float radius = 8.0f);
+[[nodiscard]] bool CanCaptureVisibleWindows();
+void DrawSeparator(HDC dc, const RECT& rect, float scale);
+[[nodiscard]] bool DrawComboItem(const DRAWITEMSTRUCT& item);
+void SetAccessibleName(HWND control, const wchar_t* name);
+[[nodiscard]] bool StyleProgress(HWND progress);
+void StyleTooltip(HWND tooltip);
+void PaintNativePanel(HWND window, float scale, bool grip = false);
+[[nodiscard]] LRESULT ControlBackground(WPARAM dc, COLORREF text);
+[[nodiscard]] bool ActivateFocusedButton(MSG& message, HWND parent);
+
+inline constexpr UINT kAppearanceLight = 41001;
+inline constexpr UINT kAppearanceDark = 41002;
+[[nodiscard]] HMENU CreateAppearanceMenu();
+
+// Native menu/dialog semantics stay with USER32; only owned presentation changes.
+class MenuThemeScope final {
+public:
+    MenuThemeScope(HWND owner, HMENU menu);
+    ~MenuThemeScope();
+    MenuThemeScope(const MenuThemeScope&) = delete;
+    MenuThemeScope& operator=(const MenuThemeScope&) = delete;
+private:
+    struct State;
+    std::unique_ptr<State> state_;
+};
+int ShowMessage(HWND owner, const wchar_t* text, const wchar_t* title, UINT flags);
+inline void ShowErrorMessage(HWND owner,const wchar_t* text) { ShowMessage(owner,text,L"Easnap",MB_OK|MB_ICONWARNING); }
+
+// Covers native menu input and capture exclusion; scope also used by the tray.
+class PopupScope final {
+public:
+    explicit PopupScope(HWND invoker);
+    ~PopupScope();
+    PopupScope(const PopupScope&) = delete;
+    PopupScope& operator=(const PopupScope&) = delete;
+private:
+    HWND invoker_{};
+    HHOOK hook_{};
+};
+[[nodiscard]] bool PopupActive() noexcept;
+[[nodiscard]] bool ConsumePopupInput(UINT message, WPARAM key = 0) noexcept;
+// The owning window handles kAppearanceLight/kAppearanceDark in WM_COMMAND,
+// including native accessibility activation of a menu item.
+void ShowAppearanceMenu(HWND invoker);
+
+} // namespace easnap::ui
