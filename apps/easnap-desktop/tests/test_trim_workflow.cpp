@@ -1356,6 +1356,36 @@ void TestTrimLayoutContainmentAcrossDpiAndResize() {
     CHECK(wide.width==400 && less_bar.width==400 && narrow_image.width==300 && narrow_image.height==300);
 }
 
+// Display matrix: work areas from a small laptop panel to 4K and ultrawide at
+// every Windows scale factor that leaves a usable desktop. The initial window
+// must fit the work area and its controls must stay inside the client.
+void TestTrimLayoutAcrossDisplayMatrix() {
+    const std::pair<int,int> work_areas[]{{1366,728},{1280,680},{1600,860},{1920,1040},{2560,1400},
+                                          {3440,1400},{3840,2120},{5120,1400},{1080,1880},{2160,3800}};
+    const float scales[]{1.0f,1.25f,1.5f,1.75f,2.0f,2.25f,2.5f,3.0f,3.5f};
+    const std::pair<int,int> sources[]{{1920,1080},{640,360},{100,100},{3840,2160},{200,1200},{5120,1440}};
+    int combinations=0;
+    for(const auto work:work_areas) for(const float scale:scales) {
+        // Windows does not offer a scale that leaves less than about 500
+        // effective rows or 600 effective columns.
+        if(work.second/scale<500 || work.first/scale<600) { continue; }
+        for(const auto source:sources) {
+            ++combinations;
+            const auto initial=easnap::ui::InitialTrimWindowSize(work.first,work.second,scale,source.first,source.second);
+            CHECK(initial.width>0 && initial.height>0);
+            CHECK(initial.width<=work.first && initial.height<=work.second);
+            const auto layout=easnap::ui::CalculateTrimWindowLayout(initial.width,initial.height,scale);
+            CHECK(easnap::ui::IsTrimWindowLayoutContained(layout,initial.width,initial.height));
+            CHECK(layout.video.height>0 && layout.video.bottom()<=layout.timeline.y);
+            CHECK(layout.play_pause.bottom()<=layout.save_or_cancel.y+layout.save_or_cancel.height);
+            const auto image=easnap::ui::FitTrimVideo(layout.video,source.first,source.second);
+            CHECK(image.width>0 && image.height>0);
+            CHECK(image.width<=layout.video.width && image.height<=layout.video.height);
+        }
+    }
+    CHECK(combinations>=300);
+}
+
 void TestSuccessfulExportAndDuplicatePrevention() {
     auto probe = std::make_shared<ExportProbe>();
     probe->block = true;
@@ -1496,6 +1526,7 @@ int main() {
         TestPreviewTransportKeepsRestartAcrossLateEndedEvent();
         TestPreviewTransportReconcilesStoppedPauseRace();
     TestTrimLayoutContainmentAcrossDpiAndResize();
+    TestTrimLayoutAcrossDisplayMatrix();
     TestSuccessfulExportAndDuplicatePrevention();
     TestGifFullAndInteriorIntervalsInvokeOneExportEach();
     TestCancellationWaitsForWorker();

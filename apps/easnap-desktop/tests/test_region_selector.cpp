@@ -306,6 +306,32 @@ static void TestHitTestInterior() {
     CHECK(sel.HitTest(centre) == SelectionHandle::Body);
 }
 
+// Handles are drawn scaled, so the grab area must grow with the monitor scale
+// and must also work on a monitor placed left of or above the primary.
+static void TestHandleHitAreaScalesWithDpi() {
+    for (const RECT bounds : {kBounds, MakeRect(-2560, -1440, 0, 0), MakeRect(-1920, 0, 3840, 2160)}) {
+        RegionSelector sel;
+        sel.Reset(bounds);
+        sel.set_enabled(true);
+        const RECT selection = MakeRect(bounds.left + 200, bounds.top + 200, bounds.left + 900, bounds.top + 700);
+        sel.SetSelection(selection);
+        CHECK(RectEquals(sel.selection(), selection));
+        const POINT corner = MakePt(selection.left, selection.top);
+        for (const float scale : {1.0f, 1.25f, 1.5f, 2.0f, 3.0f}) {
+            const LONG reach = static_cast<LONG>(10.0f * scale);
+            const SelectionHandle at_corner = sel.HitTest(corner, scale);
+            CHECK(at_corner != SelectionHandle::None && at_corner != SelectionHandle::Body);
+            // Just inside the scaled radius, outside the selection: still the handle.
+            CHECK(sel.HitTest(MakePt(corner.x - reach + 1, corner.y - reach + 1), scale) == at_corner);
+            // Beyond the scaled radius, outside the selection: nothing.
+            CHECK(sel.HitTest(MakePt(corner.x - reach - 3, corner.y - reach - 3), scale) == SelectionHandle::None);
+        }
+        // The unscaled radius must not reach a point that only a larger scale covers.
+        CHECK(sel.HitTest(MakePt(corner.x - 18, corner.y - 18), 1.0f) == SelectionHandle::None);
+        CHECK(sel.HitTest(MakePt(corner.x - 18, corner.y - 18), 2.0f) != SelectionHandle::None);
+    }
+}
+
 static void TestHitTestOutsideReturnsNone() {
     RegionSelector sel;
     sel.Reset(kBounds);
@@ -382,6 +408,7 @@ int main() {
     TestDragCreatesSelection();
     TestHitTestInterior();
     TestHitTestOutsideReturnsNone();
+    TestHandleHitAreaScalesWithDpi();
     TestNudgeMoves();
     TestCustomMoveResizeAndMinimumSizeRemainAdjustable();
 
