@@ -5,12 +5,13 @@ Screen capture, annotation, MP4 recording and GIF export for Windows 10 and 11.
 
 START
 Extract the entire ZIP to a folder you can write to. Open bin\Easnap.exe.
-Easnap appears in the notification area; use its menu or press Ctrl+Shift+S
+Easnap appears in the notification area; use its menu or press Ctrl+Shift+A
 to start a capture (unless you have changed the shortcut).
 
 Keep Easnap.exe and EasnapPreviewHost.exe together in the bin folder. The
-preview helper is launched by Easnap; do not start it separately. No installer
-or separate Visual C++ runtime is needed. Windows media components are required.
+preview helper is launched by Easnap; do not start it separately. No separate
+Visual C++ runtime is needed. Windows media components are required. The same
+release also offers a per-user installer if you prefer a Start menu entry.
 
 USE
 Select a region, then take a screenshot or start an MP4/GIF recording.
@@ -33,8 +34,8 @@ RELEASE NOTES AND SUPPORT
 
 See the release notes for known limitations and the tested Windows/display
 configurations. Scrollshot and OCR are planned; they are not in this release.
-The archive is unsigned. Published SHA-256 checksums verify download integrity;
-they do not constitute a code-signing certificate.
+The binaries are unsigned. Published SHA-256 checksums verify download
+integrity; they do not constitute a code-signing certificate.
 
 LICENSE
 MIT. See the included LICENSE file.

@@ -34,10 +34,13 @@ jobs:
         configuration: [Debug, Release]
 
     steps:
+      # Third-party actions are pinned to a commit; a moved tag cannot change
+      # what runs here. The token is not left in the checkout.
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
 
       - name: Show toolchain versions
         shell: pwsh
@@ -59,13 +62,15 @@ jobs:
         shell: pwsh
         run: cmake --build build --config ${{ matrix.configuration }} --parallel
 
+      # Unit, integration and private-desktop tests. Visible-desktop tests need
+      # a real display and input queue; soak variants repeat covered paths.
       - name: Test on the hosted runner
         shell: pwsh
         working-directory: build
         run: >-
           ctest --build-config ${{ matrix.configuration }}
           --output-on-failure --parallel 4 --no-tests=error
-          --label-exclude "interactive-desktop|desktop-visual"
+          --label-exclude "interactive-desktop|desktop-visual|soak"
 
       - name: Report pending physical desktop validation
         if: always()
@@ -73,9 +78,9 @@ jobs:
         run: |
           @'
           ### Physical desktop validation is pending
-          Hosted CI excludes tests labeled interactive-desktop or desktop-visual.
+          Hosted CI excludes tests labeled interactive-desktop, desktop-visual or soak.
           These remain registered and must be run on an unlocked Windows desktop:
-          ./scripts/build.ps1 -Configuration Release -TestMode Full
+          ./scripts/test.ps1 -Tier Full   (or -Tier Soak for the long repeats)
           A passing hosted run is not a full desktop or hardware compatibility result.
           '@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
@@ -88,18 +93,30 @@ jobs:
             Get-Item -LiteralPath $exe | Select-Object Name, Length, VersionInfo | Format-List
           }
 
+      - name: Ensure Inno Setup is available
+        if: matrix.configuration == 'Release'
+        shell: pwsh
+        run: |
+          $known = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe")
+          if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -and
+              -not ($known | Where-Object { Test-Path -LiteralPath $_ })) {
+            choco install innosetup --version=6.7.3 --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Installing Inno Setup failed.' }
+          }
+
       - name: Package the Release build
         if: matrix.configuration == 'Release'
         shell: pwsh
-        run: ./scripts/package-release.ps1 -BuildDir build -OutputDir dist/releases
+        run: ./scripts/package-release.ps1 -BuildDir build -OutputDir dist/releases -Installer Require
 
       - name: Upload artifact
         if: matrix.configuration == 'Release'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: easnap-windows-x64
           path: |
             dist/releases/*.zip
+            dist/releases/*-setup.exe
             dist/releases/*.sha256
           if-no-files-found: error
           retention-days: 14
@@ -110,9 +127,10 @@ jobs:
 
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
 
       # Exact vetted assets/evidence are listed alongside the shared predicate.
       # New captures remain rejected even inside documentation/resource folders.
@@ -134,6 +152,7 @@ jobs:
             docs/architecture.md \
             docs/user-flows.md \
             docs/project-status.md \
+            docs/testing.md \
             docs/decisions/ADR-001-overlay-rendering-gdi-not-d3d.md \
             docs/decisions/ADR-002-explicit-region-confirmation.md \
             docs/decisions/ADR-003-editor-window-and-export-model.md \

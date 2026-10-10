@@ -1,17 +1,23 @@
 <#
 .SYNOPSIS
-    Packages an existing Release x64 build as a portable ZIP and SHA-256 file.
+    Packages an existing Release x64 build as a portable ZIP, a per-user
+    installer and SHA-256 files.
 .DESCRIPTION
     Uses CMake install, verifies the application and matching preview helper,
-    and includes the license and portable instructions. Does not build, test,
-    sign or publish. Existing package outputs are never overwritten.
+    and includes the license and portable instructions. The installer is built
+    from the same verified package directory with Inno Setup 6. Does not
+    build, test, sign or publish. Existing package outputs are never overwritten.
+.PARAMETER Installer
+    Auto (default) builds the installer when Inno Setup's ISCC.exe is found and
+    says so when it is not. Require fails without it. Skip builds the ZIP only.
 .EXAMPLE
     .\scripts\package-release.ps1 -BuildDir build -OutputDir dist/releases
 #>
 [CmdletBinding()]
 param(
     [string]$BuildDir = 'build',
-    [string]$OutputDir = 'dist/releases'
+    [string]$OutputDir = 'dist/releases',
+    [ValidateSet('Auto', 'Require', 'Skip')][string]$Installer = 'Auto'
 )
 
 Set-StrictMode -Version Latest
@@ -148,5 +154,32 @@ $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLow
 [IO.File]::WriteAllText($checksum, "$archiveHash  $packageName.zip" + [char]10, (New-Object Text.UTF8Encoding($false)))
 Write-Host "Portable package: $archive"
 Write-Host "SHA-256 checksum: $checksum"
+
+if ($Installer -ne 'Skip') {
+    $compiler = @(
+        (Get-Command ISCC.exe -ErrorAction SilentlyContinue | ForEach-Object Source),
+        (Join-Path $repoRoot '.local/tools/innosetup/ISCC.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'),
+        (Join-Path $env:ProgramFiles 'Inno Setup 6/ISCC.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Programs/Inno Setup 6/ISCC.exe')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+    if (-not $compiler) {
+        if ($Installer -eq 'Require') { throw 'Inno Setup 6 (ISCC.exe) was not found; the installer cannot be built.' }
+        Write-Warning 'Inno Setup 6 (ISCC.exe) was not found. The installer was NOT built; only the ZIP exists.'
+    } else {
+        $setup = Join-Path $output "$packageName-setup.exe"
+        $setupChecksum = "$setup.sha256"
+        foreach ($path in @($setup, $setupChecksum)) {
+            if (Test-Path -LiteralPath $path) { throw "Package output already exists; choose another OutputDir: $path" }
+        }
+        & $compiler /Qp "/DAppVersion=$version" "/DSourceDir=$package" "/DOutputDir=$output" (Join-Path $repoRoot 'packaging/easnap.iss')
+        if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE." }
+        if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) { throw "Inno Setup reported success but $setup is missing." }
+        $setupHash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText($setupChecksum, "$setupHash  $packageName-setup.exe" + [char]10, (New-Object Text.UTF8Encoding($false)))
+        Write-Host "Installer: $setup"
+        Write-Host "SHA-256 checksum: $setupChecksum"
+    }
+}
 Write-Host 'Packaging completed. This command does not run tests, sign binaries or publish a release.'
 
