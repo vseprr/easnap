@@ -784,26 +784,37 @@ void TextDispatchPainting() {
                         return true;
                     };
                     CHECK(same_content(before) || same_content(expected));
-                    Pump(10); const RECT settled_caret=caret_bounds();
-                    ::HideCaret(edit); const auto settled=PresentedControl(edit),settled_expected=RenderControl(edit); ::ShowCaret(edit);
-                    CHECK(Same(settled_caret,caret_bounds()));
-                    const bool same_size=settled.width==settled_expected.width && settled.height==settled_expected.height;
+                    // WM_PAINT is asynchronous. Wait for the settled frame with a
+                    // deadline; one fixed pump is a timing assumption that fails
+                    // when the machine is busy. The settled frame itself is exact.
+                    RECT settled_caret{},difference_bounds{};
+                    platform::BgraImage settled,settled_expected;
+                    bool same_size=false;
                     size_t differences=0,content_differences=0;
-                    RECT difference_bounds{settled.width,settled.height,0,0};
-                    if(same_size) {
-                        for(int y=0;y<settled.height;++y) for(int x=0;x<settled.width;++x) {
-                            if(settled.row(y)[x]==settled_expected.row(y)[x]) { continue; }
-                            ++differences;
-                            difference_bounds.left=std::min(difference_bounds.left,static_cast<LONG>(x));
-                            difference_bounds.top=std::min(difference_bounds.top,static_cast<LONG>(y));
-                            difference_bounds.right=std::max(difference_bounds.right,static_cast<LONG>(x+1));
-                            difference_bounds.bottom=std::max(difference_bounds.bottom,static_cast<LONG>(y+1));
-                            // After WM_PAINT only the current OS caret can vary;
-                            // old caret pixels and all glyph/backing pixels must
-                            // exactly match the source-backed custom renderer.
-                            if(!::PtInRect(&settled_caret,POINT{x,y})) { ++content_differences; }
+                    const auto settle_deadline=::GetTickCount64()+1500;
+                    for(;;) {
+                        Pump(10); settled_caret=caret_bounds();
+                        ::HideCaret(edit); settled=PresentedControl(edit); settled_expected=RenderControl(edit); ::ShowCaret(edit);
+                        same_size=settled.width==settled_expected.width && settled.height==settled_expected.height;
+                        differences=content_differences=0;
+                        difference_bounds={settled.width,settled.height,0,0};
+                        if(same_size) {
+                            for(int y=0;y<settled.height;++y) for(int x=0;x<settled.width;++x) {
+                                if(settled.row(y)[x]==settled_expected.row(y)[x]) { continue; }
+                                ++differences;
+                                difference_bounds.left=std::min(difference_bounds.left,static_cast<LONG>(x));
+                                difference_bounds.top=std::min(difference_bounds.top,static_cast<LONG>(y));
+                                difference_bounds.right=std::max(difference_bounds.right,static_cast<LONG>(x+1));
+                                difference_bounds.bottom=std::max(difference_bounds.bottom,static_cast<LONG>(y+1));
+                                // After WM_PAINT only the current OS caret can vary;
+                                // old caret pixels and all glyph/backing pixels must
+                                // exactly match the source-backed custom renderer.
+                                if(!::PtInRect(&settled_caret,POINT{x,y})) { ++content_differences; }
+                            }
                         }
+                        if((same_size && content_differences==0) || ::GetTickCount64()>=settle_deadline) { break; }
                     }
+                    CHECK(Same(settled_caret,caret_bounds()));
                     if(differences || !same_size) {
                         std::printf("Text settled mode=%d theme=%d reopened=%d message=%u size_match=%d differences=%zu outside_caret=%zu bounds=%ld,%ld,%ld,%ld caret=%ld,%ld,%ld,%ld\n",
                             mode,static_cast<int>(theme),reopened,message,same_size,differences,content_differences,

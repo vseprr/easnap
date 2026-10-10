@@ -44,11 +44,13 @@ function Get-EasnapTestFingerprint($Test, [object[]]$RuntimeInputs,
     }
     $executable = [IO.Path]::GetFullPath($Test.command[0])
     $inputs = @($executable)
-    foreach ($entry in $RuntimeInputs) {
-        if ([IO.Path]::GetFullPath($entry.executable) -eq $executable) { $inputs += $entry.runtime }
-    }
     foreach ($argument in $Test.command | Select-Object -Skip 1) {
-        if ([IO.Path]::IsPathRooted($argument) -and (Test-Path -LiteralPath $argument -PathType Leaf)) { $inputs += $argument }
+        if ([IO.Path]::IsPathRooted($argument) -and (Test-Path -LiteralPath $argument -PathType Leaf)) { $inputs += [IO.Path]::GetFullPath($argument) }
+    }
+    # A test started through the isolated-desktop runner names its real
+    # executable as an argument; that executable's helpers are inputs too.
+    foreach ($entry in $RuntimeInputs) {
+        if ([IO.Path]::GetFullPath($entry.executable) -in $inputs) { $inputs += $entry.runtime }
     }
     $rows = @($inputs | Sort-Object -Unique | ForEach-Object { $_ + ':' + (Get-EasnapFileDigest $_ $Hashes) })
     return Get-EasnapDigest (@($Configuration, $ContextDigest,
@@ -56,10 +58,44 @@ function Get-EasnapTestFingerprint($Test, [object[]]$RuntimeInputs,
         ($Test.properties | ConvertTo-Json -Compress -Depth 16), ($rows -join "`n")) -join "`n")
 }
 
+# Only variables that can change a test's behaviour belong in the fingerprint.
+# Hashing the whole environment made every new terminal rerun the full suite.
+function Get-EasnapTestEnvironmentDigest {
+    $rows = @(Get-ChildItem Env: | Where-Object { $_.Name -like 'EASNAP_*' } | Sort-Object Name |
+        ForEach-Object { "$($_.Name)=$($_.Value)" })
+    return Get-EasnapDigest ($rows -join "`n")
+}
+
+function Get-EasnapTestLabels($Test) {
+    return @($Test.properties | Where-Object name -eq 'LABELS' | ForEach-Object { $_.value })
+}
+
+# fast: seconds, no devices. desktop: needs the visible desktop, the real
+# pointer or presented pixels. soak: long repeats of an already covered path.
+function Get-EasnapTestTier($Test) {
+    $labels = Get-EasnapTestLabels $Test
+    if ('soak' -in $labels) { return 'soak' }
+    if ('interactive-desktop' -in $labels -or 'desktop-visual' -in $labels) { return 'desktop' }
+    if ('unit' -in $labels) { return 'fast' }
+    return 'integration'
+}
+
+function Test-EasnapNeedsDesktop($Test) {
+    $labels = Get-EasnapTestLabels $Test
+    return 'interactive-desktop' -in $labels -or 'desktop-visual' -in $labels
+}
+
 function Select-EasnapTestWork([object[]]$Tests, [hashtable]$Fingerprints, [hashtable]$Passed,
-                              [string]$Mode, [string]$DesktopTests, [datetime]$Now = [datetime]::UtcNow) {
-    $run = @(); $cached = @(); $deferred = @()
+                              [string]$Mode, [string]$DesktopTests, [datetime]$Now = [datetime]::UtcNow,
+                              [string]$Tier = 'Full') {
+    $run = @(); $cached = @(); $deferred = @(); $excluded = @()
     foreach ($test in $Tests) {
+        # Tier limits come first: a test outside the requested tier is neither
+        # run nor reported as a pass, whatever the cache holds.
+        $kind = Get-EasnapTestTier $test
+        if (($kind -eq 'soak' -and $Tier -ne 'Soak') -or ($Tier -eq 'Fast' -and $kind -ne 'fast')) {
+            $excluded += $test.name; continue
+        }
         $prior = $Passed[$test.name]
         $fresh = $false
         try {
@@ -69,12 +105,11 @@ function Select-EasnapTestWork([object[]]$Tests, [hashtable]$Fingerprints, [hash
             }
         } catch { $fresh = $false } # Malformed local cache entries only force a rerun.
         if ($Mode -eq 'Affected' -and $fresh) { $cached += $test.name; continue }
-        $labels = @($test.properties | Where-Object name -eq 'LABELS' | ForEach-Object { $_.value })
-        if ($DesktopTests -eq 'Defer' -and 'interactive-desktop' -in $labels) {
+        if ($DesktopTests -eq 'Defer' -and (Test-EasnapNeedsDesktop $test)) {
             $deferred += $test.name
         } else { $run += $test.name }
     }
-    return [PSCustomObject]@{ Run=$run; Cached=$cached; Deferred=$deferred }
+    return [PSCustomObject]@{ Run=$run; Cached=$cached; Deferred=$deferred; Excluded=$excluded }
 }
 
 function Get-EasnapJUnitPasses([string]$Report, [string[]]$Selected) {

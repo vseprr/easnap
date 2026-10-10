@@ -33,6 +33,41 @@ try {
     Assert-Selection ((Select-EasnapTestWork $tests $fingerprints $passed Full Run).Run.Count -eq 3) 'Full bypasses cache'
     $deferred=Select-EasnapTestWork $tests $fingerprints @{} Affected Defer
     Assert-Selection ($deferred.Run.Count -eq 2 -and $deferred.Deferred.Count -eq 1 -and $deferred.Cached.Count -eq 0) 'desktop deferral is not recorded as a pass'
+    $tiered=@(
+        [PSCustomObject]@{name='logic'; command=@($b); properties=@([PSCustomObject]@{name='LABELS'; value=@('unit')})},
+        [PSCustomObject]@{name='media'; command=@($b,'--media'); properties=@([PSCustomObject]@{name='LABELS'; value=@('integration')})},
+        [PSCustomObject]@{name='pixels'; command=@($b,'--pixels'); properties=@([PSCustomObject]@{name='LABELS'; value=@('desktop-visual')})},
+        [PSCustomObject]@{name='repeat'; command=@($b,'--repeat'); properties=@([PSCustomObject]@{name='LABELS'; value=@('integration','soak')})},
+        [PSCustomObject]@{name='clicks'; command=@($b,'--clicks'); properties=@([PSCustomObject]@{name='LABELS'; value=@('interactive-desktop','soak')})}
+    )
+    $tierPrints=@{}; foreach ($test in $tiered) { $tierPrints[$test.name]='x' }
+    $now=[datetime]::UtcNow
+    Assert-Selection ((Get-EasnapTestTier $tiered[0]) -eq 'fast' -and (Get-EasnapTestTier $tiered[1]) -eq 'integration' -and
+        (Get-EasnapTestTier $tiered[2]) -eq 'desktop' -and (Get-EasnapTestTier $tiered[3]) -eq 'soak') 'labels map to one tier each'
+    $fast=Select-EasnapTestWork $tiered $tierPrints @{} Affected Defer $now Fast
+    Assert-Selection ($fast.Run.Count -eq 1 -and $fast.Run[0] -eq 'logic' -and $fast.Excluded.Count -eq 4 -and $fast.Deferred.Count -eq 0) 'Fast runs unit tests only and defers nothing'
+    $standard=Select-EasnapTestWork $tiered $tierPrints @{} Affected Defer $now Standard
+    Assert-Selection (($standard.Run -join ',') -eq 'logic,media' -and ($standard.Deferred -join ',') -eq 'pixels' -and ($standard.Excluded -join ',') -eq 'repeat,clicks') 'Standard defers visible-desktop tests and excludes soak'
+    $full=Select-EasnapTestWork $tiered $tierPrints @{} Affected Run $now Full
+    Assert-Selection (($full.Run -join ',') -eq 'logic,media,pixels' -and $full.Excluded.Count -eq 2) 'Full runs desktop tests but not soak'
+    $soak=Select-EasnapTestWork $tiered $tierPrints @{} Affected Run $now Soak
+    Assert-Selection ($soak.Run.Count -eq 5 -and $soak.Excluded.Count -eq 0) 'Soak runs everything'
+    $soakDeferred=Select-EasnapTestWork $tiered $tierPrints @{} Affected Defer $now Soak
+    Assert-Selection (($soakDeferred.Deferred -join ',') -eq 'pixels,clicks' -and 'repeat' -in $soakDeferred.Run) 'a soak test that needs the desktop is deferred with the desktop'
+    $excludedPass=@{ repeat=@{fingerprint='x'; utc=$now.ToString('o')} }
+    Assert-Selection ('repeat' -notin (Select-EasnapTestWork $tiered $tierPrints $excludedPass Affected Run $now Full).Cached) 'an excluded test is never reported as a cached pass'
+    $launcher=Join-Path $fixture 'launcher.bin'; Set-Content -LiteralPath $launcher -Value 'runner'
+    $wrapped=[PSCustomObject]@{name='wrapped'; command=@($launcher,$a,'--native'); properties=@()}
+    $wrappedBefore=Get-EasnapTestFingerprint $wrapped $runtime Release context @{}
+    Set-Content -LiteralPath $helper -Value 'helper changed under a wrapped test'
+    Assert-Selection ((Get-EasnapTestFingerprint $wrapped $runtime Release context @{}) -ne $wrappedBefore) 'a wrapped test depends on its real executable helpers'
+    Set-Content -LiteralPath $helper -Value 'first input'
+    $env:EASNAP_SELECTION_PROBE='1'; $withVariable=Get-EasnapTestEnvironmentDigest
+    Remove-Item Env:EASNAP_SELECTION_PROBE; $env:UNRELATED_SELECTION_PROBE='1'
+    Assert-Selection ((Get-EasnapTestEnvironmentDigest) -ne $withVariable) 'test variables are part of the fingerprint'
+    $withoutVariable=Get-EasnapTestEnvironmentDigest; $env:UNRELATED_SELECTION_PROBE='2'
+    Assert-Selection ((Get-EasnapTestEnvironmentDigest) -eq $withoutVariable) 'unrelated environment changes do not rerun tests'
+    Remove-Item Env:UNRELATED_SELECTION_PROBE
     $passed.Remove('pure')
     Assert-Selection ((Select-EasnapTestWork $tests $fingerprints $passed Affected Run).Run[0] -eq 'pure') 'missing/failed result must run'
     $passed['pure']=@{fingerprint=$fingerprints['pure']; utc=[datetime]::UtcNow.AddDays(-2).ToString('o')}
