@@ -889,9 +889,11 @@ void TrimWindow::UpdatePosition() {
         ApplyPlaybackDecision(decision);
         current = decision.position;
     }
+    // The tick also runs while paused; repaint only when the playhead moved.
+    const bool moved = range_.current() != current;
     range_.SetCurrent(current);
     UpdateLabels();
-    ::InvalidateRect(timeline_, nullptr, FALSE);
+    if (moved) { ::InvalidateRect(timeline_, nullptr, FALSE); }
 }
 
 void TrimWindow::UpdateLabels() {

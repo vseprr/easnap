@@ -245,7 +245,9 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
                     break;
                 case WM_CONTEXTMENU:
                 case WM_RBUTTONUP:
-                    ShowTrayMenu(hwnd);
+                    // Version 4 icons report one right-click as both messages;
+                    // the second arrives inside the first menu's modal loop.
+                    if (!easnap::ui::PopupActive()) { ShowTrayMenu(hwnd); }
                     break;
                 default:
                     break;

@@ -27,7 +27,9 @@ using easnap::media::MediaTime;
 
 constexpr int64_t kSecond = 10'000'000;
 constexpr UINT32 kWidth = 160;
-constexpr UINT32 kHeight = 96;
+// Not a multiple of 16: the decoder pads such frames, so trimming must keep
+// the declared display size rather than the padded buffer size.
+constexpr UINT32 kHeight = 120;
 constexpr uint32_t kFrameRate = 30;
 constexpr uint32_t kAudioSampleRate = 48'000;
 constexpr uint16_t kAudioChannels = 2;

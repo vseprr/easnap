@@ -819,16 +819,27 @@ bool SaveImage(const BgraImage& image, const std::wstring& path) {
     }
     // The destination always comes from the system picker, so the path is
     // already canonicalised by the shell; it is only opened, never composed.
+    // Encode beside the destination and swap the finished file in. A failed
+    // export then leaves an existing file at this path exactly as it was.
+    wchar_t suffix[48]{};
+    ::swprintf_s(suffix, L".easnap-%08lx%016llx.tmp", ::GetCurrentProcessId(), ::GetTickCount64());
+    const std::wstring staged = path + suffix;
     ComPtr<IStream> stream;
-    HRESULT hr = ::SHCreateStreamOnFileEx(path.c_str(), STGM_CREATE | STGM_WRITE | STGM_SHARE_EXCLUSIVE,
+    HRESULT hr = ::SHCreateStreamOnFileEx(staged.c_str(), STGM_CREATE | STGM_WRITE | STGM_SHARE_EXCLUSIVE,
                                           FILE_ATTRIBUTE_NORMAL, TRUE, nullptr, &stream);
     if (FAILED(hr)) {
         LogHresult(L"SHCreateStreamOnFileEx", hr);
         return false;
     }
-    if (!WriteEncodedImage(image, FormatFromPath(path), stream.Get())) {
-        stream.Reset();
-        ::DeleteFileW(path.c_str());  // Never leave a truncated export behind.
+    const bool encoded = WriteEncodedImage(image, FormatFromPath(path), stream.Get()) &&
+                         SUCCEEDED(stream->Commit(STGC_DEFAULT));
+    stream.Reset();
+    if (!encoded ||
+        ::MoveFileExW(staged.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == FALSE) {
+        if (encoded) {
+            LogMessage(L"SaveImage could not replace the destination: %lu", ::GetLastError());
+        }
+        ::DeleteFileW(staged.c_str());  // Never leave a partial export behind.
         return false;
     }
     return true;
