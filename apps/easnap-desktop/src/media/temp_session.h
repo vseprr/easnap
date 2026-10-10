@@ -185,6 +185,11 @@ public:
                 (session.directory + L"\\.session-lock").c_str(),
                 GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS,
                 FILE_ATTRIBUTE_HIDDEN, nullptr);
+            if (owned->lease == INVALID_HANDLE_VALUE) {
+                // Without its lease a later stale-session sweep may remove it.
+                platform::LogMessage(L"A session that could not be deleted is no longer leased: %lu",
+                                     ::GetLastError());
+            }
             return false;
         }
         owned_.erase(owned);

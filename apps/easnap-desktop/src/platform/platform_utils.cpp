@@ -292,6 +292,13 @@ ComRuntime::~ComRuntime() {
 // DPI and monitors
 // ---------------------------------------------------------------------------
 
+void RestrictDllSearchPath() {
+    // Dynamic loads by bare name resolve from System32 (and directories added
+    // explicitly), never from the directory a portable copy was unpacked into.
+    // Static imports are covered by the /DEPENDENTLOADFLAG linker option.
+    ::SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS);
+}
+
 void EnableDpiAwareness() {
     if (Apis().set_process_dpi_awareness_context != nullptr &&
         Apis().set_process_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE) {
@@ -1019,8 +1026,37 @@ bool RemoveDirectoryTree(const std::wstring& path) {
         ancestors.push_back(std::move(handle));
     }
 
-    const auto remove_entry = [](const auto& self, const std::wstring& entry_path,
-                                 bool require_directory) -> bool {
+    // Children are enumerated and opened by path. A checked directory could be
+    // turned into a junction between its check and that open (a metadata-only
+    // open is exempt from the sharing denial above), so every opened handle
+    // must still resolve to a direct child of the directory it was listed in.
+    const auto final_path = [](HANDLE handle) -> std::wstring {
+        std::wstring result(MAX_PATH, L'\0');
+        for (;;) {
+            const DWORD length = ::GetFinalPathNameByHandleW(
+                handle, result.data(), static_cast<DWORD>(result.size()),
+                FILE_NAME_NORMALIZED | VOLUME_NAME_GUID);
+            if (length == 0) {
+                return {};
+            }
+            if (length < result.size()) {
+                result.resize(length);
+                return result;
+            }
+            result.resize(static_cast<std::size_t>(length) + 1);
+        }
+    };
+    const auto is_direct_child = [](const std::wstring& child, const std::wstring& parent) {
+        return !parent.empty() && child.size() > parent.size() + 1 &&
+               child[parent.size()] == L'\\' &&
+               child.find(L'\\', parent.size() + 1) == std::wstring::npos &&
+               ::CompareStringOrdinal(child.c_str(), static_cast<int>(parent.size()), parent.c_str(),
+                                      static_cast<int>(parent.size()), TRUE) == CSTR_EQUAL;
+    };
+
+    const auto remove_entry = [&final_path, &is_direct_child](
+                                  const auto& self, const std::wstring& entry_path,
+                                  const std::wstring& parent_final, bool require_directory) -> bool {
         UniqueHandle handle(::CreateFileW(entry_path.c_str(),
             DELETE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ,
             nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
@@ -1030,6 +1066,11 @@ bool RemoveDirectoryTree(const std::wstring& path) {
             !::GetFileInformationByHandle(handle.get(), &info) ||
             (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 ||
             (require_directory && (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0)) {
+            return false;
+        }
+        const std::wstring entry_final = final_path(handle.get());
+        if (!is_direct_child(entry_final, parent_final)) {
+            LogMessage(L"Refusing to delete an entry that resolved outside its listed directory");
             return false;
         }
         if ((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
@@ -1045,7 +1086,7 @@ bool RemoveDirectoryTree(const std::wstring& path) {
                 std::unique_ptr<void, decltype(close_find)> search(find, close_find);
                 do {
                     const std::wstring name(entry.cFileName);
-                    if (name != L"." && name != L".." && !self(self, entry_path + L"\\" + name, false)) {
+                    if (name != L"." && name != L".." && !self(self, entry_path + L"\\" + name, entry_final, false)) {
                         return false;
                     }
                 } while (::FindNextFileW(find, &entry) != FALSE);
@@ -1068,7 +1109,7 @@ bool RemoveDirectoryTree(const std::wstring& path) {
         return ::SetFileInformationByHandle(handle.get(), FileDispositionInfo,
                                             &disposition, sizeof(disposition)) != FALSE;
     };
-    return remove_entry(remove_entry, target, true);
+    return remove_entry(remove_entry, target, final_path(ancestors.back().get()), true);
 }
 
 // ---------------------------------------------------------------------------

@@ -91,6 +91,8 @@ struct MonitorInfo {
     [[nodiscard]] float scale() const noexcept { return static_cast<float>(dpi) / 96.0f; }
 };
 
+/// Call first in every process entry point, before any library is loaded.
+void RestrictDllSearchPath();
 void EnableDpiAwareness();
 [[nodiscard]] std::vector<MonitorInfo> EnumerateMonitors();
 [[nodiscard]] MonitorInfo MonitorForPoint(POINT pt);
