@@ -296,6 +296,7 @@ bool CaptureCoordinator::BeginCaptureSession() {
         return false;
     }
 
+    session_monitors_ = platform::EnumerateMonitors();
     POINT initiating_pointer{};
     ::GetCursorPos(&initiating_pointer);
 
@@ -1288,30 +1289,57 @@ void CaptureCoordinator::OnEscapeRequested() {
     EndSession();
 }
 
+namespace {
+bool SameDisplayLayout(const std::vector<platform::MonitorInfo>& before,
+                       const std::vector<platform::MonitorInfo>& after) {
+    return before.size() == after.size() &&
+           std::equal(before.begin(), before.end(), after.begin(),
+                      [](const platform::MonitorInfo& a, const platform::MonitorInfo& b) {
+                          return ::EqualRect(&a.bounds, &b.bounds) != FALSE && a.dpi == b.dpi;
+                      });
+}
+}  // namespace
+
 void CaptureCoordinator::OnDisplayChanged() {
     if (state_ == SessionState::Idle) {
         return;
     }
     if (overlay_ && overlay_->visible()) {
+        // Work-area notifications (taskbar auto-hide, a docked app bar) arrive
+        // here too and leave the frozen snapshot valid. Only a changed monitor
+        // layout or scale makes it stale; cancelling then is the one outcome
+        // that cannot show the user outdated pixels.
+        if (SameDisplayLayout(session_monitors_, platform::EnumerateMonitors())) {
+            return;
+        }
+        platform::LogMessage(L"Display layout changed during selection - cancelling the session");
         OnOverlayCancelled();
         return;
     }
     if (IsRecordingState(state_)) {
-        // A recording survives display changes. Keep the selected desktop
-        // coordinates and reposition only its user-facing chrome.
+        // The capture provider rejects a region that left the virtual screen
+        // and the worker would repeat the last frame until Stop. End the
+        // recording instead so the user keeps what was really captured.
+        const RECT visible = platform::IntersectRects(recording_region_, platform::VirtualScreenBounds());
+        if (::EqualRect(&visible, &recording_region_) == FALSE) {
+            platform::LogMessage(L"The recording region left the desktop - ending the recording");
+            if (state_ == SessionState::RecordingActive || state_ == SessionState::RecordingPaused) {
+                OnRecordingStop();
+                return;
+            }
+            if (state_ == SessionState::RecordingConfiguring) {
+                OnRecordingCancel();
+                return;
+            }
+        }
+        // Otherwise a recording survives display changes. Keep the selected
+        // desktop coordinates and reposition only its user-facing chrome.
         if (trim_window_ && trim_window_->visible()) {
             trim_window_->RefreshLayout();
         } else if (recording_controls_) {
             recording_controls_->RefreshLayout();
         }
         return;
-    }
-    if (overlay_ && overlay_->visible()) {
-        // The frozen snapshot no longer matches the desktop; cancelling is the
-        // only outcome that cannot show the user stale pixels.
-        platform::LogMessage(L"Display layout changed during selection - cancelling the session");
-        RequestTransition(SessionState::Idle);
-        EndSession();
     }
 }
 

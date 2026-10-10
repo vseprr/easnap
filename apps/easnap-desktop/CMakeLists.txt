@@ -111,15 +111,13 @@ target_link_libraries(EasnapPreviewHost PRIVATE easnap_project_options
     d3d11 d2d1 dwrite dxgi dxguid windowscodecs
     mfplat mfuuid mfreadwrite mfplay shlwapi comctl32 shell32
     ole32 oleaut32 uuid user32 gdi32 advapi32 propsys)
-set_target_properties(EasnapPreviewHost PROPERTIES VS_DPI_AWARE "PerMonitor")
 # The retained still is a layered child; Windows requires an 8+-aware manifest.
 # Embed the project's Windows 10 baseline in the helper that owns that HWND.
+# The same manifest declares per-monitor v2 DPI awareness (see easnap.manifest).
 target_sources(EasnapPreviewHost PRIVATE resources/preview_host.manifest)
 add_dependencies(easnap-desktop EasnapPreviewHost)
 
-set_target_properties(easnap-desktop PROPERTIES
-    OUTPUT_NAME "Easnap"
-    VS_DPI_AWARE "PerMonitor")
+set_target_properties(easnap-desktop PROPERTIES OUTPUT_NAME "Easnap")
 
 target_include_directories(easnap-desktop PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -153,9 +151,12 @@ target_link_libraries(easnap-desktop PRIVATE
     advapi32
     propsys dwmapi uiautomationcore)
 
-# Per-monitor DPI awareness v2 is requested programmatically (see
-# platform::EnableDpiAwareness) and common controls v6 through a linker
-# manifest dependency in main.cpp, so no hand written .manifest is needed.
+# Per-monitor v2 DPI awareness is declared in resources/easnap.manifest. Do not
+# set VS_DPI_AWARE: it embeds per-monitor v1, which a process cannot raise
+# afterwards, so the shipped binaries ran in a different mode than the tests.
+# platform::EnableDpiAwareness remains for manifest-less test executables.
+# Common controls v6 come from a linker manifest dependency in main.cpp.
+target_sources(easnap-desktop PRIVATE resources/easnap.manifest)
 if(MSVC)
     target_link_options(easnap-desktop PRIVATE
         "/MANIFESTUAC:level='asInvoker' uiAccess='false'")

@@ -230,11 +230,12 @@ void RegionSelector::OnNudge(int dx, int dy, bool resize) {
     }
 }
 
-SelectionHandle RegionSelector::HitTest(POINT pt) const {
+SelectionHandle RegionSelector::HitTest(POINT pt, float scale) const {
     if (!has_selection_ || implicit_selection_) {
         return SelectionHandle::None;
     }
-    const LONG radius = static_cast<LONG>(theme::kHandleHitRadius);
+    // Handles are drawn scaled, so their hit area must scale with them.
+    const LONG radius = theme::Scaled(theme::kHandleHitRadius, scale);
     for (const HandleLayout& layout : kHandles) {
         const POINT center = HandleCenter(selection_, layout);
         if (std::abs(pt.x - center.x) <= radius && std::abs(pt.y - center.y) <= radius) {

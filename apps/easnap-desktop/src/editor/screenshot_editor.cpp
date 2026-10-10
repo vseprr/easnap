@@ -1587,6 +1587,9 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 ::SetWindowPos(hwnd, nullptr, placement.left, placement.top, platform::RectWidth(placement),
                                platform::RectHeight(placement), SWP_NOZORDER | SWP_NOACTIVATE);
             }
+            // CreateTextFormats replaced the shared font; the context island
+            // still holds the deleted handle until its controls are resynced.
+            SyncContext();
             Invalidate();
             return 0;
         }

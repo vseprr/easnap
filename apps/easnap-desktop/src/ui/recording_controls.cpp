@@ -526,6 +526,15 @@ private:
                 break;
             }
             case WM_DPICHANGED:
+                // Adopt the suggested rectangle first: layout reads the scale of
+                // the monitor under the window while painting reads the window's
+                // own DPI, and mid-drag the two must name the same monitor.
+                if (const auto* suggested = reinterpret_cast<const RECT*>(lparam)) {
+                    ::SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                                   static_cast<int>(platform::RectWidth(*suggested)),
+                                   static_cast<int>(platform::RectHeight(*suggested)),
+                                   SWP_NOZORDER | SWP_NOACTIVATE);
+                }
                 owner_.RefreshLayout();
                 return 0;
             case WM_CTLCOLORSTATIC: {

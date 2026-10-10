@@ -300,6 +300,8 @@ void RestrictDllSearchPath() {
 }
 
 void EnableDpiAwareness() {
+    // The product executables declare per-monitor v2 in their manifests, which
+    // makes the calls below fail harmlessly; they serve manifest-less tests.
     if (Apis().set_process_dpi_awareness_context != nullptr &&
         Apis().set_process_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) != FALSE) {
         return;

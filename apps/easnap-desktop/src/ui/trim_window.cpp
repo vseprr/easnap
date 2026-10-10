@@ -262,12 +262,17 @@ void TrimWindow::RefreshLayout() {
     const platform::MonitorInfo monitor = platform::MonitorForRect(window_rect);
     scale_ = monitor.scale();
     RebuildFonts();
-    const RECT clamped =
-        platform::ClampRectToBounds(window_rect, monitor.work_area);
-    ::SetWindowPos(hwnd_, nullptr, clamped.left, clamped.top,
-                   static_cast<int>(platform::RectWidth(clamped)),
-                   static_cast<int>(platform::RectHeight(clamped)),
-                   SWP_NOZORDER | SWP_NOACTIVATE);
+    // A maximized or minimized window is placed by the system; resizing it to
+    // its current rectangle would leave it flagged maximized at the wrong size
+    // or move it to the off-screen minimized position.
+    if (::IsZoomed(hwnd_) == FALSE && ::IsIconic(hwnd_) == FALSE) {
+        const RECT clamped =
+            platform::ClampRectToBounds(window_rect, monitor.work_area);
+        ::SetWindowPos(hwnd_, nullptr, clamped.left, clamped.top,
+                       static_cast<int>(platform::RectWidth(clamped)),
+                       static_cast<int>(platform::RectHeight(clamped)),
+                       SWP_NOZORDER | SWP_NOACTIVATE);
+    }
     RECT client{};
     ::GetClientRect(hwnd_, &client);
     LayoutControls(static_cast<int>(platform::RectWidth(client)),

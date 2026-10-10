@@ -65,7 +65,8 @@ public:
     /// Arrow-key nudging: moves the selection, or resizes when `resize` is set.
     void OnNudge(int dx, int dy, bool resize);
 
-    [[nodiscard]] SelectionHandle HitTest(POINT pt) const;
+    /// `scale` is the DPI scale of the monitor under `pt`.
+    [[nodiscard]] SelectionHandle HitTest(POINT pt, float scale = 1.0f) const;
     /// IDC_* cursor resource matching the handle under `pt`.
     [[nodiscard]] LPCWSTR CursorForPoint(POINT pt) const;
 
