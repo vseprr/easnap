@@ -121,9 +121,11 @@ bool ReadTextureToImage(ID3D11Device* device, ID3D11DeviceContext* context, ID3D
     return true;
 }
 
+/// `staging` is owned by the caller's output so a steady recording region
+/// reuses one CPU-readable texture instead of allocating one per frame.
 bool ReadTextureRegionToImage(ID3D11Device* device, ID3D11DeviceContext* context,
                               ID3D11Texture2D* texture, const RECT& source_region,
-                              BgraImage& out,
+                              ComPtr<ID3D11Texture2D>& staging, BgraImage& out,
                               RegionCaptureFailureDiagnostic* failure) {
     if (device == nullptr || context == nullptr || texture == nullptr ||
         platform::IsEmptyRect(source_region) || source_region.left < 0 || source_region.top < 0) {
@@ -154,15 +156,25 @@ bool ReadTextureRegionToImage(ID3D11Device* device, ID3D11DeviceContext* context
     staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     staging_desc.MiscFlags = 0;
 
-    ComPtr<ID3D11Texture2D> staging;
-    HRESULT hr = device->CreateTexture2D(&staging_desc, nullptr, &staging);
-    if (FAILED(hr)) {
-        LogHresult(L"CreateTexture2D(region staging)", hr);
-        if (failure != nullptr) {
-            *failure = HresultFailure(
-                RegionCaptureFailureStage::DuplicationStagingTexture, hr);
+    if (staging) {
+        D3D11_TEXTURE2D_DESC cached_desc{};
+        staging->GetDesc(&cached_desc);
+        if (cached_desc.Width != width || cached_desc.Height != height ||
+            cached_desc.Format != staging_desc.Format) {
+            staging.Reset();
         }
-        return false;
+    }
+    HRESULT hr = S_OK;
+    if (!staging) {
+        hr = device->CreateTexture2D(&staging_desc, nullptr, &staging);
+        if (FAILED(hr)) {
+            LogHresult(L"CreateTexture2D(region staging)", hr);
+            if (failure != nullptr) {
+                *failure = HresultFailure(
+                    RegionCaptureFailureStage::DuplicationStagingTexture, hr);
+            }
+            return false;
+        }
     }
     const D3D11_BOX source_box{
         static_cast<UINT>(source_region.left), static_cast<UINT>(source_region.top), 0,
@@ -287,6 +299,8 @@ struct OutputDuplication {
     DXGI_MODE_ROTATION rotation{DXGI_MODE_ROTATION_IDENTITY};
     bool frame_acquired{false};
     bool unusable{false};  ///< Set once this output proved it only returns black.
+    ComPtr<ID3D11Texture2D> region_staging;  ///< Reused readback target for region capture.
+    bool delivered_content{false};  ///< Real pixels were seen; later black frames are content.
     RegionCaptureFailureDiagnostic unusable_failure;
 
     void ReleaseFrame() {
@@ -468,7 +482,11 @@ private:
                     const FrameAcquireStatus acquired = AcquireFrame(
                         output, out, &source_region, 0, 1, &result.metrics,
                         &result.primary_failure);
-                    if (acquired == FrameAcquireStatus::Acquired && !ImageLooksBlank(out)) {
+                    // Only an output that has never shown content is suspected of
+                    // returning black; a fade to black must not demote it to GDI.
+                    if (acquired == FrameAcquireStatus::Acquired &&
+                        (output.delivered_content || !ImageLooksBlank(out))) {
+                        output.delivered_content = true;
                         recording_frame_available_ = true;
                         result.status = RegionCaptureStatus::FrameAcquired;
                         return result;
@@ -723,7 +741,7 @@ private:
                                           texture.Get(), candidate, failure)
                      : ReadTextureRegionToImage(output.device.Get(), output.context.Get(),
                                                 texture.Get(), *source_region,
-                                                candidate, failure));
+                                                output.region_staging, candidate, failure));
             if (metrics != nullptr) {
                 metrics->region_copy_microseconds += ElapsedMicroseconds(copy_start);
             }
@@ -879,24 +897,55 @@ bool CompositeCursor(BgraImage& image, const RECT& image_rect) {
     if (::GetIconInfo(cursor_info.hCursor, &icon_info) == FALSE) {
         return false;
     }
+    // The cursor bitmaps carry the drawn size, including accessibility scaling.
+    // A monochrome cursor stores its AND and XOR masks stacked in one bitmap.
+    BITMAP cursor_bitmap{};
+    const HBITMAP sized = icon_info.hbmColor != nullptr ? icon_info.hbmColor : icon_info.hbmMask;
+    const bool has_size = sized != nullptr &&
+        ::GetObjectW(sized, sizeof(cursor_bitmap), &cursor_bitmap) == sizeof(cursor_bitmap);
     if (icon_info.hbmColor != nullptr) {
         ::DeleteObject(icon_info.hbmColor);
     }
     if (icon_info.hbmMask != nullptr) {
         ::DeleteObject(icon_info.hbmMask);
     }
+    const int cursor_width = has_size ? cursor_bitmap.bmWidth : ::GetSystemMetrics(SM_CXCURSOR);
+    const int cursor_height = !has_size ? ::GetSystemMetrics(SM_CYCURSOR)
+        : (icon_info.hbmColor != nullptr ? cursor_bitmap.bmHeight : cursor_bitmap.bmHeight / 2);
 
-    const int x = static_cast<int>(cursor_info.ptScreenPos.x - image_rect.left - static_cast<LONG>(icon_info.xHotspot));
-    const int y = static_cast<int>(cursor_info.ptScreenPos.y - image_rect.top - static_cast<LONG>(icon_info.yHotspot));
-    if (x > image.width || y > image.height) {
+    const LONG x = cursor_info.ptScreenPos.x - image_rect.left - static_cast<LONG>(icon_info.xHotspot);
+    const LONG y = cursor_info.ptScreenPos.y - image_rect.top - static_cast<LONG>(icon_info.yHotspot);
+    const RECT covered = platform::IntersectRects(
+        RECT{x, y, x + cursor_width, y + cursor_height}, RECT{0, 0, image.width, image.height});
+    if (platform::IsEmptyRect(covered)) {
         return false;
     }
 
-    platform::GdiImageSurface surface(image);
-    if (!surface.valid()) {
-        return false;
+    // Composite through a cursor-sized surface: this runs for every recorded
+    // frame, so the full frame must not make a round trip through GDI.
+    const int patch_width = static_cast<int>(platform::RectWidth(covered));
+    const int patch_height = static_cast<int>(platform::RectHeight(covered));
+    const size_t row_bytes = static_cast<size_t>(patch_width) * sizeof(uint32_t);
+    BgraImage patch;
+    patch.Reset(patch_width, patch_height);
+    for (int row = 0; row < patch_height; ++row) {
+        std::memcpy(patch.row(row), image.row(covered.top + row) + covered.left, row_bytes);
     }
-    return ::DrawIconEx(surface.dc(), x, y, cursor_info.hCursor, 0, 0, 0, nullptr, DI_NORMAL) != FALSE;
+    bool drawn = false;
+    {
+        platform::GdiImageSurface surface(patch);
+        if (!surface.valid()) {
+            return false;
+        }
+        drawn = ::DrawIconEx(surface.dc(), x - covered.left, y - covered.top, cursor_info.hCursor,
+                             0, 0, 0, nullptr, DI_NORMAL) != FALSE;
+    }
+    if (drawn) {
+        for (int row = 0; row < patch_height; ++row) {
+            std::memcpy(image.row(covered.top + row) + covered.left, patch.row(row), row_bytes);
+        }
+    }
+    return drawn;
 }
 
 std::unique_ptr<IRegionCaptureProvider> CreateRegionCaptureProvider() {
