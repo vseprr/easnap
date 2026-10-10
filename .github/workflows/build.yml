@@ -25,8 +25,10 @@ concurrency:
 
 jobs:
   build:
-    name: ${{ matrix.configuration }} (windows-latest)
-    runs-on: windows-latest
+    # Pinned: the build uses the Visual Studio 17 2022 generator, and the image
+    # behind windows-latest moves on to newer Visual Studio versions.
+    name: ${{ matrix.configuration }} (windows-2022)
+    runs-on: windows-2022
 
     strategy:
       fail-fast: false
