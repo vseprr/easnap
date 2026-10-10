@@ -219,6 +219,7 @@ private:
     void CreateContextControls();
     [[nodiscard]] HWND Control(int identifier) const;
     void SyncContext(bool layout = true);
+    void CommitContextTransaction();
     void PlaceContext(bool follow_frame = false);
     void StartTextEditing(std::optional<size_t> index, POINT point);
     void UpdateTextFromControl();
@@ -278,7 +279,7 @@ private:
     Annotation pending_;      ///< Stroke currently being drawn.
     bool has_pending_{false};
     bool dragging_{false};
-    int hovered_index_{-1};
+    bool context_owns_transaction_{false};  ///< A property control opened the open transaction.
     bool editing_text_{false};
     ToolId tool_{ToolId::Pen};
     AnnotationStyle style_{};
