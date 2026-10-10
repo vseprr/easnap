@@ -114,7 +114,9 @@ private:
 
 AudioCaptureResult AudioCaptureProvider::Start(AudioSource source,
                                                 PacketCallback on_packet) {
-    if (active()) {
+    // A failed Both session is unhealthy but still owns its mixer thread and
+    // endpoints until Stop(); it must not be restarted over them.
+    if (active() || dual_active_.load(std::memory_order_acquire)) {
         return AudioCaptureResult::AlreadyActive;
     }
     if (source == AudioSource::None || !on_packet) {
@@ -223,8 +225,11 @@ AudioCaptureResult AudioCaptureProvider::Start(AudioSource source,
 
 bool AudioCaptureProvider::active() const {
     if (source_ == AudioSource::Both) {
+        // Endpoint health is read directly, exactly as diagnostics() does, so
+        // the two can never disagree while the mixer thread is between polls.
         return dual_active_.load(std::memory_order_acquire) &&
-               !dual_failed_.load(std::memory_order_acquire);
+               !dual_failed_.load(std::memory_order_acquire) &&
+               !EndpointFailed();
     }
     return single_ != nullptr && single_->active();
 }
