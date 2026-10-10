@@ -9,6 +9,8 @@ alongside it. Contributor instructions are in [CONTRIBUTING.md](../CONTRIBUTING.
 | [README](../README.md) | Product overview, build, run and test instructions |
 | [Roadmap](../EASNAP_ROADMAP.md) | Accepted phases and current bounded work |
 | [Architecture](architecture.md) | Implemented modules, ownership and data flow |
+| [Development](development.md) | Building, running, packaging and source layout |
+| [Testing](testing.md) | Test tiers, running only what changed, display selection and isolation from the user |
 | [User flows](user-flows.md) | Current interaction, completion and retry behavior |
 | [UI direction](ui-modernization-direction.md) | Scope of the separately authorized presentation effort |
 | [Design system](ui/design-system.md) | Implemented colors, controls, accessibility and layout |
@@ -53,7 +55,8 @@ not unfinished roadmap instructions.
   [publication/clipboard lifetime](decisions/ADR-011-recording-completion-and-clipboard-lifetime.md),
   [GIF policy](decisions/ADR-013-gif-stream-timing-palette-and-publication.md),
   [shared configuration/completion](decisions/ADR-014-unified-recording-configuration-and-format-completion.md).
-- Development/testing: [incremental execution and desktop ownership](decisions/ADR-025-incremental-test-execution.md).
+- Development/testing: [incremental execution and desktop ownership](decisions/ADR-025-incremental-test-execution.md),
+  [test tiers and desktop isolation](decisions/ADR-026-test-tiers-and-desktop-isolation.md).
 
 Keep progress in project status, durable decisions in ADRs and measured evidence
 in investigation reports. Avoid duplicating phase histories across these files.

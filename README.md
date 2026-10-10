@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/vseprr/easnap/releases/latest">Download</a> ·
-  <a href="https://github.com/vseprr/easnap/releases/tag/v1.0.0">Release notes</a> ·
+  <a href="https://github.com/vseprr/easnap/releases/latest">Release notes</a> ·
   <a href="#planned">Planned features</a>
 </p>
 
@@ -52,29 +52,38 @@ out of the recording.
 
 ## Download and run
 
-The portable build targets **Windows 10 and Windows 11, x64**. No installer is
-required.
+Easnap targets **Windows 10 and Windows 11, x64**. The
+[latest release](https://github.com/vseprr/easnap/releases/latest) offers two
+equivalent packages built from the same binaries:
 
-1. Download **[Easnap-v1.0.0-windows-x64.zip](https://github.com/vseprr/easnap/releases/download/v1.0.0/Easnap-v1.0.0-windows-x64.zip)** from the release.
-2. Extract the entire ZIP to a folder you can write to.
-3. Open the `bin` folder and run `Easnap.exe`. Keep its matching
-   `EasnapPreviewHost.exe` beside it; the preview helper is part of the application.
-4. Press **Ctrl+Shift+A**, or choose **Capture** from the tray menu.
+| Package | Use it when |
+|---|---|
+| `Easnap-v<version>-windows-x64-setup.exe` | You want one file to run: it installs for your user only, without administrator rights, and adds a Start menu entry and an uninstaller. |
+| `Easnap-v<version>-windows-x64.zip` | You want a portable copy: extract the whole ZIP and run `bin\Easnap.exe`. Keep `EasnapPreviewHost.exe` beside it; the preview helper is part of the application. |
 
-The build is unsigned, so Windows may display a publisher or reputation warning.
-Download `Easnap-v1.0.0-windows-x64.zip.sha256` from the same release to check the ZIP:
+Then press **Ctrl+Shift+A**, or choose **Capture** from the tray menu.
+
+The binaries are unsigned, so Windows may display a publisher or reputation
+warning. Each package has a `.sha256` file in the same release:
 
 ```powershell
-Get-FileHash .\Easnap-v1.0.0-windows-x64.zip -Algorithm SHA256
+Get-FileHash .\Easnap-v1.0.1-windows-x64-setup.exe -Algorithm SHA256
 ```
 
-Compare the result with the value in the `.zip.sha256` file. The extracted ZIP also contains `SHA256SUMS.txt`, which lists checksums for the packaged files.
+Compare the result with the value in the matching `.sha256` file. Releases from
+v1.0.1 also carry a build provenance attestation, which ties a file to the
+workflow run that built it:
 
-To update, exit Easnap and extract the new release into a separate folder. Always
-use the application and preview helper from the same release. To remove the
-portable application, exit it and delete its extracted folder. User settings and
-temporary data are stored separately; **Open data folder** in the tray shows
-their location.
+```powershell
+gh attestation verify .\Easnap-v1.0.1-windows-x64-setup.exe --repo vseprr/easnap
+```
+
+To update, exit Easnap, then run the new installer or extract the new ZIP into a
+separate folder. Always use the application and preview helper from the same
+release. To remove it, use **Apps > Installed apps** for the installed copy, or
+exit Easnap and delete the extracted folder for the portable one. Settings and
+temporary recordings are stored separately under `%LOCALAPPDATA%\Easnap` and
+are kept on removal; **Open data folder** in the tray shows the location.
 
 ## First capture
 
@@ -99,15 +108,16 @@ Light and Dark appearance are available from the tray and capture controls.
 
 - Transient redraw artifacts can occur while resizing or maximizing the Trim
   window.
-- The recorded physical display baseline is **125% scaling**. The wider
-  Windows, GPU, audio-device, accessibility and mixed-DPI compatibility matrix
-  is not complete.
+- Physical testing covers two 1920x1080 displays at **125% scaling** (144 Hz
+  and 60 Hz). Layout at other resolutions and scale factors is covered by
+  automated layout tests only; other GPUs, audio devices, mixed-DPI layouts and
+  accessibility tools have not been checked on real hardware.
 - GIF preview plays the source recording. Its final palette and frame cadence
   are applied during export; GIF has no audio.
 - MP4 cut points follow video/audio sample granularity. A trim near the end of a
   long recording can take longer because decoding starts at the source beginning.
 
-See [release notes](https://github.com/vseprr/easnap/releases/tag/v1.0.0) and
+See the [release notes](https://github.com/vseprr/easnap/releases/latest) and
 [project status](docs/project-status.md) for validation results and remaining work.
 
 ## Planned
@@ -128,14 +138,14 @@ dependencies. Build with Visual Studio 2022, the Desktop development with C++
 workload, a Windows SDK and CMake 3.20 or later:
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DEASNAP_BUILD_TESTS=ON
-cmake --build build --config Release
-ctest --test-dir build -C Release --output-on-failure --parallel 4
+.\scripts\build.ps1                 # build, then run the tests affected by your change
+.\build\bin\Release\Easnap.exe    # run the development build directly
 ```
 
-Native media and desktop tests require an interactive Windows session; leave
-the pointer and desktop idle while they run. See the
-[development guide](docs/development.md) for incremental testing and packaging,
+Tests are split into tiers so a normal run does not use your pointer, keyboard
+or screen; the few that need the real desktop run on a display you choose. See
+the [testing guide](docs/testing.md), the
+[development guide](docs/development.md) for building and packaging,
 [architecture](docs/architecture.md) for the code structure, and
 [project status](docs/project-status.md) before starting changes.
 

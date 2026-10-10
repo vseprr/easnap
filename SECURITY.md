@@ -27,7 +27,15 @@ separate security branches.
 - Recording Copy places a file reference on the clipboard. Files still used by
   the clipboard are retained; unreferenced stale sessions can be cleaned later.
 - Live sessions hold an exclusive lease. The preview helper uses private IPC,
-  restricted handle inheritance and supervised lifetime management.
+  restricted handle inheritance and supervised lifetime management. The
+  application range-checks what the helper reports before acting on it.
+- Cleanup deletes only inside `%LOCALAPPDATA%\Easnap`, through checked handles.
+  It refuses reparse points and verifies that every entry it opens still
+  resolves to a direct child of the directory it was listed in.
+- Both executables load libraries from the Windows system directory only. A DLL
+  placed beside a portable copy is not loaded.
+- Saving a screenshot writes a temporary file beside the destination and
+  replaces the destination only after encoding succeeded.
 
 These boundaries do not protect against malware running as the same user or
 an administrator. Blur and pixelation are visual effects; review exported
@@ -35,13 +43,21 @@ images carefully before sharing sensitive information.
 
 ## Build and repository checks
 
-The C++ build enables strict warnings, SDL checks, control-flow protection,
-ASLR and DEP. Portable binaries use the static runtime and Windows SDK libraries.
-The release package is unsigned.
+The C++ build enables strict warnings as errors, SDL checks, Control Flow Guard,
+high-entropy ASLR, DEP and CET shadow-stack compatibility, and resolves static
+imports from the system directory (`/DEPENDENTLOADFLAG:0x800`). Binaries use the
+static runtime and Windows SDK libraries only.
 
-CI builds Debug and Release, runs checks suitable for hosted Windows runners,
-and checks the tracked-file inventory. Interactive desktop and device coverage
-must be validated separately; see [development](docs/development.md) and
+Release binaries and the installer are **unsigned**. Each package has a SHA-256
+file, which detects a corrupted download but not a replaced one, because it is
+published alongside the package. From v1.0.1 each package also has a build
+provenance attestation that ties it to the workflow run that built it:
+`gh attestation verify <file> --repo vseprr/easnap`.
+
+CI builds Debug and Release with third-party actions pinned to commits and a
+read-only token, runs the tests suitable for hosted Windows runners, and checks
+the tracked-file inventory. Tests that need a real display, pointer or audio
+device are validated separately; see [testing](docs/testing.md) and
 [project status](docs/project-status.md).
 
 `.gitignore` excludes local tooling configuration, credentials, private keys,

@@ -245,9 +245,13 @@ image copy.
 ## Desktop and recovery behavior
 
 Selection/source coordinates use signed physical desktop pixels; DPI scales UI
-controls independently. Workspace display-layout changes cancel the current
-selection to avoid silently using stale coordinates. A started recording uses
-its fixed capture rectangle.
+controls independently. A change to the monitor layout, resolution or scale
+cancels the current selection or screenshot edit, because the frozen image no
+longer matches the desktop. A work-area change alone, such as the taskbar
+hiding or an app bar docking, does not. A started recording uses its fixed
+capture rectangle; if that rectangle is no longer on the desktop (its monitor
+was disconnected or shrank), the recording stops and opens for trimming with
+what was captured up to that point.
 
 Tray actions include capture, cursor preference, About, opening the local data
 folder and Exit. Settings and private recordings are local to the current user.
