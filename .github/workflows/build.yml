@@ -64,15 +64,19 @@ jobs:
         shell: pwsh
         run: cmake --build build --config ${{ matrix.configuration }} --parallel
 
-      # Unit, integration and private-desktop tests. Visible-desktop tests need
-      # a real display and input queue; soak variants repeat covered paths.
+      # Unit, integration and private-desktop tests. Excluded here, and still
+      # required locally: visible-desktop tests (no real display or input
+      # queue), soak variants, preview tests (the hosted Windows Server image
+      # cannot open an MFPlay player) and the overlay interaction test, whose
+      # click targets assume a larger desktop than the runner's.
       - name: Test on the hosted runner
         shell: pwsh
         working-directory: build
         run: >-
           ctest --build-config ${{ matrix.configuration }}
           --output-on-failure --parallel 4 --no-tests=error
-          --label-exclude "interactive-desktop|desktop-visual|soak"
+          --label-exclude "interactive-desktop|desktop-visual|soak|preview"
+          --exclude-regex "^capture_overlay_interaction$"
 
       - name: Report pending physical desktop validation
         if: always()
@@ -80,7 +84,8 @@ jobs:
         run: |
           @'
           ### Physical desktop validation is pending
-          Hosted CI excludes tests labeled interactive-desktop, desktop-visual or soak.
+          Hosted CI excludes tests labeled interactive-desktop, desktop-visual, soak
+          or preview, and capture_overlay_interaction.
           These remain registered and must be run on an unlocked Windows desktop:
           ./scripts/test.ps1 -Tier Full   (or -Tier Soak for the long repeats)
           A passing hosted run is not a full desktop or hardware compatibility result.

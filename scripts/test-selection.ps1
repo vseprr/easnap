@@ -10,7 +10,13 @@ function Get-EasnapFileDigest([string]$Path, [hashtable]$Hashes) {
     $full = [IO.Path]::GetFullPath($Path)
     if (-not $Hashes.ContainsKey($full)) {
         if (-not (Test-Path -LiteralPath $full -PathType Leaf)) { throw "Missing test input: $full. Build this configuration first." }
-        $Hashes[$full] = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash
+        # Computed with .NET directly: Get-FileHash lives in a module that Windows
+        # PowerShell cannot load when it is started from PowerShell 7, as CTest
+        # does on hosted runners.
+        $algorithm = [Security.Cryptography.SHA256]::Create()
+        $stream = [IO.File]::OpenRead($full)
+        try { $Hashes[$full] = ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '') }
+        finally { $stream.Dispose(); $algorithm.Dispose() }
     }
     return $Hashes[$full]
 }

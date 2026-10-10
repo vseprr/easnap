@@ -36,8 +36,12 @@ Every registered test belongs to exactly one tier, derived from its CTest labels
 were not run and are not counted as passed. Tests outside the requested tier
 are reported as such and are never taken from the cache.
 
-Hosted CI runs the fast and integration tiers. It has no real display or input
-queue, so a green CI run says nothing about the desktop tier.
+Hosted CI runs the fast tier and the part of the integration tier a hosted
+Windows Server image can execute. It has no real display or input queue and
+cannot open an MFPlay player, so it excludes the desktop and soak tiers, every
+test labelled `preview`, and `capture_overlay_interaction`, whose click targets
+assume a larger desktop than the runner's. A green CI run says nothing about
+those tests; they must be run locally.
 
 ## Running only what changed
 

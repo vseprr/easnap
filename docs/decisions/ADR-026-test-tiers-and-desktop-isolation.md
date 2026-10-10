@@ -47,8 +47,9 @@ The developer uses the same computer while tests run, with two displays.
 A Standard run after an unchanged build executes nothing. On the development
 machine a Full run took 91 s for 26 background tests and 274 s for 7
 visible-desktop tests, against 790 s for the previous suite; a Soak run took
-195 s and 390 s. The three private-desktop tests are no longer excluded from
-hosted CI.
+195 s and 390 s. Two of the three private-desktop tests now also run in
+hosted CI; the overlay interaction test and all preview tests do not, because
+the hosted image has a small desktop and cannot open an MFPlay player.
 
 The desktop tier still shares the input queue and focus with the user; the
 tooling reduces interference and reports it, it does not eliminate it: in the

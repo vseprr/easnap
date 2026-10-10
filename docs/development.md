@@ -71,8 +71,9 @@ clip, not arbitrary video content. The original clip is no longer in the checkou
 Current results and remaining visual failures are recorded in
 [project status](project-status.md).
 
-The Windows CI workflow builds Debug and Release, runs the fast and integration
-tiers uncached and packages the Release build. Automated tests complement
+The Windows CI workflow builds Debug and Release on the `windows-2022` image,
+runs the tests a hosted runner can execute (see [testing](testing.md)) uncached
+and packages the Release build. Automated tests complement
 manual multi-monitor, DPI, audio-device and visual interaction checks.
 
 ## Packaging
