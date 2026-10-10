@@ -21,6 +21,11 @@ constexpr std::size_t kMaximumDiagnosticCharacters = 512;
 constexpr media::MediaTime kAudioStreamInterleaveLag{
     static_cast<int64_t>(media::kDefaultAudioQueueBudgetMs + 250) * 10'000};
 constexpr media::MediaTime kMaximumAudioWriterLead{1'000'000};  // 100 ms
+// Video normally advances every frame interval. A frontier that has not moved
+// for this long cannot release the audio gate; fail instead of blocking the
+// Pause/Stop/Abort callers that wait for the callback to drain.
+constexpr std::chrono::seconds kAudioGateStallLimit{10};
+constexpr std::chrono::milliseconds kAudioGateStallPoll{250};
 
 std::wstring BoundedDiagnostic(std::wstring message) {
     if (message.size() > kMaximumDiagnosticCharacters) {
@@ -248,8 +253,10 @@ bool RecordingSession::Pause() {
         }
         return false;
     }
-    state_.store(RecordingSessionState::Paused, std::memory_order_release);
-    return true;
+    // A failure recorded while the audio callback drained must stay visible.
+    RecordingSessionState expected = RecordingSessionState::Recording;
+    return state_.compare_exchange_strong(expected, RecordingSessionState::Paused,
+                                          std::memory_order_acq_rel);
 }
 
 bool RecordingSession::Resume() {
@@ -266,8 +273,9 @@ bool RecordingSession::Resume() {
     if (AudioEnabled() && audio_provider_ != nullptr) {
         audio_provider_->ResumeDelivery();
     }
-    state_.store(RecordingSessionState::Recording, std::memory_order_release);
-    return true;
+    RecordingSessionState expected = RecordingSessionState::Paused;
+    return state_.compare_exchange_strong(expected, RecordingSessionState::Recording,
+                                          std::memory_order_acq_rel);
 }
 
 bool RecordingSession::Stop() {
@@ -282,7 +290,9 @@ bool RecordingSession::Stop() {
         return false;
     }
     if (initial_state != RecordingSessionState::Failed) {
-        state_.store(RecordingSessionState::Stopping, std::memory_order_release);
+        RecordingSessionState expected = initial_state;
+        state_.compare_exchange_strong(expected, RecordingSessionState::Stopping,
+                                       std::memory_order_acq_rel);
     }
 
     StopWorkersAndJoin();
@@ -990,7 +1000,7 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
 
         const media::MediaTime chunk_end = chunk.timestamp + chunk.duration;
         const auto wait_start = std::chrono::steady_clock::now();
-        audio_video_progress_.wait(audio_lock, [this, chunk_end] {
+        const auto gate_open = [this, chunk_end] {
             const int64_t video_end =
                 last_video_writer_end_100ns_.load(std::memory_order_acquire);
             const int64_t maximum = (std::numeric_limits<int64_t>::max)();
@@ -1001,7 +1011,24 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
             return chunk_end.count() <= allowed_audio_end ||
                    !consumer_running_.load(std::memory_order_acquire) ||
                    state() == RecordingSessionState::Failed;
-        });
+        };
+        bool video_stalled = false;
+        int64_t observed_video_end =
+            last_video_writer_end_100ns_.load(std::memory_order_acquire);
+        auto last_video_progress = wait_start;
+        while (!audio_video_progress_.wait_for(audio_lock, kAudioGateStallPoll,
+                                               gate_open)) {
+            const int64_t video_end =
+                last_video_writer_end_100ns_.load(std::memory_order_acquire);
+            const auto now = std::chrono::steady_clock::now();
+            if (video_end != observed_video_end) {
+                observed_video_end = video_end;
+                last_video_progress = now;
+            } else if (now - last_video_progress >= kAudioGateStallLimit) {
+                video_stalled = true;
+                break;
+            }
+        }
         const auto wait_elapsed =
             std::chrono::steady_clock::now() - wait_start;
         const auto wait_microseconds =
@@ -1013,8 +1040,12 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
         const uint64_t gate_wait_microseconds =
             wait_microseconds > 0 ? static_cast<uint64_t>(wait_microseconds) :
                                     0;
-        if (!consumer_running_.load(std::memory_order_acquire) ||
-            state() == RecordingSessionState::Failed) {
+        if (video_stalled) {
+            write_failed = true;
+            write_failure_context =
+                L"Recording video stopped advancing while captured audio waited for it";
+        } else if (!consumer_running_.load(std::memory_order_acquire) ||
+                   state() == RecordingSessionState::Failed) {
             write_failed = true;
             write_failure_context =
                 L"Audio delivery outlived the recording video consumer";
