@@ -783,21 +783,23 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
             hr = capture_client->GetBuffer(&data, &frames_available, &flags,
                                             &device_position, &qpc_position);
 
-            if (hr == AUDCLNT_S_BUFFER_EMPTY || frames_available == 0) {
-                break;
-            }
-            if (!has_padding || buffered_frames_available < frames_available) {
-                buffered_frames_available = frames_available;
-            }
-
+            // A failed call reports no frames, so it must be classified before
+            // the empty-buffer exit or endpoint loss would look like silence.
             if (FAILED(hr)) {
                 platform::LogMessage(L"[Audio] GetBuffer failed: 0x%08lX", hr);
+                last_failure_hresult_.store(hr, std::memory_order_release);
                 capture_failures_.Increment();
                 if (hr == AUDCLNT_E_DEVICE_INVALIDATED) {
                     device_invalidations_.Increment();
                     device_lost = true;
                 }
                 break;
+            }
+            if (hr == AUDCLNT_S_BUFFER_EMPTY || frames_available == 0) {
+                break;
+            }
+            if (!has_padding || buffered_frames_available < frames_available) {
+                buffered_frames_available = frames_available;
             }
 
             LARGE_INTEGER capture_qpc{};

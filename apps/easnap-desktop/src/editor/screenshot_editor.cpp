@@ -771,18 +771,24 @@ LRESULT CALLBACK ScreenshotEditor::PropertyProc(HWND hwnd,UINT message,WPARAM wp
     }
     const bool slider=control>=2601 && control<=2603;
     if(!self->syncing_context_ && ((slider && (message==WM_LBUTTONDOWN || message==WM_KEYDOWN)) || (!slider && message==WM_SETFOCUS))) {
-        self->document_.BeginTransaction();
+        // Only a transaction opened here is committed here: a text edit or a
+        // transform that is already open keeps its own undo boundary.
+        if(!self->document_.in_transaction()) { self->context_owns_transaction_=true; self->document_.BeginTransaction(); }
     }
     if(message==WM_KEYDOWN && wparam==VK_ESCAPE) {
-        self->document_.CancelTransaction(); self->Close(false); return 0;
+        self->context_owns_transaction_=false; self->document_.CancelTransaction(); self->Close(false); return 0;
     }
     const LRESULT result=::DefSubclassProc(hwnd,message,wparam,lparam);
     if(clear_hover) { self->SyncWatermarkClear(); }
-    if((slider && (message==WM_LBUTTONUP || message==WM_KEYUP)) || (!slider && message==WM_KILLFOCUS)) { self->document_.CommitTransaction(); }
-    if(slider && message==WM_CAPTURECHANGED && ::GetKeyState(VK_LBUTTON)<0) {
-        self->document_.CancelTransaction(); self->SyncContext(); self->Invalidate();
+    if((slider && (message==WM_LBUTTONUP || message==WM_KEYUP)) || (!slider && message==WM_KILLFOCUS)) { self->CommitContextTransaction(); }
+    if(slider && message==WM_CAPTURECHANGED && ::GetKeyState(VK_LBUTTON)<0 && self->context_owns_transaction_) {
+        self->context_owns_transaction_=false; self->document_.CancelTransaction(); self->SyncContext(); self->Invalidate();
     }
     return result;
+}
+void ScreenshotEditor::CommitContextTransaction() {
+    if(!context_owns_transaction_) { return; }
+    context_owns_transaction_=false; document_.CommitTransaction();
 }
 void ScreenshotEditor::SyncContext(bool layout) {
     if(!context_ || syncing_context_) { return; }
@@ -1134,7 +1140,6 @@ void ScreenshotEditor::ResetSession() {
     has_pending_ = false;
     dragging_ = false;
     editing_text_ = false;
-    hovered_index_ = -1;
     redaction_revision_ = UINT64_MAX;
     redacted_image_ = platform::BgraImage{};
     redaction_cache_.reset();
@@ -1440,7 +1445,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         if(id==2602) { value.opacity=position; }
         if(id==2603) { value.font_size=position; }
         ChangeStyle(value);
-        if(LOWORD(wparam)==TB_ENDTRACK) { document_.CommitTransaction(); }
+        if(LOWORD(wparam)==TB_ENDTRACK) { CommitContextTransaction(); }
         return 0;
     }
 
@@ -1476,7 +1481,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 if(end && ::lstrcmpiW(end,L"pt")==0) { end+=2; }
                 if(end && *end==0 && std::isfinite(size) && size>=6 && size<=288) { auto value=ContextStyle(); value.font_size=static_cast<float>(size); ChangeStyle(value); }
                 else { ui::ShowCaptureStatusNotice(region_,L"Font size must be 6–288 pt"); SyncContext(); Invalidate(); }
-                if(notification==CBN_KILLFOCUS) { document_.CommitTransaction(); }
+                if(notification==CBN_KILLFOCUS) { CommitContextTransaction(); }
                 return 0;
             }
             if(id==2605 && notification==BN_CLICKED) {
@@ -1493,6 +1498,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 if(text.size()!=static_cast<size_t>(length)) {
                     syncing_context_=true; ::SetWindowTextW(Control(2604),text.c_str()); ::SendMessageW(Control(2604),EM_SETSEL,text.size(),text.size()); syncing_context_=false;
                 }
+                if(selected_ && *selected_>=document_.annotations().size()) { selected_.reset(); }
                 Annotation a;
                 if(selected_) { a=document_.annotations()[*selected_]; }
                 else { a.tool=ToolId::Watermark; a.style=style_; a.style.opacity=30; a.points={{0,0},{static_cast<float>(source_image_.width),static_cast<float>(source_image_.height)}}; }
@@ -1581,6 +1587,9 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 ::SetWindowPos(hwnd, nullptr, placement.left, placement.top, platform::RectWidth(placement),
                                platform::RectHeight(placement), SWP_NOZORDER | SWP_NOACTIVATE);
             }
+            // CreateTextFormats replaced the shared font; the context island
+            // still holds the deleted handle until its controls are resynced.
+            SyncContext();
             Invalidate();
             return 0;
         }
@@ -1599,12 +1608,6 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
 
         case WM_MOUSEMOVE: {
             const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            const ToolbarItem* hovered = HitTestToolbar(pt);
-            const int hovered_index = hovered != nullptr ? static_cast<int>(hovered - toolbar_.data()) : -1;
-            if (hovered_index != hovered_index_) {
-                hovered_index_ = hovered_index;
-                Invalidate();
-            }
             if ((dragging_ || transforming_) && ::GetCapture()==hwnd) {
                 POINT desktop=pt; ::ClientToScreen(hwnd,&desktop); UpdateStroke(desktop);
             }
@@ -1645,10 +1648,15 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
 
         case WM_KEYDOWN: {
             if(editing_text_ && text_edit_) { ::SendMessageW(text_edit_,message,wparam,lparam); return 0; }
-            if(wparam==VK_ESCAPE && (transforming_ || dragging_ || document_.in_transaction())) { CancelStroke(); document_.CancelTransaction(); SyncContext(); Invalidate(); return 0; }
+            if(wparam==VK_ESCAPE && (transforming_ || dragging_ || document_.in_transaction())) {
+                // The rollback can remove the selected annotation (a watermark created in this transaction).
+                CancelStroke(); document_.CancelTransaction();
+                if(selected_ && *selected_>=document_.annotations().size()) { selected_.reset(); }
+                SyncContext(); Invalidate(); return 0;
+            }
             if(wparam==VK_ESCAPE && selected_) { Select({}); return 0; }
             if(wparam==VK_DELETE && selected_) { document_.Remove(*selected_); Select({}); return 0; }
-            if(selected_ && wparam>=VK_LEFT && wparam<=VK_DOWN) {
+            if(selected_ && *selected_<document_.annotations().size() && wparam>=VK_LEFT && wparam<=VK_DOWN) {
                 auto a=document_.annotations()[*selected_]; const float step=(::GetKeyState(VK_SHIFT)&0x8000) ? 10.0f:1.0f;
                 for(auto& p:a.points) { p.x+=wparam==VK_LEFT ? -step:wparam==VK_RIGHT ? step:0; p.y+=wparam==VK_UP ? -step:wparam==VK_DOWN ? step:0; }
                 document_.Replace(*selected_,std::move(a)); Invalidate(); return 0;
@@ -1695,12 +1703,6 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 }
             }
             if (wparam == VK_ESCAPE) {
-                if (editing_text_) {
-                    editing_text_ = false;
-                    has_pending_ = false;
-                    Invalidate();
-                    return 0;
-                }
                 Close(false);
                 return 0;
             }
@@ -1847,7 +1849,7 @@ void ScreenshotEditor::BeginStroke(POINT point) {
     else { hit=document_.HitTest(p); }
     if(hit) {
         Select(hit); original_=document_.annotations()[*hit]; drag_origin_=p;
-        transforming_=true; document_.BeginTransaction(); return;
+        transforming_=true; context_owns_transaction_=false; document_.BeginTransaction(); return;
     }
     if(tool_==ToolId::Watermark) { return; }
     const bool leave_text_selection=(tool_==ToolId::Text || tool_==ToolId::Tag) && selected_ &&
@@ -1896,7 +1898,9 @@ void ScreenshotEditor::UpdateStroke(POINT point) {
 void ScreenshotEditor::EndStroke(POINT point) {
     if(transforming_) {
         UpdateStroke(point); transforming_=false; document_.CommitTransaction();
-        if(callbacks_.on_document_committed && !original_.Same(document_.annotations()[*selected_])) { callbacks_.on_document_committed(); }
+        // Delete or undo during the drag leaves no selected annotation to compare.
+        const bool moved=selected_ && *selected_<document_.annotations().size() && !original_.Same(document_.annotations()[*selected_]);
+        if(callbacks_.on_document_committed && moved) { callbacks_.on_document_committed(); }
         Invalidate(); return;
     }
     if(!has_pending_ || !dragging_) { return; }
@@ -1922,7 +1926,7 @@ void ScreenshotEditor::StartTextEditing(std::optional<size_t> index,POINT point)
     if(editing_text_ && index && selected_ && *selected_<*index &&
        document_.annotations()[*selected_].text.empty()) { --*index; }
     CommitPendingText();
-    document_.BeginTransaction();
+    context_owns_transaction_=false; document_.BeginTransaction();
     if(!index) {
         Annotation a; a.tool=tool_==ToolId::Tag ? ToolId::Tag:ToolId::Text; a.style=style_; a.points={ToImagePoint(point)};
         document_.Apply(std::move(a)); index=document_.annotations().size()-1;
@@ -2001,7 +2005,7 @@ LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd,UINT message,WPARAM wp
             ::ClientToScreen(hwnd,&point); self->CommitPendingText();
             if(self->visible_ && self->selected_) {
                 self->original_=self->document_.annotations()[*self->selected_]; self->drag_origin_=self->ToImagePoint(point);
-                self->transform_handle_=-1; self->transforming_=true; self->document_.BeginTransaction();
+                self->transform_handle_=-1; self->transforming_=true; self->context_owns_transaction_=false; self->document_.BeginTransaction();
                 ::SetCapture(self->hwnd_); ::SetFocus(self->hwnd_);
             }
             return 0;

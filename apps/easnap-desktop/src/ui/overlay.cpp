@@ -1234,7 +1234,7 @@ HCURSOR OverlayController::AnnotationCursor(POINT point) const {
     const auto r=selector_.selection();
     if(!workspace_.screenshot_visible() || !::PtInRect(&r,point) || !callbacks_.annotation_cursor) { return nullptr; }
     if(!workspace_.screenshot_fixed()) {
-        const auto handle=selector_.HitTest(point);
+        const auto handle=selector_.HitTest(point, platform::MonitorForPoint(point).scale());
         if(handle!=SelectionHandle::Body && handle!=SelectionHandle::None) { return nullptr; }
     }
     return callbacks_.annotation_cursor(point);
@@ -1245,7 +1245,7 @@ void OverlayController::PointerDown(POINT point, bool native_double, bool exclud
     WorkspacePointerTarget target = WorkspacePointerTarget::Content;
     if (excluded) { target = WorkspacePointerTarget::Excluded; }
     else if (workspace_.editing()) {
-        const auto handle = selector_.HitTest(point);
+        const auto handle = selector_.HitTest(point, platform::MonitorForPoint(point).scale());
         if (workspace_.screenshot_fixed()) {
             const RECT region = selector_.selection();
             target = ::PtInRect(&region, point) ?

@@ -387,7 +387,9 @@ private:
         startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
         startup.StartupInfo.hStdInput = child_input.get();
         startup.StartupInfo.hStdOutput = child_output.get();
-        startup.StartupInfo.hStdError = child_output.get();
+        // stdout carries the framed protocol; a stray CRT or codec diagnostic
+        // on stderr must not be able to corrupt it.
+        startup.StartupInfo.hStdError = nullptr;
         startup.lpAttributeList = attributes.get();
         PROCESS_INFORMATION information{};
         if (!::CreateProcessW(path.c_str(), command_line.data(), nullptr, nullptr,
@@ -537,7 +539,15 @@ private:
                 packet.acknowledged_intent < acknowledged_intent_ ||
                 packet.acknowledged_resize > sent_resize_ ||
                 packet.acknowledged_resize < acknowledged_resize_ ||
-                packet.diagnostics_length > native_trace_.size()) {
+                packet.diagnostics_length > native_trace_.size() ||
+                // The helper is a separate process: range-check what it reports
+                // before the values drive UI state.
+                static_cast<unsigned>(packet.snapshot.state) >
+                    static_cast<unsigned>(MediaPreviewState::Failed) ||
+                static_cast<unsigned>(packet.snapshot.failed_operation) >
+                    static_cast<unsigned>(MediaPreviewOperation::Playback) ||
+                packet.snapshot.duration < MediaTime::zero() ||
+                packet.snapshot.position < MediaTime::zero()) {
                 Fail(HRESULT_FROM_WIN32(ERROR_INVALID_DATA), MediaPreviewOperation::Playback);
                 return;
             }

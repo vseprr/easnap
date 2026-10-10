@@ -245,7 +245,9 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
                     break;
                 case WM_CONTEXTMENU:
                 case WM_RBUTTONUP:
-                    ShowTrayMenu(hwnd);
+                    // Version 4 icons report one right-click as both messages;
+                    // the second arrives inside the first menu's modal loop.
+                    if (!easnap::ui::PopupActive()) { ShowTrayMenu(hwnd); }
                     break;
                 default:
                     break;
@@ -340,6 +342,7 @@ HWND CreateHostWindow(HINSTANCE instance) {
 }  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, _In_ int) {
+    easnap::platform::RestrictDllSearchPath();
     // Single instance: a second launch just tells the user and exits, so the
     // global shortcut and the notification icon always have exactly one owner.
     const easnap::platform::UniqueHandle instance_mutex{::CreateMutexW(nullptr, TRUE, kSingleInstanceMutex)};

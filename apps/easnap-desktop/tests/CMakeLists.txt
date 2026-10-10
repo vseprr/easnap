@@ -6,6 +6,14 @@
 # automation, graphics, codecs, clipboard and available capture/audio devices.
 # Label those requirements explicitly; capability skips are not device coverage.
 # Tests should exercise production logic and guard a documented behavior.
+#
+# scripts/test.ps1 derives a tier from the labels (docs/testing.md):
+#   unit                                 -> fast     (seconds, every run)
+#   interactive-desktop / desktop-visual -> desktop  (needs the visible desktop)
+#   soak                                 -> soak     (long repeats, on demand)
+#   anything else                        -> integration
+# Tests wrapped in easnap_isolated_desktop run on a private, non-input desktop:
+# they show nothing on screen and cannot be disturbed by the person using the PC.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -14,6 +22,10 @@
 # Links the production-owned transition rules directly. It deliberately avoids
 # capture_provider.cpp and every graphics/UI translation unit.
 # ---------------------------------------------------------------------------
+
+# Runs a test on a private, non-input Windows desktop (see the source header).
+add_executable(easnap_isolated_desktop isolated_desktop_runner.cpp)
+target_link_libraries(easnap_isolated_desktop PRIVATE easnap_project_options user32)
 
 add_executable(test_recording_finalizer
     test_recording_finalizer.cpp
@@ -220,15 +232,22 @@ target_link_libraries(test_media_preview PRIVATE easnap_project_options
 add_test(NAME mfplay_preview_transport COMMAND test_media_preview --transport)
 set_tests_properties(mfplay_preview_transport PROPERTIES
     LABELS "integration;media-foundation;trim;preview" TIMEOUT 240)
+# Seed 0 also covers reopen and delayed-completion recovery and runs every
+# time. Seeds 1 and 2 execute the same code with other random delays, and the
+# 30-second seek runs only add resource-growth sample depth: both are soak.
 foreach(seed RANGE 0 2)
     add_test(NAME mfplay_preview_stress_${seed} COMMAND test_media_preview --stress-seed ${seed})
     set_tests_properties(mfplay_preview_stress_${seed} PROPERTIES
         LABELS "integration;media-foundation;trim;preview;stress" TIMEOUT 180 PROCESSORS 2)
-    add_test(NAME mfplay_preview_continuous_seek_${seed}
+    add_test(NAME mfplay_preview_continuous_seek_soak_${seed}
              COMMAND test_media_preview --continuous-seek ${seed} 30)
-    set_tests_properties(mfplay_preview_continuous_seek_${seed} PROPERTIES
-        LABELS "integration;media-foundation;trim;preview;stress" TIMEOUT 120 PROCESSORS 2)
+    set_tests_properties(mfplay_preview_continuous_seek_soak_${seed} PROPERTIES
+        LABELS "integration;media-foundation;trim;preview;stress;soak" TIMEOUT 120 PROCESSORS 2)
 endforeach()
+set_property(TEST mfplay_preview_stress_1 mfplay_preview_stress_2 APPEND PROPERTY LABELS soak)
+add_test(NAME mfplay_preview_continuous_seek COMMAND test_media_preview --continuous-seek 0 15)
+set_tests_properties(mfplay_preview_continuous_seek PROPERTIES
+    LABELS "integration;media-foundation;trim;preview;stress" TIMEOUT 90 PROCESSORS 2)
 add_test(NAME mfplay_preview_startup COMMAND test_media_preview --startup)
 set_tests_properties(mfplay_preview_startup PROPERTIES
     LABELS "integration;media-foundation;trim;preview" TIMEOUT 60)
@@ -349,8 +368,10 @@ add_test(NAME capture_magnifier_logic COMMAND test_capture_overlay)
 set_tests_properties(capture_magnifier_logic PROPERTIES LABELS "unit;overlay" TIMEOUT 30)
 # Native dispatch regression: synthetic snapshot, real production windows; no
 # backend capture or OS clipboard writes. Requires an interactive desktop.
-add_test(NAME capture_overlay_interaction COMMAND test_capture_overlay --native)
-set_tests_properties(capture_overlay_interaction PROPERTIES LABELS "integration;overlay" TIMEOUT 30)
+add_test(NAME capture_overlay_interaction
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_overlay> --native)
+set_tests_properties(capture_overlay_interaction PROPERTIES
+    LABELS "integration;overlay;isolated-desktop" TIMEOUT 30)
 
 add_executable(test_capture_workspace
     test_capture_workspace.cpp
@@ -369,11 +390,15 @@ target_include_directories(test_capture_workspace PRIVATE
 target_link_libraries(test_capture_workspace PRIVATE easnap_project_options
     d3d11 d2d1 dwrite dxgi windowscodecs
     user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
-add_test(NAME capture_workspace_production COMMAND test_capture_workspace)
-set_tests_properties(capture_workspace_production PROPERTIES LABELS "integration;workspace;clipboard;editor" TIMEOUT 60)
+add_test(NAME capture_workspace_production
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_workspace>)
+set_tests_properties(capture_workspace_production PROPERTIES
+    LABELS "integration;workspace;clipboard;editor;isolated-desktop" TIMEOUT 60)
 
-add_test(NAME capture_frame_interaction COMMAND test_capture_workspace --frame-performance)
-set_tests_properties(capture_frame_interaction PROPERTIES LABELS "integration;workspace;overlay;performance" TIMEOUT 30)
+add_test(NAME capture_frame_interaction
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_workspace> --frame-performance)
+set_tests_properties(capture_frame_interaction PROPERTIES
+    LABELS "integration;workspace;overlay;performance;isolated-desktop" TIMEOUT 30)
 
 add_executable(test_ui_modernization
     test_ui_modernization.cpp
@@ -408,14 +433,20 @@ add_test(NAME ui_modernization_native COMMAND test_ui_modernization)
 add_test(NAME trim_endpoint_presentation COMMAND test_ui_modernization --trim-endpoint)
 set_tests_properties(trim_endpoint_presentation PROPERTIES
     LABELS "integration;ui;preview;desktop-visual" TIMEOUT 90)
+# 24 real clicks per case keep every gate (frame, motion and freeze thresholds)
+# reachable in about a third of the time; the 72-click run is the soak variant.
 add_test(NAME trim_timeline_seek_stress
          COMMAND test_ui_modernization --seek-stress
-                 "${CMAKE_CURRENT_BINARY_DIR}/seek-stress-$<CONFIG>")
-set_tests_properties(trim_timeline_seek_stress PROPERTIES
+                 "${CMAKE_CURRENT_BINARY_DIR}/seek-stress-$<CONFIG>" 24)
+add_test(NAME trim_timeline_seek_soak
+         COMMAND test_ui_modernization --seek-stress
+                 "${CMAKE_CURRENT_BINARY_DIR}/seek-soak-$<CONFIG>" 72)
+set_tests_properties(trim_timeline_seek_stress trim_timeline_seek_soak PROPERTIES
     LABELS "integration;ui;preview;desktop-visual;stress" TIMEOUT 300
     # The long interactive observer must not depend on WGC's asynchronous DLL
     # teardown. DXGI observes the same composed desktop; pixel gates are shared.
     ENVIRONMENT "EASNAP_TEST_CAPTURE=duplication")
+set_property(TEST trim_timeline_seek_soak APPEND PROPERTY LABELS soak)
 add_test(NAME ui_material_raster_parity COMMAND test_ui_modernization --material-rasters)
 set_tests_properties(ui_material_raster_parity PROPERTIES LABELS "unit;ui;theme" TIMEOUT 30)
 set_tests_properties(ui_modernization_native PROPERTIES
@@ -490,11 +521,12 @@ set_tests_properties(annotation_editing_native PROPERTIES LABELS "integration;ed
 
 # These assertions use the physical desktop, pointer, focus or capture timing.
 # Keep their full coverage, but never run them concurrently with another test.
+# The three capture_* tests left this list: they are message-driven and run on
+# a private desktop instead.
 set(interactive_desktop_tests
     real_desktop_recording_session recording_pause_stop_stress
-    capture_overlay_interaction capture_workspace_production capture_frame_interaction
     ui_modernization_native annotation_editing_native trim_endpoint_presentation
-    trim_timeline_seek_stress)
+    trim_timeline_seek_stress trim_timeline_seek_soak)
 set_tests_properties(${interactive_desktop_tests} PROPERTIES RUN_SERIAL TRUE)
 set_property(TEST ${interactive_desktop_tests} APPEND PROPERTY LABELS interactive-desktop)
 set_tests_properties(mfplay_preview_startup PROPERTIES RUN_SERIAL TRUE)

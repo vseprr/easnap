@@ -19,12 +19,20 @@
     Compatibility shortcut for -TestMode Full (includes desktop checks).
 
 .PARAMETER TestMode
-    Affected (default) builds tests and runs changed/uncached checks. Full always
-    runs all checks. None explicitly builds without tests.
+    Affected (default) builds tests and runs changed/uncached checks. Full
+    ignores the pass cache. None explicitly builds without tests.
+
+.PARAMETER Tier
+    Which tests are eligible: Fast, Standard, Full or Soak (docs/testing.md).
+    Defaults to Standard for Affected and Full for TestMode Full.
 
 .PARAMETER DesktopTests
-    Run or Defer physical input/capture checks. Defaults to Defer for Affected,
-    Run for Full. Deferred checks are printed as pending and never cached.
+    Run or Defer tests that need the visible desktop. Defaults to Run for the
+    Full and Soak tiers. Deferred tests are printed as pending, never cached.
+
+.PARAMETER Monitor
+    Display for visible-desktop tests (number, name such as SAMSUNG, device,
+    Primary or Ask). Ask prompts when several displays are active.
 
 .PARAMETER Clean
     Clean generated targets for Configuration using CMake before configuring.
@@ -51,8 +59,13 @@ param(
     [ValidateSet('Affected', 'Full', 'None')]
     [string]$TestMode = 'Affected',
 
+    [ValidateSet('Fast', 'Standard', 'Full', 'Soak')]
+    [string]$Tier,
+
     [ValidateSet('Run', 'Defer')]
     [string]$DesktopTests,
+
+    [string]$Monitor = 'Ask',
 
     [ValidateRange(1,16)][int]$TestJobs = 4,
 
@@ -64,7 +77,10 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if ($WithTests -and -not $PSBoundParameters.ContainsKey('TestMode')) { $TestMode = 'Full' }
-if (-not $DesktopTests) { $DesktopTests = if ($TestMode -eq 'Full') { 'Run' } else { 'Defer' } }
+if (-not $Tier) {
+    $Tier = if ($TestMode -eq 'Full' -or $DesktopTests -eq 'Run') { 'Full' } else { 'Standard' }
+}
+if (-not $DesktopTests) { $DesktopTests = if ($Tier -in @('Full', 'Soak')) { 'Run' } else { 'Defer' } }
 . (Join-Path $PSScriptRoot 'build-safety.ps1')
 Push-Location $repoRoot
 
@@ -99,7 +115,7 @@ try {
     if ($TestMode -ne 'None') {
         Write-Host 'Running tests' -ForegroundColor Cyan
         & (Join-Path $PSScriptRoot 'test.ps1') -BuildDir $BuildDir -Configuration $Configuration `
-            -Mode $TestMode -DesktopTests $DesktopTests -Jobs $TestJobs
+            -Tier $Tier -Mode $TestMode -DesktopTests $DesktopTests -Monitor $Monitor -Jobs $TestJobs
     }
 
     $outputRoot = if ([IO.Path]::IsPathRooted($BuildDir)) { $BuildDir } else { Join-Path $repoRoot $BuildDir }

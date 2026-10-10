@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Easnap
-    VERSION 1.0.0
+    VERSION 1.0.1
     DESCRIPTION "Easnap - Windows 10 screen capture and recording tool"
     HOMEPAGE_URL "https://github.com/vseprr/easnap"
     LANGUAGES CXX)
@@ -58,7 +58,11 @@ if(MSVC)
     if(EASNAP_WARNINGS_AS_ERRORS)
         target_compile_options(easnap_project_options INTERFACE /WX)
     endif()
-    target_link_options(easnap_project_options INTERFACE /DYNAMICBASE /NXCOMPAT /GUARD:CF)
+    # /DEPENDENTLOADFLAG:0x800 resolves every static import from System32 only
+    # (LOAD_LIBRARY_SEARCH_SYSTEM32), so a DLL placed beside a portable copy is
+    # never loaded. /CETCOMPAT opts in to hardware shadow stacks where available.
+    target_link_options(easnap_project_options INTERFACE
+        /DYNAMICBASE /HIGHENTROPYVA /NXCOMPAT /GUARD:CF /CETCOMPAT /DEPENDENTLOADFLAG:0x800)
 else()
     # MinGW / clang-cl cross builds are supported for syntax verification.
     target_compile_options(easnap_project_options INTERFACE -Wall -Wextra)

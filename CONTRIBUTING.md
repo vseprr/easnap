@@ -15,18 +15,20 @@ root:
 .\scripts\build.ps1 -Configuration Debug
 ```
 
-The default affected-test run reports physical desktop checks as pending.
-For a full local check, leave the desktop unlocked and input idle, then run:
+The default run executes only the tests your change affects and reports tests
+that need the visible desktop as pending. Before a pull request that touches
+windows, capture or recording, run them too and say which display you used:
 
 ```powershell
-.\scripts\build.ps1 -Configuration Release -TestMode Full
+.\scripts\test.ps1 -Tier Full
 ```
 
-Native capture, pointer, display and audio checks need a usable Windows desktop
-and relevant hardware. Hosted CI excludes tests labeled `interactive-desktop`
-or `desktop-visual` and reports them as pending. Its remaining media/audio
-checks still depend on the runner's available Windows components. A hosted
-green check does not validate physical display or audio configurations.
+The [testing guide](docs/testing.md) explains the tiers, the pass cache, how
+tests are kept away from your pointer and keyboard, and how to write a test
+that does not need the visible desktop. Hosted CI runs the fast tier and the
+integration tests a hosted runner can execute; it excludes the desktop and soak
+tiers and all preview tests. A green hosted check does not validate preview
+playback, a physical display, pointer or audio device.
 
 ## Changes
 
@@ -60,13 +62,15 @@ After a Release build and its applicable validation:
 
 This installs the matched application and preview helper, license and usage
 instructions, verifies the executables' version and x64 architecture, and
-creates a ZIP with SHA-256 checksums. It does not run tests or sign binaries.
-Existing outputs are not overwritten; use another directory under `dist/`
-when preparing a replacement candidate.
+creates a portable ZIP and, when Inno Setup 6 is installed, a per-user installer
+from the same verified files, each with a SHA-256 file. `-Installer Require`
+fails instead of skipping the installer. The script does not run tests or sign
+binaries. Existing outputs are not overwritten; use another directory under
+`dist/` when preparing a replacement candidate.
 
 The Release workflow takes an existing `vMAJOR.MINOR.PATCH` tag, runs the hosted
-Build workflow for that tag, and creates a draft release from the tested
-Release package. The tag must match the CMake project version and have notes
+Build workflow for that tag, attests the packages and creates a draft release
+from the tested ZIP and installer. The tag must match the CMake project version and have notes
 at `docs/releases/<tag>.md`. Review local desktop results, known limitations,
 release notes and package contents before publishing the draft.
 

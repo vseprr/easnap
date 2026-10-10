@@ -10,7 +10,9 @@ Easnap has a native Win32 parent process and a supervised preview helper.
 The parent owns the tray, global shortcut, capture workspace, screenshot editor,
 recording workflows and export. `EasnapPreviewHost.exe` hosts native MFPlay:
 a stalled media callback or shutdown can be contained without blocking the
-application UI. Both executables must come from the same build.
+application UI. Both executables must come from the same build. Both restrict
+library loading to the Windows system directory before anything else runs, and
+the parent range-checks the state the helper reports over their private pipe.
 
 The hidden host window in `src/main.cpp` receives application messages.
 `CaptureCoordinator` is the sole owner of application session state. UI surfaces
@@ -159,6 +161,21 @@ native side/bottom nonclient geometry and customize only the caption through
 the accepted [ADR-024](decisions/ADR-024-native-trim-frame.md) path. Fixed dialogs,
 floating islands and layered capture surfaces keep their dedicated paths.
 
+Both executables declare per-monitor v2 DPI awareness in their manifests
+(`resources/easnap.manifest`, `resources/preview_host.manifest`). The awareness
+of a process cannot be raised after start, so it is not left to a run-time call
+or to a build-system property. Windows take their scale from the monitor they
+are on and adopt the rectangle Windows suggests when it changes.
+
+The host window forwards display, DPI and work-area notifications to the
+coordinator. A screenshot-editing session is cancelled only when the monitor
+layout or scale actually changed since its snapshot was taken; a work-area
+change alone (taskbar auto-hide, a docked app bar) leaves it intact. A
+recording whose region is no longer inside the desktop is ended through the
+normal Stop path rather than left repeating its last frame. Nothing in the
+application assumes a refresh rate: recording is paced by the selected frame
+rate on a steady clock and UI animation is time-based.
+
 Layout measures with a memory DC, calculates DPI-scaled client rectangles,
 batches child positioning, then invalidates and completes owner-thread paints.
 Client minima include the native frame when converted to outer tracking sizes.
@@ -295,7 +312,13 @@ The temporary store restricts session directories to the current user and
 SYSTEM. Cleanup retains files still referenced by the clipboard and defers
 deletion if clipboard inspection fails. Shutdown cancels and joins active work
 before store cleanup. A copied recording can therefore outlive the parent
-process until it is no longer needed by the clipboard.
+process until it is no longer needed by the clipboard. Deletion goes through
+checked handles, refuses reparse points and verifies that each opened entry
+still resolves to a direct child of the directory it was listed in.
+
+A screenshot is saved by encoding to a temporary file beside the destination
+and replacing the destination only on success, the same staged publication
+recordings use.
 
 Each new session holds an exclusive `.session-lock` handle for its live lifetime.
 A different store/process cannot collect it. Released/crashed marked sessions
@@ -322,6 +345,8 @@ publication, capture fallback, codecs, audio and helper recovery. Native tests
 depend on available Windows capabilities; a capability skip is not hardware
 acceptance. The current results and remaining visual/device checks belong in
 [project status](project-status.md), not in a second architectural progress log.
-Local incremental execution and controlled-desktop ownership are defined in
-[ADR-025](decisions/ADR-025-incremental-test-execution.md); full validation bypasses
-the local successful-result cache.
+Tests are organised in tiers; message-driven window tests run on a private
+desktop and the few that need the real desktop run on a chosen display. See
+[testing](testing.md), [ADR-025](decisions/ADR-025-incremental-test-execution.md)
+and [ADR-026](decisions/ADR-026-test-tiers-and-desktop-isolation.md). Full
+validation bypasses the local successful-result cache.

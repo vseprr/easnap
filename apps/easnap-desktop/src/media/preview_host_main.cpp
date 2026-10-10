@@ -360,6 +360,7 @@ private:
 }  // namespace easnap::media
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+    easnap::platform::RestrictDllSearchPath();
     const HANDLE input = ::GetStdHandle(STD_INPUT_HANDLE);
     const HANDLE output = ::GetStdHandle(STD_OUTPUT_HANDLE);
     if (input == nullptr || input == INVALID_HANDLE_VALUE ||

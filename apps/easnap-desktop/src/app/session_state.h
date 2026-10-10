@@ -167,6 +167,8 @@ private:
     std::unique_ptr<TrimExportController> trim_export_;
     capture::DesktopSnapshot snapshot_;
     RECT recording_region_{};
+    /// Monitor bounds and scale the frozen snapshot was taken against.
+    std::vector<platform::MonitorInfo> session_monitors_;
     media::RecordingOptions recording_options_{};
     std::wstring trim_source_path_;
     TrimArtifact trim_artifact_;
