@@ -99,7 +99,17 @@ display while the PC was in use.
 - The installer was built, installed silently into a scratch directory, the
   installed application started and reported 1.0.1.0, and the uninstaller
   removed the files and the registration.
-- Hosted CI results for this branch are recorded in the pull request, not here.
+- Hosted CI (`windows-2022`) built Debug and Release and passed the 20 tests
+  it can execute. Hosted tests had never run for this repository before; the
+  first run failed on the preview tests (the image cannot open an MFPlay
+  player), on `capture_overlay_interaction` (click targets assume a larger
+  desktop) and on the selection self-test (`Get-FileHash` unavailable). The
+  first two are now excluded from hosted CI and remain local-only; the third
+  was fixed.
+- v1.0.1 was built by the Release workflow from the tag and published. The
+  published ZIP and installer were downloaded again and checked: SHA-256 files
+  match, `gh attestation verify` succeeds for both, both executables report
+  1.0.1.0, and the published installer installed, ran and uninstalled cleanly.
 
 Not validated:
 
@@ -155,6 +165,11 @@ Found in the v1.0.1 review and not fixed:
   over the mode toolbar and the configuration island at 200 % on a 768-row
   display are unverified or known to be imperfect.
 - Not every visible-desktop test follows the chosen display.
+- `capture_overlay_interaction` fails three checks on the hosted runner's
+  small desktop. Whether that is only a test assumption or also a layout
+  problem at low resolution is not established.
+- CI is pinned to `windows-2022` because the project uses the Visual Studio
+  17 2022 generator; moving to a newer toolchain is pending.
 - `annotation_editing_native` is intermittent (see Validation).
 
 Camera, Mouse Effects, device pickers, Scrollshot and OCR are not implemented.
