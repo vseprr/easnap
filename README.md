@@ -67,7 +67,7 @@ The binaries are unsigned, so Windows may display a publisher or reputation
 warning. Each package has a `.sha256` file in the same release:
 
 ```powershell
-Get-FileHash .\Easnap-v1.0.1-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\Easnap-v1.0.2-windows-x64-setup.exe -Algorithm SHA256
 ```
 
 Compare the result with the value in the matching `.sha256` file. Releases from
@@ -75,7 +75,7 @@ v1.0.1 also carry a build provenance attestation, which ties a file to the
 workflow run that built it:
 
 ```powershell
-gh attestation verify .\Easnap-v1.0.1-windows-x64-setup.exe --repo vseprr/easnap
+gh attestation verify .\Easnap-v1.0.2-windows-x64-setup.exe --repo vseprr/easnap
 ```
 
 To update, exit Easnap, then run the new installer or extract the new ZIP into a

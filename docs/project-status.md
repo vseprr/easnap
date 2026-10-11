@@ -1,16 +1,17 @@
 # Project status
 
-**Updated:** 2026-10-11
+**Updated:** 2026-10-12
 Read with the [roadmap](../EASNAP_ROADMAP.md) before implementation work.
 
-## Current slice: v1.0.1 maintenance and hardening
+## Current slice: v1.0.2 maintenance and hardening
 
-v1.0.1 follows the published v1.0.0 with fixes, hardening and test tooling.
+v1.0.1 followed the published v1.0.0 with fixes, hardening and test tooling.
+v1.0.2 adds the two changes listed under [v1.0.2](#v102) below.
 No feature was added and no phase was started. Distribution is a per-user
 installer and a portable ZIP built from the same two executables, both
 unsigned, each with a SHA-256 file and a build provenance attestation.
 
-### Implemented in this slice
+### Implemented in v1.0.1
 
 Defects fixed:
 
@@ -67,7 +68,7 @@ Tests and tooling ([testing](testing.md),
   factors, and selection hit areas across scales and negative origins.
 - Per-user installer (`packaging/easnap.iss`) built by `package-release.ps1`.
 
-### After v1.0.1 (on `main`, not released)
+### v1.0.2
 
 - Editor: derived Blur/Pixelate/Spotlight pixels are kept by
   `editor/redaction_renderer`. An edit recomputes only the rectangle it can
@@ -108,7 +109,25 @@ Validation of these two changes:
   `annotation_editing_native` (the known reopened-text-box comparison) passed
   only on the retry.
 
+Release validation of v1.0.2 (2026-10-12, version bump and one test timeout
+changed since the runs above):
+
+- Hosted CI on `main` failed after the merge: `redaction_renderer_logic` hit
+  its 30 s timeout in the Debug build. It took 23 s and 24 s in Debug on the
+  two preceding pull-request runs and 3 to 4 s in Release. The timeout is now
+  120 s; the test is unchanged.
+- Release x64 build with warnings as errors succeeded; both executables report
+  1.0.2.0.
+- Standard tier with the cache ignored: 27 of 27 passed. Full tier, one run,
+  visible-desktop tests on the secondary display: 34 of 34 passed, none
+  retried. The six soak tests were not run.
+- The installer was built locally from those binaries, installed silently
+  into a scratch directory, the installed application started and reported
+  1.0.2.0, and the uninstaller removed the files, the registration and the
+  Start menu entry.
 ## Validation
+
+This section records the v1.0.1 release; v1.0.2 is under [v1.0.2](#v102).
 
 Environment: one development PC, Windows 10, two 1920x1080 displays at 125 %
 (144 Hz primary, 60 Hz secondary). Visible-desktop tests ran on the secondary
@@ -192,7 +211,7 @@ Found in the v1.0.1 review and not fixed:
 - Up to v1.0.1, an MP4 trim of a recording whose height is not a multiple of
   16 is wrong when exported on a machine without a hardware H.264 encoder
   that reads Direct3D surfaces. The recording itself is intact; export again
-  with a build that contains the fix.
+  with v1.0.2 or later.
 - The repacking of a locked hardware surface was exercised only on the hosted
   runner's WARP adapter, not on a physical GPU with a software encoder.
 - Editor pixel effects still repaint the whole image for a spotlight preview
