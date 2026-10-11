@@ -150,14 +150,13 @@ private:
 /// Averages `block` x `block` pixel blocks inside `area` (mosaic / privacy blur).
 void ApplyMosaic(BgraImage& image, const RECT& area, int block_size);
 
-/// Mosaic restricted to the pixels whose `coverage` value is >= `min_level`.
+/// Mosaic restricted to the pixels of `area` whose `mask` entry is non-zero.
 ///
-/// `coverage` is a width*height map produced by the caller (one entry per pixel,
-/// counting how many brush strokes painted it). Running this once per level with
-/// a growing `block_size` is what makes repeated painting progressively coarser
-/// without touching the pixels a user only painted over once.
-void ApplyMosaicMasked(BgraImage& image, const std::vector<uint8_t>& coverage, uint8_t min_level,
-                       const RECT& area, int block_size);
+/// `mask` has one entry per pixel of `area`, row by row. `area` must lie inside
+/// the image. Blocks are anchored at the top-left corner of `area` and average
+/// only the masked pixels they contain.
+void ApplyMosaicMasked(BgraImage& image, const RECT& area, const std::vector<uint8_t>& mask,
+                       int block_size);
 
 /// Copies `source_region` (image coordinates) out of `source` into `out`.
 bool CropImage(const BgraImage& source, const RECT& source_region, BgraImage& out);

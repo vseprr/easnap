@@ -47,6 +47,8 @@ set(EASNAP_SOURCES
     src/ui/region_selector.cpp
     src/editor/screenshot_editor.h
     src/editor/screenshot_editor.cpp
+    src/editor/redaction_renderer.h
+    src/editor/redaction_renderer.cpp
     src/capture/capture_provider.h
     src/capture/capture_provider.cpp
     src/capture/recording_capture_worker.h

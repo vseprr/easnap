@@ -111,106 +111,6 @@ void AdjustForNonClient(RECT& rect, UINT dpi) {
     ::AdjustWindowRectEx(&rect, kEditorStyle, FALSE, kEditorExStyle);
 }
 
-/// Per-pixel "how many times did the mosaic brush pass here" map.
-///
-/// Every stroke stamps circular dabs along its path. A pixel can only gain one
-/// level per stroke (the `stamp` array remembers the stroke that last touched
-/// it), so a slow drag does not accidentally darken more than a fast one - only
-/// painting over an area *again* does.
-class CoverageMap {
-public:
-    void Reset(int width, int height) {
-        width_ = width;
-        height_ = height;
-        level_.assign(static_cast<size_t>(width) * static_cast<size_t>(height), 0);
-        stamp_.assign(level_.size(), 0);
-        stroke_ = 0;
-        max_level_ = 0;
-        bounds_ = RECT{width, height, 0, 0};
-    }
-
-    void BeginStroke() {
-        ++stroke_;
-        bounds_ = RECT{width_, height_, 0, 0};
-    }
-    void CurrentMask(std::vector<uint8_t>& mask) const {
-        std::fill(mask.begin(), mask.end(), uint8_t{0});
-        for (LONG y = bounds_.top; y < bounds_.bottom; ++y) {
-            for (LONG x = bounds_.left; x < bounds_.right; ++x) {
-                const size_t i = static_cast<size_t>(y) * width_ + x;
-                if (stamp_[i] == stroke_) { mask[i] = level_[i]; }
-            }
-        }
-    }
-
-    /// Stamps a filled circle of `radius` pixels centred on (cx, cy).
-    void Dab(float cx, float cy, float radius) {
-        const int x0 = std::max(0, static_cast<int>(std::floor(cx - radius)));
-        const int y0 = std::max(0, static_cast<int>(std::floor(cy - radius)));
-        const int x1 = std::min(width_ - 1, static_cast<int>(std::ceil(cx + radius)));
-        const int y1 = std::min(height_ - 1, static_cast<int>(std::ceil(cy + radius)));
-        const float radius_sq = radius * radius;
-        for (int y = y0; y <= y1; ++y) {
-            const float dy = static_cast<float>(y) + 0.5f - cy;
-            for (int x = x0; x <= x1; ++x) {
-                const float dx = static_cast<float>(x) + 0.5f - cx;
-                if (dx * dx + dy * dy > radius_sq) {
-                    continue;
-                }
-                const size_t index = static_cast<size_t>(y) * static_cast<size_t>(width_) + static_cast<size_t>(x);
-                if (stamp_[index] == stroke_) {
-                    continue;
-                }
-                stamp_[index] = stroke_;
-                if (level_[index] < 255) {
-                    ++level_[index];
-                }
-                max_level_ = std::max(max_level_, level_[index]);
-                bounds_.left = std::min(bounds_.left, static_cast<LONG>(x));
-                bounds_.top = std::min(bounds_.top, static_cast<LONG>(y));
-                bounds_.right = std::max(bounds_.right, static_cast<LONG>(x) + 1);
-                bounds_.bottom = std::max(bounds_.bottom, static_cast<LONG>(y) + 1);
-            }
-        }
-    }
-
-    /// Walks the polyline and stamps overlapping dabs so the trail is solid.
-    void Stroke(const std::vector<D2D1_POINT_2F>& points, float radius) {
-        if (points.empty()) {
-            return;
-        }
-        BeginStroke();
-        const float step = std::max(1.0f, radius * 0.4f);
-        Dab(points.front().x, points.front().y, radius);
-        for (size_t i = 1; i < points.size(); ++i) {
-            const D2D1_POINT_2F a = points[i - 1];
-            const D2D1_POINT_2F b = points[i];
-            const float dx = b.x - a.x;
-            const float dy = b.y - a.y;
-            const float length = std::sqrt(dx * dx + dy * dy);
-            const int segments = std::max(1, static_cast<int>(std::ceil(length / step)));
-            for (int s = 1; s <= segments; ++s) {
-                const float t = static_cast<float>(s) / static_cast<float>(segments);
-                Dab(a.x + dx * t, a.y + dy * t, radius);
-            }
-        }
-    }
-
-    [[nodiscard]] const std::vector<uint8_t>& level() const noexcept { return level_; }
-    [[nodiscard]] uint8_t max_level() const noexcept { return max_level_; }
-    [[nodiscard]] const RECT& bounds() const noexcept { return bounds_; }
-    [[nodiscard]] bool empty() const noexcept { return max_level_ == 0; }
-
-private:
-    int width_{0};
-    int height_{0};
-    std::vector<uint8_t> level_;
-    std::vector<uint32_t> stamp_;
-    uint32_t stroke_{0};
-    uint8_t max_level_{0};
-    RECT bounds_{};
-};
-
 void DrawArrow(ID2D1RenderTarget* target, const Annotation& annotation, ID2D1SolidColorBrush* brush) {
     const D2D1_POINT_2F start = annotation.points.front();
     const D2D1_POINT_2F end = annotation.points.back();
@@ -414,10 +314,6 @@ void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
 }
 
 }  // namespace
-
-// Vector-only edits reuse the derived pixels; edits to effects rebuild them
-// deterministically from the immutable capture and the ordered effect list.
-struct ScreenshotEditor::RedactionCache { std::vector<Annotation> effects; };
 
 // ---------------------------------------------------------------------------
 // Annotation / AnnotationDocument
@@ -1141,8 +1037,7 @@ void ScreenshotEditor::ResetSession() {
     dragging_ = false;
     editing_text_ = false;
     redaction_revision_ = UINT64_MAX;
-    redacted_image_ = platform::BgraImage{};
-    redaction_cache_.reset();
+    redaction_.Reset();
     image_bitmap_.Reset();
 }
 
@@ -2132,101 +2027,32 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target,ID2D1SolidColorBr
 // Rendering
 // ---------------------------------------------------------------------------
 
-namespace {
-// Three separable box passes approximate a Gaussian. Sliding sums keep cost
-// linear in pixels, independent of strength, and all input is derived afresh.
-void SmoothBlur(platform::BgraImage& image,int radius) {
-    std::vector<uint32_t> scratch(image.pixels.size());
-    const int w=image.width,h=image.height;
-    const auto pass=[&](bool horizontal) {
-        const int major=horizontal ? h:w, minor=horizontal ? w:h;
-        const int count=radius*2+1;
-        for(int row=0;row<major;++row) {
-            const auto index=[&](int col) { return horizontal ? static_cast<size_t>(row)*w+std::clamp(col,0,w-1) : static_cast<size_t>(std::clamp(col,0,h-1))*w+row; };
-            int red=0,green=0,blue=0;
-            const auto accumulate=[&](uint32_t pixel,int sign) { red+=static_cast<int>((pixel>>16)&255)*sign; green+=static_cast<int>((pixel>>8)&255)*sign; blue+=static_cast<int>(pixel&255)*sign; };
-            for(int k=-radius;k<=radius;++k) { accumulate(image.pixels[index(k)],1); }
-            for(int col=0;col<minor;++col) {
-                scratch[index(col)]=0xff000000u|(static_cast<uint32_t>(red/count)<<16)|(static_cast<uint32_t>(green/count)<<8)|static_cast<uint32_t>(blue/count);
-                accumulate(image.pixels[index(col-radius)],-1); accumulate(image.pixels[index(col+radius+1)],1);
-            }
-        }
-        image.pixels.swap(scratch);
-    };
-    for(int i=0;i<3;++i) { pass(true); pass(false); }
-}
-}
-
 void ScreenshotEditor::RebuildRedactedBase() {
     const bool effect_preview=has_pending_ && (pending_.tool==ToolId::Mosaic || pending_.tool==ToolId::Spotlight);
     if((redaction_revision_==document_.revision() && !effect_preview) || !has_image()) { return; }
-    std::vector<Annotation> effects;
-    for(const auto& a:document_.annotations()) if(a.tool==ToolId::Mosaic || a.tool==ToolId::Spotlight) { effects.push_back(a); }
-    if(effect_preview) { effects.push_back(pending_); }
-    redaction_revision_=effect_preview ? UINT64_MAX:document_.revision();
-    if(redaction_cache_ && SameList(redaction_cache_->effects,effects)) { return; }
-    redacted_image_=source_image_;
-    const int w=source_image_.width,h=source_image_.height;
-    CoverageMap coverage; coverage.Reset(w,h);
-    std::vector<uint8_t> mask(source_image_.pixels.size());
-    std::vector<float> spots;
-    float dim=0;
-    for(const auto& a:effects) {
-        if(a.points.empty()) { continue; }
-        const auto box=a.bounds();
-        const RECT r{std::clamp(static_cast<LONG>(std::floor(box.left)),0L,static_cast<LONG>(w)),
-            std::clamp(static_cast<LONG>(std::floor(box.top)),0L,static_cast<LONG>(h)),
-            std::clamp(static_cast<LONG>(std::ceil(box.right)),0L,static_cast<LONG>(w)),
-            std::clamp(static_cast<LONG>(std::ceil(box.bottom)),0L,static_cast<LONG>(h))};
-        if(::IsRectEmpty(&r)) { continue; }
+    std::vector<RedactionEffect> effects;
+    const auto add=[&](const Annotation& a) {
+        if((a.tool!=ToolId::Mosaic && a.tool!=ToolId::Spotlight) || a.points.empty()) { return; }
+        RedactionEffect effect; effect.box=a.bounds(); effect.strength=a.style.strength;
         if(a.tool==ToolId::Spotlight) {
-            if(spots.empty()) { spots.resize(source_image_.pixels.size()); }
-            dim=std::max(dim,a.style.opacity/100);
-            const float rx=(box.right-box.left)/2,ry=(box.bottom-box.top)/2;
-            for(LONG y=r.top;y<r.bottom;++y) for(LONG x=r.left;x<r.right;++x) {
-                float inside=1;
-                const float px=x+0.5f-(box.left+rx),py=y+0.5f-(box.top+ry);
-                if(a.style.shape==SpotlightShape::Ellipse && rx>0 && ry>0) {
-                    inside=std::clamp((1-std::hypot(px/rx,py/ry))*std::min(rx,ry)+0.5f,0.0f,1.0f);
-                } else if(a.style.shape==SpotlightShape::Rounded) {
-                    const float radius=std::min({rx,ry,16*a.style.image_scale});
-                    const float qx=std::abs(px)-(rx-radius),qy=std::abs(py)-(ry-radius);
-                    const float d=std::hypot(std::max(qx,0.0f),std::max(qy,0.0f))+std::min(std::max(qx,qy),0.0f)-radius;
-                    inside=std::clamp(0.5f-d,0.0f,1.0f);
-                }
-                auto& value=spots[static_cast<size_t>(y)*w+x]; value=std::max(value,inside);
-            }
-            continue;
-        }
-        if(a.style.method==EffectMethod::Brush) {
-            coverage.Stroke(a.points,a.style.brush_size/2); coverage.CurrentMask(mask);
-            for(auto& value:mask) { value=value ? 1:0; }
+            effect.kind=RedactionKind::Spotlight; effect.dim=a.style.opacity/100; effect.corner_radius=16*a.style.image_scale;
+            effect.outline=a.style.shape==SpotlightShape::Ellipse ? RedactionOutline::Ellipse :
+                a.style.shape==SpotlightShape::Rounded ? RedactionOutline::Rounded : RedactionOutline::Rectangle;
         } else {
-            std::fill(mask.begin(),mask.end(),uint8_t{0});
-            for(LONG y=r.top;y<r.bottom;++y) { std::fill(mask.begin()+static_cast<ptrdiff_t>(y)*w+r.left,mask.begin()+static_cast<ptrdiff_t>(y)*w+r.right,uint8_t{1}); }
+            effect.kind=a.style.effect==EffectMode::Pixelate ? RedactionKind::Pixelate : RedactionKind::Blur;
+            if(a.style.method==EffectMethod::Brush) { effect.brush=true; effect.brush_path=a.points; effect.brush_radius=a.style.brush_size/2; }
         }
-        if(a.style.effect==EffectMode::Pixelate) {
-            platform::ApplyMosaicMasked(redacted_image_,mask,1,r,std::clamp(static_cast<int>(2+a.style.strength*0.7f),2,72));
-        } else {
-            const int radius=std::clamp(static_cast<int>(1+a.style.strength*0.35f),1,36);
-            const RECT expanded{std::max(0L,r.left-radius*3),std::max(0L,r.top-radius*3),
-                std::min(static_cast<LONG>(w),r.right+radius*3),std::min(static_cast<LONG>(h),r.bottom+radius*3)};
-            platform::BgraImage blurred;
-            if(platform::CropImage(redacted_image_,expanded,blurred)) {
-                SmoothBlur(blurred,radius);
-                for(LONG y=r.top;y<r.bottom;++y) for(LONG x=r.left;x<r.right;++x) if(mask[static_cast<size_t>(y)*w+x]) {
-                    redacted_image_.row(y)[x]=blurred.row(y-expanded.top)[x-expanded.left];
-                }
-            }
-        }
-    }
-    if(!spots.empty()) for(size_t i=0;i<spots.size();++i) {
-        const float factor=1-dim*(1-spots[i]); const auto pixel=redacted_image_.pixels[i];
-        redacted_image_.pixels[i]=0xff000000u|(static_cast<uint32_t>(((pixel>>16)&255)*factor)<<16)|
-            (static_cast<uint32_t>(((pixel>>8)&255)*factor)<<8)|static_cast<uint32_t>((pixel&255)*factor);
-    }
-    redaction_cache_=std::make_unique<RedactionCache>(); redaction_cache_->effects=std::move(effects);
-    image_bitmap_.Reset();
+        effects.push_back(std::move(effect));
+    };
+    for(const auto& a:document_.annotations()) { add(a); }
+    if(effect_preview) { add(pending_); }
+    redaction_revision_=effect_preview ? UINT64_MAX:document_.revision();
+    // Only the pixels an edit can influence are recomputed and uploaded.
+    const RECT changed=redaction_.Update(source_image_,std::move(effects));
+    if(::IsRectEmpty(&changed) || !image_bitmap_) { return; }
+    const auto& image=redaction_.image();
+    const D2D1_RECT_U target{static_cast<UINT32>(changed.left),static_cast<UINT32>(changed.top),static_cast<UINT32>(changed.right),static_cast<UINT32>(changed.bottom)};
+    if(FAILED(image_bitmap_->CopyFromMemory(&target,image.row(changed.top)+changed.left,static_cast<UINT32>(image.stride_bytes())))) { image_bitmap_.Reset(); }
 }
 
 void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repaint) {
@@ -2242,7 +2068,7 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
     RECT client{0, 0, platform::RectWidth(bounds), platform::RectHeight(bounds)};
     if (repaint) { client = platform::IntersectRects(client, *repaint); }
     if (platform::IsEmptyRect(client) || FAILED(image_target_->BindDC(dc, &client))) { return; }
-    if (!image_bitmap_) { image_bitmap_ = platform::CreateD2DBitmapForTarget(image_target_.Get(), redacted_image_); }
+    if (!image_bitmap_) { image_bitmap_ = platform::CreateD2DBitmapForTarget(image_target_.Get(), redaction_.image()); }
     if (!image_bitmap_ || !image_brush_) { return; }
     image_target_->BeginDraw();
     image_target_->SetTransform(D2D1::Matrix3x2F::Translation(
@@ -2280,13 +2106,13 @@ platform::BgraImage ScreenshotEditor::Composite() {
 
     platform::BgraImage output;
     auto& graphics = platform::GraphicsEnvironment::Get();
-    if (!graphics.EnsureInitialized() || redacted_image_.empty()) {
+    if (!graphics.EnsureInitialized() || redaction_.image().empty()) {
         return output;
     }
     platform::BgraImage cropped;
     const RECT crop{region_.left - source_bounds_.left, region_.top - source_bounds_.top,
                     region_.right - source_bounds_.left, region_.bottom - source_bounds_.top};
-    if (!platform::CropImage(redacted_image_, crop, cropped)) { return {}; }
+    if (!platform::CropImage(redaction_.image(), crop, cropped)) { return {}; }
     if (document_.annotations().empty()) {
         return cropped;  // Nothing to composite.
     }

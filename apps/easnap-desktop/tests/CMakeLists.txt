@@ -349,6 +349,21 @@ set_tests_properties(region_selector_logic PROPERTIES
     LABELS "unit;selection"
     TIMEOUT 30)
 
+# Incremental redaction must equal a rebuild from the capture, pixel for pixel.
+add_executable(test_redaction_renderer
+    test_redaction_renderer.cpp
+    ../src/editor/redaction_renderer.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_redaction_renderer PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_redaction_renderer PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    shlwapi comctl32 shell32 ole32 oleaut32 uuid
+    user32 gdi32 advapi32 propsys)
+add_test(NAME redaction_renderer_logic COMMAND test_redaction_renderer)
+set_tests_properties(redaction_renderer_logic PROPERTIES LABELS "unit;editor" TIMEOUT 30)
+
 add_executable(test_capture_overlay
     test_capture_overlay.cpp
     ../src/ui/overlay.cpp
@@ -383,6 +398,7 @@ add_executable(test_capture_workspace
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/editor/redaction_renderer.cpp
     ../src/app/recording_workflow.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_capture_workspace PRIVATE
@@ -418,6 +434,7 @@ add_executable(test_ui_modernization
     ../src/ui/trim_layout.cpp
     ../src/ui/timeline_accessibility.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/editor/redaction_renderer.cpp
     ../src/media/preview_process.cpp
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp
@@ -452,7 +469,7 @@ set_tests_properties(ui_material_raster_parity PROPERTIES LABELS "unit;ui;theme"
 set_tests_properties(ui_modernization_native PROPERTIES
     LABELS "integration;ui;accessibility;theme;preview" TIMEOUT 90)
 
-foreach(ui_target test_region_selector test_capture_overlay test_capture_workspace test_ui_modernization)
+foreach(ui_target test_region_selector test_redaction_renderer test_capture_overlay test_capture_workspace test_ui_modernization)
     target_link_libraries(${ui_target} PRIVATE uxtheme gdiplus oleacc dwmapi)
 endforeach()
 

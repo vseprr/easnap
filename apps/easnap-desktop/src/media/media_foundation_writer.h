@@ -33,6 +33,11 @@ public:
     virtual bool Finalize(std::wstring& out_path) = 0;
     virtual void Abort() = 0;
     [[nodiscard]] virtual std::wstring last_error() const = 0;
+    /// True once open when the encoder reads DXGI surfaces itself and so
+    /// addresses the picture inside a larger texture. Any other encoder
+    /// receives a surface as one contiguous copy of the whole texture, which
+    /// must then be exactly the picture.
+    [[nodiscard]] virtual bool EncoderReadsSurfaces() const = 0;
 };
 
 std::unique_ptr<IMediaFoundationNv12Writer>

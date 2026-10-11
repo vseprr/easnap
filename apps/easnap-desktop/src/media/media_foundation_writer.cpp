@@ -193,6 +193,10 @@ public:
         return result;
     }
 
+    [[nodiscard]] bool EncoderReadsSurfaces() const override {
+        return encoder_reads_surfaces_.load(std::memory_order_acquire);
+    }
+
     bool WriteVideoSample(IMFSample* sample, MediaTime timestamp,
                           MediaTime duration) override {
         const std::scoped_lock api_lock(api_mutex_);
@@ -479,6 +483,21 @@ private:
             SetError(L"Starting the H.264/AAC sink writer", result);
             return false;
         }
+
+        // A Direct3D-aware encoder takes the surface; every other one locks it.
+        bool reads_surfaces = false;
+        if (requested_native_nv12_ && requested_d3d_manager_ != nullptr) {
+            ComPtr<IMFTransform> encoder;
+            ComPtr<IMFAttributes> encoder_attributes;
+            if (SUCCEEDED(writer->GetServiceForStream(stream_index, GUID_NULL,
+                                                      IID_PPV_ARGS(&encoder))) &&
+                SUCCEEDED(encoder->GetAttributes(&encoder_attributes))) {
+                reads_surfaces =
+                    ::MFGetAttributeUINT32(encoder_attributes.Get(),
+                                           MF_SA_D3D11_AWARE, FALSE) != FALSE;
+            }
+        }
+        encoder_reads_surfaces_.store(reads_surfaces, std::memory_order_release);
 
         sink_writer_ = std::move(writer);
         // Record the begun sink before copying metadata that may allocate, so
@@ -1051,6 +1070,7 @@ private:
     bool open_{false};
 
     std::atomic<bool> has_error_{false};
+    std::atomic<bool> encoder_reads_surfaces_{false};
     std::wstring last_error_;
 };
 
