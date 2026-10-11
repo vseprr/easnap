@@ -1,3 +1,4 @@
+#include "media/mf_video_aperture.h"
 #include "media/media_interfaces.h"
 
 #include <mfapi.h>
@@ -92,8 +93,15 @@ struct SourceDescription final {
     ComPtr<IMFSourceReader> reader;
     DWORD video_stream{0};
     std::optional<DWORD> audio_stream;
+    /// Display size of the video: what is exported.
     UINT32 width{0};
     UINT32 height{0};
+    /// Decoded buffer size and where the display area starts inside it. A
+    /// decoder may pad the buffer to its block alignment.
+    UINT32 buffer_width{0};
+    UINT32 buffer_height{0};
+    UINT32 crop_left{0};
+    UINT32 crop_top{0};
     LONG video_stride{0};
     UINT32 frame_rate_numerator{0};
     UINT32 frame_rate_denominator{0};
@@ -238,7 +246,8 @@ std::optional<MediaTime> ReadPresentationDuration(IMFSourceReader* reader) {
 }
 
 bool DiscoverStreams(IMFSourceReader* reader, DWORD& video_stream,
-                     std::optional<DWORD>& audio_stream) {
+                     std::optional<DWORD>& audio_stream, UINT32& display_width,
+                     UINT32& display_height) {
     bool found_video = false;
     bool found_audio = false;
     for (DWORD stream = 0; stream < kMaximumSourceStreams; ++stream) {
@@ -262,6 +271,12 @@ bool DiscoverStreams(IMFSourceReader* reader, DWORD& video_stream,
                 LogFailure(L"The source video stream is not H.264");
                 return false;
             }
+            if (FAILED(::MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE,
+                                            &display_width, &display_height)) ||
+                display_width == 0 || display_height == 0) {
+                LogFailure(L"Reading the source video display dimensions failed");
+                return false;
+            }
             video_stream = stream;
             found_video = true;
         } else if (major_type == MFMediaType_Audio && !found_audio) {
@@ -279,6 +294,8 @@ bool DiscoverStreams(IMFSourceReader* reader, DWORD& video_stream,
     }
     return true;
 }
+
+bool ReadDecodedVideoFormat(SourceDescription& source, bool native_nv12);
 
 bool ConfigureVideoDecoder(SourceDescription& source, bool native_nv12) {
     ComPtr<IMFMediaType> decoded_type;
@@ -302,12 +319,17 @@ bool ConfigureVideoDecoder(SourceDescription& source, bool native_nv12) {
                    result);
         return false;
     }
+    return ReadDecodedVideoFormat(source, native_nv12);
+}
 
+bool ReadDecodedVideoFormat(SourceDescription& source, bool native_nv12) {
     ComPtr<IMFMediaType> actual_type;
-    result = source.reader->GetCurrentMediaType(source.video_stream, &actual_type);
+    HRESULT result =
+        source.reader->GetCurrentMediaType(source.video_stream, &actual_type);
     if (SUCCEEDED(result)) {
         result = ::MFGetAttributeSize(actual_type.Get(), MF_MT_FRAME_SIZE,
-                                      &source.width, &source.height);
+                                      &source.buffer_width,
+                                      &source.buffer_height);
     }
     if (SUCCEEDED(result)) {
         result = ::MFGetAttributeRatio(actual_type.Get(), MF_MT_FRAME_RATE,
@@ -319,13 +341,37 @@ bool ConfigureVideoDecoder(SourceDescription& source, bool native_nv12) {
         result = actual_type->GetGUID(MF_MT_SUBTYPE, &actual_subtype);
     }
     UINT32 stride = 0;
+    source.video_stride = 0;
     if (SUCCEEDED(result) &&
         SUCCEEDED(actual_type->GetUINT32(MF_MT_DEFAULT_STRIDE, &stride))) {
         source.video_stride = static_cast<LONG>(stride);
     } else if (SUCCEEDED(result) &&
-               source.width <= static_cast<UINT32>((std::numeric_limits<LONG>::max)() / 4)) {
+               source.buffer_width <=
+                   static_cast<UINT32>((std::numeric_limits<LONG>::max)() / 4)) {
         source.video_stride = static_cast<LONG>(
-            native_nv12 ? source.width : source.width * 4u);
+            native_nv12 ? source.buffer_width : source.buffer_width * 4u);
+    }
+
+    // The buffer may be larger than the picture: a decoder pads it to its block
+    // alignment and often announces that only with its first sample. Only the
+    // declared display aperture is image data.
+    if (SUCCEEDED(result) &&
+        !ResolveExpectedAperture(actual_type.Get(), source.buffer_width,
+                                 source.buffer_height, source.width,
+                                 source.height, source.crop_left,
+                                 source.crop_top)) {
+        wchar_t detail[192]{};
+        ::swprintf(detail, ARRAYSIZE(detail),
+                   L"The decoded %ux%u video buffer declares no %ux%u display area",
+                   source.buffer_width, source.buffer_height, source.width,
+                   source.height);
+        LogFailure(detail);
+        return false;
+    }
+    if (SUCCEEDED(result) && native_nv12 &&
+        ((source.crop_left | source.crop_top) & 1u) != 0) {
+        LogFailure(L"The decoded NV12 display area starts on an odd pixel");
+        return false;
     }
 
     const uint64_t pixels = static_cast<uint64_t>(source.width) * source.height;
@@ -447,7 +493,7 @@ std::optional<SourceDescription> OpenSource(
     const auto duration = ReadPresentationDuration(source.reader.Get());
     if (!duration.has_value() ||
         !DiscoverStreams(source.reader.Get(), source.video_stream,
-                         source.audio_stream)) {
+                         source.audio_stream, source.width, source.height)) {
         return std::nullopt;
     }
     source.duration = *duration;
@@ -531,10 +577,12 @@ bool CopyDecodedVideo(IMFSample* sample, const SourceDescription& source,
             result = buffer_2d->Lock2D(&scanline, &pitch);
             if (SUCCEEDED(result) && scanline != nullptr &&
                 static_cast<uint64_t>(std::abs(static_cast<int64_t>(pitch))) >=
-                    static_cast<uint64_t>(source.width) * 4u) {
+                    static_cast<uint64_t>(source.buffer_width) * 4u) {
                 for (UINT32 row = 0; row < source.height; ++row) {
                     std::memcpy(mutable_image->row(static_cast<int>(row)),
-                                scanline + static_cast<int64_t>(row) * pitch,
+                                scanline +
+                                    static_cast<int64_t>(row + source.crop_top) * pitch +
+                                    static_cast<int64_t>(source.crop_left) * 4,
                                 static_cast<std::size_t>(source.width) * 4u);
                 }
             } else if (SUCCEEDED(result)) {
@@ -552,18 +600,20 @@ bool CopyDecodedVideo(IMFSample* sample, const SourceDescription& source,
             result = buffer->Lock(&bytes, nullptr, &byte_count);
             const uint64_t stride = static_cast<uint64_t>(
                 std::abs(static_cast<int64_t>(source.video_stride)));
-            const uint64_t required = stride * source.height;
+            const uint64_t required = stride * source.buffer_height;
             if (SUCCEEDED(result) && bytes != nullptr &&
-                stride >= static_cast<uint64_t>(source.width) * 4u &&
+                stride >= static_cast<uint64_t>(source.buffer_width) * 4u &&
                 required <= byte_count) {
                 BYTE* first_row = bytes;
                 if (source.video_stride < 0) {
-                    first_row += stride * (source.height - 1u);
+                    first_row += stride * (source.buffer_height - 1u);
                 }
                 for (UINT32 row = 0; row < source.height; ++row) {
                     std::memcpy(mutable_image->row(static_cast<int>(row)),
-                                first_row + static_cast<int64_t>(row) *
-                                                source.video_stride,
+                                first_row +
+                                    static_cast<int64_t>(row + source.crop_top) *
+                                        source.video_stride +
+                                    static_cast<int64_t>(source.crop_left) * 4,
                                 static_cast<std::size_t>(source.width) * 4u);
                 }
             } else if (SUCCEEDED(result)) {
@@ -690,6 +740,82 @@ bool ProcessVideoSample(IMFSample* sample, int64_t source_time,
     return true;
 }
 
+/// Copies the display area of a system-memory NV12 sample into a buffer laid
+/// out exactly as the encoder input describes: `width` bytes per row, the
+/// interleaved chroma plane directly after `height` luma rows.
+bool PackNv12Picture(IMFSample* sample, const SourceDescription& source,
+                     ComPtr<IMFSample>& packed) {
+    const uint64_t stride = static_cast<uint64_t>(
+        std::abs(static_cast<int64_t>(source.video_stride)));
+    const uint64_t luma_bytes = static_cast<uint64_t>(source.width) * source.height;
+    const uint64_t packed_bytes = luma_bytes + luma_bytes / 2u;
+    // Last byte read from the chroma plane, which follows every buffer row.
+    const uint64_t required =
+        stride * source.buffer_height +
+        (source.crop_top / 2u + source.height / 2u - 1u) * stride +
+        source.crop_left + source.width;
+    if (source.video_stride <= 0 || stride < source.buffer_width ||
+        packed_bytes > (std::numeric_limits<DWORD>::max)()) {
+        LogFailure(L"The decoded NV12 layout is unsupported");
+        return false;
+    }
+
+    ComPtr<IMFMediaBuffer> decoded;
+    ComPtr<IMFMediaBuffer> picture;
+    HRESULT result = sample->ConvertToContiguousBuffer(&decoded);
+    if (SUCCEEDED(result)) {
+        result = ::MFCreateMemoryBuffer(static_cast<DWORD>(packed_bytes), &picture);
+    }
+    BYTE* from = nullptr;
+    BYTE* to = nullptr;
+    DWORD from_bytes = 0;
+    if (SUCCEEDED(result)) {
+        result = decoded->Lock(&from, nullptr, &from_bytes);
+    }
+    if (SUCCEEDED(result)) {
+        result = picture->Lock(&to, nullptr, nullptr);
+        if (SUCCEEDED(result)) {
+            if (from == nullptr || to == nullptr || required > from_bytes) {
+                result = MF_E_BUFFERTOOSMALL;
+            } else {
+                const BYTE* luma = from + source.crop_top * stride + source.crop_left;
+                const BYTE* chroma = from + stride * source.buffer_height +
+                                     (source.crop_top / 2u) * stride + source.crop_left;
+                for (UINT32 row = 0; row < source.height; ++row) {
+                    std::memcpy(to + static_cast<uint64_t>(row) * source.width,
+                                luma + row * stride, source.width);
+                }
+                for (UINT32 row = 0; row < source.height / 2u; ++row) {
+                    std::memcpy(to + luma_bytes + static_cast<uint64_t>(row) * source.width,
+                                chroma + row * stride, source.width);
+                }
+            }
+            const HRESULT unlock_result = picture->Unlock();
+            if (SUCCEEDED(result)) {
+                result = unlock_result;
+            }
+        }
+        const HRESULT unlock_result = decoded->Unlock();
+        if (SUCCEEDED(result)) {
+            result = unlock_result;
+        }
+    }
+    if (SUCCEEDED(result)) {
+        result = picture->SetCurrentLength(static_cast<DWORD>(packed_bytes));
+    }
+    if (SUCCEEDED(result)) {
+        result = ::MFCreateSample(&packed);
+    }
+    if (SUCCEEDED(result)) {
+        result = packed->AddBuffer(picture.Get());
+    }
+    if (FAILED(result)) {
+        LogFailure(L"Copying the display area of a decoded NV12 frame", result);
+        return false;
+    }
+    return true;
+}
+
 bool ProcessNativeVideoSample(
     IMFSample* sample, int64_t source_time, SourceDescription& source,
     MediaTime start, MediaTime end, IMediaFoundationNv12Writer& writer,
@@ -716,6 +842,7 @@ bool ProcessNativeVideoSample(
         return true;
     }
 
+    bool dxgi_sample = false;
     DWORD buffer_count = 0;
     if (SUCCEEDED(sample->GetBufferCount(&buffer_count))) {
         for (DWORD index = 0; index < buffer_count; ++index) {
@@ -723,10 +850,29 @@ bool ProcessNativeVideoSample(
             ComPtr<IMFDXGIBuffer> dxgi_buffer;
             if (SUCCEEDED(sample->GetBufferByIndex(index, &buffer)) &&
                 SUCCEEDED(buffer.As(&dxgi_buffer))) {
-                source.dxgi_sample_seen = true;
+                source.dxgi_sample_seen = dxgi_sample = true;
                 break;
             }
         }
+    }
+
+    // The encoder input is the picture: `width` x `height`, rows `width` bytes
+    // apart. A texture is addressed by plane, so its padding is harmless while
+    // the picture starts at the origin. A padded system-memory buffer keeps its
+    // chroma plane after the padded rows and has to be repacked.
+    ComPtr<IMFSample> packed;
+    if (dxgi_sample) {
+        if (source.crop_left != 0 || source.crop_top != 0) {
+            LogFailure(L"The decoded GPU frame does not start at its display area");
+            return false;
+        }
+    } else if (source.buffer_width != source.width ||
+               source.buffer_height != source.height ||
+               source.video_stride != static_cast<LONG>(source.width)) {
+        if (!PackNv12Picture(sample, source, packed)) {
+            return false;
+        }
+        sample = packed.Get();
     }
     const auto encode_started = DiagnosticsClock::now();
     const bool wrote = writer.WriteVideoSample(sample, output_start,
@@ -870,6 +1016,10 @@ bool TranscodeInterval(SourceDescription& source, MediaTime start, MediaTime end
         if ((flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) != 0 &&
             ((is_video && video_started) || (is_audio && audio_started))) {
             LogFailure(L"The decoded media format changes during the trim interval");
+            return false;
+        }
+        if ((flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) != 0 && is_video &&
+            !ReadDecodedVideoFormat(source, source.native_nv12)) {
             return false;
         }
         if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0) {

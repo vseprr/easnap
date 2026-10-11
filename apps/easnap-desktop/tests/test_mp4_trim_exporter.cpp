@@ -34,6 +34,9 @@ constexpr uint32_t kFrameRate = 30;
 constexpr uint32_t kAudioSampleRate = 48'000;
 constexpr uint16_t kAudioChannels = 2;
 constexpr uint64_t kFrameCount = 120;
+// Mean per-channel error allowed between a re-encoded frame and its source
+// pattern. Lossy coding stays far below it; a wrong picture is far above.
+constexpr double kPictureErrorLimit = 12.0;
 
 int g_pass = 0;
 int g_fail = 0;
@@ -413,6 +416,149 @@ Mp4Inspection InspectMp4(const std::wstring& path) {
     return inspection;
 }
 
+/// Decodes the first video frame of `path` at its display size.
+bool DecodeFirstFrame(const std::wstring& path, easnap::platform::BgraImage& image) {
+    ComPtr<IMFAttributes> attributes;
+    HRESULT result = ::MFCreateAttributes(&attributes, 1);
+    if (SUCCEEDED(result)) {
+        result = attributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
+    }
+    ComPtr<IMFSourceReader> reader;
+    if (SUCCEEDED(result)) {
+        result = ::MFCreateSourceReaderFromURL(path.c_str(), attributes.Get(), &reader);
+    }
+    ComPtr<IMFMediaType> decoded;
+    if (SUCCEEDED(result)) {
+        result = ::MFCreateMediaType(&decoded);
+    }
+    if (SUCCEEDED(result)) {
+        result = decoded->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+    }
+    if (SUCCEEDED(result)) {
+        result = decoded->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
+    }
+    const DWORD stream = static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
+    if (SUCCEEDED(result)) {
+        result = reader->SetCurrentMediaType(stream, nullptr, decoded.Get());
+    }
+    ComPtr<IMFMediaType> actual;
+    UINT32 width = 0;
+    UINT32 height = 0;
+    if (SUCCEEDED(result)) {
+        result = reader->GetCurrentMediaType(stream, &actual);
+    }
+    if (SUCCEEDED(result)) {
+        result = ::MFGetAttributeSize(actual.Get(), MF_MT_FRAME_SIZE, &width, &height);
+    }
+    if (FAILED(result) || width != kWidth || height != kHeight) {
+        return false;
+    }
+    for (;;) {
+        DWORD flags = 0;
+        ComPtr<IMFSample> sample;
+        result = reader->ReadSample(stream, 0, nullptr, &flags, nullptr, &sample);
+        if (FAILED(result) ||
+            (flags & (MF_SOURCE_READERF_ERROR | MF_SOURCE_READERF_ENDOFSTREAM)) != 0) {
+            return false;
+        }
+        if (sample == nullptr) {
+            continue;
+        }
+        ComPtr<IMFMediaBuffer> buffer;
+        if (FAILED(sample->ConvertToContiguousBuffer(&buffer))) {
+            return false;
+        }
+        image.width = static_cast<int>(width);
+        image.height = static_cast<int>(height);
+        image.pixels.resize(static_cast<std::size_t>(width) * height);
+        const auto copy_rows = [&](const BYTE* top_row, int64_t pitch) {
+            for (UINT32 row = 0; row < height; ++row) {
+                std::memcpy(image.row(static_cast<int>(row)), top_row + row * pitch,
+                            static_cast<std::size_t>(width) * 4u);
+            }
+        };
+        ComPtr<IMF2DBuffer> buffer_2d;
+        if (SUCCEEDED(buffer.As(&buffer_2d))) {
+            BYTE* scanline = nullptr;
+            LONG pitch = 0;
+            if (FAILED(buffer_2d->Lock2D(&scanline, &pitch))) {
+                return false;
+            }
+            copy_rows(scanline, pitch);
+            return SUCCEEDED(buffer_2d->Unlock2D());
+        }
+        // A plain memory buffer: the media type says whether rows run bottom-up.
+        UINT32 raw_stride = width * 4u;
+        static_cast<void>(actual->GetUINT32(MF_MT_DEFAULT_STRIDE, &raw_stride));
+        const int64_t stride = static_cast<LONG>(raw_stride);
+        const uint64_t row_bytes = static_cast<uint64_t>(stride < 0 ? -stride : stride);
+        BYTE* bytes = nullptr;
+        DWORD length = 0;
+        if (FAILED(buffer->Lock(&bytes, nullptr, &length))) {
+            return false;
+        }
+        const bool fits = row_bytes >= width * 4u && row_bytes * height <= length;
+        if (fits) {
+            copy_rows(stride < 0 ? bytes + row_bytes * (height - 1u) : bytes, stride);
+        }
+        return SUCCEEDED(buffer->Unlock()) && fits;
+    }
+}
+
+/// Mean absolute difference per colour channel over rows [first_row, last_row).
+double MeanChannelError(const easnap::platform::BgraImage& actual,
+                        const easnap::platform::BgraImage& expected,
+                        int first_row, int last_row) {
+    uint64_t total = 0;
+    for (int y = first_row; y < last_row; ++y) {
+        for (int x = 0; x < actual.width; ++x) {
+            const uint32_t a = actual.row(y)[x];
+            const uint32_t e = expected.row(y)[x];
+            for (int shift = 0; shift <= 16; shift += 8) {
+                total += static_cast<uint64_t>(std::abs(
+                    static_cast<int>((a >> shift) & 0xFF) -
+                    static_cast<int>((e >> shift) & 0xFF)));
+            }
+        }
+    }
+    const double samples =
+        static_cast<double>(last_row - first_row) * actual.width * 3.0;
+    return samples > 0 ? static_cast<double>(total) / samples : 0.0;
+}
+
+/// A trim must carry the picture itself: a decoder buffer padded beyond the
+/// display size, or a misplaced chroma plane, shows up as a large error here.
+void CheckTrimmedPicture(const std::wstring& trimmed_path, MediaTime start) {
+    easnap::platform::BgraImage trimmed;
+    CHECK(DecodeFirstFrame(trimmed_path, trimmed));
+    if (trimmed.empty()) {
+        return;
+    }
+    easnap::platform::BgraImage expected;
+    expected.width = static_cast<int>(kWidth);
+    expected.height = static_cast<int>(kHeight);
+    expected.pixels.resize(static_cast<std::size_t>(kWidth) * kHeight);
+    const int64_t start_frame = start.count() * kFrameRate / kSecond;
+    double whole = 255.0;
+    double bottom = 255.0;
+    // The first exported frame is the one at the trim start; allow its neighbours
+    // because the codec may move a frame boundary by one frame.
+    for (int64_t frame = start_frame - 1; frame <= start_frame + 1; ++frame) {
+        FillMovingPattern(expected, static_cast<uint32_t>(frame));
+        const double error =
+            MeanChannelError(trimmed, expected, 0, static_cast<int>(kHeight));
+        if (error < whole) {
+            whole = error;
+            bottom = MeanChannelError(trimmed, expected,
+                                      static_cast<int>(kHeight) - 8,
+                                      static_cast<int>(kHeight));
+        }
+    }
+    std::printf("trimmed picture error: whole %.2f, bottom rows %.2f\n", whole, bottom);
+    CHECK(whole < kPictureErrorLimit);
+    CHECK(bottom < kPictureErrorLimit);
+}
+
 void CheckDurationNear(const Mp4Inspection& inspection, MediaTime expected,
                        int64_t tolerance) {
     const int64_t actual = static_cast<int64_t>(inspection.presentation_duration);
@@ -510,6 +656,7 @@ void TestMp4TrimExporter() {
     CHECK(video_inspection.first_video_time >= 0);
     CHECK(video_inspection.first_video_time <= kSecond / kFrameRate);
     CheckDurationNear(video_inspection, expected_interior, kVideoTolerance);
+    CheckTrimmedPicture(video_interior, interior_start);
 
     const std::wstring av_interior = session->directory + L"\\av-interior.mp4";
     CHECK(exporter->Export(av_source, av_interior, interior_start,

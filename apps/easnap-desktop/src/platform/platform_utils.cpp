@@ -438,22 +438,20 @@ void ApplyMosaic(BgraImage& image, const RECT& area, int block_size) {
     }
 }
 
-void ApplyMosaicMasked(BgraImage& image, const std::vector<uint8_t>& coverage, uint8_t min_level,
-                       const RECT& area, int block_size) {
-    if (image.empty() || block_size <= 1 || min_level == 0) {
+void ApplyMosaicMasked(BgraImage& image, const RECT& area, const std::vector<uint8_t>& mask,
+                       int block_size) {
+    if (image.empty() || block_size <= 1 || IsEmptyRect(area) || area.left < 0 || area.top < 0 ||
+        area.right > image.width || area.bottom > image.height) {
         return;
     }
-    if (coverage.size() != static_cast<size_t>(image.width) * static_cast<size_t>(image.height)) {
+    const size_t area_width = static_cast<size_t>(area.right - area.left);
+    if (mask.size() != area_width * static_cast<size_t>(area.bottom - area.top)) {
         return;
     }
-    const RECT clipped = IntersectRects(area, RECT{0, 0, image.width, image.height});
-    if (IsEmptyRect(clipped)) {
-        return;
-    }
+    const RECT& clipped = area;
 
     const auto covered = [&](LONG x, LONG y) {
-        return coverage[static_cast<size_t>(y) * static_cast<size_t>(image.width) + static_cast<size_t>(x)] >=
-               min_level;
+        return mask[static_cast<size_t>(y - area.top) * area_width + static_cast<size_t>(x - area.left)] != 0;
     };
 
     for (LONG y = clipped.top; y < clipped.bottom; y += block_size) {

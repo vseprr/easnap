@@ -27,8 +27,8 @@ restructured test suite. It adds no features and starts no new phase.
 
 Continue hardening before any feature work:
 
-1. Make the editor's Blur/Pixelate/Spotlight preview incremental. It currently
-   recomputes the whole image on every pointer move.
+1. Done after v1.0.1: incremental Blur/Pixelate/Spotlight pixels, and MP4 trim
+   of pictures the decoder pads. Both are on `main` and not yet released.
 2. Reject a recording region the H.264 encoder cannot accept with a specific
    message before recording starts.
 3. Investigate the remaining Trim redraw artifacts with reproducible desktop

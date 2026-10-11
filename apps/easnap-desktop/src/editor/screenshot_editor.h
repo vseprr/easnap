@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "app/session_state.h"
+#include "editor/redaction_renderer.h"
 #include "platform/platform_utils.h"
 
 namespace easnap::editor {
@@ -173,7 +174,6 @@ public:
 
 private:
     struct ToolbarItem;
-    struct RedactionCache;
 
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
     LRESULT HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
@@ -232,8 +232,8 @@ private:
     void SyncWatermarkClear();
     void PaintContext(HDC dc, HWND window) const;
 
-    /// Rebuild derived blur/pixelation and spotlight pixels from the immutable
-    /// source. Only the final composite reaches the clipboard or file.
+    /// Brings the derived blur/pixelation and spotlight pixels up to date with
+    /// the effect list. Only the final composite reaches the clipboard or file.
     void RebuildRedactedBase();
     bool CopyToClipboard();
     bool SaveToFile();
@@ -271,8 +271,7 @@ private:
     ComPtr<ID2D1DCRenderTarget> image_target_;
     ComPtr<ID2D1Bitmap> image_bitmap_;
     ComPtr<ID2D1SolidColorBrush> image_brush_;
-    platform::BgraImage redacted_image_;  ///< Capture with mosaic areas applied.
-    std::unique_ptr<RedactionCache> redaction_cache_;
+    RedactionRenderer redaction_;         ///< Capture with pixel effects applied.
 
     AnnotationDocument document_;
     std::vector<ToolbarItem> toolbar_;

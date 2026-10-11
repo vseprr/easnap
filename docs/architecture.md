@@ -138,9 +138,11 @@ is shown transparently and populated before exposure, preserving display affinit
 Document movement is unrestricted; source clips apply to content, selection and
 the native editing host. Fully off-canvas effect regions do not alter source pixels.
 
-Blur/pixelation operate on pixels derived from the original capture. Effect
-changes, moves, deletion and undo rebuild that derived state; unrelated vector
-edits reuse it. Spotlight masks combine with union semantics before one outside
+Blur/pixelation operate on pixels derived from the original capture, owned by
+`editor/redaction_renderer`. Effect changes, moves, deletion and undo
+recompute only the rectangle they can influence, closed over every effect that
+reads it, so the result always equals a rebuild from the capture; unrelated
+vector edits reuse it. Spotlight masks combine with union semantics before one outside
 dim layer is applied. Tiled watermark and vector annotations share the preview
 and export drawing code. Selection frames and handles have a separate editor-only
 pass. There is no second document or export-specific approximation of the tools.
@@ -292,7 +294,10 @@ buffers the entire decoded recording. See ADR-009 and ADR-013.
 
 Native trim forwards the original decoded sample after rebasing its timing;
 holding a new sample with only the same buffers would not retain the decoder's
-tracked surface lease. Cancellation drains the synchronous sink on the encoder
+tracked surface lease. The decoded format is read again when the decoder
+announces it with the first sample: a system-memory NV12 buffer padded beyond
+the picture is repacked to the picture before encoding, and the BGRA fallback
+copies only the display aperture. Cancellation drains the synchronous sink on the encoder
 worker before releasing it and shutting down Media Foundation. The staging
 owner still discards that output; draining does not publish a cancelled export.
 
