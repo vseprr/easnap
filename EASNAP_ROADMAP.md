@@ -1,17 +1,19 @@
 # Easnap delivery roadmap
 
-**Updated:** 2026-10-10
+**Updated:** 2026-10-12
 
 Read this with [project status](docs/project-status.md). This file records the
 phase boundaries; validation details belong in project status and the linked
 technical reports.
 
-## Current: v1.0.1 maintenance and hardening
+## Current: v1.0.2 maintenance and hardening
 
-[`vseprr/easnap`](https://github.com/vseprr/easnap) v1.0.1 is a maintenance
-release on top of v1.0.0. It contains defect fixes, security hardening,
-display-change robustness, a per-user installer beside the portable ZIP, and a
-restructured test suite. It adds no features and starts no new phase.
+[`vseprr/easnap`](https://github.com/vseprr/easnap) v1.0.2 is the second
+maintenance release on top of v1.0.0. v1.0.1 brought defect fixes, security
+hardening, display-change robustness, a per-user installer beside the portable
+ZIP, and a restructured test suite. v1.0.2 adds incremental redaction rendering
+in the editor and a fix for MP4 trims of pictures the decoder pads. Neither
+adds features or starts a new phase.
 
 | Phase | State |
 |---|---|
@@ -19,7 +21,7 @@ restructured test suite. It adds no features and starts no new phase.
 | Screenshots and annotations | Implemented; prior accepted UX corrections retained |
 | MP4 recording | Implemented |
 | GIF export and recording/trim integration | Implemented; Phase 3.3 accepted |
-| Release hardening | v1.0.0 published; v1.0.1 maintenance release; broader physical validation remains |
+| Release hardening | v1.0.0 published; v1.0.1 and v1.0.2 maintenance releases; broader physical validation remains |
 | Scrollshot | Reserved for v1.1; not implemented |
 | OCR | Planned after v1; not implemented and no date committed |
 
@@ -27,8 +29,8 @@ restructured test suite. It adds no features and starts no new phase.
 
 Continue hardening before any feature work:
 
-1. Done after v1.0.1: incremental Blur/Pixelate/Spotlight pixels, and MP4 trim
-   of pictures the decoder pads. Both are on `main` and not yet released.
+1. Done in v1.0.2: incremental Blur/Pixelate/Spotlight pixels, and MP4 trim
+   of pictures the decoder pads.
 2. Reject a recording region the H.264 encoder cannot accept with a specific
    message before recording starts.
 3. Investigate the remaining Trim redraw artifacts with reproducible desktop

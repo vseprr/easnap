@@ -362,7 +362,9 @@ target_link_libraries(test_redaction_renderer PRIVATE easnap_project_options
     shlwapi comctl32 shell32 ole32 oleaut32 uuid
     user32 gdi32 advapi32 propsys)
 add_test(NAME redaction_renderer_logic COMMAND test_redaction_renderer)
-set_tests_properties(redaction_renderer_logic PROPERTIES LABELS "unit;editor" TIMEOUT 30)
+# Every edit is compared with a full rebuild. Optimized that takes seconds; an
+# unoptimized Debug build on the hosted runner needs about 24 s.
+set_tests_properties(redaction_renderer_logic PROPERTIES LABELS "unit;editor" TIMEOUT 120)
 
 add_executable(test_capture_overlay
     test_capture_overlay.cpp
