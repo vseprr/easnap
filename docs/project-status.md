@@ -125,6 +125,13 @@ changed since the runs above):
   into a scratch directory, the installed application started and reported
   1.0.2.0, and the uninstaller removed the files, the registration and the
   Start menu entry.
+- Hosted CI passed on the release commit in Debug and Release;
+  `redaction_renderer_logic` took 31 s in Debug.
+- v1.0.2 was built by the Release workflow from the tag and published. The
+  workflow's ZIP and installer were downloaded and checked before publication:
+  SHA-256 files match, `gh attestation verify` succeeds for both, both
+  executables report 1.0.2.0, and the installer installed, ran and uninstalled
+  cleanly.
 ## Validation
 
 This section records the v1.0.1 release; v1.0.2 is under [v1.0.2](#v102).
