@@ -75,12 +75,15 @@ Tests and tooling ([testing](testing.md),
   and uploads only that rectangle to the preview bitmap. A change of the
   shared spotlight dim, or the first/last spotlight, still covers the image.
 - MP4 trim: the decoder announces its padded buffer (160x128 for a 160x120
-  picture) with the first sample. The exporter ignored that change, so on the
-  system-memory NV12 path the encoder read chroma from the wrong offset and
-  the trimmed video was visibly wrong for any height that is not a multiple
-  of 16. The exporter now re-reads the decoded format, resolves the display
-  aperture, crops on the BGRA path and repacks padded system-memory NV12
-  frames. GPU frames were already correct and are still passed through.
+  picture) with the first sample. The exporter ignored that change. Whenever
+  the encoder received the frame as one contiguous buffer it read chroma from
+  the wrong offset, and the trimmed video was visibly wrong for any height
+  that is not a multiple of 16. That happens on the system-memory NV12 path
+  and on the D3D path with an encoder that locks surfaces instead of reading
+  them. The exporter now re-reads the decoded format, resolves the display
+  aperture, crops on the BGRA path and repacks the picture for those
+  encoders. The writer reports whether its encoder is Direct3D-aware; only
+  then is a padded texture forwarded unchanged, which was already correct.
 
 Validation of these two changes:
 
@@ -90,15 +93,20 @@ Validation of these two changes:
   the dependency closure disabled the test fails. A small drag on a 1200x800
   image stays inside its neighbourhood.
 - `mp4_trim_export_backend` now decodes the trimmed file and compares the
-  picture with the source pattern. Mean channel error was 1.11 on the GPU
-  path. With D3D disabled by a temporary local switch (not committed) it was
-  37.89 before the fix (121.22 in the bottom rows) and 1.11 after. No
-  committed test forces the system-memory path; it runs wherever no D3D
-  decoder is available, which is expected on the hosted runner.
-- Full tier, visible-desktop tests on the primary display: 33 passed and
-  `recording_pause_stop_stress` passed only on the automatic retry (one
-  audio/video duration delta was 101.7 ms against a 100 ms limit). Recording
-  code was not changed.
+  picture with the source pattern. Mean channel error was 1.11 on the local
+  hardware path (NVIDIA decoder and encoder). With D3D disabled by a
+  temporary local switch (not committed) it was 37.89 before the fix (121.22
+  in the bottom rows) and 1.11 after. The hosted runner (WARP adapter,
+  software encoder) failed the same check with 34.89 on the D3D path until
+  surfaces were repacked for encoders that lock them, and passes since. No
+  committed test selects a path: each machine exercises the one it has.
+- Full tier, visible-desktop tests on the primary display while the PC was in
+  use, two runs. First: 33 passed, `recording_pause_stop_stress` passed only
+  on the automatic retry (one audio/video duration delta of 101.7 ms against
+  a 100 ms limit). Second: 32 passed, `trim_timeline_seek_stress` (pointer
+  authentication, the pointer was one pixel off) and
+  `annotation_editing_native` (the known reopened-text-box comparison) passed
+  only on the retry.
 
 ## Validation
 
@@ -181,10 +189,12 @@ Found in the v1.0.1 review and not fixed:
 - No size pre-check before H.264 encoding: a region beyond the encoder limit
   fails at start with a general message.
 - The capture path still allocates a frame image and an NV12 buffer per frame.
-- MP4 trim rejects a GPU-decoded frame whose display area does not start at
-  the texture origin; no decoder producing one was observed. Recordings made
-  by v1.0.1 or earlier are unaffected by the trim defect itself, but trims
-  exported from them on a machine without D3D decoding should be re-exported.
+- Up to v1.0.1, an MP4 trim of a recording whose height is not a multiple of
+  16 is wrong when exported on a machine without a hardware H.264 encoder
+  that reads Direct3D surfaces. The recording itself is intact; export again
+  with a build that contains the fix.
+- The repacking of a locked hardware surface was exercised only on the hosted
+  runner's WARP adapter, not on a physical GPU with a software encoder.
 - Editor pixel effects still repaint the whole image for a spotlight preview
   and for moving any annotation, although only the changed rectangle is
   recomputed.
