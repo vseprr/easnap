@@ -740,22 +740,17 @@ bool ProcessVideoSample(IMFSample* sample, int64_t source_time,
     return true;
 }
 
-/// Copies the display area of a system-memory NV12 sample into a buffer laid
-/// out exactly as the encoder input describes: `width` bytes per row, the
+/// Copies the display area of a decoded NV12 sample into a buffer laid out
+/// exactly as the encoder input describes: `width` bytes per row, the
 /// interleaved chroma plane directly after `height` luma rows.
+/// `buffer_height` is the number of luma rows the decoded buffer really holds;
+/// its chroma plane starts after them.
 bool PackNv12Picture(IMFSample* sample, const SourceDescription& source,
-                     ComPtr<IMFSample>& packed) {
-    const uint64_t stride = static_cast<uint64_t>(
-        std::abs(static_cast<int64_t>(source.video_stride)));
+                     UINT32 buffer_height, ComPtr<IMFSample>& packed) {
     const uint64_t luma_bytes = static_cast<uint64_t>(source.width) * source.height;
     const uint64_t packed_bytes = luma_bytes + luma_bytes / 2u;
-    // Last byte read from the chroma plane, which follows every buffer row.
-    const uint64_t required =
-        stride * source.buffer_height +
-        (source.crop_top / 2u + source.height / 2u - 1u) * stride +
-        source.crop_left + source.width;
-    if (source.video_stride <= 0 || stride < source.buffer_width ||
-        packed_bytes > (std::numeric_limits<DWORD>::max)()) {
+    if (packed_bytes > (std::numeric_limits<DWORD>::max)() ||
+        buffer_height < source.crop_top + source.height) {
         LogFailure(L"The decoded NV12 layout is unsupported");
         return false;
     }
@@ -766,39 +761,70 @@ bool PackNv12Picture(IMFSample* sample, const SourceDescription& source,
     if (SUCCEEDED(result)) {
         result = ::MFCreateMemoryBuffer(static_cast<DWORD>(packed_bytes), &picture);
     }
-    BYTE* from = nullptr;
-    BYTE* to = nullptr;
-    DWORD from_bytes = 0;
-    if (SUCCEEDED(result)) {
-        result = decoded->Lock(&from, nullptr, &from_bytes);
+    if (FAILED(result)) {
+        LogFailure(L"Preparing a decoded NV12 frame for repacking", result);
+        return false;
     }
-    if (SUCCEEDED(result)) {
+
+    // The two-dimensional lock reports the real row pitch (for a surface, the
+    // mapped one). The plain lock is the contiguous layout of the media type.
+    ComPtr<IMF2DBuffer2> decoded_2d;
+    BYTE* from = nullptr;
+    uint64_t from_bytes = 0;
+    int64_t pitch = 0;
+    const bool lock_2d = SUCCEEDED(decoded.As(&decoded_2d));
+    if (lock_2d) {
+        BYTE* start = nullptr;
+        LONG row_pitch = 0;
+        DWORD length = 0;
+        result = decoded_2d->Lock2DSize(MF2DBuffer_LockFlags_Read, &from,
+                                        &row_pitch, &start, &length);
+        if (SUCCEEDED(result) && from != nullptr && start != nullptr &&
+            from >= start && static_cast<uint64_t>(from - start) <= length) {
+            from_bytes = length - static_cast<uint64_t>(from - start);
+        }
+        pitch = row_pitch;
+    } else {
+        DWORD length = 0;
+        result = decoded->Lock(&from, nullptr, &length);
+        from_bytes = length;
+        pitch = source.video_stride;
+    }
+    if (FAILED(result)) {
+        LogFailure(L"Locking a decoded NV12 frame for repacking", result);
+        return false;
+    }
+
+    const uint64_t stride = pitch > 0 ? static_cast<uint64_t>(pitch) : 0;
+    // Last byte read from the chroma plane, which follows every buffer row.
+    const uint64_t required =
+        stride * buffer_height +
+        (source.crop_top / 2u + source.height / 2u - 1u) * stride +
+        source.crop_left + source.width;
+    BYTE* to = nullptr;
+    if (from == nullptr || stride < static_cast<uint64_t>(source.crop_left) + source.width ||
+        required > from_bytes) {
+        result = MF_E_BUFFERTOOSMALL;
+    } else {
         result = picture->Lock(&to, nullptr, nullptr);
-        if (SUCCEEDED(result)) {
-            if (from == nullptr || to == nullptr || required > from_bytes) {
-                result = MF_E_BUFFERTOOSMALL;
-            } else {
-                const BYTE* luma = from + source.crop_top * stride + source.crop_left;
-                const BYTE* chroma = from + stride * source.buffer_height +
-                                     (source.crop_top / 2u) * stride + source.crop_left;
-                for (UINT32 row = 0; row < source.height; ++row) {
-                    std::memcpy(to + static_cast<uint64_t>(row) * source.width,
-                                luma + row * stride, source.width);
-                }
-                for (UINT32 row = 0; row < source.height / 2u; ++row) {
-                    std::memcpy(to + luma_bytes + static_cast<uint64_t>(row) * source.width,
-                                chroma + row * stride, source.width);
-                }
-            }
-            const HRESULT unlock_result = picture->Unlock();
-            if (SUCCEEDED(result)) {
-                result = unlock_result;
-            }
+    }
+    if (SUCCEEDED(result) && to != nullptr) {
+        const BYTE* luma = from + source.crop_top * stride + source.crop_left;
+        const BYTE* chroma = from + stride * buffer_height +
+                             (source.crop_top / 2u) * stride + source.crop_left;
+        for (UINT32 row = 0; row < source.height; ++row) {
+            std::memcpy(to + static_cast<uint64_t>(row) * source.width,
+                        luma + row * stride, source.width);
         }
-        const HRESULT unlock_result = decoded->Unlock();
-        if (SUCCEEDED(result)) {
-            result = unlock_result;
+        for (UINT32 row = 0; row < source.height / 2u; ++row) {
+            std::memcpy(to + luma_bytes + static_cast<uint64_t>(row) * source.width,
+                        chroma + row * stride, source.width);
         }
+        result = picture->Unlock();
+    }
+    const HRESULT unlock_result = lock_2d ? decoded_2d->Unlock2D() : decoded->Unlock();
+    if (SUCCEEDED(result)) {
+        result = unlock_result;
     }
     if (SUCCEEDED(result)) {
         result = picture->SetCurrentLength(static_cast<DWORD>(packed_bytes));
@@ -842,6 +868,9 @@ bool ProcessNativeVideoSample(
         return true;
     }
 
+    // Rows the decoded buffer holds: the texture height for a surface, the
+    // announced frame height otherwise.
+    UINT32 buffer_height = source.buffer_height;
     bool dxgi_sample = false;
     DWORD buffer_count = 0;
     if (SUCCEEDED(sample->GetBufferCount(&buffer_count))) {
@@ -851,25 +880,31 @@ bool ProcessNativeVideoSample(
             if (SUCCEEDED(sample->GetBufferByIndex(index, &buffer)) &&
                 SUCCEEDED(buffer.As(&dxgi_buffer))) {
                 source.dxgi_sample_seen = dxgi_sample = true;
+                ComPtr<ID3D11Texture2D> texture;
+                if (SUCCEEDED(dxgi_buffer->GetResource(IID_PPV_ARGS(&texture)))) {
+                    D3D11_TEXTURE2D_DESC description{};
+                    texture->GetDesc(&description);
+                    buffer_height = description.Height;
+                }
                 break;
             }
         }
     }
 
     // The encoder input is the picture: `width` x `height`, rows `width` bytes
-    // apart. A texture is addressed by plane, so its padding is harmless while
-    // the picture starts at the origin. A padded system-memory buffer keeps its
-    // chroma plane after the padded rows and has to be repacked.
+    // apart. An encoder that reads surfaces addresses the picture inside a
+    // padded texture. Everything else sees one contiguous buffer, where the
+    // chroma plane follows the padded rows, so that buffer must be repacked.
+    const bool padded = source.buffer_width != source.width ||
+                        buffer_height != source.height ||
+                        source.crop_left != 0 || source.crop_top != 0;
+    const bool pass_through =
+        dxgi_sample ? (source.crop_left == 0 && source.crop_top == 0 &&
+                       (!padded || writer.EncoderReadsSurfaces()))
+                    : (!padded && source.video_stride == static_cast<LONG>(source.width));
     ComPtr<IMFSample> packed;
-    if (dxgi_sample) {
-        if (source.crop_left != 0 || source.crop_top != 0) {
-            LogFailure(L"The decoded GPU frame does not start at its display area");
-            return false;
-        }
-    } else if (source.buffer_width != source.width ||
-               source.buffer_height != source.height ||
-               source.video_stride != static_cast<LONG>(source.width)) {
-        if (!PackNv12Picture(sample, source, packed)) {
+    if (!pass_through) {
+        if (!PackNv12Picture(sample, source, buffer_height, packed)) {
             return false;
         }
         sample = packed.Get();
