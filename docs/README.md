@@ -55,7 +55,9 @@ not unfinished roadmap instructions.
   [publication/clipboard lifetime](decisions/ADR-011-recording-completion-and-clipboard-lifetime.md),
   [GIF policy](decisions/ADR-013-gif-stream-timing-palette-and-publication.md),
   [shared configuration/completion](decisions/ADR-014-unified-recording-configuration-and-format-completion.md).
-- Scrollshot: [stitching engine](decisions/ADR-027-scrollshot-stitching-engine.md).
+- Scrollshot: [stitching engine](decisions/ADR-027-scrollshot-stitching-engine.md),
+  [capture workspace](decisions/ADR-028-scrollshot-capture-workspace.md),
+  [editing an image larger than the screen](decisions/ADR-029-scrolled-and-zoomed-image-editing.md).
 - Development/testing: [incremental execution and desktop ownership](decisions/ADR-025-incremental-test-execution.md),
   [test tiers and desktop isolation](decisions/ADR-026-test-tiers-and-desktop-isolation.md).
 

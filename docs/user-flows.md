@@ -18,7 +18,7 @@ The compact magnifier displays each source pixel at 4 DIP with a wider sampled a
 Double-click the selection to copy a screenshot directly, or press **Enter**
 to open Editing. Entering Editing does not yet capture the final screenshot.
 The frame remains adjustable over the live desktop, and the top
-**Screenshot / Record** options switch modes.
+**Screenshot / Scrollshot / Record** options switch modes.
 
 ## Screenshot Editing
 
@@ -130,6 +130,79 @@ Selecting a tool or fixing the frame alone does not consume that latch.
 Completion failure leaves a normal retryable session, without a repeating
 automatic-copy loop. See [ADR-002](decisions/ADR-002-explicit-region-confirmation.md).
 
+## Scrollshot
+
+Scrollshot joins everything that passes through the frame into one tall
+image. It is manual: you scroll, Easnap follows. It needs Windows 10
+version 2004 (build 19041) or later; on an older build the mode button and the
+tools island's button are disabled and say so.
+
+**Start.** Choose **Scrollshot** while the workspace is provisional. An island
+below the frame, or beside it when there is no room, offers **Start
+Scrollshot** and a help button. The frame can still be moved and resized;
+**Enter** starts. The scissors button on the screenshot tools island starts a
+Scrollshot directly from an untouched Screenshot frame. Once the screenshot is
+fixed the button is disabled and its tooltip says why.
+
+**Capture.** Start locks the frame: it cannot be moved, resized or switched to
+another mode, and a right-click no longer cancels. The border is drawn outside
+the selection. Inside the frame the workspace is open, so the pointer, the
+wheel and, after a click, the keyboard go to the application underneath.
+Outside the frame Easnap keeps the input.
+
+Scroll the content with the wheel, the keyboard or its scrollbar. The image
+only grows downwards: scrolling back up adds nothing, and Easnap finds its
+place again when you continue. A header or footer that stays in place is kept
+once, as are fixed side rails. The mouse pointer, the border, the island and
+the preview are never part of the image. The image ends at 32,000 rows or 48
+million pixels, whichever comes first.
+
+The island shows the stitched size and one status line:
+
+| Status | Meaning |
+|---|---|
+| Scroll the content inside the frame. | Following |
+| Easnap lost track. Scroll back up a little, then continue. | Recent pictures could not be placed; nothing is being added |
+| Maximum length reached. Copy, save or edit the image. | The size limit |
+| This area cannot be captured any more. What was captured is kept. | The screen rectangle cannot be read |
+| The wheel goes to the active window. Click inside the frame once, then scroll. | Windows routes the wheel by focus on this computer |
+| Capture stopped. Copy, save or edit the image. | After an action stopped the capture and the image is still held |
+
+A live preview of the lower end of the image stands beside the frame. It never
+takes input. The island and the preview stay outside the frame; if the frame
+leaves no room on its monitor they move to another monitor, and only when
+there is none do they lie over the frame.
+
+**Finish.** Each action first stops the capture.
+
+| Action | Result |
+|---|---|
+| Copy (**Enter** or **Ctrl+C**) | The image goes to the clipboard and the session ends. If the clipboard refuses a very tall image, the image stays and the status points to Save |
+| Save (**Ctrl+S**) | A PNG save dialog. Cancelling it returns to the island with the image |
+| Edit | Opens the stitched image in the screenshot tools |
+| Discard (**Esc**) | Drops the image and ends the session |
+
+The keys work while Easnap has the keyboard focus. After a click inside the
+frame the focus is in the other application; **Ctrl+Shift+A** brings it back
+to the island.
+
+### Editing a stitched image
+
+Edit opens the whole image in the same tools as a screenshot. It is fitted to
+its width, never enlarged beyond 100%, and starts at the top. A label shows
+its size and the zoom; a thumb on the right edge shows the position.
+
+- The wheel scrolls; **Shift+wheel** pans sideways when the image is wider
+  than the view; **Ctrl+wheel** zooms around the pointer.
+- **Page Up / Page Down**, **Home / End** and, with nothing selected, the
+  arrow keys scroll.
+- **Ctrl+Plus / Ctrl+Minus** zoom in steps from 10% to 400%; **Ctrl+0** fits
+  the width; **Ctrl+1** is 100%.
+
+Every tool works at every scroll position and zoom. Copy and Save export the
+whole image at its captured resolution with all annotations, not the part on
+show. The view cannot be turned back into a Scrollshot capture.
+
 ## Record
 
 Choose Record while the workspace is provisional. Configure:
@@ -230,6 +303,12 @@ normal cleanup so pasting remains possible after closing Easnap.
 | Screenshot Editing | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Screenshot Editing | Ctrl+C / Ctrl+S | Copy / Save |
 | Screenshot Editing | Esc | Cancel pending text, otherwise cancel session |
+| Scrollshot, before Start | Enter | Start |
+| Scrollshot capture and review | Enter / Ctrl+C | Copy |
+| Scrollshot capture and review | Ctrl+S / Esc | Save / Discard |
+| Stitched image | Wheel / Shift+wheel / Ctrl+wheel | Scroll / pan sideways / zoom |
+| Stitched image | Page Up / Page Down / Home / End | Scroll by a page / to the start or end |
+| Stitched image | Ctrl+Plus / Ctrl+Minus / Ctrl+0 / Ctrl+1 | Zoom in / out / fit width / 100% |
 | Recording configuration | Enter / Esc | Activate focused control / cancel |
 | Active or paused recording | Esc | Stop and finalize |
 | Trim timeline | Tab / Shift+Tab | Focus In, playhead, Out, then leave timeline |
@@ -252,6 +331,12 @@ hiding or an app bar docking, does not. A started recording uses its fixed
 capture rectangle; if that rectangle is no longer on the desktop (its monitor
 was disconnected or shrank), the recording stops and opens for trimming with
 what was captured up to that point.
+
+A Scrollshot keeps its image through such a change. While capturing or
+reviewing, the capture stops, the workspace is hidden and the island moves to
+a valid place with a notice; Edit rebuilds the workspace. While a stitched
+image is being edited, the annotations are drawn into the image and the
+session returns to the four-action island.
 
 Tray actions include capture, cursor preference, About, opening the local data
 folder and Exit. Settings and private recordings are local to the current user.

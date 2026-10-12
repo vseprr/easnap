@@ -10,6 +10,11 @@
 // when the user copies or saves, which keeps undo/redo lossless. The command
 // history belongs to a single editing session and is wiped when that session
 // ends (see ScreenshotEditor::ResetSession).
+//
+// A stitched Scrollshot is edited by the same document, tools and export path.
+// Only the mapping between the desktop and the image differs: the image is
+// seen through a viewport that scrolls and zooms (editor/image_viewport.h),
+// where a screenshot is shown one to one at the place it was captured.
 #pragma once
 
 #include <functional>
@@ -19,6 +24,7 @@
 #include <vector>
 
 #include "app/session_state.h"
+#include "editor/image_viewport.h"
 #include "editor/redaction_renderer.h"
 #include "platform/platform_utils.h"
 
@@ -131,6 +137,11 @@ public:
         std::function<bool()> on_prepare_image;
         std::function<void()> on_document_committed;
         std::function<void(const RECT&)> on_image_invalidated;
+        /// The tools island's Scrollshot button, pressed while the frame is
+        /// still provisional. It never acquires or fixes the screenshot.
+        std::function<void()> on_scrollshot;
+        /// The viewport of a document moved, scrolled or zoomed.
+        std::function<void(const ImageView&)> on_view_changed;
     };
 
     explicit ScreenshotEditor(Callbacks callbacks);
@@ -144,6 +155,23 @@ public:
     /// Installs the final selected pixels once; subsequent geometry is immutable.
     bool SetImage(platform::BgraImage image);
     [[nodiscard]] bool has_image() const noexcept { return !source_image_.empty(); }
+    /// Opens the tools for an image that already exists and may be larger than
+    /// the screen. It is shown through a viewport inside `view_area`, fitted to
+    /// the width at first, and scrolled and zoomed with Wheel and the keyboard.
+    /// `image` is taken only when this succeeds.
+    /// `preferred_left` is where the viewport's left edge goes when the area allows.
+    bool OpenDocument(platform::BgraImage& image, const RECT& view_area, LONG preferred_left,
+                      app::AppSettings* settings, HWND owner);
+    [[nodiscard]] bool document_mode() const noexcept { return document_mode_; }
+    [[nodiscard]] bool has_annotations() const noexcept { return !document_.annotations().empty(); }
+    [[nodiscard]] ImageView view() const noexcept { return view_; }
+    /// A wheel turn over the image. Scrolls a document vertically, pans it
+    /// with Shift and zooms it around `desktop_point` with Ctrl; a screenshot
+    /// shown one to one ignores it.
+    void Wheel(int delta, bool control, bool shift, POINT desktop_point);
+    /// Gives the unannotated image back, for a caller that must close the
+    /// editor without losing it.
+    [[nodiscard]] platform::BgraImage TakeImage();
     void Show();
     void Hide();
     /// During a frame gesture, update geometry immediately and defer the island's
@@ -160,6 +188,9 @@ public:
     [[nodiscard]] bool ProcessDialogMessage(MSG& message) const;
     void RenderImage(HDC dc, const RECT& desktop_bounds, const RECT* repaint = nullptr);
     [[nodiscard]] platform::BgraImage Composite();
+    /// Composite after finishing a text edit that is still open, without
+    /// treating that commit as a reason to complete the session.
+    [[nodiscard]] platform::BgraImage CompositeCommitted();
     bool CompleteCopy();
     [[nodiscard]] bool completing() const noexcept { return completing_; }
     [[nodiscard]] uint64_t revision() const noexcept { return document_.revision(); }
@@ -187,6 +218,10 @@ private:
     [[nodiscard]] RECT InitialWindowRect(const RECT& screen_region) const;
     /// Forgets every trace of the previous editing session.
     void ResetSession();
+    /// Resets tools and styles for a new session on `frame`.
+    void BeginSession(const RECT& frame, app::AppSettings* settings);
+    /// Creates the island, its context island and their controls beside `screen_region`.
+    bool CreateWindows(const RECT& screen_region, HWND owner);
     void CreateTextFormats();
     bool FeatureUsed();
     bool EnsureImage();
@@ -202,7 +237,17 @@ private:
     void InvalidateImage(const RECT& source_bounds) const;
     [[nodiscard]] RECT PendingDamage() const;
 
-    [[nodiscard]] D2D1_POINT_2F ToImagePoint(POINT client_pt) const;
+    /// Desktop point to image pixels through the current view.
+    [[nodiscard]] D2D1_POINT_2F ToImagePoint(POINT desktop_pt) const;
+    /// A screenshot is shown one to one where it was captured.
+    void ResetFixedView();
+    /// Adopts a document view: viewport, scale and scroll position.
+    void ApplyView(const ImageView& view, bool notify = true);
+    void ScrollDocument(float delta_x, float delta_y);
+    void ZoomDocument(float zoom, POINT anchor);
+    /// Makes the base bitmap hold image rows [first, end) and returns the rows
+    /// it actually covers from `first` on, or 0 on failure.
+    [[nodiscard]] int EnsureBaseRows(int first, int end);
     [[nodiscard]] const ToolbarItem* HitTestToolbar(POINT client_pt) const;
 
     void OnToolbarActivated(const ToolbarItem& item);
@@ -286,8 +331,18 @@ private:
     int client_width_{0};      ///< Client area width in physical pixels.
     int client_height_{0};     ///< Client area height in physical pixels.
     RECT toolbar_rect_{};      ///< Toolbar strip, client pixels (docked to top).
-    D2D1_RECT_F image_rect_{}; ///< Frozen source placement in physical desktop pixels.
-    float zoom_{1.0f};         ///< Inline image is presented at physical 1:1 scale.
+    /// Desktop-to-image mapping. A screenshot keeps scale 1 at its captured
+    /// place; a document scrolls and zooms inside `view_area_`.
+    ImageView view_{};
+    D2D1_POINT_2F view_origin_{};  ///< Desktop position of image pixel (0, 0).
+    float zoom_{1.0f};
+    RECT view_area_{};
+    LONG view_preferred_left_{0};
+    bool document_mode_{false};
+    /// Image rows the base bitmap currently holds. A document taller than one
+    /// bitmap may be is uploaded in the band that is being shown.
+    int band_top_{0};
+    int band_rows_{0};
     float scale_{1.0f};        ///< DPI scale of the hosting monitor.
     uint64_t redaction_revision_{UINT64_MAX};
     bool visible_{false};

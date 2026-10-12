@@ -1,0 +1,45 @@
+// Easnap - user-visible text, Turkish.
+//
+// Same identifiers and the same %1 ... %9 placeholders as strings_en.rc.
+#pragma code_page(65001)
+
+LANGUAGE LANG_TURKISH, SUBLANG_DEFAULT
+
+STRINGTABLE
+BEGIN
+    IDS_MODE_SCREENSHOT "Ekran görüntüsü"
+    IDS_MODE_SCROLLSHOT "Kaydırmalı"
+    IDS_MODE_RECORD "Kayıt"
+    IDS_MODE_SCROLLSHOT_UNSUPPORTED "Kaydırmalı çekim için Windows 10 sürüm 2004 veya sonrası gerekir"
+    IDS_NOTICE_COPIED "Panoya kopyalandı"
+    IDS_DOCUMENT_VIEW_LABEL "%1 × %2   %%%3"
+
+    IDS_SCROLLSHOT_START "Kaydırmalı çekimi başlat"
+    IDS_SCROLLSHOT_HELP "Kaydırmalı ekran görüntüsü ipuçları"
+    IDS_SCROLLSHOT_HELP_TITLE "Kaydırmalı ekran görüntüsü"
+    IDS_SCROLLSHOT_HELP_BODY "Easnap, çerçeveden geçen her şeyi tek bir uzun görüntüde birleştirir.\n\n- Başlat'a basın, ardından çerçevenin içindeki içeriği tekerlekle, klavyeyle veya kaydırma çubuğuyla kaydırın.\n- Sabit bir hızla kaydırın. Easnap takibi kaybederse biraz yukarı kaydırıp devam edin.\n- Sabit üst ve alt bölümler bir kez alınır. Fare imleci görüntüye hiç girmez.\n- Kopyala (Enter veya Ctrl+C), Kaydet (Ctrl+S) ya da Düzenle ile bitirin. Esc vazgeçer.\n- Kısayollar klavye odağı Easnap'teyken çalışır; yakalama kısayolu odağı geri getirir."
+    IDS_SCROLLSHOT_HELP_WHEEL "\n\nBu bilgisayarda Windows tekerleği yalnızca etkin pencereye gönderiyor. Kaydırmadan önce çerçevenin içine bir kez tıklayın ya da Windows fare ayarlarında ""Üzerine geldiğimde etkin olmayan pencereleri kaydır"" seçeneğini açın."
+    IDS_SCROLLSHOT_TOOL "Kaydırmalı ekran görüntüsü"
+    IDS_SCROLLSHOT_TOOL_FIXED "Kaydırmalı ekran görüntüsü (ekran görüntüsü alındıktan sonra kullanılamaz)"
+    IDS_SCROLLSHOT_EDIT "Düzenle"
+    IDS_SCROLLSHOT_SAVE "Kaydet (Ctrl+S)"
+    IDS_SCROLLSHOT_DISCARD "Vazgeç (Esc)"
+    IDS_SCROLLSHOT_COPY "Panoya kopyala (Enter)"
+    IDS_SCROLLSHOT_SIZE "%1 × %2"
+    IDS_SCROLLSHOT_STATUS_SCROLL "Çerçevenin içindeki içeriği kaydırın."
+    IDS_SCROLLSHOT_STATUS_LOST "Easnap takibi kaybetti. Biraz yukarı kaydırıp devam edin."
+    IDS_SCROLLSHOT_STATUS_LIMIT "En fazla uzunluğa ulaşıldı. Görüntüyü kopyalayın, kaydedin veya düzenleyin."
+    IDS_SCROLLSHOT_STATUS_CAPTURE_FAILED "Bu alan artık yakalanamıyor. Yakalanan kısım korunuyor."
+    IDS_SCROLLSHOT_STATUS_DISPLAY_CHANGED "Ekran düzeni değişti, çekim durdu. Görüntünüz korunuyor."
+    IDS_SCROLLSHOT_STATUS_WHEEL "Tekerlek etkin pencereye gidiyor. Çerçevenin içine bir kez tıklayıp kaydırın."
+    IDS_SCROLLSHOT_STATUS_STOPPING "Çekim hâlâ tamamlanıyor. Birazdan yeniden deneyin."
+    IDS_SCROLLSHOT_STATUS_COPY_FAILED "Pano görüntüyü kabul etmedi. Kaydet'i kullanın."
+    IDS_SCROLLSHOT_STATUS_SAVE_FAILED "Kaydedilemedi. Görüntü hâlâ burada; başka bir konum deneyin."
+    IDS_SCROLLSHOT_STATUS_READY "Çekim durdu. Görüntüyü kopyalayın, kaydedin veya düzenleyin."
+    IDS_SCROLLSHOT_START_FAILED "Easnap bu alanı yakalayamadı. Yeniden deneyin."
+    IDS_SCROLLSHOT_UNSUPPORTED "Kaydırmalı ekran görüntüsü için Windows 10 sürüm 2004 veya sonrası gerekir; çünkü Easnap kendi pencerelerini yakalanan görüntünün dışında tutmak zorundadır."
+    IDS_SCROLLSHOT_PANEL_TITLE "Easnap - Kaydırmalı çekim"
+    IDS_SCROLLSHOT_PREVIEW_TITLE "Kaydırmalı çekim önizlemesi"
+    IDS_SCROLLSHOT_STATUS_COPYING "Kopyalanıyor..."
+    IDS_SCROLLSHOT_STATUS_SAVING "Kaydediliyor..."
+END

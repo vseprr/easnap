@@ -1,9 +1,76 @@
 # Project status
 
-**Updated:** 2026-10-12
+**Updated:** 2026-10-13
 Read with the [roadmap](../EASNAP_ROADMAP.md) before implementation work.
 
-## Current slice: v1.0.2 maintenance and hardening
+## Current slice: v1.1.0-beta.1 preparation
+
+Work is on the branch `feature/v1.1-beta`, on top of the published v1.0.2.
+Nothing from this branch has been released.
+
+### Implemented on the branch
+
+- **Scrollshot.** A third workspace mode joins everything scrolled through a
+  locked frame into one tall image; see [user flows](user-flows.md#scrollshot).
+  The stitching engine ([ADR-027](decisions/ADR-027-scrollshot-stitching-engine.md)),
+  the capture session and the workspace integration
+  ([ADR-028](decisions/ADR-028-scrollshot-capture-workspace.md)) are in the
+  application: mode button, Start/help island, scissors button on the tools
+  island, the four-action island with status and live preview, Copy, Save,
+  Edit and Discard, and survival of a display change.
+- **Editing a stitched image.** The screenshot editor opens an image larger
+  than the screen, scrolls and zooms it, and exports the whole image
+  ([ADR-029](decisions/ADR-029-scrolled-and-zoomed-image-editing.md)).
+- **Localized text, first part.** English and Turkish string tables with one
+  accessor. The mode bar, the copied notice and all Scrollshot text use it.
+  The roughly 330 older strings are still English literals in the code.
+- The capture provider can return a plain image of a region and wait for the
+  desktop to change (`CaptureRegionImage`).
+
+### Validated on the branch
+
+One development PC, Windows 10 build 19045, NVIDIA GPU, two 1920x1080 displays
+at 125%; visible-desktop tests ran on the secondary display.
+
+- Release x64 with warnings as errors builds. The Standard tier passed 32 of
+  32 in one run on 2026-10-13.
+- `scrollshot_real_desktop` passed on the secondary display. A second process
+  showed a 3,160-row document; six single wheel notches, three double notches,
+  a click and two Page Down keys, then wheel notches to the end scrolled it
+  through the open frame. The production session returned 720 x 2,880 pixels
+  from 17 pictures: every pixel equal to what that process drew.
+- `ui_modernization_native` and `annotation_editing_native` passed on the
+  secondary display after the editor's coordinate mapping changed.
+- The stitching engine's 232 checks pass in Release and Debug; the session's
+  66, the layout and viewport's 351 and the workspace's 330 pass in Release.
+
+Not validated on the branch:
+
+- The complete flow in the running application, from the tray or shortcut to
+  Copy, Save and Edit, has not been exercised by hand. The coordinator code
+  that connects the tested parts has no automated test.
+- The Full and Soak tiers have not been run as a whole. Debug was built and
+  run only for the stitching engine.
+- Scrollshot on real applications (browsers, editors, lists with lazy
+  loading), at a scale other than 125%, on mixed-DPI or portrait monitors, on
+  a second GPU, and through a display change during capture.
+- Turkish text has not been reviewed in the running application.
+
+### Known limitations of the new work
+
+- Scrollshot needs Windows 10 version 2004 (build 19041). It is manual and
+  vertical; the image only grows downwards.
+- Copying and saving a very tall image run on the UI thread.
+- At the 48-million-pixel limit, editing holds two buffers of about 190 MB
+  and an export allocates a third.
+- Discard, and Esc while editing a stitched image, drop the image without
+  asking.
+- A screenshot taken with the workspace visible can differ from the screen by
+  one level at a few values (measured: 47 as 46, 70 as 69): Windows changes
+  them under the translucent, capture-excluded shading window. Scrollshot
+  avoids it; screenshots do not yet.
+
+## Previous slice: v1.0.2 maintenance and hardening
 
 v1.0.1 followed the published v1.0.0 with fixes, hardening and test tooling.
 v1.0.2 adds the two changes listed under [v1.0.2](#v102) below.
@@ -242,13 +309,15 @@ Found in the v1.0.1 review and not fixed:
   17 2022 generator; moving to a newer toolchain is pending.
 - `annotation_editing_native` is intermittent (see Validation).
 
-Camera, Mouse Effects, device pickers, Scrollshot and OCR are not implemented.
-Scrollshot is intended for v1.1; OCR remains post-v1 without a promised date.
+Camera, Mouse Effects, device pickers and OCR are not implemented. OCR remains
+post-v1 without a promised date.
 
 ## Next slice
 
-Hardening continues before feature work; the ordered list is in the
-[roadmap](../EASNAP_ROADMAP.md). Preserve the native frame, shared
+Beta readiness for v1.1.0-beta.1, in the order of the
+[roadmap](../EASNAP_ROADMAP.md): diagnostics and data safety, the remaining
+Turkish text, the settings window, compatibility, release and distribution,
+CI and community files, then the documentation pass. Preserve the native frame, shared
 rendering/control path and asynchronous preview boundaries. See
 [ADR-024](decisions/ADR-024-native-trim-frame.md),
 [architecture](architecture.md) and the

@@ -4,6 +4,7 @@
 #include "ui/overlay.h"
 
 #include <windowsx.h>
+#include <dwmapi.h>
 
 #include <algorithm>
 #include <array>
@@ -11,6 +12,7 @@
 #include <optional>
 #include <string>
 
+#include "strings/strings.h"
 #include "ui/ui_theme.h"
 
 namespace easnap::ui {
@@ -30,6 +32,11 @@ struct PaletteButton {
     const wchar_t* label;
     RECT rect;  ///< Client coordinates of the overlay window.
 };
+
+/// Order of the mode buttons, left to right.
+constexpr std::array<app::CaptureMode, 3> kModes{
+    app::CaptureMode::Screenshot, app::CaptureMode::Scrollshot, app::CaptureMode::Record};
+constexpr int kFirstModeCommand = 3000;
 
 /// Reusable GDI surface shared by one monitor's serial dim/chrome/magnifier paints.
 class BackBuffer {
@@ -274,6 +281,9 @@ public:
             platform::LogMessage(L"SetLayeredWindowAttributes(chrome) failed (error %lu)", ::GetLastError());
         }
 
+        label_font_ = theme::CreateUiFont(13.0f, monitor_.scale(), false);
+        button_font_ = theme::CreateUiFont(15.0f, monitor_.scale(), true);
+        MeasureModeButtons();
         if (owns_palette_) {
             const RECT panel = ToolbarPanel();
             mode_toolbar_ = ::CreateWindowExW(
@@ -301,21 +311,24 @@ public:
         if (frame != nullptr) {
             frozen_.Create(frame->image);
         }
-        label_font_ = theme::CreateUiFont(13.0f, monitor_.scale(), false);
-        button_font_ = theme::CreateUiFont(15.0f, monitor_.scale(), true);
         if (mode_toolbar_) {
+            constexpr std::array<Icon, 3> icons{Icon::Rectangle, Icon::Scissors, Icon::Record};
             const auto buttons = PaletteLayout(true);
             for (size_t i = 0; i < buttons.size(); ++i) {
                 const auto& r = buttons[i].rect;
                 mode_buttons_[i] = ::CreateWindowExW(0, L"BUTTON", buttons[i].label,
                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_RADIOBUTTON | BS_PUSHLIKE | (i == 0 ? WS_GROUP : 0),
                     r.left, r.top, r.right-r.left, r.bottom-r.top, mode_toolbar_,
-                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(3000 + i)), instance, nullptr);
-                ButtonStyle style; style.icon=i==0 ? Icon::Rectangle:Icon::Record; style.preserve_disabled_visual=true; style.hide_focus_line=true; style.segmented=true;
+                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFirstModeCommand + static_cast<int>(i))), instance, nullptr);
+                ButtonStyle style; style.icon=icons[i]; style.preserve_disabled_visual=true; style.hide_focus_line=true; style.segmented=true;
                 if (!mode_buttons_[i] || !StyleButton(mode_buttons_[i], style)) {
                     Destroy(); return false;
                 }
                 ::SendMessageW(mode_buttons_[i], WM_SETFONT, reinterpret_cast<WPARAM>(button_font_), TRUE);
+            }
+            if (!CaptureExclusionSupported()) {
+                // The reason for the disabled button is its accessible name too.
+                ::SetWindowTextW(mode_buttons_[1], strings::Get(IDS_MODE_SCROLLSHOT_UNSUPPORTED));
             }
             static_cast<void>(::SetWindowDisplayAffinity(mode_toolbar_, 0x11));
             SyncModeButtons();
@@ -359,6 +372,7 @@ public:
         if (mode_toolbar_) { ::ShowWindow(mode_toolbar_, SW_HIDE); }
         ::ShowWindow(image_, SW_HIDE);
         if(shade_) { ::ShowWindow(shade_,SW_HIDE); }
+        HideShadeStrips();
         if (magnifier_ != nullptr) {
             if (::IsWindowVisible(magnifier_)) { ::ShowWindow(magnifier_, SW_HIDE); }
         }
@@ -372,6 +386,7 @@ public:
 
     void Resume() const {
         UpdateShade();
+        UpdateInputRegion();
         ::ShowWindow(dim_, SW_SHOWNOACTIVATE);
         ::ShowWindow(chrome_, SW_SHOWNOACTIVATE);
         ArmModeFade();
@@ -438,6 +453,7 @@ public:
             ::DestroyWindow(image_);
             image_ = nullptr;
         }
+        DestroyShadeStrips();
         if(shade_) { ::DestroyWindow(shade_); shade_=nullptr; }
         if (dim_ != nullptr) {
             ::SetWindowLongPtrW(dim_, GWLP_USERDATA, 0);
@@ -449,6 +465,7 @@ public:
     void Invalidate() const {
         SyncModeButtons();
         UpdateShade();
+        UpdateInputRegion();
         UpdateImage();
         if (mode_toolbar_) { ::InvalidateRect(mode_toolbar_, nullptr, FALSE); }
         if (dim_ != nullptr) {
@@ -488,9 +505,11 @@ public:
         for (size_t i = 0; i < mode_buttons_.size(); ++i) {
             HWND button = mode_buttons_[i];
             if (!button) { continue; }
-            const bool enabled = controller_.workspace().can_switch_mode();
+            // Scrollshot needs capture exclusion; without it the button stays off.
+            const bool enabled = controller_.workspace().can_switch_mode() &&
+                (kModes[i] != app::CaptureMode::Scrollshot || CaptureExclusionSupported());
             if ((::IsWindowEnabled(button) != FALSE) != enabled) { ::EnableWindow(button, enabled); }
-            const WPARAM checked = (i == 0) == (controller_.mode() == app::CaptureMode::Screenshot) ? BST_CHECKED : BST_UNCHECKED;
+            const WPARAM checked = kModes[i] == controller_.mode() ? BST_CHECKED : BST_UNCHECKED;
             if (::SendMessageW(button, BM_GETCHECK, 0, 0) != static_cast<LRESULT>(checked)) { ::SendMessageW(button, BM_SETCHECK, checked, 0); }
         }
     }
@@ -502,7 +521,7 @@ public:
         if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) { controller_.HandleCancelled(); return true; }
         if (message.message == WM_KEYDOWN && message.wParam == VK_TAB) {
             const bool backwards = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            if ((!backwards && message.hwnd == mode_buttons_[1]) || (backwards && message.hwnd == mode_buttons_[0])) {
+            if ((!backwards && message.hwnd == mode_buttons_.back()) || (backwards && message.hwnd == mode_buttons_.front())) {
                 if (controller_.workspace().screenshot_visible()) { controller_.EditorKey(WM_KEYDOWN, VK_TAB, 0); }
                 else { ::SetForegroundWindow(dim_); ::SetFocus(dim_); }
                 return true;
@@ -525,9 +544,71 @@ public:
         return ::IsWindowVisible(magnifier_) && ::GetWindowRect(magnifier_, &box) && ::PtInRect(&box, point);
     }
 
+    /// See OverlayController::ExposeScrollshotFrame. Without the four windows
+    /// the shading stays as it is and the capture is merely not exact.
+    void SetFrameExposed(bool exposed) {
+        if (exposed && shade_ && !shade_strips_[0]) {
+            HINSTANCE instance = ::GetModuleHandleW(nullptr);
+            for (HWND& strip : shade_strips_) {
+                strip = ::CreateWindowExW(
+                    WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+                    kChromeClassName, L"Easnap outside shading", WS_POPUP, monitor_.bounds.left, monitor_.bounds.top,
+                    1, 1, dim_, nullptr, instance, this);
+                if (!strip || !::SetLayeredWindowAttributes(strip, 0, theme::kDimAlpha, LWA_ALPHA) ||
+                    !::SetWindowDisplayAffinity(strip, 0x11)) {
+                    platform::LogMessage(L"The outside shading could not be split (error %lu)", ::GetLastError());
+                    DestroyShadeStrips();
+                    break;
+                }
+            }
+        }
+        UpdateShade();
+    }
+
+    [[nodiscard]] bool IsShadeStrip(HWND hwnd) const noexcept {
+        return hwnd != nullptr && std::find(shade_strips_.begin(), shade_strips_.end(), hwnd) != shade_strips_.end();
+    }
+
+    void HideShadeStrips() const {
+        for (HWND strip : shade_strips_) {
+            if (strip && ::IsWindowVisible(strip)) { ::ShowWindow(strip, SW_HIDE); }
+        }
+    }
+
+    void DestroyShadeStrips() noexcept {
+        for (HWND& strip : shade_strips_) {
+            if (strip) { ::SetWindowLongPtrW(strip, GWLP_USERDATA, 0); ::DestroyWindow(strip); strip = nullptr; }
+        }
+    }
+
     void UpdateShade() const {
         if(!shade_) { return; }
         const RECT selection=platform::IntersectRects(controller_.selector().selection(),monitor_.bounds);
+        if (controller_.frame_exposed() && shade_strips_[0] && controller_.selector().has_selection() &&
+            !platform::IsEmptyRect(selection)) {
+            // Above, below, left and right of the frame: none contains it.
+            const RECT& monitor = monitor_.bounds;
+            const std::array<RECT, 4> strips{{{monitor.left, monitor.top, monitor.right, selection.top},
+                                              {monitor.left, selection.bottom, monitor.right, monitor.bottom},
+                                              {monitor.left, selection.top, selection.left, selection.bottom},
+                                              {selection.right, selection.top, monitor.right, selection.bottom}}};
+            for (size_t i = 0; i < strips.size(); ++i) {
+                HWND strip = shade_strips_[i];
+                if (platform::IsEmptyRect(strips[i])) {
+                    if (::IsWindowVisible(strip)) { ::ShowWindow(strip, SW_HIDE); }
+                    continue;
+                }
+                RECT current{};
+                ::GetWindowRect(strip, &current);
+                if (::IsWindowVisible(strip) && ::EqualRect(&current, &strips[i])) { continue; }
+                // Below the image and chrome windows, like the shading it replaces.
+                ::SetWindowPos(strip, image_, strips[i].left, strips[i].top, platform::RectWidth(strips[i]),
+                               platform::RectHeight(strips[i]), SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                ::RedrawWindow(strip, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            }
+            if (::IsWindowVisible(shade_)) { ::ShowWindow(shade_, SW_HIDE); }
+            return;
+        }
         HRGN outside=::CreateRectRgn(0,0,client_width(),client_height());
         if(controller_.selector().has_selection() && !platform::IsEmptyRect(selection)) {
             HRGN inside=::CreateRectRgn(selection.left-monitor_.bounds.left,selection.top-monitor_.bounds.top,
@@ -539,6 +620,30 @@ public:
         ::DeleteObject(previous);
         if(same || !::SetWindowRgn(shade_,outside,FALSE)) { ::DeleteObject(outside); }
         if(!::IsWindowVisible(shade_)) { ::ShowWindow(shade_,SW_SHOWNOACTIVATE); }
+        HideShadeStrips();
+    }
+
+    /// The input plane covers the whole monitor, except while a Scrollshot is
+    /// capturing: then it leaves the frame open, so the wheel and the pointer
+    /// reach the application underneath and everything outside stays inert.
+    void UpdateInputRegion() const {
+        if (!dim_) { return; }
+        const RECT selection = platform::IntersectRects(controller_.selector().selection(), monitor_.bounds);
+        const bool open = controller_.workspace().scrollshot_capturing() && !platform::IsEmptyRect(selection);
+        HRGN wanted = nullptr;
+        if (open) {
+            wanted = ::CreateRectRgn(0, 0, client_width(), client_height());
+            HRGN inside = ::CreateRectRgn(selection.left - monitor_.bounds.left, selection.top - monitor_.bounds.top,
+                selection.right - monitor_.bounds.left, selection.bottom - monitor_.bounds.top);
+            if (wanted && inside) { ::CombineRgn(wanted, wanted, inside, RGN_DIFF); }
+            if (inside) { ::DeleteObject(inside); }
+        }
+        HRGN current = ::CreateRectRgn(0, 0, 0, 0);
+        const int current_type = current ? ::GetWindowRgn(dim_, current) : ERROR;
+        const bool same = open ? (current_type != ERROR && wanted && ::EqualRgn(current, wanted)) : current_type == ERROR;
+        if (current) { ::DeleteObject(current); }
+        // The system owns a region it accepted; ours is deleted only when unused.
+        if (same || !::SetWindowRgn(dim_, wanted, FALSE)) { if (wanted) { ::DeleteObject(wanted); } }
     }
 
     void UpdateImage() const {
@@ -679,6 +784,10 @@ private:
             }
 
             case WM_SETCURSOR: {
+                if (controller_.workspace().scrollshot_locked()) {
+                    ::SetCursor(::LoadCursorW(nullptr, IDC_ARROW));
+                    return TRUE;
+                }
                 POINT pt{};
                 ::GetCursorPos(&pt);
                 const auto annotation_cursor=controller_.AnnotationCursor(pt);
@@ -721,8 +830,27 @@ private:
                 return 0;
 
             case WM_RBUTTONUP:
-                controller_.HandleCancelled();
+                // A stray right-click must not throw a stitched image away.
+                if (!controller_.workspace().scrollshot_locked()) { controller_.HandleCancelled(); }
                 return 0;
+
+            case WM_MOUSEWHEEL:
+            case WM_MOUSEHWHEEL: {
+                const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+                const RECT frame = controller_.selector().selection();
+                if (controller_.workspace().scrollshot_capturing()) {
+                    // With "scroll inactive windows" off, Windows sends the wheel
+                    // here instead of to the content under the pointer.
+                    if (::PtInRect(&frame, pt)) { controller_.RequestScrollshotCommand(ScrollshotCommand::WheelBlocked); }
+                } else if (controller_.workspace().screenshot_fixed()) {
+                    const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+                    const WORD keys = GET_KEYSTATE_WPARAM(wparam);
+                    const bool horizontal = message == WM_MOUSEHWHEEL;
+                    controller_.EditorWheel(horizontal ? -delta : delta, (keys & MK_CONTROL) != 0,
+                                            horizontal || (keys & MK_SHIFT) != 0, pt);
+                }
+                return 0;
+            }
 
             case WM_CHAR:
                 if (controller_.workspace().screenshot_visible()) {
@@ -731,6 +859,13 @@ private:
                 return 0;
 
             case WM_KEYDOWN:
+                if (controller_.workspace().scrollshot_locked()) {
+                    const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+                    if (wparam == VK_ESCAPE) { controller_.RequestScrollshotCommand(ScrollshotCommand::Discard); }
+                    else if (wparam == VK_RETURN || (control && wparam == 'C')) { controller_.RequestScrollshotCommand(ScrollshotCommand::Copy); }
+                    else if (control && wparam == 'S') { controller_.RequestScrollshotCommand(ScrollshotCommand::Save); }
+                    return 0;
+                }
                 if (wparam == VK_TAB && mode_toolbar_ && controller_.workspace().can_switch_mode()) {
                     ::SetForegroundWindow(mode_toolbar_); ::SetFocus(mode_buttons_[0]); return 0;
                 }
@@ -770,7 +905,9 @@ private:
                 return 0;
 
             case WM_DISPLAYCHANGE:
-                controller_.HandleCancelled();
+                // A locked Scrollshot holds captured content: the coordinator
+                // stops it and keeps the image instead of cancelling here.
+                if (!controller_.workspace().scrollshot_locked()) { controller_.HandleCancelled(); }
                 return 0;
 
             default:
@@ -792,7 +929,10 @@ private:
 
             case WM_COMMAND:
                 if (hwnd == mode_toolbar_ && HIWORD(wparam) == BN_CLICKED &&
-                    LOWORD(wparam) >= 3000 && LOWORD(wparam) <= 3001) { OnPaletteClicked(LOWORD(wparam) - 3000); }
+                    LOWORD(wparam) >= kFirstModeCommand &&
+                    LOWORD(wparam) < kFirstModeCommand + static_cast<int>(kModes.size())) {
+                    OnPaletteClicked(LOWORD(wparam) - kFirstModeCommand);
+                }
                 return 0;
             case WM_KEYDOWN:
                 if (hwnd == mode_toolbar_) { return HandleKey(wparam); }
@@ -822,7 +962,7 @@ private:
                             theme::FillSolid(dc, client, theme::kChromeColorKey);
                             DrawPalette(dc);
                         }
-                        else if(hwnd==shade_) { theme::FillSolid(dc,client,theme::kDim); }
+                        else if(hwnd==shade_ || IsShadeStrip(hwnd)) { theme::FillSolid(dc,client,theme::kDim); }
                         else { PaintChrome(dc); }
                     });
                     return 0;
@@ -852,7 +992,9 @@ private:
                 controller_.HandleCancelled();
                 return 0;
             case VK_RETURN:
-                if (controller_.selector().CanCommit()) {
+                if (controller_.workspace().scrollshot_visible()) {
+                    controller_.RequestScrollshotCommand(ScrollshotCommand::Start);
+                } else if (controller_.selector().CanCommit()) {
                     controller_.EnterEditing();
                 }
                 return 0;
@@ -892,34 +1034,56 @@ private:
 
     void OnPaletteClicked(int index) {
         if (!controller_.workspace().can_switch_mode()) { return; }
-        const auto buttons = PaletteLayout();
-        if (index < 0 || index >= static_cast<int>(buttons.size())) {
+        if (index < 0 || index >= static_cast<int>(kModes.size())) {
             return;
         }
-        controller_.SetMode(buttons[static_cast<size_t>(index)].mode);
-        if (controller_.mode() == app::CaptureMode::Screenshot) { ::SetFocus(dim_); }
+        const app::CaptureMode mode = kModes[static_cast<size_t>(index)];
+        if (mode == app::CaptureMode::Scrollshot && !CaptureExclusionSupported()) { return; }
+        controller_.SetMode(mode);
+        if (controller_.mode() != app::CaptureMode::Record) { ::SetFocus(dim_); }
+    }
+
+    /// One width for all mode buttons: the widest label in the active
+    /// language plus the icon and the button's own insets.
+    void MeasureModeButtons() {
+        const float scale = monitor_.scale();
+        LONG widest = 0;
+        if (HDC dc = ::CreateCompatibleDC(nullptr)) {
+            const HGDIOBJ previous = ::SelectObject(dc, button_font_);
+            for (UINT id : {IDS_MODE_SCREENSHOT, IDS_MODE_SCROLLSHOT, IDS_MODE_RECORD}) {
+                const wchar_t* text = strings::Get(id);
+                SIZE size{};
+                if (::GetTextExtentPoint32W(dc, text, ::lstrlenW(text), &size)) { widest = std::max(widest, size.cx); }
+            }
+            ::SelectObject(dc, previous);
+            ::DeleteDC(dc);
+        }
+        // Face inset 6, icon inset 10, icon 18, gap 6, label inset 6 each side.
+        mode_button_width_ = std::max<LONG>(theme::Scaled(theme::kPaletteButtonMinimumWidth, scale),
+                                            widest + theme::Scaled(60, scale));
     }
 
     /// Palette buttons in this window's client coordinates.
-    [[nodiscard]] std::array<PaletteButton, 2> PaletteLayout(bool local = false) const {
+    [[nodiscard]] std::array<PaletteButton, 3> PaletteLayout(bool local = false) const {
         const float scale = monitor_.scale();
-        const LONG button_width = theme::Scaled(theme::kPaletteButtonWidth, scale);
+        const LONG button_width = mode_button_width_;
         const LONG button_height = theme::Scaled(theme::kPaletteButtonHeight, scale);
         const LONG padding = theme::Scaled(theme::kPalettePadding, scale);
         const LONG grip=theme::Scaled(24,scale);
-        const LONG panel_width = button_width * 2 + padding * 3+grip;
+        const LONG count = static_cast<LONG>(kModes.size());
+        const LONG panel_width = button_width * count + padding * (count + 1) + grip;
         const LONG panel_left = local ? 0 : (client_width() - panel_width) / 2;
         const LONG panel_top = 0;
 
-        std::array<PaletteButton, 2> buttons{};
-        buttons[0].mode = app::CaptureMode::Screenshot;
-        buttons[0].label = L"Screenshot";
-        buttons[0].rect = RECT{panel_left + padding+grip, panel_top + padding, panel_left + padding+grip + button_width,
-                               panel_top + padding + button_height};
-        buttons[1].mode = app::CaptureMode::Record;
-        buttons[1].label = L"Record";
-        buttons[1].rect = RECT{buttons[0].rect.right + padding, buttons[0].rect.top,
-                               buttons[0].rect.right + padding + button_width, buttons[0].rect.bottom};
+        constexpr std::array<UINT, 3> labels{IDS_MODE_SCREENSHOT, IDS_MODE_SCROLLSHOT, IDS_MODE_RECORD};
+        std::array<PaletteButton, 3> buttons{};
+        LONG left = panel_left + padding + grip;
+        for (size_t i = 0; i < buttons.size(); ++i) {
+            buttons[i].mode = kModes[i];
+            buttons[i].label = strings::Get(labels[i]);
+            buttons[i].rect = RECT{left, panel_top + padding, left + button_width, panel_top + padding + button_height};
+            left += button_width + padding;
+        }
         return buttons;
     }
 
@@ -1041,9 +1205,75 @@ private:
         theme::FillSolid(dc, client, theme::kChromeColorKey);
 
         controller_.selector().RenderGdi(dc, monitor_.bounds, monitor_.scale(), label_font_,
-            controller_.workspace().editing() && controller_.workspace().can_adjust_selection(), controller_.workspace().accent());
+            controller_.workspace().editing() && controller_.workspace().can_adjust_selection(), controller_.workspace().accent(),
+            controller_.workspace().scrollshot_locked(), !controller_.document_view());
+        if (controller_.document_view()) { DrawDocumentIndicators(dc); }
         if (owns_palette_) { DrawNotice(dc); }
     }
+
+    /// Readout of a document view: image size and scale, at the place the
+    /// frame's size readout normally takes.
+    [[nodiscard]] RECT DocumentLabelRect() const {
+        const std::wstring& label = controller_.document_label();
+        LONG width = 0;
+        if (HDC dc = ::CreateCompatibleDC(nullptr)) {
+            const HGDIOBJ previous = ::SelectObject(dc, label_font_);
+            SIZE size{};
+            if (::GetTextExtentPoint32W(dc, label.c_str(), static_cast<int>(label.size()), &size)) { width = size.cx; }
+            ::SelectObject(dc, previous);
+            ::DeleteDC(dc);
+        }
+        return RegionSelector::LabelRect(controller_.selector().selection(), monitor_.bounds, monitor_.scale(),
+                                         width + theme::Scaled(20, monitor_.scale()));
+    }
+
+    /// The strip at the viewport's right edge that shows where it is in the image.
+    [[nodiscard]] RECT DocumentScrollRect() const {
+        const RECT selection = controller_.selector().selection();
+        const float scale = monitor_.scale();
+        const LONG inset = theme::Scaled(theme::kSelectionBorder, scale) + theme::Scaled(4, scale);
+        return RECT{selection.right - monitor_.bounds.left - inset - theme::Scaled(5, scale),
+                    selection.top - monitor_.bounds.top + inset,
+                    selection.right - monitor_.bounds.left - inset,
+                    selection.bottom - monitor_.bounds.top - inset};
+    }
+
+    void DrawDocumentIndicators(HDC dc) const {
+        const float scale = monitor_.scale();
+        if (!controller_.document_label().empty()) {
+            const RECT box = DocumentLabelRect();
+            theme::FillRounded(dc, box, theme::Scaled(4.0f, scale), theme::Current().panel);
+            theme::DrawLabel(dc, box, controller_.document_label().c_str(), theme::Current().text, label_font_,
+                             DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
+        }
+        const float visible = controller_.document_visible_fraction();
+        if (visible >= 1.0f) { return; }  // The whole image fits: nothing to indicate.
+        const RECT track = DocumentScrollRect();
+        const LONG length = platform::RectHeight(track);
+        if (length <= 0) { return; }
+        const LONG shortest = std::min<LONG>(length, theme::Scaled(24, scale));
+        const LONG thumb = std::clamp<LONG>(static_cast<LONG>(visible * static_cast<float>(length)), shortest, length);
+        const LONG top = track.top + static_cast<LONG>(std::min(controller_.document_top_fraction() / (1.0f - visible), 1.0f) *
+                                                       static_cast<float>(length - thumb));
+        theme::FillRounded(dc, RECT{track.left, top, track.right, top + thumb}, theme::Scaled(2.5f, scale),
+                           theme::Mix(theme::Current().panel, theme::Current().text, 0.55f));
+    }
+
+public:
+    /// Repaints what a scroll or zoom step changes besides the image itself.
+    void InvalidateDocumentIndicators() {
+        if (chrome_ == nullptr) { return; }
+        RECT label = DocumentLabelRect();
+        ::InflateRect(&label, 1, 1);
+        RECT track = DocumentScrollRect();
+        ::InflateRect(&track, 1, 1);
+        for (const RECT* rect : {&label, &track, &document_label_painted_}) {
+            if (!::IsRectEmpty(rect)) { ::InvalidateRect(chrome_, rect, FALSE); }
+        }
+        document_label_painted_ = label;
+    }
+
+private:
 
     void DrawPalette(HDC dc) const {
         const auto buttons = PaletteLayout(true);
@@ -1077,9 +1307,12 @@ private:
     bool owns_palette_{false};
     HWND dim_{nullptr};
     HWND shade_{nullptr};
+    /// Replaces `shade_` while a Scrollshot frame is exposed: top, bottom, left, right.
+    std::array<HWND, 4> shade_strips_{};
     HWND chrome_{nullptr};
     HWND mode_toolbar_{nullptr};
-    std::array<HWND, 2> mode_buttons_{};
+    std::array<HWND, 3> mode_buttons_{};
+    LONG mode_button_width_{0};
     std::optional<ULONGLONG> mode_fade_start_;
     HWND magnifier_{nullptr};
     HWND image_{nullptr};
@@ -1088,6 +1321,7 @@ private:
     HFONT label_font_{nullptr};
     HFONT button_font_{nullptr};
     int hover_button_{-1};
+    RECT document_label_painted_{};
 };
 
 // ---------------------------------------------------------------------------
@@ -1171,9 +1405,86 @@ void OverlayController::FixScreenshot() {
     Invalidate();
 }
 
+void OverlayController::BeginScrollshotCapture() {
+    if (!workspace_.editing() || workspace_.screenshot_fixed() || workspace_.scrollshot_locked()) { return; }
+    CancelPointer();
+    workspace_.BeginScrollshotCapture();
+    selector_.set_enabled(false);
+    // Mode switching ends with the lock; the options fade as they do when a
+    // screenshot is fixed.
+    for (const auto& window : windows_) { window->BeginModeFade(); }
+    Invalidate();
+}
+
+void OverlayController::StopScrollshotCapture() {
+    if (!workspace_.scrollshot_capturing()) { return; }
+    workspace_.StopScrollshotCapture();
+    ExposeScrollshotFrame(false);
+    Invalidate();
+}
+
+void OverlayController::ExposeScrollshotFrame(bool exposed) {
+    if (frame_exposed_ == exposed || windows_.empty()) { return; }
+    frame_exposed_ = exposed;
+    for (const auto& window : windows_) { window->SetFrameExposed(exposed); }
+    // The picture taken next must already be composed with the new shading.
+    if (exposed) { ::DwmFlush(); }
+}
+
+void OverlayController::RequestScrollshotCommand(ScrollshotCommand command) {
+    if (callbacks_.on_scrollshot_command) { callbacks_.on_scrollshot_command(command); }
+}
+
+void OverlayController::BeginDocumentView(const RECT& viewport) {
+    if (windows_.empty() || document_view_) { return; }
+    CancelPointer();
+    if (workspace_.scrollshot_locked()) {
+        workspace_.StopScrollshotCapture();
+        workspace_.EditScrollshot();
+    } else {
+        // A workspace shown only for this document: no selection was made.
+        workspace_.EnterEditing();
+        workspace_.EditorFeatureUsed();
+    }
+    document_view_ = true;
+    document_top_ = 0.0f;
+    document_visible_ = 1.0f;
+    document_label_.clear();
+    selector_.SetSelection(viewport);
+    selector_.set_enabled(false);
+    last_region_ = selector_.selection();
+    last_has_selection_ = selector_.has_selection();
+    last_region_interacting_ = false;
+    for (const auto& window : windows_) { window->BeginModeFade(); }
+    Invalidate();
+}
+
+void OverlayController::SetDocumentView(const RECT& viewport, float top_fraction, float visible_fraction,
+                                        std::wstring label) {
+    if (!document_view_) { return; }
+    document_top_ = top_fraction;
+    document_visible_ = visible_fraction;
+    document_label_ = std::move(label);
+    const RECT previous = selector_.selection();
+    if (::EqualRect(&previous, &viewport) == FALSE) {
+        selector_.SetSelection(viewport);
+        last_region_ = selector_.selection();
+        last_has_selection_ = selector_.has_selection();
+        Invalidate();
+    }
+    for (const auto& window : windows_) { window->InvalidateDocumentIndicators(); }
+}
+
+void OverlayController::EditorWheel(int delta, bool control, bool shift, POINT point) {
+    if (callbacks_.on_editor_wheel) { callbacks_.on_editor_wheel(delta, control, shift, point); }
+}
+
 void OverlayController::Destroy() {
     windows_.clear();
     visible_ = false;
+    document_view_ = false;
+    frame_exposed_ = false;
+    document_label_.clear();
     notice_.clear();
 }
 
@@ -1241,6 +1552,8 @@ HCURSOR OverlayController::AnnotationCursor(POINT point) const {
 }
 
 void OverlayController::PointerDown(POINT point, bool native_double, bool excluded, DWORD time) {
+    // A locked Scrollshot frame neither moves nor starts a new selection.
+    if (workspace_.scrollshot_locked()) { return; }
     const bool annotation=callbacks_.wants_annotation_pointer ? callbacks_.wants_annotation_pointer(point):UsesAnnotationTool();
     WorkspacePointerTarget target = WorkspacePointerTarget::Content;
     if (excluded) { target = WorkspacePointerTarget::Excluded; }

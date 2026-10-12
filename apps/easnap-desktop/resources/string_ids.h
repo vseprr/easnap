@@ -1,0 +1,48 @@
+// Easnap - identifiers of the localized string tables.
+//
+// resources/strings_en.rc and resources/strings_tr.rc must both define every
+// identifier listed here; tests/test_strings.cpp enforces that, together with
+// equal %1...%9 placeholders. Keep the values stable and append within a group.
+#pragma once
+
+#define IDS_FIRST 20000
+
+// Capture workspace ---------------------------------------------------------
+#define IDS_MODE_SCREENSHOT 20000
+#define IDS_MODE_SCROLLSHOT 20001
+#define IDS_MODE_RECORD 20002
+#define IDS_MODE_SCROLLSHOT_UNSUPPORTED 20003
+#define IDS_NOTICE_COPIED 20004
+#define IDS_DOCUMENT_VIEW_LABEL 20005
+
+// Scrollshot ----------------------------------------------------------------
+#define IDS_SCROLLSHOT_START 20100
+#define IDS_SCROLLSHOT_HELP 20101
+#define IDS_SCROLLSHOT_HELP_TITLE 20102
+#define IDS_SCROLLSHOT_HELP_BODY 20103
+#define IDS_SCROLLSHOT_HELP_WHEEL 20104
+#define IDS_SCROLLSHOT_TOOL 20105
+#define IDS_SCROLLSHOT_TOOL_FIXED 20106
+#define IDS_SCROLLSHOT_EDIT 20107
+#define IDS_SCROLLSHOT_SAVE 20108
+#define IDS_SCROLLSHOT_DISCARD 20109
+#define IDS_SCROLLSHOT_COPY 20110
+#define IDS_SCROLLSHOT_SIZE 20111
+#define IDS_SCROLLSHOT_STATUS_SCROLL 20112
+#define IDS_SCROLLSHOT_STATUS_LOST 20113
+#define IDS_SCROLLSHOT_STATUS_LIMIT 20114
+#define IDS_SCROLLSHOT_STATUS_CAPTURE_FAILED 20115
+#define IDS_SCROLLSHOT_STATUS_DISPLAY_CHANGED 20116
+#define IDS_SCROLLSHOT_STATUS_WHEEL 20117
+#define IDS_SCROLLSHOT_STATUS_STOPPING 20118
+#define IDS_SCROLLSHOT_STATUS_COPY_FAILED 20119
+#define IDS_SCROLLSHOT_STATUS_SAVE_FAILED 20120
+#define IDS_SCROLLSHOT_STATUS_READY 20121
+#define IDS_SCROLLSHOT_START_FAILED 20122
+#define IDS_SCROLLSHOT_UNSUPPORTED 20123
+#define IDS_SCROLLSHOT_PANEL_TITLE 20124
+#define IDS_SCROLLSHOT_PREVIEW_TITLE 20125
+#define IDS_SCROLLSHOT_STATUS_COPYING 20126
+#define IDS_SCROLLSHOT_STATUS_SAVING 20127
+
+#define IDS_LAST 20127

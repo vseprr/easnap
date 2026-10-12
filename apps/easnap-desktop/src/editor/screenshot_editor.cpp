@@ -1,5 +1,6 @@
 // Easnap - screenshot annotation editor implementation.
 #include "editor/screenshot_editor.h"
+#include "strings/strings.h"
 #include "ui/capture_workspace.h"
 #include "ui/native_controls.h"
 #include <commctrl.h>
@@ -39,8 +40,15 @@ constexpr float kCanvasGap = 8.0f;
 constexpr float kMinClientWidth = 460.0f;
 constexpr float kMinClientHeight = kToolbarRowHeight;
 
+/// A picture up to this height is one Direct2D bitmap and one composite pass,
+/// as every screenshot is. A taller document is shown and exported in bands,
+/// which keeps each bitmap within what Direct2D and WIC accept.
+constexpr int kWholeBitmapRows = 8192;
+constexpr int kPreviewBandRows = 4096;
+constexpr int kCompositeBandRows = 2048;
+
 /// Preferred tool island width, clamped to the current monitor.
-constexpr float kIslandWidth = 780.0f;
+constexpr float kIslandWidth = 832.0f;
 constexpr float kIslandGrip = 24.0f;
 
 enum CommandId {
@@ -51,7 +59,12 @@ enum CommandId {
     kCommandSave,
     kCommandCancel,
     kCommandTheme,
+    kCommandScrollshot,
 };
+
+/// Tooltip tool on the island itself: a disabled button receives no mouse
+/// messages, so its reason for being disabled is shown through the parent.
+constexpr UINT_PTR kScrollshotDisabledTip = 0xEA70;
 
 constexpr std::array<D2D1_COLOR_F, 8> kPaletteColors = {{
     {0.898f, 0.243f, 0.259f, 1.0f},  // red
@@ -89,10 +102,6 @@ D2D1_RECT_F NormalizedD2DRect(D2D1_POINT_2F a, D2D1_POINT_2F b) {
     return D2D1::RectF(std::min(a.x, b.x), std::min(a.y, b.y), std::max(a.x, b.x), std::max(a.y, b.y));
 }
 
-D2D1_RECT_F ToD2DRect(const RECT& r) {
-    return D2D1::RectF(static_cast<float>(r.left), static_cast<float>(r.top), static_cast<float>(r.right),
-                       static_cast<float>(r.bottom));
-}
 
 /// Grows `rect` by the non-client frame of `style`. Uses the per-monitor aware
 /// entry point when the running build of Windows offers it (capability probing,
@@ -552,11 +561,13 @@ bool ScreenshotEditor::CreateToolbarControls() {
                 if (item.command == kCommandSave) { style.icon = Icon::Save; name=L"Save (Ctrl+S)"; }
                 if (item.command == kCommandCancel) { style.icon = Icon::Discard; name=L"Discard (Esc)"; }
                 if (item.command == kCommandTheme) { style.icon = Icon::Appearance; name=L"Switch Light / Dark theme"; }
+                if (item.command == kCommandScrollshot) { style.icon = Icon::Scissors; name = strings::Get(IDS_SCROLLSHOT_TOOL); }
                 break;
         }
         const DWORD type = item.kind == ToolbarItem::Kind::Command ? BS_PUSHBUTTON : BS_RADIOBUTTON | BS_PUSHLIKE;
         const bool first = item.identifier == 2000 || item.identifier == 2100 || item.identifier == 2200 ||
-                           item.identifier == 2300 || item.identifier == 2401;
+                           item.identifier == 2300 || item.identifier == 2401 ||
+                           item.identifier == 2400 + kCommandScrollshot;
         const HWND parent=item.kind==ToolbarItem::Kind::Tool || item.kind==ToolbarItem::Kind::Command ? hwnd_ : item.kind==ToolbarItem::Kind::BrushSize ? brush_popup_:context_;
         HWND button = ::CreateWindowExW(0, L"BUTTON", name.c_str(), WS_CHILD | WS_TABSTOP | type | (first ? WS_GROUP : 0),
             0,0,1,1, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(item.identifier)), ::GetModuleHandleW(nullptr), nullptr);
@@ -569,6 +580,14 @@ bool ScreenshotEditor::CreateToolbarControls() {
             info.lpszText = name.data();
             ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
         }
+    }
+    if (tooltip_) {
+        TOOLINFOW info{sizeof(info)};
+        info.uFlags = TTF_SUBCLASS;
+        info.hwnd = hwnd_;
+        info.uId = kScrollshotDisabledTip;
+        info.lpszText = const_cast<wchar_t*>(strings::Get(IDS_SCROLLSHOT_TOOL_FIXED));
+        ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
     }
     SyncToolbarControls();
     return true;
@@ -832,8 +851,11 @@ LRESULT CALLBACK ScreenshotEditor::ToolbarButtonProc(HWND hwnd, UINT message, WP
         if(!self->brush_hover_started_) { self->brush_hover_started_=::GetTickCount64(); }
         ::SetTimer(self->context_,0xEA62,30,nullptr);
     }
+    // Every other control fixes the screenshot on its first press. Cancel,
+    // the theme switch and Scrollshot must not acquire an image.
     if ((message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) &&
-        ::GetDlgCtrlID(hwnd) != 2400 + kCommandCancel && ::GetDlgCtrlID(hwnd) != 2400 + kCommandTheme && !self->FeatureUsed()) { return 0; }
+        ::GetDlgCtrlID(hwnd) != 2400 + kCommandCancel && ::GetDlgCtrlID(hwnd) != 2400 + kCommandTheme &&
+        ::GetDlgCtrlID(hwnd) != 2400 + kCommandScrollshot && !self->FeatureUsed()) { return 0; }
     if (message == WM_KEYDOWN && (wparam == VK_ESCAPE || (::GetKeyState(VK_CONTROL) & 0x8000) != 0)) {
         return self->HandleMessage(self->hwnd_, message, wparam, lparam);
     }
@@ -873,6 +895,18 @@ void ScreenshotEditor::SyncToolbarControls() const {
             case ToolbarItem::Kind::Command:
                 if (item.command == kCommandUndo || item.command == kCommandClear) { enabled = document_.CanUndo(); }
                 if (item.command == kCommandRedo) { enabled = document_.CanRedo(); }
+                if (item.command == kCommandScrollshot) {
+                    // A scrolling capture starts from a provisional frame only.
+                    enabled = !has_image() && ui::CaptureExclusionSupported();
+                    if (tooltip_ && item.shown) {
+                        TOOLINFOW info{sizeof(info)};
+                        info.hwnd = hwnd_;
+                        info.uId = kScrollshotDisabledTip;
+                        info.rect = RECT{static_cast<LONG>(item.rect.left), static_cast<LONG>(item.rect.top),
+                            static_cast<LONG>(item.rect.right), static_cast<LONG>(item.rect.bottom)};
+                        ::SendMessageW(tooltip_, TTM_NEWTOOLRECTW, 0, reinterpret_cast<LPARAM>(&info));
+                    }
+                }
                 break;
         }
         if ((::IsWindowEnabled(button) != FALSE) != enabled) { ::EnableWindow(button, enabled); }
@@ -939,6 +973,13 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         item.label=item.tooltip=entry.name; item.rect=place(kToolButton*s); toolbar_.push_back(item);
     }
     { const auto split=place(kGroupGap*s); main_separators_.push_back({static_cast<LONG>((split.left+split.right)/2),static_cast<LONG>(split.top+8*s),static_cast<LONG>((split.left+split.right)/2+1),static_cast<LONG>(split.bottom-8*s)}); }
+    {
+        // Scrollshot is a different kind of capture, not an annotation tool or
+        // an edit command, so it stands alone between the two groups.
+        ToolbarItem item; item.kind=ToolbarItem::Kind::Command; item.command=kCommandScrollshot; item.identifier=2400+kCommandScrollshot;
+        item.label=item.tooltip=strings::Get(IDS_SCROLLSHOT_TOOL); item.rect=place(kCommandButton*s); toolbar_.push_back(item);
+        const auto split=place(8*s); main_separators_.push_back({static_cast<LONG>((split.left+split.right)/2),static_cast<LONG>(split.top+8*s),static_cast<LONG>((split.left+split.right)/2+1),static_cast<LONG>(split.bottom-8*s)});
+    }
     struct Command { int id; const wchar_t* name; };
     constexpr Command commands[]={{kCommandUndo,L"Undo"},{kCommandRedo,L"Redo"},{kCommandClear,L"Clear annotations"},
         {kCommandTheme,L"Switch theme"},{kCommandSave,L"Save"},{kCommandCancel,L"Discard"},{kCommandCopy,L"Copy to clipboard (Ctrl+C)"}};
@@ -1003,8 +1044,7 @@ void ScreenshotEditor::LayoutClient(int client_width, int client_height) {
     client_height_ = std::max(1, client_height);
     BuildToolbar(static_cast<float>(client_width_));
     toolbar_rect_.right = client_width_;
-    zoom_ = 1.0f;
-    image_rect_ = ToD2DRect(source_bounds_);
+    if (!document_mode_) { ResetFixedView(); }
     SyncToolbarControls();
 }
 
@@ -1039,6 +1079,7 @@ void ScreenshotEditor::ResetSession() {
     redaction_revision_ = UINT64_MAX;
     redaction_.Reset();
     image_bitmap_.Reset();
+    band_top_ = band_rows_ = 0;
 }
 
 void ScreenshotEditor::CreateTextFormats() {
@@ -1055,11 +1096,38 @@ bool ScreenshotEditor::Open(const RECT& screen_region, app::AppSettings* setting
         return false;
     }
     Destroy();
+    BeginSession(screen_region, settings);
+    return CreateWindows(screen_region, owner);
+}
 
-    source_bounds_ = screen_region;
-    region_ = screen_region;
+bool ScreenshotEditor::OpenDocument(platform::BgraImage& image, const RECT& view_area, LONG preferred_left,
+                                    app::AppSettings* settings, HWND owner) {
+    if (image.empty() || platform::IsEmptyRect(view_area)) {
+        return false;
+    }
+    Destroy();
+    const ImageView view = LayoutImageView(image.width, image.height, view_area, preferred_left,
+                                           FitWidthZoom(image.width, view_area), 0.0f, 0.0f);
+    BeginSession(view.viewport, settings);
+    document_mode_ = true;
+    view_area_ = view_area;
+    view_preferred_left_ = preferred_left;
+    // The windows come first: only an editor that opened may take the image.
+    if (!CreateWindows(view.viewport, owner)) {
+        return false;
+    }
+    source_image_ = std::move(image);
+    image = platform::BgraImage{};
+    redaction_revision_ = UINT64_MAX;
+    ApplyView(view);
+    return true;
+}
+
+void ScreenshotEditor::BeginSession(const RECT& frame, app::AppSettings* settings) {
+    source_bounds_ = frame;
+    region_ = frame;
     settings_ = settings;
-    scale_ = platform::MonitorForRect(screen_region).scale();
+    scale_ = platform::MonitorForRect(frame).scale();
     ResetSession();
     closed_reported_ = false;
     tool_ = ToolId::Pointer;
@@ -1068,7 +1136,9 @@ bool ScreenshotEditor::Open(const RECT& screen_region, app::AppSettings* setting
     style_.brush_size = kBrushSizeOptions[1];
     style_.font_size = 16.0f;
     style_.image_scale = scale_;
+}
 
+bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     static bool class_registered = [] {
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(wc);
@@ -1126,7 +1196,7 @@ bool ScreenshotEditor::SetImage(platform::BgraImage image) {
         image.height != platform::RectHeight(region_)) { return false; }
     source_image_ = std::move(image);
     source_bounds_ = region_;
-    image_rect_ = ToD2DRect(source_bounds_);
+    ResetFixedView();
     redaction_revision_ = UINT64_MAX;
     Invalidate();
     return true;
@@ -1182,7 +1252,7 @@ void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
         case WM_LBUTTONDOWN: if (FeatureUsed()) { BeginStroke(point); } break;
         case WM_LBUTTONDBLCLK: {
             if(!FeatureUsed()) { break; }
-            const auto hit=document_.HitTest(ToImagePoint(point));
+            const auto hit=document_.HitTest(ToImagePoint(point),5.0f/zoom_);
             if(hit && (document_.annotations()[*hit].tool==ToolId::Text || document_.annotations()[*hit].tool==ToolId::Tag)) {
                 CancelStroke(); StartTextEditing(hit,point);
                 if(text_edit_) {
@@ -1249,6 +1319,7 @@ void ScreenshotEditor::Destroy() {
     }
     if (toolbar_font_) { ::DeleteObject(toolbar_font_); toolbar_font_ = nullptr; }
     source_image_ = platform::BgraImage{};
+    document_mode_ = false;
     visible_ = false;
 }
 
@@ -1259,9 +1330,71 @@ void ScreenshotEditor::Invalidate() const {
 
 void ScreenshotEditor::InvalidateImage(const RECT& source_damage) const {
     if (!has_image() || !callbacks_.on_image_invalidated) { return; }
-    RECT desktop_damage = source_damage;
-    ::OffsetRect(&desktop_damage, source_bounds_.left, source_bounds_.top);
+    // Image pixels to desktop pixels, rounded outwards.
+    const RECT desktop_damage{
+        static_cast<LONG>(std::floor(view_origin_.x + static_cast<float>(source_damage.left) * zoom_)),
+        static_cast<LONG>(std::floor(view_origin_.y + static_cast<float>(source_damage.top) * zoom_)),
+        static_cast<LONG>(std::ceil(view_origin_.x + static_cast<float>(source_damage.right) * zoom_)),
+        static_cast<LONG>(std::ceil(view_origin_.y + static_cast<float>(source_damage.bottom) * zoom_))};
     callbacks_.on_image_invalidated(platform::IntersectRects(desktop_damage, region_));
+}
+
+void ScreenshotEditor::ResetFixedView() {
+    zoom_ = 1.0f;
+    view_origin_ = D2D1::Point2F(static_cast<float>(source_bounds_.left), static_cast<float>(source_bounds_.top));
+    view_ = ImageView{};
+    view_.viewport = source_bounds_;
+    view_.image_width = source_image_.width;
+    view_.image_height = source_image_.height;
+}
+
+void ScreenshotEditor::ApplyView(const ImageView& view, bool notify) {
+    const bool moved = ::EqualRect(&view.viewport, &region_) == FALSE;
+    view_ = view;
+    zoom_ = view.zoom;
+    view_origin_ = view.origin();
+    region_ = view.viewport;
+    if (editing_text_) { LayoutTextEditor(); }
+    // The workspace moves its image plane before anything is repainted into it.
+    if (notify && callbacks_.on_view_changed) { callbacks_.on_view_changed(view_); }
+    if (moved && hwnd_ && !island_user_positioned_) { PlaceContext(true); }
+    Invalidate();
+}
+
+void ScreenshotEditor::ScrollDocument(float delta_x, float delta_y) {
+    if (!document_mode_ || !has_image()) { return; }
+    const ImageView next = LayoutImageView(source_image_.width, source_image_.height, view_area_, view_preferred_left_,
+                                           zoom_, view_.scroll_x + delta_x, view_.scroll_y + delta_y);
+    if (next.scroll_x != view_.scroll_x || next.scroll_y != view_.scroll_y) { ApplyView(next); }
+}
+
+void ScreenshotEditor::ZoomDocument(float zoom, POINT anchor) {
+    if (!document_mode_ || !has_image()) { return; }
+    // Zoom around a point of the picture: the pointer when it is over the
+    // viewport, otherwise the viewport's centre.
+    if (::PtInRect(&region_, anchor) == FALSE) {
+        anchor = POINT{(region_.left + region_.right) / 2, (region_.top + region_.bottom) / 2};
+    }
+    const ImageView next = ZoomImageView(view_, view_area_, view_preferred_left_, zoom, anchor);
+    if (next.zoom != view_.zoom) { ApplyView(next); }
+}
+
+void ScreenshotEditor::Wheel(int delta, bool control, bool shift, POINT desktop_point) {
+    if (!document_mode_ || !visible_ || !has_image() || dragging_ || transforming_ || delta == 0) { return; }
+    if (control) {
+        ZoomDocument(StepZoom(zoom_, delta > 0 ? 1 : -1), desktop_point);
+        return;
+    }
+    // One wheel notch moves 96 DIP of the screen, whatever the scale.
+    const float step = 96.0f * scale_ / zoom_ * (static_cast<float>(delta) / static_cast<float>(WHEEL_DELTA));
+    if (shift) { ScrollDocument(-step, 0.0f); }
+    else { ScrollDocument(0.0f, -step); }
+}
+
+platform::BgraImage ScreenshotEditor::TakeImage() {
+    platform::BgraImage image = std::move(source_image_);
+    source_image_ = platform::BgraImage{};
+    return image;
 }
 
 RECT ScreenshotEditor::PendingDamage() const {
@@ -1537,6 +1670,18 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             CancelStroke();
             return 0;
 
+        case WM_MOUSEWHEEL:
+        case WM_MOUSEHWHEEL: {
+            // An island that holds the focus receives the wheel where Windows
+            // routes it by focus. It belongs to the document all the same.
+            const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+            const WORD keys = GET_KEYSTATE_WPARAM(wparam);
+            const bool horizontal = message == WM_MOUSEHWHEEL;
+            Wheel(horizontal ? -delta : delta, (keys & MK_CONTROL) != 0, horizontal || (keys & MK_SHIFT) != 0,
+                  POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)});
+            return 0;
+        }
+
         case WM_CHAR:
             OnCharacter(static_cast<wchar_t>(wparam));
             return 0;
@@ -1559,6 +1704,36 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             if (wparam == VK_TAB) { ::SetFocus(::GetDlgItem(hwnd_, 2000)); return 0; }
             const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
             const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            if (document_mode_) {
+                // A document larger than its viewport is moved and scaled from
+                // the keyboard as well as with the wheel.
+                const float page = static_cast<float>(platform::RectHeight(region_)) / zoom_ * 0.9f;
+                const POINT centre{(region_.left + region_.right) / 2, (region_.top + region_.bottom) / 2};
+                switch (wparam) {
+                    case VK_PRIOR: ScrollDocument(0.0f, -page); return 0;
+                    case VK_NEXT: ScrollDocument(0.0f, page); return 0;
+                    case VK_HOME: ScrollDocument(0.0f, -static_cast<float>(source_image_.height)); return 0;
+                    case VK_END: ScrollDocument(0.0f, static_cast<float>(source_image_.height)); return 0;
+                    case VK_UP: ScrollDocument(0.0f, -48.0f * scale_ / zoom_); return 0;
+                    case VK_DOWN: ScrollDocument(0.0f, 48.0f * scale_ / zoom_); return 0;
+                    case VK_LEFT: ScrollDocument(-48.0f * scale_ / zoom_, 0.0f); return 0;
+                    case VK_RIGHT: ScrollDocument(48.0f * scale_ / zoom_, 0.0f); return 0;
+                    case VK_OEM_PLUS: case VK_ADD:
+                        if (control) { ZoomDocument(StepZoom(zoom_, 1), centre); return 0; }
+                        break;
+                    case VK_OEM_MINUS: case VK_SUBTRACT:
+                        if (control) { ZoomDocument(StepZoom(zoom_, -1), centre); return 0; }
+                        break;
+                    case '0': case VK_NUMPAD0:
+                        if (control) { ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre); return 0; }
+                        break;
+                    case '1': case VK_NUMPAD1:
+                        if (control) { ZoomDocument(1.0f, centre); return 0; }
+                        break;
+                    default:
+                        break;
+                }
+            }
             if (control) {
                 switch (wparam) {
                     case 'Z': {
@@ -1621,10 +1796,10 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
 // Interaction
 // ---------------------------------------------------------------------------
 
-D2D1_POINT_2F ScreenshotEditor::ToImagePoint(POINT client_pt) const {
+D2D1_POINT_2F ScreenshotEditor::ToImagePoint(POINT desktop_pt) const {
     const float zoom = zoom_ > 0.0f ? zoom_ : 1.0f;
-    return D2D1::Point2F((static_cast<float>(client_pt.x) - image_rect_.left) / zoom,
-                         (static_cast<float>(client_pt.y) - image_rect_.top) / zoom);
+    return D2D1::Point2F((static_cast<float>(desktop_pt.x) - view_origin_.x) / zoom,
+                         (static_cast<float>(desktop_pt.y) - view_origin_.y) / zoom);
 }
 
 const ScreenshotEditor::ToolbarItem* ScreenshotEditor::HitTestToolbar(POINT client_pt) const {
@@ -1643,6 +1818,10 @@ const ScreenshotEditor::ToolbarItem* ScreenshotEditor::HitTestToolbar(POINT clie
 
 void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
     if(item.kind==ToolbarItem::Kind::Command && item.command==kCommandCancel) { Close(false); return; }
+    if(item.kind==ToolbarItem::Kind::Command && item.command==kCommandScrollshot) {
+        if(!has_image() && callbacks_.on_scrollshot) { callbacks_.on_scrollshot(); }
+        return;
+    }
     if(item.kind==ToolbarItem::Kind::Command && item.command==kCommandTheme) {
         const auto value=ui::theme::Preference()==app::AppearanceTheme::Light ? app::AppearanceTheme::Dark:app::AppearanceTheme::Light;
         if(callbacks_.on_appearance) { callbacks_.on_appearance(value); }
@@ -1696,17 +1875,17 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
 bool ScreenshotEditor::WantsPointer(POINT point) const {
     if(editing_text_ || transforming_ || dragging_ || selected_) { return true; }
     const auto p=ToImagePoint(point);
-    return tool_!=ToolId::Pointer || document_.HitTest(p).has_value();
+    return tool_!=ToolId::Pointer || document_.HitTest(p,5.0f/zoom_).has_value();
 }
 HCURSOR ScreenshotEditor::ImageCursor(POINT point) const {
     const auto p=ToImagePoint(point);
     if(selected_ && *selected_<document_.annotations().size()) {
         const auto handles=document_.annotations()[*selected_].Handles();
-        for(size_t i=0;i<handles.size();++i) if(std::hypot(p.x-handles[i].x,p.y-handles[i].y)<=9*scale_) {
+        for(size_t i=0;i<handles.size();++i) if(std::hypot(p.x-handles[i].x,p.y-handles[i].y)<=9*scale_/zoom_) {
             return ::LoadCursorW(nullptr,handles.size()==2 ? IDC_CROSS : i%2==0 ? IDC_SIZENWSE:IDC_SIZENESW);
         }
     }
-    const bool movable=document_.HitTest(p).has_value();
+    const bool movable=document_.HitTest(p,5.0f/zoom_).has_value();
     return ::LoadCursorW(nullptr,movable ? IDC_SIZEALL : tool_==ToolId::Pointer ? IDC_ARROW : tool_==ToolId::Text || tool_==ToolId::Tag ? IDC_IBEAM:IDC_CROSS);
 }
 void ScreenshotEditor::BeginStroke(POINT point) {
@@ -1714,7 +1893,7 @@ void ScreenshotEditor::BeginStroke(POINT point) {
     if(editing_text_) {
         // Repeated clicks on the active object keep its editing session alive.
         // Only an actual outside click commits; that click never creates text.
-        if(selected_ && document_.annotations()[*selected_].HitTest(ToImagePoint(point))) {
+        if(selected_ && document_.annotations()[*selected_].HitTest(ToImagePoint(point),5.0f/zoom_)) {
             if(text_edit_) {
                 POINT local=point; ::ScreenToClient(text_edit_,&local);
                 ::SendMessageW(text_edit_,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(local.x,local.y));
@@ -1724,7 +1903,7 @@ void ScreenshotEditor::BeginStroke(POINT point) {
         }
         CommitPendingText(); Select({});
         // Commit can remove an empty annotation and shift later indices.
-        const auto hit=document_.HitTest(ToImagePoint(point));
+        const auto hit=document_.HitTest(ToImagePoint(point),5.0f/zoom_);
         if(hit && (document_.annotations()[*hit].tool==ToolId::Text || document_.annotations()[*hit].tool==ToolId::Tag)) {
             StartTextEditing(hit,point);
         }
@@ -1735,13 +1914,13 @@ void ScreenshotEditor::BeginStroke(POINT point) {
     transform_handle_=-1;
     if(selected_ && *selected_<document_.annotations().size()) {
         const auto handles=document_.annotations()[*selected_].Handles();
-        for(size_t i=0;i<handles.size();++i) if(std::hypot(p.x-handles[i].x,p.y-handles[i].y)<=9*scale_) { transform_handle_=static_cast<int>(i); break; }
+        for(size_t i=0;i<handles.size();++i) if(std::hypot(p.x-handles[i].x,p.y-handles[i].y)<=9*scale_/zoom_) { transform_handle_=static_cast<int>(i); break; }
     }
     // Hover-hit objects are selectable and movable with every creation tool.
     // Handles appear only after an explicit selection click.
     std::optional<size_t> hit;
     if(transform_handle_>=0) { hit=selected_; }
-    else { hit=document_.HitTest(p); }
+    else { hit=document_.HitTest(p,5.0f/zoom_); }
     if(hit) {
         Select(hit); original_=document_.annotations()[*hit]; drag_origin_=p;
         transforming_=true; context_owns_transaction_=false; document_.BeginTransaction(); return;
@@ -1852,27 +2031,30 @@ void ScreenshotEditor::LayoutTextEditor() {
     if(!text_host_ || !text_edit_ || !selected_) { return; }
     pending_=document_.annotations()[*selected_];
     const auto box=pending_.bounds(); const float em=pending_.FontPixels();
-    if(!text_font_ || text_font_pixels_!=em) {
-        HFONT next=ui::theme::CreateUiFont(em,1,false);
-        if(next) { ::SendMessageW(text_edit_,WM_SETFONT,reinterpret_cast<WPARAM>(next),FALSE); if(text_font_) { ::DeleteObject(text_font_); } text_font_=next; text_font_pixels_=em; }
+    // The native input follows the scale the text is shown at.
+    const float shown_em=em*zoom_;
+    if(!text_font_ || text_font_pixels_!=shown_em) {
+        HFONT next=ui::theme::CreateUiFont(shown_em,1,false);
+        if(next) { ::SendMessageW(text_edit_,WM_SETFONT,reinterpret_cast<WPARAM>(next),FALSE); if(text_font_) { ::DeleteObject(text_font_); } text_font_=next; text_font_pixels_=shown_em; }
     }
     if(reinterpret_cast<HFONT>(::SendMessageW(text_edit_,WM_GETFONT,0,0))!=text_font_) {
         ::SendMessageW(text_edit_,WM_SETFONT,reinterpret_cast<WPARAM>(text_font_),FALSE);
     }
     const LONG pad=ui::theme::Scaled(5,scale_);
-    const LONG x=source_bounds_.left+static_cast<LONG>(std::floor(box.left))-pad,y=source_bounds_.top+static_cast<LONG>(std::floor(box.top))-pad;
-    const LONG w=std::max(2*pad+8L,static_cast<LONG>(std::ceil(box.right-box.left))+2*pad);
-    const LONG h=std::max(2*pad+8L,static_cast<LONG>(std::ceil(box.bottom-box.top))+2*pad);
+    const LONG x=static_cast<LONG>(view_origin_.x)+static_cast<LONG>(std::floor(box.left*zoom_))-pad;
+    const LONG y=static_cast<LONG>(view_origin_.y)+static_cast<LONG>(std::floor(box.top*zoom_))-pad;
+    const LONG w=std::max(2*pad+8L,static_cast<LONG>(std::ceil((box.right-box.left)*zoom_))+2*pad);
+    const LONG h=std::max(2*pad+8L,static_cast<LONG>(std::ceil((box.bottom-box.top)*zoom_))+2*pad);
     ::SetWindowPos(text_host_,HWND_TOPMOST,x,y,w,h,SWP_NOACTIVATE);
     ::MoveWindow(text_edit_,0,0,w,h,FALSE);
     // The input keeps its full layout/caret coordinates, but nothing (including
     // its selection frame) may paint beyond the capture canvas.
-    RECT visible=platform::IntersectRects({x,y,x+w,y+h},source_bounds_);
+    RECT visible=platform::IntersectRects({x,y,x+w,y+h},document_mode_ ? region_ : source_bounds_);
     ::OffsetRect(&visible,-x,-y);
     HRGN clip=::CreateRectRgn(visible.left,visible.top,visible.right,visible.bottom);
     if(clip && !::SetWindowRgn(text_host_,clip,FALSE)) { ::DeleteObject(clip); }
     const float inset=pending_.tool==ToolId::Tag ? em*0.45f : pending_.style.text_mode==TextMode::Fill ? em*0.25f : pending_.style.text_mode==TextMode::Outline ? em*0.075f:0;
-    RECT format{pad+static_cast<LONG>(inset+(pending_.tool==ToolId::Tag ? em*0.9f:0)),pad+static_cast<LONG>(inset),32760,32760};
+    RECT format{pad+static_cast<LONG>((inset+(pending_.tool==ToolId::Tag ? em*0.9f:0))*zoom_),pad+static_cast<LONG>(inset*zoom_),32760,32760};
     ::SendMessageW(text_edit_,EM_SETRECTNP,0,reinterpret_cast<LPARAM>(&format));
     ::InvalidateRect(text_edit_,nullptr,FALSE);
 
@@ -1965,7 +2147,7 @@ LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd,UINT message,WPARAM wp
             float x{},y{}; DWRITE_HIT_TEST_METRICS metrics{};
             if(layout && SUCCEEDED(layout->HitTestTextPosition(start,FALSE,&x,&y,&metrics))) {
                 RECT format{}; ::SendMessageW(hwnd,EM_GETRECT,0,reinterpret_cast<LPARAM>(&format));
-                ::SetCaretPos(format.left+static_cast<int>(std::lround(x)),format.top+static_cast<int>(std::lround(y)));
+                ::SetCaretPos(format.left+static_cast<int>(std::lround(x*self->zoom_)),format.top+static_cast<int>(std::lround(y*self->zoom_)));
             }
         }
     }
@@ -1978,11 +2160,12 @@ void ScreenshotEditor::PaintTextEditor(HDC dc) {
     if(start==end) { return; }
     const auto& a=document_.annotations()[*selected_]; auto layout=TextLayout(a); if(!layout) { return; }
     const float em=a.FontPixels(); const float inset=a.tool==ToolId::Tag ? em*0.45f : a.style.text_mode==TextMode::Fill ? em*0.25f : a.style.text_mode==TextMode::Outline ? em*0.075f:0;
-    const float x=source_bounds_.left-bounds.left+a.points.front().x+inset+(a.tool==ToolId::Tag ? em*0.9f:0), y=source_bounds_.top-bounds.top+a.points.front().y+inset;
+    // Layout units are image pixels; the host's pixels are scaled by the view.
+    const float x=(view_origin_.x-bounds.left)/zoom_+a.points.front().x+inset+(a.tool==ToolId::Tag ? em*0.9f:0), y=(view_origin_.y-bounds.top)/zoom_+a.points.front().y+inset;
     UINT32 count{}; layout->HitTestTextRange(start,end-start,x,y,nullptr,0,&count);
     std::vector<DWRITE_HIT_TEST_METRICS> ranges(count);
     if(SUCCEEDED(layout->HitTestTextRange(start,end-start,x,y,ranges.data(),count,&count))) {
-        for(const auto& r:ranges) { RECT area{static_cast<LONG>(r.left),static_cast<LONG>(r.top),static_cast<LONG>(std::ceil(r.left+r.width)),static_cast<LONG>(std::ceil(r.top+r.height))}; ::InvertRect(dc,&area); }
+        for(const auto& r:ranges) { RECT area{static_cast<LONG>(r.left*zoom_),static_cast<LONG>(r.top*zoom_),static_cast<LONG>(std::ceil((r.left+r.width)*zoom_)),static_cast<LONG>(std::ceil((r.top+r.height)*zoom_))}; ::InvertRect(dc,&area); }
     }
 }
 void ScreenshotEditor::CommitPendingText() {
@@ -2001,11 +2184,13 @@ void ScreenshotEditor::OnCharacter(wchar_t character) {
 void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target,ID2D1SolidColorBrush* brush) const {
     if(!selected_ || *selected_>=document_.annotations().size()) { return; }
     const auto& a=document_.annotations()[*selected_]; if(a.tool==ToolId::Watermark || a.points.empty()) { return; }
-    brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus)); const float width=1.2f*scale_;
+    // Frame and handles keep their size on screen at every scale of the view.
+    const float unit=scale_/zoom_;
+    brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus)); const float width=1.2f*unit;
     const auto box=NormalizedD2DRect(a.points.front(),a.points.back());
     if(a.tool==ToolId::Text || a.tool==ToolId::Tag) {
-        auto r=a.bounds(); const float pad=3*scale_; r.left-=pad; r.top-=pad; r.right+=pad; r.bottom+=pad;
-        target->DrawRoundedRectangle(D2D1::RoundedRect(r,5*scale_,5*scale_),brush,width);
+        auto r=a.bounds(); const float pad=3*unit; r.left-=pad; r.top-=pad; r.right+=pad; r.bottom+=pad;
+        target->DrawRoundedRectangle(D2D1::RoundedRect(r,5*unit,5*unit),brush,width);
     } else if(a.tool==ToolId::Ellipse || (a.tool==ToolId::Spotlight && a.style.shape==SpotlightShape::Ellipse)) {
         target->DrawEllipse(D2D1::Ellipse({(box.left+box.right)/2,(box.top+box.bottom)/2},(box.right-box.left)/2,(box.bottom-box.top)/2),brush,width);
     } else if(a.tool==ToolId::Pen || a.tool==ToolId::Line || a.tool==ToolId::Arrow) {
@@ -2018,8 +2203,8 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target,ID2D1SolidColorBr
         target->DrawRectangle(r,brush,width);
     }
     for(auto point:a.Handles()) {
-        brush->SetColor(D2D1::ColorF(D2D1::ColorF::White)); target->FillEllipse(D2D1::Ellipse(point,4.5f*scale_,4.5f*scale_),brush);
-        brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus)); target->DrawEllipse(D2D1::Ellipse(point,4.5f*scale_,4.5f*scale_),brush,1.5f*scale_);
+        brush->SetColor(D2D1::ColorF(D2D1::ColorF::White)); target->FillEllipse(D2D1::Ellipse(point,4.5f*unit,4.5f*unit),brush);
+        brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus)); target->DrawEllipse(D2D1::Ellipse(point,4.5f*unit,4.5f*unit),brush,1.5f*unit);
     }
 }
 
@@ -2051,8 +2236,53 @@ void ScreenshotEditor::RebuildRedactedBase() {
     const RECT changed=redaction_.Update(source_image_,std::move(effects));
     if(::IsRectEmpty(&changed) || !image_bitmap_) { return; }
     const auto& image=redaction_.image();
-    const D2D1_RECT_U target{static_cast<UINT32>(changed.left),static_cast<UINT32>(changed.top),static_cast<UINT32>(changed.right),static_cast<UINT32>(changed.bottom)};
-    if(FAILED(image_bitmap_->CopyFromMemory(&target,image.row(changed.top)+changed.left,static_cast<UINT32>(image.stride_bytes())))) { image_bitmap_.Reset(); }
+    // The bitmap holds rows [band_top_, band_top_ + band_rows_): the whole
+    // picture for a screenshot, the band on show for a tall document.
+    const LONG top=std::max<LONG>(changed.top,band_top_),bottom=std::min<LONG>(changed.bottom,band_top_+band_rows_);
+    if(bottom<=top) { return; }
+    const D2D1_RECT_U target{static_cast<UINT32>(changed.left),static_cast<UINT32>(top-band_top_),static_cast<UINT32>(changed.right),static_cast<UINT32>(bottom-band_top_)};
+    if(FAILED(image_bitmap_->CopyFromMemory(&target,image.row(top)+changed.left,static_cast<UINT32>(image.stride_bytes())))) { image_bitmap_.Reset(); band_rows_=0; }
+}
+
+int ScreenshotEditor::EnsureBaseRows(int first, int end) {
+    const auto& image = redaction_.image();
+    if (!image_target_ || image.empty() || first < 0 || first >= image.height || end <= first) { return 0; }
+    end = std::min(end, image.height);
+    const int limit = static_cast<int>(std::min<UINT32>(image_target_->GetMaximumBitmapSize(), 16384u));
+    if (image.height <= std::min(kWholeBitmapRows, limit)) {
+        if (!image_bitmap_) {
+            image_bitmap_ = platform::CreateD2DBitmapForTarget(image_target_.Get(), image);
+            band_top_ = 0;
+            band_rows_ = image_bitmap_ ? image.height : 0;
+        }
+        return image_bitmap_ ? end - first : 0;
+    }
+    if (image_bitmap_ && first >= band_top_ && first < band_top_ + band_rows_) {
+        return std::min(end, band_top_ + band_rows_) - first;
+    }
+    // Centre the band on what is wanted, so scrolling a little reuses it.
+    const int rows = std::min({kPreviewBandRows, limit, image.height});
+    const int top = std::clamp(first - (rows - std::min(end - first, rows)) / 2, 0, image.height - rows);
+    if (!image_bitmap_) {
+        const D2D1_BITMAP_PROPERTIES properties = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.0f, 96.0f);
+        if (FAILED(image_target_->CreateBitmap(D2D1::SizeU(static_cast<UINT32>(image.width), static_cast<UINT32>(rows)),
+                                               properties, &image_bitmap_))) {
+            image_bitmap_.Reset();
+        }
+    } else {
+        // Draw calls already issued still refer to the rows about to be replaced.
+        image_target_->Flush();
+    }
+    if (!image_bitmap_ ||
+        FAILED(image_bitmap_->CopyFromMemory(nullptr, image.row(top), static_cast<UINT32>(image.stride_bytes())))) {
+        image_bitmap_.Reset();
+        band_rows_ = 0;
+        return 0;
+    }
+    band_top_ = top;
+    band_rows_ = rows;
+    return std::min(end, band_top_ + band_rows_) - first;
 }
 
 void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repaint) {
@@ -2068,13 +2298,38 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
     RECT client{0, 0, platform::RectWidth(bounds), platform::RectHeight(bounds)};
     if (repaint) { client = platform::IntersectRects(client, *repaint); }
     if (platform::IsEmptyRect(client) || FAILED(image_target_->BindDC(dc, &client))) { return; }
-    if (!image_bitmap_) { image_bitmap_ = platform::CreateD2DBitmapForTarget(image_target_.Get(), redaction_.image()); }
-    if (!image_bitmap_ || !image_brush_) { return; }
+    // Where image pixel (0, 0) falls in this paint, and which image rows the
+    // paint can show. A screenshot shows all of its rows.
+    const float origin_x = view_origin_.x - static_cast<float>(bounds.left + client.left);
+    const float origin_y = view_origin_.y - static_cast<float>(bounds.top + client.top);
+    int first_row = 0;
+    int end_row = source_image_.height;
+    if (document_mode_) {
+        first_row = std::clamp(static_cast<int>(std::floor(-origin_y / zoom_)) - 1, 0, source_image_.height);
+        end_row = std::clamp(static_cast<int>(std::ceil((static_cast<float>(platform::RectHeight(client)) - origin_y) / zoom_)) + 1,
+                             first_row, source_image_.height);
+    }
+    if (EnsureBaseRows(first_row, std::max(end_row, first_row + 1)) <= 0 || !image_bitmap_ || !image_brush_) { return; }
     image_target_->BeginDraw();
-    image_target_->SetTransform(D2D1::Matrix3x2F::Translation(
-        static_cast<float>(source_bounds_.left - bounds.left - client.left), static_cast<float>(source_bounds_.top - bounds.top - client.top)));
+    const D2D1::Matrix3x2F translation = D2D1::Matrix3x2F::Translation(origin_x, origin_y);
+    image_target_->SetTransform(zoom_ == 1.0f ? translation : D2D1::Matrix3x2F::Scale(zoom_, zoom_) * translation);
     image_target_->PushAxisAlignedClip(D2D1::RectF(0,0,static_cast<float>(source_image_.width),static_cast<float>(source_image_.height)),D2D1_ANTIALIAS_MODE_ALIASED);
-    image_target_->DrawBitmap(image_bitmap_.Get());
+    if (band_top_ == 0 && band_rows_ == source_image_.height && zoom_ == 1.0f) {
+        image_target_->DrawBitmap(image_bitmap_.Get());
+    } else {
+        // Reduced pictures are filtered; enlarged ones keep their pixels sharp.
+        const auto filter = zoom_ > 1.0f ? D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+                                         : D2D1_BITMAP_INTERPOLATION_MODE_LINEAR;
+        const float width = static_cast<float>(source_image_.width);
+        for (int row = first_row; row < end_row;) {
+            const int covered = EnsureBaseRows(row, end_row);
+            if (covered <= 0 || !image_bitmap_) { break; }
+            image_target_->DrawBitmap(image_bitmap_.Get(),
+                D2D1::RectF(0, static_cast<float>(row), width, static_cast<float>(row + covered)), 1.0f, filter,
+                D2D1::RectF(0, static_cast<float>(row - band_top_), width, static_cast<float>(row - band_top_ + covered)));
+            row += covered;
+        }
+    }
     for (const auto& annotation : document_.annotations()) {
         DrawAnnotation(image_target_.Get(), annotation, image_brush_.Get(), false);
     }
@@ -2085,6 +2340,7 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
     image_target_->PopAxisAlignedClip();
     if (FAILED(image_target_->EndDraw())) {
         image_bitmap_.Reset(); image_brush_.Reset(); image_target_.Reset();
+        band_rows_ = 0;
     }
 }
 
@@ -2106,79 +2362,94 @@ platform::BgraImage ScreenshotEditor::Composite() {
 
     platform::BgraImage output;
     auto& graphics = platform::GraphicsEnvironment::Get();
-    if (!graphics.EnsureInitialized() || redaction_.image().empty()) {
+    const platform::BgraImage& base_image = redaction_.image();
+    if (!graphics.EnsureInitialized() || base_image.empty()) {
         return output;
     }
-    platform::BgraImage cropped;
-    const RECT crop{region_.left - source_bounds_.left, region_.top - source_bounds_.top,
-                    region_.right - source_bounds_.left, region_.bottom - source_bounds_.top};
-    if (!platform::CropImage(redaction_.image(), crop, cropped)) { return {}; }
+    // Once the pixels exist the frame cannot move, so the export is always the
+    // whole image: the captured region, or the stitched document.
     if (document_.annotations().empty()) {
-        return cropped;  // Nothing to composite.
+        return base_image;  // Nothing to composite.
     }
 
-    // Always the captured resolution - never the window or preview size.
-    const UINT width = static_cast<UINT>(cropped.width);
-    const UINT height = static_cast<UINT>(cropped.height);
-    ComPtr<IWICBitmap> wic_bitmap;
-    HRESULT hr = graphics.wic_factory()->CreateBitmap(width, height, GUID_WICPixelFormat32bppPBGRA,
-                                                      WICBitmapCacheOnLoad, &wic_bitmap);
-    if (FAILED(hr)) {
-        platform::LogHresult(L"WIC CreateBitmap(composite)", hr);
-        return {};
-    }
-
+    // Always the captured resolution - never the window or preview size. A
+    // screenshot is one pass; a tall document is composited in bands, each
+    // with the same annotation list shifted to its rows.
+    const int width = base_image.width;
+    const int height = base_image.height;
+    const int band_rows = height <= kWholeBitmapRows ? height : kCompositeBandRows;
     const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
         D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
         96.0f, 96.0f);
-    ComPtr<ID2D1RenderTarget> render_target;
-    hr = graphics.d2d_factory()->CreateWicBitmapRenderTarget(wic_bitmap.Get(), properties, &render_target);
-    if (FAILED(hr)) {
-        platform::LogHresult(L"CreateWicBitmapRenderTarget", hr);
-        return {};
-    }
+    const D2D1_BITMAP_PROPERTIES base_properties =
+        D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.0f, 96.0f);
+    output.Reset(width, height);
+    for (int top = 0; top < height; top += band_rows) {
+        const int rows = std::min(band_rows, height - top);
+        ComPtr<IWICBitmap> wic_bitmap;
+        HRESULT hr = graphics.wic_factory()->CreateBitmap(static_cast<UINT>(width), static_cast<UINT>(rows),
+                                                          GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &wic_bitmap);
+        if (FAILED(hr)) {
+            platform::LogHresult(L"WIC CreateBitmap(composite)", hr);
+            return {};
+        }
+        ComPtr<ID2D1RenderTarget> render_target;
+        hr = graphics.d2d_factory()->CreateWicBitmapRenderTarget(wic_bitmap.Get(), properties, &render_target);
+        if (FAILED(hr)) {
+            platform::LogHresult(L"CreateWicBitmapRenderTarget", hr);
+            return {};
+        }
 
-    ComPtr<ID2D1Bitmap> base = platform::CreateD2DBitmapForTarget(render_target.Get(), cropped);
-    ComPtr<ID2D1SolidColorBrush> brush;
-    render_target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush);
+        ComPtr<ID2D1Bitmap> base;
+        hr = render_target->CreateBitmap(D2D1::SizeU(static_cast<UINT32>(width), static_cast<UINT32>(rows)),
+                                         base_image.row(top), static_cast<UINT32>(base_image.stride_bytes()),
+                                         base_properties, &base);
+        if (FAILED(hr)) {
+            platform::LogHresult(L"ID2D1RenderTarget::CreateBitmap", hr);
+        }
+        ComPtr<ID2D1SolidColorBrush> brush;
+        render_target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush);
+        if (!base || !brush) { return {}; }
 
-    if (!base || !brush) { return {}; }
-    render_target->BeginDraw();
-    render_target->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f));
-    if (base != nullptr) {
+        render_target->BeginDraw();
+        render_target->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f));
         render_target->DrawBitmap(base.Get(),
-                                  D2D1::RectF(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)));
-    }
-    render_target->SetTransform(D2D1::Matrix3x2F::Translation(-static_cast<float>(crop.left), -static_cast<float>(crop.top)));
-    for (const Annotation& annotation : document_.annotations()) {
-        DrawAnnotation(render_target.Get(), annotation, brush.Get(), false);
-    }
-    hr = render_target->EndDraw();
-    if (FAILED(hr)) {
-        platform::LogHresult(L"Composite EndDraw", hr);
-        return {};
-    }
+                                  D2D1::RectF(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(rows)));
+        render_target->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, -static_cast<float>(top)));
+        for (const Annotation& annotation : document_.annotations()) {
+            DrawAnnotation(render_target.Get(), annotation, brush.Get(), false);
+        }
+        hr = render_target->EndDraw();
+        if (FAILED(hr)) {
+            platform::LogHresult(L"Composite EndDraw", hr);
+            return {};
+        }
 
-    WICRect lock_rect{0, 0, static_cast<INT>(width), static_cast<INT>(height)};
-    ComPtr<IWICBitmapLock> lock;
-    hr = wic_bitmap->Lock(&lock_rect, WICBitmapLockRead, &lock);
-    if (FAILED(hr)) {
-        platform::LogHresult(L"IWICBitmap::Lock", hr);
-        return {};
-    }
-    UINT stride = 0;
-    UINT buffer_size = 0;
-    BYTE* data = nullptr;
-    if (FAILED(lock->GetStride(&stride)) || FAILED(lock->GetDataPointer(&buffer_size, &data)) || data == nullptr) {
-        return {};
-    }
-
-    output.Reset(static_cast<int>(width), static_cast<int>(height));
-    for (int y = 0; y < output.height; ++y) {
-        std::memcpy(output.row(y), data + static_cast<size_t>(y) * stride, output.stride_bytes());
+        WICRect lock_rect{0, 0, static_cast<INT>(width), static_cast<INT>(rows)};
+        ComPtr<IWICBitmapLock> lock;
+        hr = wic_bitmap->Lock(&lock_rect, WICBitmapLockRead, &lock);
+        if (FAILED(hr)) {
+            platform::LogHresult(L"IWICBitmap::Lock", hr);
+            return {};
+        }
+        UINT stride = 0;
+        UINT buffer_size = 0;
+        BYTE* data = nullptr;
+        if (FAILED(lock->GetStride(&stride)) || FAILED(lock->GetDataPointer(&buffer_size, &data)) || data == nullptr) {
+            return {};
+        }
+        for (int y = 0; y < rows; ++y) {
+            std::memcpy(output.row(top + y), data + static_cast<size_t>(y) * stride, output.stride_bytes());
+        }
     }
     output.MakeOpaque();
     return output;
+}
+platform::BgraImage ScreenshotEditor::CompositeCommitted() {
+    completing_ = true;
+    CommitPendingText();
+    completing_ = false;
+    return Composite();
 }
 
 bool ScreenshotEditor::CopyToClipboard() {

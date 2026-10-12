@@ -38,7 +38,7 @@ void TestIdentityAlwaysLegal() {
 }
 
 void TestSessionEntryAndCancellation() {
-    CHECK(easnap::app::kSessionTransitionCount == 22);
+    CHECK(easnap::app::kSessionTransitionCount == 35);
     CHECK(IsSessionTransitionLegal(SessionState::Idle, SessionState::RegionSelecting));
     CHECK(IsSessionTransitionLegal(SessionState::RegionSelecting, SessionState::Idle));
     CHECK(!IsSessionTransitionLegal(SessionState::Idle, SessionState::RecordingActive));
@@ -74,6 +74,41 @@ void TestRecordingBranch() {
     CHECK(!IsSessionTransitionLegal(SessionState::RecordingPaused, SessionState::Idle));
     CHECK(!IsSessionTransitionLegal(SessionState::RecordingFinalizing, SessionState::RecordingActive));
     CHECK(!IsSessionTransitionLegal(SessionState::Exporting, SessionState::RecordingActive));
+}
+
+void TestScrollshotBranch() {
+    // The mode can be chosen before or after a region exists, and switched
+    // with the other two modes while the frame is provisional.
+    CHECK(IsSessionTransitionLegal(SessionState::RegionSelecting, SessionState::ScrollshotConfiguring));
+    CHECK(IsSessionTransitionLegal(SessionState::ScreenshotEditing, SessionState::ScrollshotConfiguring));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotConfiguring, SessionState::ScreenshotEditing));
+    CHECK(IsSessionTransitionLegal(SessionState::RecordingConfiguring, SessionState::ScrollshotConfiguring));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotConfiguring, SessionState::RecordingConfiguring));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotConfiguring, SessionState::Idle));
+    // Start, and the tools island's button that skips the Start step.
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotConfiguring, SessionState::ScrollshotCapturing));
+    CHECK(IsSessionTransitionLegal(SessionState::ScreenshotEditing, SessionState::ScrollshotCapturing));
+    // Capturing ends in review with the image kept, or with the session.
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotCapturing, SessionState::ScrollshotReview));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotCapturing, SessionState::Idle));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotReview, SessionState::Idle));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotReview, SessionState::ScreenshotEditing));
+    // An edited Scrollshot returns to review when the displays change.
+    CHECK(IsSessionTransitionLegal(SessionState::ScreenshotEditing, SessionState::ScrollshotReview));
+
+    // The frame is locked once capture started, and a stopped capture does
+    // not resume. Recording and Scrollshot never run into each other.
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotCapturing, SessionState::ScrollshotConfiguring));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotCapturing, SessionState::ScreenshotEditing));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotCapturing, SessionState::RecordingConfiguring));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotReview, SessionState::ScrollshotCapturing));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotReview, SessionState::ScrollshotConfiguring));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotReview, SessionState::RecordingConfiguring));
+    CHECK(!IsSessionTransitionLegal(SessionState::Idle, SessionState::ScrollshotCapturing));
+    CHECK(!IsSessionTransitionLegal(SessionState::Idle, SessionState::ScrollshotConfiguring));
+    CHECK(!IsSessionTransitionLegal(SessionState::RegionSelecting, SessionState::ScrollshotCapturing));
+    CHECK(!IsSessionTransitionLegal(SessionState::RecordingActive, SessionState::ScrollshotCapturing));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScreenshotExporting, SessionState::ScrollshotReview));
 }
 
 void TestRecordingControlPolicy() {
@@ -353,6 +388,7 @@ int main() {
     TestSessionEntryAndCancellation();
     TestScreenshotBranch();
     TestRecordingBranch();
+    TestScrollshotBranch();
     TestRecordingControlPolicy();
     TestSupportedRecordingAudioChoices();
     TestRecordingFormatsAndCapabilities();

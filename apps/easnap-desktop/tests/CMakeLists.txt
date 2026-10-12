@@ -392,6 +392,29 @@ target_link_libraries(test_scrollshot_session PRIVATE easnap_project_options
 add_test(NAME scrollshot_session_worker COMMAND test_scrollshot_session)
 set_tests_properties(scrollshot_session_worker PROPERTIES LABELS "unit;scrollshot" TIMEOUT 60)
 
+# Where the Scrollshot island and preview go around a frame, and the scrolled,
+# zoomed view the editor maps a stitched image through. Rectangles only.
+add_executable(test_scrollshot_layout
+    test_scrollshot_layout.cpp
+    ../src/ui/scrollshot_layout.cpp
+    ../src/editor/image_viewport.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_scrollshot_layout PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_scrollshot_layout PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+add_test(NAME scrollshot_layout_logic COMMAND test_scrollshot_layout)
+set_tests_properties(scrollshot_layout_logic PROPERTIES LABELS "unit;scrollshot;editor" TIMEOUT 30)
+
+# Both string tables, read from this executable's resources through the
+# production accessor.
+add_executable(test_strings test_strings.cpp)
+target_link_libraries(test_strings PRIVATE easnap_project_options easnap_strings user32)
+add_test(NAME strings_catalog COMMAND test_strings)
+set_tests_properties(strings_catalog PROPERTIES LABELS "unit;localization" TIMEOUT 30)
+
 add_executable(test_capture_overlay
     test_capture_overlay.cpp
     ../src/ui/overlay.cpp
@@ -404,7 +427,7 @@ add_executable(test_capture_overlay
 target_include_directories(test_capture_overlay PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
     "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
-target_link_libraries(test_capture_overlay PRIVATE easnap_project_options
+target_link_libraries(test_capture_overlay PRIVATE easnap_project_options easnap_strings
     d3d11 d2d1 dwrite dxgi windowscodecs
     user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
 add_test(NAME capture_magnifier_logic COMMAND test_capture_overlay)
@@ -423,15 +446,18 @@ add_executable(test_capture_workspace
     ../src/ui/capture_magnifier.cpp
     ../src/ui/region_selector.cpp
     ../src/ui/recording_controls.cpp
+    ../src/ui/scrollshot_controls.cpp
+    ../src/ui/scrollshot_layout.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/app/recording_workflow.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_capture_workspace PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
-target_link_libraries(test_capture_workspace PRIVATE easnap_project_options
+target_link_libraries(test_capture_workspace PRIVATE easnap_project_options easnap_strings
     d3d11 d2d1 dwrite dxgi windowscodecs
     user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
 add_test(NAME capture_workspace_production
@@ -443,6 +469,59 @@ add_test(NAME capture_frame_interaction
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_workspace> --frame-performance)
 set_tests_properties(capture_frame_interaction PROPERTIES
     LABELS "integration;workspace;overlay;performance;isolated-desktop" TIMEOUT 30)
+
+# Scrollshot in the production workspace: mode bar, locked frame and its open
+# input plane, both islands, the preview, and the editor on a stitched image
+# that scrolls and zooms. Message-driven; nothing is captured from a screen.
+add_executable(test_scrollshot_workspace
+    test_scrollshot_workspace.cpp
+    ../src/ui/capture_workspace.cpp
+    ../src/ui/overlay.cpp
+    ../src/ui/capture_magnifier.cpp
+    ../src/ui/region_selector.cpp
+    ../src/ui/scrollshot_controls.cpp
+    ../src/ui/scrollshot_layout.cpp
+    ../src/ui/ui_theme.cpp
+    ../src/ui/native_controls.cpp
+    ../src/editor/screenshot_editor.cpp
+    ../src/editor/image_viewport.cpp
+    ../src/editor/redaction_renderer.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_scrollshot_workspace PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_scrollshot_workspace PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
+add_test(NAME scrollshot_workspace_production
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_scrollshot_workspace>)
+set_tests_properties(scrollshot_workspace_production PROPERTIES
+    LABELS "integration;scrollshot;workspace;editor;isolated-desktop" TIMEOUT 90)
+
+# Scrollshot against the real desktop: a second process shows a known document,
+# real wheel and keyboard input scrolls it through the open frame, and the
+# production session and provider must return it pixel for pixel.
+add_executable(test_scrollshot_desktop
+    test_scrollshot_desktop.cpp
+    ../src/capture/capture_provider.cpp
+    ../src/scrollshot/scrollshot_session.cpp
+    ../src/scrollshot/stitch_engine.cpp
+    ../src/ui/capture_workspace.cpp
+    ../src/ui/overlay.cpp
+    ../src/ui/capture_magnifier.cpp
+    ../src/ui/region_selector.cpp
+    ../src/ui/scrollshot_controls.cpp
+    ../src/ui/scrollshot_layout.cpp
+    ../src/ui/ui_theme.cpp
+    ../src/ui/native_controls.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_scrollshot_desktop PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_scrollshot_desktop PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
+add_test(NAME scrollshot_real_desktop COMMAND test_scrollshot_desktop)
+set_tests_properties(scrollshot_real_desktop PROPERTIES
+    LABELS "integration;scrollshot;real-desktop-capture" TIMEOUT 90 SKIP_RETURN_CODE 77)
 
 add_executable(test_ui_modernization
     test_ui_modernization.cpp
@@ -462,13 +541,14 @@ add_executable(test_ui_modernization
     ../src/ui/trim_layout.cpp
     ../src/ui/timeline_accessibility.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/media/preview_process.cpp
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/platform/platform_utils.cpp)
 add_dependencies(test_ui_modernization EasnapPreviewHost)
-target_link_libraries(test_ui_modernization PRIVATE windowsapp)
+target_link_libraries(test_ui_modernization PRIVATE windowsapp easnap_strings)
 target_include_directories(test_ui_modernization PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
 target_link_libraries(test_ui_modernization PRIVATE easnap_project_options
@@ -497,7 +577,8 @@ set_tests_properties(ui_material_raster_parity PROPERTIES LABELS "unit;ui;theme"
 set_tests_properties(ui_modernization_native PROPERTIES
     LABELS "integration;ui;accessibility;theme;preview" TIMEOUT 90)
 
-foreach(ui_target test_region_selector test_redaction_renderer test_capture_overlay test_capture_workspace test_ui_modernization)
+foreach(ui_target test_region_selector test_redaction_renderer test_capture_overlay test_capture_workspace
+                  test_scrollshot_workspace test_scrollshot_desktop test_ui_modernization)
     target_link_libraries(${ui_target} PRIVATE uxtheme gdiplus oleacc dwmapi)
 endforeach()
 
@@ -569,7 +650,7 @@ set_tests_properties(annotation_editing_native PROPERTIES LABELS "integration;ed
 # The three capture_* tests left this list: they are message-driven and run on
 # a private desktop instead.
 set(interactive_desktop_tests
-    real_desktop_recording_session recording_pause_stop_stress
+    real_desktop_recording_session recording_pause_stop_stress scrollshot_real_desktop
     ui_modernization_native annotation_editing_native trim_endpoint_presentation
     trim_timeline_seek_stress trim_timeline_seek_soak)
 set_tests_properties(${interactive_desktop_tests} PROPERTIES RUN_SERIAL TRUE)

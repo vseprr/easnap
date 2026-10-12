@@ -310,6 +310,14 @@ void DrawIcon(HDC dc, const RECT& r, Icon icon, COLORREF color, float scale) {
         case Icon::ChevronDown: line(6,9,12,15); line(12,15,18,9); break;
         case Icon::Minimize: line(5,16,19,16); break;
         case Icon::Maximize: box(5,5,19,19); break;
+        case Icon::Scissors: circle(3,15,9,21); circle(15,15,21,21); line(8,16,19,3); line(16,16,5,3); break;
+        case Icon::Help: {
+            circle(3,3,21,21);
+            graphics.DrawBezier(&pen,9,10,9,5,15,5,15,10); graphics.DrawBezier(&pen,15,10,15,12,12,12,12,15);
+            Gdiplus::SolidBrush dot(Gdiplus::Color(255,GetRValue(color),GetGValue(color),GetBValue(color)));
+            graphics.FillEllipse(&dot,11,17,2,2);
+            break;
+        }
         case Icon::None: break;
     }
 
@@ -468,13 +476,21 @@ LRESULT CALLBACK AccessibleNameProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM 
     return ::DefSubclassProc(hwnd,message,wparam,lparam);
 }
 }
-bool CanCaptureVisibleWindows() {
+bool CaptureExclusionSupported() {
     // EXCLUDEFROMCAPTURE was introduced in Windows 10 build 19041. Older
-    // systems interpret it as a black rectangle, so retain the hide fallback.
-    using VersionFn=LONG(WINAPI*)(OSVERSIONINFOW*);
-    const auto version=reinterpret_cast<VersionFn>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"),"RtlGetVersion"));
-    OSVERSIONINFOW info{}; info.dwOSVersionInfoSize=sizeof(info);
-    if(!version || version(&info)!=0 || info.dwMajorVersion<10 || (info.dwMajorVersion==10 && info.dwBuildNumber<19041)) { return false; }
+    // systems interpret it as a black rectangle.
+    static const bool supported=[] {
+        using VersionFn=LONG(WINAPI*)(OSVERSIONINFOW*);
+        const auto version=reinterpret_cast<VersionFn>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"),"RtlGetVersion"));
+        OSVERSIONINFOW info{}; info.dwOSVersionInfoSize=sizeof(info);
+        return version && version(&info)==0 && (info.dwMajorVersion>10 || (info.dwMajorVersion==10 && info.dwBuildNumber>=19041));
+    }();
+    return supported;
+}
+bool CanCaptureVisibleWindows() {
+    // Where exclusion is missing, or one visible window lacks it, the caller
+    // retains its hide fallback.
+    if(!CaptureExclusionSupported()) { return false; }
     bool excluded=true;
     const bool enumerated=::EnumWindows([](HWND hwnd,LPARAM param)->BOOL {
         DWORD process{}; ::GetWindowThreadProcessId(hwnd,&process);

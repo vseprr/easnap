@@ -7,6 +7,17 @@ configure_file(resources/portable-readme.txt.in generated/README.txt @ONLY)
 target_include_directories(easnap_project_options INTERFACE
     "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
+# Localized text: the string tables and their accessor. An interface library,
+# so the application and every test that creates production windows compile
+# the same resource script and read the same tables.
+add_library(easnap_strings INTERFACE)
+target_sources(easnap_strings INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/strings.rc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/strings/strings.cpp")
+target_include_directories(easnap_strings INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+
 set(EASNAP_SOURCES
     src/main.cpp
     src/app/session_transitions.h
@@ -37,6 +48,11 @@ set(EASNAP_SOURCES
     src/ui/capture_workspace.cpp
     src/ui/recording_controls.h
     src/ui/recording_controls.cpp
+    src/ui/scrollshot_controls.h
+    src/ui/scrollshot_controls.cpp
+    src/ui/scrollshot_layout.h
+    src/ui/scrollshot_layout.cpp
+    src/strings/strings.h
     src/ui/trim_window.h
     src/ui/trim_window.cpp
     src/ui/timeline_accessibility.cpp
@@ -47,6 +63,8 @@ set(EASNAP_SOURCES
     src/ui/region_selector.cpp
     src/editor/screenshot_editor.h
     src/editor/screenshot_editor.cpp
+    src/editor/image_viewport.h
+    src/editor/image_viewport.cpp
     src/editor/redaction_renderer.h
     src/editor/redaction_renderer.cpp
     src/capture/capture_provider.h
@@ -129,7 +147,7 @@ target_include_directories(easnap-desktop PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
-target_link_libraries(easnap-desktop PRIVATE easnap_project_options)
+target_link_libraries(easnap-desktop PRIVATE easnap_project_options easnap_strings)
 
 # Native graphics, media, shell, theme and accessibility dependencies.
 # The supervised preview helper has its own narrower link set above.

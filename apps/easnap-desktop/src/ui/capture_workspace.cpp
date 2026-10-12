@@ -1,4 +1,5 @@
 #include "ui/capture_workspace.h"
+#include "strings/strings.h"
 #include "ui/native_controls.h"
 #include <algorithm>
 
@@ -10,6 +11,22 @@ void CaptureWorkspace::SetMode(app::CaptureMode mode) noexcept {
         quick_return_armed_ = true;
     }
     mode_ = mode;
+}
+void CaptureWorkspace::BeginScrollshotCapture() noexcept {
+    if (!editing() || screenshot_fixed_ || scrollshot_locked()) { return; }
+    mode_ = app::CaptureMode::Scrollshot;
+    scrollshot_ = ScrollshotPhase::Capturing;
+    // This is not an untouched return to Screenshot: nothing completes by itself later.
+    quick_return_armed_ = false;
+}
+void CaptureWorkspace::EditScrollshot() noexcept {
+    if (scrollshot_ != ScrollshotPhase::Stopped) { return; }
+    scrollshot_ = ScrollshotPhase::Idle;
+    mode_ = app::CaptureMode::Screenshot;
+    editor_feature_used_ = true;
+    screenshot_fixed_ = true;
+    quick_return_armed_ = false;
+    automatic_attempt_consumed_ = true;
 }
 void CaptureWorkspace::EditorFeatureUsed() noexcept {
     if (screenshot_visible()) { editor_feature_used_ = true; FixScreenshot(); }
@@ -123,6 +140,6 @@ void ShowCaptureNotice(const RECT& region,const std::wstring& text,bool status) 
     }
 }
 } // namespace
-void ShowCaptureCopiedNotice(const RECT& region) { ShowCaptureNotice(region,L"Copied to clipboard",false); }
+void ShowCaptureCopiedNotice(const RECT& region) { ShowCaptureNotice(region,strings::Get(IDS_NOTICE_COPIED),false); }
 void ShowCaptureStatusNotice(const RECT& region,const std::wstring& text) { ShowCaptureNotice(region,text,true); }
 } // namespace easnap::ui

@@ -18,6 +18,7 @@
 #include "app/app_settings.h"
 #include "editor/screenshot_editor.h"
 #include "ui/native_controls.h"
+#include "strings/strings.h"
 #include "ui/overlay.h"
 #include "ui/recording_controls.h"
 #include "ui/trim_window.h"
@@ -1162,7 +1163,7 @@ void Workspace() {
     const auto monitor=test::SelectedTestMonitor() ? *test::SelectedTestMonitor():monitors.front();const POINT pointer{monitor.bounds.left+200,monitor.bounds.top+200};
     CHECK(overlay.Show(snapshot,pointer));
     const HWND modes=::FindWindowW(L"EasnapCaptureModes",nullptr);
-    CHECK(modes && ::GetDlgItem(modes,3000) && ::GetDlgItem(modes,3001));
+    CHECK(modes && ::GetDlgItem(modes,3000) && ::GetDlgItem(modes,3001) && ::GetDlgItem(modes,3002));
     CHECK(ui::CanCaptureVisibleWindows());
     HWND shade=nullptr;
     while((shade=::FindWindowExW(nullptr,shade,L"EasnapOverlayChrome",L"Easnap outside shading")) && ::GetWindow(shade,GW_OWNER)!=overlay.owner_window()) {}
@@ -1188,7 +1189,8 @@ void Workspace() {
         CHECK(cancelled==0 && completed==0 && !overlay.workspace().editing());
         CHECK(Same(overlay.selector().selection(),frame));
     }
-    Click(modes,3001);CHECK(overlay.mode()==app::CaptureMode::Record);
+    Click(modes,3001);CHECK(overlay.mode()==app::CaptureMode::Scrollshot);
+    Click(modes,3002);CHECK(overlay.mode()==app::CaptureMode::Record);
     Click(modes,3000);CHECK(overlay.mode()==app::CaptureMode::Screenshot);
     overlay.EnterEditing();
     CHECK(overlay.workspace().editing());
@@ -1211,7 +1213,7 @@ void Workspace() {
     }
     Appearance(app::AppearanceTheme::Light);
     overlay.FixScreenshot();
-    CHECK(overlay.workspace().screenshot_fixed() && !::IsWindowEnabled(::GetDlgItem(modes,3001)));
+    CHECK(overlay.workspace().screenshot_fixed() && !::IsWindowEnabled(::GetDlgItem(modes,3001)) && !::IsWindowEnabled(::GetDlgItem(modes,3002)));
     HWND image_window=::FindWindowW(L"EasnapCaptureImage",nullptr); CHECK(image_window);
     if(image_window) {
         // Observe the real compositor before any WM_PAINT is pumped. Only this
@@ -1960,6 +1962,8 @@ void Trim(bool all_edges_only=false, const wchar_t* edge_filter=nullptr, int lay
 }
 }
 int wmain(int argc,wchar_t** argv) {
+    // Assertions name controls by their English text, whatever Windows speaks.
+    easnap::strings::SetPreference(easnap::strings::LanguagePreference::English);
     std::setvbuf(stdout,nullptr,_IONBF,0);
     ::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     ::CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);

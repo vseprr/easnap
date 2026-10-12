@@ -122,7 +122,9 @@ geometry functions, which need no monitor:
 
 - trim window sizing and control layout across work areas from 1280x680 to
   3840x2120, ultrawide and portrait, at scale factors from 100 % to 350 %;
-- selection-handle hit areas across scale factors and negative-origin layouts.
+- selection-handle hit areas across scale factors and negative-origin layouts;
+- placement of the Scrollshot island and preview on one, two and stacked
+  monitors, a frame across two monitors and a small work area.
 
 These prove that layout stays inside the work area and that controls do not
 overlap at those sizes. They do not prove rendering, DPI transitions between
@@ -141,6 +143,12 @@ UI animation is time-based.
 - Use the visible desktop only for what cannot be observed otherwise, add the
   test to `interactive_desktop_tests`, and place windows with `OnTestMonitor`
   so they follow the chosen display.
+- Send real input only after verifying which window will receive it
+  (`WindowFromPoint`, `GetForegroundWindow`), so it can never land in a window
+  of the person using the PC. `test_scrollshot_desktop.cpp` shows the pattern,
+  including a second process as the application being captured.
+- A test that cannot run in the environment exits with 77 and declares
+  `SKIP_RETURN_CODE 77`. CTest then reports it as skipped, not as passed.
 - Do not synchronise with a fixed sleep. Wait for the condition with a
   deadline; a fixed sleep is a timing assumption that fails under load.
 - Label long repeats `soak` and keep a short variant in the normal tiers.

@@ -1,0 +1,46 @@
+// Easnap - user-visible text, English (United States).
+//
+// %1 ... %9 are replaced at run time. strings_tr.rc must define the same
+// identifiers with the same placeholders.
+#pragma code_page(65001)
+
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+
+STRINGTABLE
+BEGIN
+    IDS_MODE_SCREENSHOT "Screenshot"
+    IDS_MODE_SCROLLSHOT "Scrollshot"
+    IDS_MODE_RECORD "Record"
+    IDS_MODE_SCROLLSHOT_UNSUPPORTED "Scrollshot needs Windows 10 version 2004 or later"
+    IDS_NOTICE_COPIED "Copied to clipboard"
+    IDS_DOCUMENT_VIEW_LABEL "%1 × %2   %3%%"
+
+    IDS_SCROLLSHOT_START "Start Scrollshot"
+    IDS_SCROLLSHOT_HELP "Tips for scrolling screenshots"
+    IDS_SCROLLSHOT_HELP_TITLE "Scrolling screenshot"
+    IDS_SCROLLSHOT_HELP_BODY "Easnap joins everything that passes through the frame into one tall image.\n\n- Press Start, then scroll the content inside the frame with the wheel, the keyboard or its scrollbar.\n- Scroll at a steady pace. If Easnap loses track, scroll back up a little and continue.\n- A fixed header or footer is kept once. The mouse pointer is never part of the image.\n- Finish with Copy (Enter or Ctrl+C), Save (Ctrl+S) or Edit. Esc discards.\n- The shortcuts work while Easnap has the keyboard focus; the capture shortcut brings it back."
+    IDS_SCROLLSHOT_HELP_WHEEL "\n\nOn this computer Windows sends the wheel to the active window only. Click inside the frame once before scrolling, or turn on ""Scroll inactive windows when I hover over them"" in the Windows mouse settings."
+    IDS_SCROLLSHOT_TOOL "Scrolling screenshot"
+    IDS_SCROLLSHOT_TOOL_FIXED "Scrolling screenshot (not available once the screenshot is taken)"
+    IDS_SCROLLSHOT_EDIT "Edit"
+    IDS_SCROLLSHOT_SAVE "Save (Ctrl+S)"
+    IDS_SCROLLSHOT_DISCARD "Discard (Esc)"
+    IDS_SCROLLSHOT_COPY "Copy to clipboard (Enter)"
+    IDS_SCROLLSHOT_SIZE "%1 × %2"
+    IDS_SCROLLSHOT_STATUS_SCROLL "Scroll the content inside the frame."
+    IDS_SCROLLSHOT_STATUS_LOST "Easnap lost track. Scroll back up a little, then continue."
+    IDS_SCROLLSHOT_STATUS_LIMIT "Maximum length reached. Copy, save or edit the image."
+    IDS_SCROLLSHOT_STATUS_CAPTURE_FAILED "This area cannot be captured any more. What was captured is kept."
+    IDS_SCROLLSHOT_STATUS_DISPLAY_CHANGED "The display changed, so capture stopped. Your image is kept."
+    IDS_SCROLLSHOT_STATUS_WHEEL "The wheel goes to the active window. Click inside the frame once, then scroll."
+    IDS_SCROLLSHOT_STATUS_STOPPING "Still finishing the capture. Try again in a moment."
+    IDS_SCROLLSHOT_STATUS_COPY_FAILED "The clipboard did not accept the image. Use Save."
+    IDS_SCROLLSHOT_STATUS_SAVE_FAILED "Save failed. The image is still here; try another location."
+    IDS_SCROLLSHOT_STATUS_READY "Capture stopped. Copy, save or edit the image."
+    IDS_SCROLLSHOT_START_FAILED "Easnap could not capture this area. Try again."
+    IDS_SCROLLSHOT_UNSUPPORTED "Scrolling screenshots need Windows 10 version 2004 or later, because Easnap must keep its own windows out of the captured image."
+    IDS_SCROLLSHOT_PANEL_TITLE "Easnap - Scrollshot"
+    IDS_SCROLLSHOT_PREVIEW_TITLE "Scrollshot preview"
+    IDS_SCROLLSHOT_STATUS_COPYING "Copying..."
+    IDS_SCROLLSHOT_STATUS_SAVING "Saving..."
+END

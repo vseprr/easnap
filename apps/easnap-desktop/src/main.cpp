@@ -275,6 +275,10 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             coordinator.OnTrimExportCompleted(static_cast<uint64_t>(wparam));
             return 0;
 
+        case easnap::app::kMsgScrollshotProgress:
+            coordinator.OnScrollshotProgress(static_cast<uint64_t>(wparam));
+            return 0;
+
         case WM_CLIPBOARDUPDATE:
             coordinator.OnClipboardChanged();
             return 0;

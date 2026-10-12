@@ -98,6 +98,10 @@ void EnableDpiAwareness();
 [[nodiscard]] MonitorInfo MonitorForPoint(POINT pt);
 [[nodiscard]] MonitorInfo MonitorForRect(const RECT& rect);
 [[nodiscard]] RECT VirtualScreenBounds();
+/// True when Windows sends the mouse wheel to the focused window instead of
+/// the one under the pointer ("Scroll inactive windows when I hover over
+/// them" is off). A window that keeps the focus then takes every wheel turn.
+[[nodiscard]] bool WheelFollowsFocus() noexcept;
 
 [[nodiscard]] RECT NormalizedRect(POINT a, POINT b);
 [[nodiscard]] RECT IntersectRects(const RECT& a, const RECT& b);

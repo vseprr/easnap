@@ -345,6 +345,13 @@ MonitorInfo MonitorForRect(const RECT& rect) {
     return MonitorForHandle(::MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST));
 }
 
+bool WheelFollowsFocus() noexcept {
+    // SPI_GETMOUSEWHEELROUTING: 0 focus, 1 hybrid, 2 the window under the pointer.
+    constexpr UINT kGetMouseWheelRouting = 0x201C;
+    DWORD routing = 2;
+    return ::SystemParametersInfoW(kGetMouseWheelRouting, 0, &routing, 0) != FALSE && routing == 0;
+}
+
 RECT VirtualScreenBounds() {
     RECT bounds{};
     bounds.left = ::GetSystemMetrics(SM_XVIRTUALSCREEN);

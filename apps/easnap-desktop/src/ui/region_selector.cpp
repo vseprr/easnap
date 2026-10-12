@@ -40,9 +40,9 @@ RECT ToClientRect(const RECT& rect, const RECT& origin) {
                 rect.bottom - origin.top};
 }
 
-RECT SizeLabelRect(const RECT& selection, const RECT& monitor, float scale) {
+RECT SizeLabelRect(const RECT& selection, const RECT& monitor, float scale, LONG width = 0) {
     const int padding = theme::Scaled(6.0f, scale);
-    const int label_width = theme::Scaled(104.0f, scale);
+    const int label_width = width > 0 ? static_cast<int>(width) : theme::Scaled(104.0f, scale);
     const int label_height = theme::Scaled(24.0f, scale);
     LONG top = selection.top - label_height - padding - theme::Scaled(theme::kSelectionBorder, scale);
     if (top < monitor.top) { top = selection.top + padding; }
@@ -277,12 +277,31 @@ LPCWSTR RegionSelector::CursorForPoint(POINT pt) const {
     }
 }
 
+RECT RegionSelector::LabelRect(const RECT& selection, const RECT& monitor_rect, float scale, LONG width) {
+    return SizeLabelRect(ToClientRect(selection, monitor_rect), ToClientRect(monitor_rect, monitor_rect), scale, width);
+}
+
 void RegionSelector::RenderGdi(HDC dc, const RECT& monitor_rect, float scale, HFONT label_font,
-                               bool show_handles, COLORREF accent) const {
+                               bool show_handles, COLORREF accent, bool around_content, bool show_label) const {
     if (dc == nullptr) {
         return;
     }
     const RECT monitor = ToClientRect(monitor_rect, monitor_rect);
+
+    if (around_content && has_selection_) {
+        const RECT inner = ToClientRect(selection_, monitor_rect);
+        const int border = theme::Scaled(theme::kSelectionBorder, scale);
+        // Each edge moves outside when the monitor has room for it there.
+        const LONG left = inner.left - border >= monitor.left ? inner.left - border : inner.left;
+        const LONG top = inner.top - border >= monitor.top ? inner.top - border : inner.top;
+        const LONG right = inner.right + border <= monitor.right ? inner.right + border : inner.right;
+        const LONG bottom = inner.bottom + border <= monitor.bottom ? inner.bottom + border : inner.bottom;
+        theme::FillSolid(dc, RECT{left, top, right, top + border}, accent);
+        theme::FillSolid(dc, RECT{left, bottom - border, right, bottom}, accent);
+        theme::FillSolid(dc, RECT{left, top, left + border, bottom}, accent);
+        theme::FillSolid(dc, RECT{right - border, top, right, bottom}, accent);
+        return;
+    }
 
     if (!has_selection_) {
         if (enabled_ && ::PtInRect(&monitor_rect, cursor_) != FALSE) {
@@ -321,6 +340,9 @@ void RegionSelector::RenderGdi(HDC dc, const RECT& monitor_rect, float scale, HF
         }
     }
 
+    if (!show_label) {
+        return;
+    }
     // Size readout, kept inside the monitor.
     wchar_t label[64]{};
     ::swprintf(label, ARRAYSIZE(label), L"%ld \u00D7 %ld", platform::RectWidth(selection_),

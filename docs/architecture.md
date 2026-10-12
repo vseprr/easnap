@@ -25,6 +25,8 @@ The normal flows are:
 Idle → Standby → Editing → screenshot completion → Idle
                         → Recording ↔ RecordingPaused
                                     → RecordingFinalizing → Trimming → Idle
+                        → ScrollshotConfiguring → ScrollshotCapturing
+                                    → ScrollshotReview ↔ Editing → Idle
 ```
 
 Screenshot publication runs while Editing remains active. Successful completion
@@ -41,9 +43,11 @@ All paths below are under `apps/easnap-desktop/src`.
 | Area | Responsibility |
 |---|---|
 | `app/` | Coordinator, transition policy, settings, recording/finalization, trim and completion orchestration |
-| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls and trim view |
-| `editor/` | Screenshot document, commands/history, tools, reversible effects, inline rendering and full-resolution composite |
+| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls, Scrollshot island and preview, and trim view |
+| `editor/` | Screenshot document, commands/history, tools, reversible effects, the scrolled and zoomed view, inline rendering and full-resolution composite |
 | `capture/` | Desktop acquisition, per-output fallback and capture worker |
+| `scrollshot/` | Stitching engine and the capture session that feeds it |
+| `strings/` | Localized text from the English and Turkish resource tables |
 | `recording/` | Active-time recording session, cadence and audio timeline |
 | `media/` | Bounded queues, WASAPI, dual-source mixing/resampling, MP4/GIF writers/exporters and preview |
 | `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers and private storage |
@@ -58,8 +62,8 @@ layout metrics. This is a Windows implementation, not a portable UI abstraction.
 
 Entering Standby captures a monitor snapshot for selection feedback and the
 magnifier. It is not the final editor image. Entering Editing exposes a
-provisional frame over the live desktop; geometry, Screenshot/Record switching
-and mode-specific controls remain available.
+provisional frame over the live desktop; geometry, Screenshot/Scrollshot/Record
+switching and mode-specific controls remain available.
 
 The first screenshot toolbar interaction, including padding or a grip press,
 or an explicit screenshot action requests acquisition. The coordinator keeps
@@ -200,6 +204,41 @@ frames. Native UI/input/capture tests run serially. The guide identifies the
 production symbols and existing tests to reuse for a new surface. This describes
 required coverage; actual pre/post-restart results and the current repair's
 acceptance boundary are recorded in [project status](project-status.md).
+
+## Scrollshot
+
+Scrollshot stitches the pictures of one fixed screen rectangle into a tall
+image while the user scrolls its content.
+
+`scrollshot/stitch_engine.*` has no window, thread, clock or capture
+dependency. It places each submitted frame on a canvas or returns the reason
+it could not: no guess is ever written. It recognises fixed headers, footers
+and side rails, tolerates local changes such as a caret or a hover highlight,
+and refuses ambiguous or low-information fits. See
+[ADR-027](decisions/ADR-027-scrollshot-stitching-engine.md).
+
+`scrollshot/scrollshot_session.*` owns a capture provider and one worker. The
+worker reads the rectangle through `IRegionCaptureProvider::CaptureRegionImage`
+when the desktop changes, submits it, and keeps a reduced preview. The UI
+thread learns about progress through throttled, generation-tagged messages
+and never waits for a picture; stopping has a deadline.
+
+The coordinator starts a capture only when every visible Easnap window is
+excluded from capture, rearranges the outside shading so that no translucent
+window contains the frame, and takes the first picture before it locks the
+frame.
+While capturing, the workspace's input plane has a hole over the frame, so
+Windows delivers pointer and wheel to the application underneath; Easnap
+neither injects nor forwards input. `ScrollshotControls` owns the island and
+the click-through preview; `PlaceScrollshotSurfaces` keeps both outside the
+frame wherever the monitors allow. A stitched image survives a display change.
+See [ADR-028](decisions/ADR-028-scrollshot-capture-workspace.md).
+
+Edit opens the image in the screenshot editor's document mode. `ImageView`
+is the single mapping between desktop and image pixels for every tool; the
+base bitmap is uploaded in bands and the export composites the whole image in
+bands at its captured resolution. See
+[ADR-029](decisions/ADR-029-scrolled-and-zoomed-image-editing.md).
 
 ## Capture and recording
 

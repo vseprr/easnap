@@ -5,6 +5,9 @@
 
 namespace easnap::ui {
 enum class WorkspaceInteraction { Standby, Editing };
+/// Where a Scrollshot stands. `Capturing` opens the frame to the application
+/// underneath; `Stopped` keeps the frame locked while the image is reviewed.
+enum class ScrollshotPhase { Idle, Capturing, Stopped };
 
 class CaptureWorkspace {
 public:
@@ -13,9 +16,19 @@ public:
     void SetMode(app::CaptureMode mode) noexcept;
     void EditorFeatureUsed() noexcept;
     void FixScreenshot() noexcept { if (screenshot_visible()) { screenshot_fixed_ = true; } }
+    /// Locks the frame for a scrolling capture. The mode becomes Scrollshot
+    /// whichever mode asked for it.
+    void BeginScrollshotCapture() noexcept;
+    void StopScrollshotCapture() noexcept { if (scrollshot_locked()) { scrollshot_ = ScrollshotPhase::Stopped; } }
+    /// Hands the stitched image to the screenshot editor: the workspace shows
+    /// a fixed screenshot from here on.
+    void EditScrollshot() noexcept;
     [[nodiscard]] bool screenshot_fixed() const noexcept { return screenshot_fixed_; }
-    [[nodiscard]] bool can_adjust_selection() const noexcept { return !screenshot_fixed_; }
-    [[nodiscard]] bool can_switch_mode() const noexcept { return !screenshot_fixed_; }
+    [[nodiscard]] ScrollshotPhase scrollshot_phase() const noexcept { return scrollshot_; }
+    [[nodiscard]] bool scrollshot_locked() const noexcept { return scrollshot_ != ScrollshotPhase::Idle; }
+    [[nodiscard]] bool scrollshot_capturing() const noexcept { return scrollshot_ == ScrollshotPhase::Capturing; }
+    [[nodiscard]] bool can_adjust_selection() const noexcept { return !screenshot_fixed_ && !scrollshot_locked(); }
+    [[nodiscard]] bool can_switch_mode() const noexcept { return !screenshot_fixed_ && !scrollshot_locked(); }
     [[nodiscard]] bool ConsumeQuickReturn() noexcept;
     // Called only after an actual successful document revision/gesture commit.
     // Consumes the automatic attempt before publication, including failures.
@@ -26,14 +39,16 @@ public:
     [[nodiscard]] bool magnifier_visible() const noexcept { return !editing(); }
     [[nodiscard]] bool screenshot_visible() const noexcept { return editing() && mode_ == app::CaptureMode::Screenshot; }
     [[nodiscard]] bool recording_visible() const noexcept { return editing() && mode_ == app::CaptureMode::Record; }
+    [[nodiscard]] bool scrollshot_visible() const noexcept { return editing() && mode_ == app::CaptureMode::Scrollshot; }
     [[nodiscard]] bool quick_return_armed() const noexcept { return quick_return_armed_; }
     [[nodiscard]] bool automatic_attempt_consumed() const noexcept { return automatic_attempt_consumed_; }
     [[nodiscard]] COLORREF accent() const noexcept {
-        return mode_ == app::CaptureMode::Screenshot ? theme::Current().screenshot_border : theme::Current().record_border;
+        return mode_ == app::CaptureMode::Record ? theme::Current().record_border : theme::Current().screenshot_border;
     }
 private:
     WorkspaceInteraction interaction_{WorkspaceInteraction::Standby};
     app::CaptureMode mode_{app::CaptureMode::Screenshot};
+    ScrollshotPhase scrollshot_{ScrollshotPhase::Idle};
     bool editor_feature_used_{false};
     bool quick_return_armed_{false};
     bool automatic_attempt_consumed_{false};

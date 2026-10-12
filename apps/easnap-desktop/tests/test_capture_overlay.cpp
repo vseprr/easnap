@@ -1,6 +1,8 @@
 #include "native_test_monitor.h"
 // Production overlay policy and native message routing. No capture backend or
 // clipboard mutation: the native pass uses a deterministic frozen image.
+#include "strings/strings.h"
+#include "ui/native_controls.h"
 #include "ui/overlay.h"
 #include "ui/ui_theme.h"
 
@@ -354,11 +356,24 @@ void TestNativeOverlay() {
             ::SendMessageW(windows.dim, message, flags, ClientPoint(x, y));
         };
         const int before_changes = changes, before_completions = completions;
-        const LONG button_offset = ui::theme::Scaled(ui::theme::kPaletteButtonWidth / 2 +
-            ui::theme::kPalettePadding, monitor.scale());
-        const LONG toolbar_y = ui::theme::Scaled(ui::theme::kPalettePadding +
-            ui::theme::kPaletteButtonHeight / 2, monitor.scale());
-        send(WM_LBUTTONDOWN, width / 2 + button_offset, toolbar_y);
+        // The mode buttons are as wide as their labels need, so their centres
+        // come from the production windows: Screenshot, Scrollshot, Record.
+        const auto mode_point = [&](int index) {
+            RECT button{};
+            ::GetWindowRect(::GetDlgItem(::FindWindowW(L"EasnapCaptureModes", nullptr), 3000 + index), &button);
+            return POINT{(button.left + button.right) / 2 - bounds.left, (button.top + button.bottom) / 2 - bounds.top};
+        };
+        const POINT screenshot_button = mode_point(0), scrollshot_button = mode_point(1), record_button = mode_point(2);
+        CHECK(screenshot_button.x < scrollshot_button.x && scrollshot_button.x < record_button.x);
+        if (ui::CaptureExclusionSupported()) {
+            // Choosing Scrollshot before a region exists changes only the pending mode.
+            send(WM_LBUTTONDOWN, scrollshot_button.x, scrollshot_button.y);
+            send(WM_LBUTTONUP, scrollshot_button.x, scrollshot_button.y);
+            CHECK(overlay.mode() == CaptureMode::Scrollshot && !overlay.workspace().editing());
+            CHECK(overlay.workspace().accent() == ui::theme::Current().screenshot_border);
+            CHECK(Equal(overlay.selector().selection(), bounds) && changes == before_changes);
+        }
+        send(WM_LBUTTONDOWN, record_button.x, record_button.y);
         send(WM_MOUSEMOVE, width / 3, height / 3, MK_LBUTTON);
         send(WM_LBUTTONUP, width / 3, height / 3);
         CHECK(overlay.mode() == CaptureMode::Record && !overlay.workspace().editing());
@@ -416,7 +431,7 @@ void TestNativeOverlay() {
         CHECK(completions == before_completions + 2);
         for (int i = 0; i < 4; ++i) {
             const bool record = i % 2 == 0;
-            send(WM_LBUTTONDOWN, width / 2 + (record ? button_offset : -button_offset), toolbar_y);
+            send(WM_LBUTTONDOWN, record ? record_button.x : screenshot_button.x, record_button.y);
             send(WM_MOUSEMOVE, width / 3, height / 3, MK_LBUTTON);
             send(WM_LBUTTONUP, width / 3, height / 3);
             CHECK(overlay.mode() == (record ? CaptureMode::Record : CaptureMode::Screenshot));
@@ -480,8 +495,8 @@ void TestNativeOverlay() {
         ::SendMessageW(windows.dim, WM_KEYDOWN, 'A', 0);
         keys.fill(0); ::SetKeyboardState(keys.data());
         ::SendMessageW(windows.dim, WM_KEYDOWN, VK_RIGHT, 0);
-        send(WM_LBUTTONDOWN, width / 2 + button_offset, toolbar_y);
-        send(WM_LBUTTONUP, width / 2 + button_offset, toolbar_y);
+        send(WM_LBUTTONDOWN, record_button.x, record_button.y);
+        send(WM_LBUTTONUP, record_button.x, record_button.y);
         CHECK(Equal(overlay.selector().selection(), custom));
         CHECK(overlay.mode() == CaptureMode::Screenshot && completions == before_completions + 3);
         send(WM_MOUSEMOVE, width / 3, height * 5 / 8);
@@ -584,6 +599,8 @@ void TestNativeOverlay() {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Assertions name controls by their English text, whatever Windows speaks.
+    easnap::strings::SetPreference(easnap::strings::LanguagePreference::English);
     CHECK(::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
     if (argc > 1 && std::string_view(argv[1]) == "--native") {
         // This fixture has no editable text or IME behavior. Prevent Windows'

@@ -10,7 +10,8 @@ namespace easnap::ui {
 enum class Icon { None, Record, Pause, Play, Stop, SystemAudio, Microphone, Cursor,
                   Copy, Save, Discard, Appearance, Sun, Moon, Pen, Arrow,
                   Rectangle, Ellipse, Text, Mosaic, Undo, Redo, Clear, Check, Line, Droplet, Tag, Spotlight, Watermark,
-                  TextFill, TextOutline, Hand, Region, RoundedRectangle, ChevronDown, Minimize, Maximize };
+                  TextFill, TextOutline, Hand, Region, RoundedRectangle, ChevronDown, Minimize, Maximize,
+                  Scissors, Help };
 enum class ButtonRole { Standard, Primary, Destructive, Success };
 struct ButtonStyle {
     Icon icon{Icon::None};
@@ -53,6 +54,10 @@ void UpdateButtonStyle(HWND button, ButtonStyle style);
 [[nodiscard]] bool StyleInput(HWND input);
 [[nodiscard]] bool StyleLabel(HWND label);
 void RoundWindow(HWND window, float radius = 8.0f);
+/// True on Windows builds that can keep a window out of every screen capture
+/// (10.0.19041 and later). Earlier builds show such a window as a black box.
+[[nodiscard]] bool CaptureExclusionSupported();
+/// True when, in addition, every visible window of this process is excluded.
 [[nodiscard]] bool CanCaptureVisibleWindows();
 void DrawSeparator(HDC dc, const RECT& rect, float scale);
 [[nodiscard]] bool DrawComboItem(const DRAWITEMSTRUCT& item);

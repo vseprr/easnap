@@ -77,8 +77,18 @@ public:
     /// `monitor_rect` is in virtual-screen pixels and maps to the device
     /// context's origin; `scale` is the monitor's DPI scale so the chrome keeps
     /// a constant physical size.
+    ///
+    /// With `around_content` the frame is drawn outside the selection wherever
+    /// the monitor has room, without handles or a size label: nothing then
+    /// covers pixels that are being captured. An edge at the monitor boundary
+    /// is still drawn inside. `show_label` false leaves the size readout to
+    /// the caller, which may have more to say than the frame's own size.
     void RenderGdi(HDC dc, const RECT& monitor_rect, float scale, HFONT label_font,
-                   bool show_handles = true, COLORREF accent = RGB(41, 162, 255)) const;
+                   bool show_handles = true, COLORREF accent = RGB(41, 162, 255),
+                   bool around_content = false, bool show_label = true) const;
+    /// Where the size readout of `selection` goes on a monitor, in the
+    /// monitor's client coordinates, for a readout `width` pixels wide.
+    [[nodiscard]] static RECT LabelRect(const RECT& selection, const RECT& monitor_rect, float scale, LONG width);
 
     /// Client-space damage for a selected frame: four edge/handle strips and
     /// the size label. Invalidate both old and new footprints when geometry changes.

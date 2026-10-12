@@ -44,7 +44,8 @@ inline constexpr UINT kChangedMessage = WM_APP + 0x310;
 // Metrics (device-independent pixels; multiply by the monitor DPI scale)
 // ---------------------------------------------------------------------------
 
-inline constexpr float kPaletteButtonWidth = 148.0f;
+/// Mode buttons are as wide as their widest label needs, but not narrower.
+inline constexpr float kPaletteButtonMinimumWidth = 112.0f;
 inline constexpr float kPaletteButtonHeight = 36.0f;
 inline constexpr float kPalettePadding = 8.0f;
 inline constexpr float kPaletteTopMargin = 0.0f;

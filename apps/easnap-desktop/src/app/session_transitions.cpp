@@ -33,6 +33,27 @@ constexpr std::array<std::pair<SessionState, SessionState>, kSessionTransitionCo
     {SessionState::RecordingTrimming, SessionState::Exporting},
     {SessionState::Exporting, SessionState::RecordingTrimming},
     {SessionState::Exporting, SessionState::Idle},
+
+    // Scrollshot shares the provisional workspace with the other two modes.
+    {SessionState::RegionSelecting, SessionState::ScrollshotConfiguring},
+    {SessionState::ScreenshotEditing, SessionState::ScrollshotConfiguring},
+    {SessionState::ScrollshotConfiguring, SessionState::ScreenshotEditing},
+    {SessionState::RecordingConfiguring, SessionState::ScrollshotConfiguring},
+    {SessionState::ScrollshotConfiguring, SessionState::RecordingConfiguring},
+    {SessionState::ScrollshotConfiguring, SessionState::Idle},
+    {SessionState::ScrollshotConfiguring, SessionState::ScrollshotCapturing},
+    // The tools island's Scrollshot button starts capture without a Start step.
+    {SessionState::ScreenshotEditing, SessionState::ScrollshotCapturing},
+    // Every way out of capturing keeps the stitched image for review, except
+    // ending the whole session.
+    {SessionState::ScrollshotCapturing, SessionState::ScrollshotReview},
+    {SessionState::ScrollshotCapturing, SessionState::Idle},
+    {SessionState::ScrollshotReview, SessionState::Idle},
+    // Edit hands the stitched image to the screenshot editor. A display change
+    // while it is being edited hands it back, annotations included, instead of
+    // cancelling as a screenshot of a desktop that no longer exists would.
+    {SessionState::ScrollshotReview, SessionState::ScreenshotEditing},
+    {SessionState::ScreenshotEditing, SessionState::ScrollshotReview},
 }};
 
 }  // namespace

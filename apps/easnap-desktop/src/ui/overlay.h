@@ -23,6 +23,16 @@ namespace easnap::ui {
 
 class OverlayWindow;
 
+/// What the keyboard or the wheel asked of a Scrollshot while the workspace,
+/// not one of its islands, had the focus.
+enum class ScrollshotCommand {
+    Start,         ///< Enter while the frame is still adjustable.
+    Copy,          ///< Enter or Ctrl+C while capturing or reviewing.
+    Save,          ///< Ctrl+S.
+    Discard,       ///< Esc.
+    WheelBlocked,  ///< A wheel turn over the frame arrived here instead of the content.
+};
+
 /// Owns every overlay window and the shared selection state.
 class OverlayController {
 public:
@@ -38,6 +48,10 @@ public:
         std::function<void(UINT, POINT)> on_image_pointer;
         std::function<void(UINT, WPARAM, LPARAM)> on_editor_key;
         std::function<void(HDC, const RECT&, const RECT&)> on_paint_image;
+        std::function<void(ScrollshotCommand)> on_scrollshot_command;
+        /// A wheel turn over a fixed image: delta, Ctrl, Shift (or a
+        /// horizontal wheel), pointer position on the desktop.
+        std::function<void(int, bool, bool, POINT)> on_editor_wheel;
     };
 
     explicit OverlayController(Callbacks callbacks);
@@ -54,6 +68,34 @@ public:
     /// Restores the existing workspace after acquiring final pixels off-screen.
     void Resume();
     void FixScreenshot();
+    /// Locks the frame for a scrolling capture and opens the input plane
+    /// inside it, so the wheel and the pointer reach the content underneath
+    /// while everything outside the frame stays inert.
+    void BeginScrollshotCapture();
+    /// Closes the input plane again. The frame stays locked.
+    void StopScrollshotCapture();
+    /// Rearranges the shading outside the frame so that no translucent window
+    /// contains the frame, and waits until the compositor shows it. Windows
+    /// passes every pixel under a translucent capture-excluded window through
+    /// a blend that changes a few values by one level - in captures too, and
+    /// even where a window region cuts the window away. Call before the first
+    /// picture of a scrolling capture. The screen looks the same. Ends with
+    /// `false`, StopScrollshotCapture or Destroy.
+    void ExposeScrollshotFrame(bool exposed);
+    [[nodiscard]] bool frame_exposed() const noexcept { return frame_exposed_; }
+    void RequestScrollshotCommand(ScrollshotCommand command);
+    /// Shows a fixed image that is larger than its frame: the workspace of a
+    /// stopped Scrollshot, or a freshly shown one, becomes the viewport
+    /// `viewport` onto that image. The frame can no longer be changed by hand.
+    void BeginDocumentView(const RECT& viewport);
+    /// The viewport moved, scrolled or zoomed. The fractions describe the part
+    /// of the image above and inside it; `label` replaces the size readout.
+    void SetDocumentView(const RECT& viewport, float top_fraction, float visible_fraction, std::wstring label);
+    [[nodiscard]] bool document_view() const noexcept { return document_view_; }
+    [[nodiscard]] float document_top_fraction() const noexcept { return document_top_; }
+    [[nodiscard]] float document_visible_fraction() const noexcept { return document_visible_; }
+    [[nodiscard]] const std::wstring& document_label() const noexcept { return document_label_; }
+    void EditorWheel(int delta, bool control, bool shift, POINT point);
     /// Destroys all windows and releases device resources.
     void Destroy();
 
@@ -113,6 +155,11 @@ private:
     bool pointer_active_{false};
     bool selection_started_{false};
     bool visible_{false};
+    bool document_view_{false};
+    bool frame_exposed_{false};
+    float document_top_{0.0f};
+    float document_visible_{1.0f};
+    std::wstring document_label_;
 };
 
 }  // namespace easnap::ui

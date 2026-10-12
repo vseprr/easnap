@@ -6,6 +6,7 @@
 
 #include <shlobj.h>
 
+#include <chrono>
 #include <new>
 #include <utility>
 
@@ -13,8 +14,11 @@
 #include "editor/screenshot_editor.h"
 #include "media/temp_session.h"
 #include "recording/recording_session.h"
+#include "scrollshot/scrollshot_session.h"
+#include "strings/strings.h"
 #include "ui/overlay.h"
 #include "ui/recording_controls.h"
+#include "ui/scrollshot_controls.h"
 #include "ui/trim_window.h"
 
 namespace easnap::app {
@@ -150,8 +154,19 @@ const wchar_t* ToString(SessionState state) noexcept {
             return L"RecordingTrimming";
         case SessionState::Exporting:
             return L"Exporting";
+        case SessionState::ScrollshotConfiguring:
+            return L"ScrollshotConfiguring";
+        case SessionState::ScrollshotCapturing:
+            return L"ScrollshotCapturing";
+        case SessionState::ScrollshotReview:
+            return L"ScrollshotReview";
     }
     return L"Unknown";
+}
+
+bool IsScrollshotState(SessionState state) noexcept {
+    return state == SessionState::ScrollshotConfiguring || state == SessionState::ScrollshotCapturing ||
+           state == SessionState::ScrollshotReview;
 }
 
 bool IsRecordingState(SessionState state) noexcept {
@@ -210,6 +225,7 @@ void CaptureCoordinator::Shutdown() {
     }
     StopRecordingForShutdown();
     StopTrimForShutdown();
+    StopScrollshotForShutdown();
     ::RemoveClipboardFormatListener(host_window_);
     if (recording_completion_) {
         recording_completion_->Shutdown();
@@ -223,8 +239,13 @@ void CaptureCoordinator::Shutdown() {
         recording_controls_->Destroy();
         recording_controls_.reset();
     }
-    // Both the editor and configuring recording island can be owned by the
-    // overlay. Retire their HWNDs before Windows destroys that owner.
+    if (scrollshot_controls_) {
+        scrollshot_controls_->Destroy();
+        scrollshot_controls_.reset();
+    }
+    // The editor, the configuring recording island and the Scrollshot island
+    // can be owned by the overlay. Retire their HWNDs before Windows destroys
+    // that owner.
     if (overlay_) {
         overlay_->Destroy();
         overlay_.reset();
@@ -270,7 +291,11 @@ void CaptureCoordinator::OnGlobalHotkey() {
         // Exactly one session may exist. Re-pressing the shortcut during a
         // session brings the active surface forward instead of stacking a new
         // overlay on top of it.
-        if (overlay_ && overlay_->visible()) {
+        if (IsScrollshotState(state_) && scrollshot_controls_ && scrollshot_controls_->visible()) {
+            // The island takes the focus, so Enter, Ctrl+S and Esc work again
+            // after the scrolled application had it.
+            scrollshot_controls_->Activate();
+        } else if (overlay_ && overlay_->visible()) {
             if (recording_controls_ && recording_controls_->visible()) {
                 recording_controls_->Activate();
             } else {
@@ -318,6 +343,17 @@ bool CaptureCoordinator::BeginCaptureSession() {
         return false;
     }
 
+    EnsureOverlay();
+
+    if (!overlay_->Show(snapshot_, initiating_pointer)) {
+        ui::ShowErrorMessage(host_window_, L"Easnap could not open the capture overlay.");
+        EndSession();
+        return false;
+    }
+    return true;
+}
+
+void CaptureCoordinator::EnsureOverlay() {
     if (!overlay_) {
         ui::OverlayController::Callbacks callbacks;
         callbacks.on_editing_changed = [this](CaptureMode mode, const RECT& region) {
@@ -339,28 +375,33 @@ bool CaptureCoordinator::BeginCaptureSession() {
         callbacks.on_paint_image = [this](HDC dc, const RECT& bounds, const RECT& repaint) {
             if (editor_) { editor_->RenderImage(dc, bounds, &repaint); }
         };
+        callbacks.on_scrollshot_command = [this](ui::ScrollshotCommand command) { OnScrollshotCommand(command); };
+        callbacks.on_editor_wheel = [this](int delta, bool control, bool shift, POINT point) {
+            if (editor_) { editor_->Wheel(delta, control, shift, point); }
+        };
         overlay_ = std::make_unique<ui::OverlayController>(std::move(callbacks));
     }
-
-    if (!overlay_->Show(snapshot_, initiating_pointer)) {
-        ui::ShowErrorMessage(host_window_, L"Easnap could not open the capture overlay.");
-        EndSession();
-        return false;
-    }
-    return true;
+    overlay_retired_ = false;
 }
 
 void CaptureCoordinator::OnWorkspaceEditingChanged(CaptureMode mode, const RECT& region) {
     if (!overlay_ || !overlay_->visible() ||
         (state_ != SessionState::RegionSelecting && state_ != SessionState::ScreenshotEditing &&
-         state_ != SessionState::RecordingConfiguring)) { return; }
+         state_ != SessionState::RecordingConfiguring && state_ != SessionState::ScrollshotConfiguring)) { return; }
     if (platform::IsEmptyRect(region)) {
         return;
     }
 
     if (mode == CaptureMode::Record) {
         if (editor_) { editor_->Hide(); }
+        if (scrollshot_controls_) { scrollshot_controls_->Hide(); }
         BeginRecordingConfiguration(region);
+        return;
+    }
+    if (mode == CaptureMode::Scrollshot) {
+        if (editor_) { editor_->Hide(); }
+        if (recording_controls_) { recording_controls_->Hide(); }
+        BeginScrollshotConfiguration(region);
         return;
     }
 
@@ -368,6 +409,7 @@ void CaptureCoordinator::OnWorkspaceEditingChanged(CaptureMode mode, const RECT&
         return;
     }
     if (recording_controls_) { recording_controls_->Hide(); }
+    if (scrollshot_controls_) { scrollshot_controls_->Hide(); }
     OpenEditor(region);
 }
 
@@ -375,6 +417,10 @@ void CaptureCoordinator::OnWorkspaceRegionChanged(const RECT& region) {
     if (editor_) { editor_->SetRegion(region, overlay_ && overlay_->selector().interacting()); }
     recording_region_ = MakeRecordingRegionEncoderCompatible(region);
     if (recording_controls_) { recording_controls_->SetRegion(region); }
+    if (state_ == SessionState::ScrollshotConfiguring && scrollshot_controls_) {
+        scrollshot_region_ = region;
+        scrollshot_controls_->SetFrame(region);
+    }
 }
 
 void CaptureCoordinator::CompleteWorkspaceScreenshot() {
@@ -1211,12 +1257,473 @@ void CaptureCoordinator::StopRecordingForShutdown() {
     }
 }
 
+// --- Scrollshot --------------------------------------------------------------
+
+namespace {
+/// How long an action waits for the capture worker to reach its barrier.
+constexpr auto kScrollshotStopDeadline = std::chrono::milliseconds(3000);
+/// More rows of the reduced image than any preview window can show.
+constexpr int kScrollshotPreviewRows = 4096;
+/// Height kept free under a document for the tools island, its context
+/// island and the brush pop-up, in device-independent pixels.
+constexpr float kDocumentToolsReserveDip = 176.0f;
+}  // namespace
+
+void CaptureCoordinator::EnsureScrollshotControls() {
+    if (!scrollshot_controls_) {
+        ui::ScrollshotControls::Callbacks callbacks;
+        callbacks.on_action = [this](ui::ScrollshotControls::Action action) {
+            using Action = ui::ScrollshotControls::Action;
+            switch (action) {
+                case Action::Start: OnScrollshotAction(ScrollshotAction::Start); break;
+                case Action::Help: OnScrollshotAction(ScrollshotAction::Help); break;
+                case Action::Edit: OnScrollshotAction(ScrollshotAction::Edit); break;
+                case Action::Save: OnScrollshotAction(ScrollshotAction::Save); break;
+                case Action::Discard: OnScrollshotAction(ScrollshotAction::Discard); break;
+                case Action::Copy: OnScrollshotAction(ScrollshotAction::Copy); break;
+            }
+        };
+        callbacks.on_wheel_blocked = [this] { OnScrollshotCommand(ui::ScrollshotCommand::WheelBlocked); };
+        scrollshot_controls_ = std::make_unique<ui::ScrollshotControls>(std::move(callbacks));
+    }
+    scrollshot_controls_retired_ = false;
+}
+
+void CaptureCoordinator::BeginScrollshotConfiguration(const RECT& region) {
+    if (!overlay_ || !RequestTransition(SessionState::ScrollshotConfiguring)) {
+        return;
+    }
+    scrollshot_region_ = region;
+    scrollshot_notice_ = ScrollshotNotice::None;
+    EnsureScrollshotControls();
+
+    if (!scrollshot_controls_->Show(ui::ScrollshotControls::View::Start, region, overlay_->panel_owner_window())) {
+        ui::ShowErrorMessage(host_window_, strings::Get(IDS_SCROLLSHOT_START_FAILED));
+        RequestTransition(SessionState::Idle);
+        EndSession();
+    }
+}
+
+void CaptureCoordinator::OnScrollshotAction(ScrollshotAction action) {
+    // One action at a time: a Save dialog pumps messages while it is open.
+    if (!initialized_ || scrollshot_busy_) {
+        return;
+    }
+    switch (action) {
+        case ScrollshotAction::Start: StartScrollshotCapture(); break;
+        case ScrollshotAction::Help: ShowScrollshotHelp(); break;
+        case ScrollshotAction::Edit: EditScrollshot(); break;
+        case ScrollshotAction::Save: SaveScrollshot(); break;
+        case ScrollshotAction::Discard: DiscardScrollshot(); break;
+        case ScrollshotAction::Copy: CopyScrollshot(); break;
+    }
+}
+
+void CaptureCoordinator::OnScrollshotCommand(ui::ScrollshotCommand command) {
+    const bool holds_image = state_ == SessionState::ScrollshotCapturing || state_ == SessionState::ScrollshotReview;
+    switch (command) {
+        case ui::ScrollshotCommand::Start:
+            if (state_ == SessionState::ScrollshotConfiguring) { OnScrollshotAction(ScrollshotAction::Start); }
+            break;
+        case ui::ScrollshotCommand::Copy:
+            if (holds_image) { OnScrollshotAction(ScrollshotAction::Copy); }
+            break;
+        case ui::ScrollshotCommand::Save:
+            if (holds_image) { OnScrollshotAction(ScrollshotAction::Save); }
+            break;
+        case ui::ScrollshotCommand::Discard:
+            if (holds_image) { OnScrollshotAction(ScrollshotAction::Discard); }
+            break;
+        case ui::ScrollshotCommand::WheelBlocked:
+            // The wheel reached Easnap instead of the content under the frame.
+            if (state_ == SessionState::ScrollshotCapturing && scrollshot_notice_ == ScrollshotNotice::None) {
+                scrollshot_notice_ = ScrollshotNotice::WheelBlocked;
+                UpdateScrollshotStatus();
+            }
+            break;
+    }
+}
+
+void CaptureCoordinator::StartScrollshotCapture() {
+    const bool from_tools = state_ == SessionState::ScreenshotEditing;
+    if ((state_ != SessionState::ScrollshotConfiguring && !from_tools) || !overlay_ || !overlay_->visible() ||
+        scrollshot_session_) {
+        return;
+    }
+    // The tools island offers this only while its frame is provisional.
+    if (from_tools && (!editor_ || editor_->has_image())) {
+        return;
+    }
+    const RECT region = overlay_->selector().selection();
+    HWND message_owner = scrollshot_controls_ && scrollshot_controls_->visible() ? scrollshot_controls_->hwnd()
+                                                                                 : host_window_;
+    if (platform::IsEmptyRect(region)) {
+        return;
+    }
+    // A continuous capture has no hide-and-show fallback. Every Easnap window
+    // must already be invisible to capture, or its pixels would be stitched in.
+    if (!ui::CanCaptureVisibleWindows()) {
+        ui::ShowMessage(message_owner, strings::Get(IDS_SCROLLSHOT_UNSUPPORTED),
+                        strings::Get(IDS_SCROLLSHOT_HELP_TITLE), MB_OK | MB_ICONWARNING);
+        return;
+    }
+
+    scrollshot::ScrollshotSession::Options options;
+    options.region = region;
+    options.generation = ++scrollshot_generation_;
+    options.notify_window = host_window_;
+    options.notify_message = kMsgScrollshotProgress;
+    options.preview_width = ui::ScrollshotControls::PreviewPixelWidth(region);
+    // The first picture is taken with the workspace on screen: its surfaces are
+    // excluded from capture, and the shading is rearranged so that nothing
+    // translucent contains the frame. Neither is visible, so a failure only
+    // has to put the shading back.
+    overlay_->ExposeScrollshotFrame(true);
+    auto session = std::make_unique<scrollshot::ScrollshotSession>(capture::CreateRegionCaptureProvider(), options);
+    if (!session->Start()) {
+        overlay_->ExposeScrollshotFrame(false);
+        platform::LogMessage(L"Scrollshot could not capture its first picture");
+        ui::ShowMessage(message_owner, strings::Get(IDS_SCROLLSHOT_START_FAILED),
+                        strings::Get(IDS_SCROLLSHOT_HELP_TITLE), MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (!RequestTransition(SessionState::ScrollshotCapturing)) {
+        overlay_->ExposeScrollshotFrame(false);
+        return;  // The session object stops its worker as it goes out of scope.
+    }
+    scrollshot_session_ = std::move(session);
+    scrollshot_region_ = region;
+    scrollshot_image_ = {};
+    scrollshot_height_ = 0;
+    // Until the first click inside the frame, a wheel that follows the focus
+    // would go to Easnap. Say so before the user wonders why nothing moves.
+    scrollshot_notice_ = platform::WheelFollowsFocus() ? ScrollshotNotice::WheelBlocked : ScrollshotNotice::None;
+
+    if (editor_) { editor_->Hide(); }
+    if (recording_controls_) { recording_controls_->Hide(); }
+    overlay_->BeginScrollshotCapture();
+    snapshot_.Clear();
+    if (capture_provider_) { capture_provider_->Release(); }
+
+    // Reached from the tools island, the Start island was never shown.
+    EnsureScrollshotControls();
+    if (!scrollshot_controls_->Show(ui::ScrollshotControls::View::Capture, region, overlay_->panel_owner_window())) {
+        ui::ShowErrorMessage(host_window_, strings::Get(IDS_SCROLLSHOT_START_FAILED));
+        RequestTransition(SessionState::Idle);
+        EndSession();
+        return;
+    }
+    OnScrollshotProgress(scrollshot_generation_);
+    scrollshot_controls_->Activate();
+}
+
+void CaptureCoordinator::OnScrollshotProgress(uint64_t generation) {
+    if (!initialized_ || generation != scrollshot_generation_ || !scrollshot_session_ ||
+        state_ != SessionState::ScrollshotCapturing) {
+        return;  // A message from a capture that has already ended.
+    }
+    const scrollshot::ScrollshotProgress progress = scrollshot_session_->progress();
+    // Rows were added, so the wheel reaches the content after all.
+    if (scrollshot_notice_ == ScrollshotNotice::WheelBlocked && scrollshot_height_ > 0 &&
+        progress.height > scrollshot_height_) {
+        scrollshot_notice_ = ScrollshotNotice::None;
+    }
+    scrollshot_height_ = progress.height;
+    if (scrollshot_controls_) {
+        scrollshot::ScrollshotPreview preview;
+        scrollshot_session_->CopyPreview(kScrollshotPreviewRows, preview);
+        scrollshot_controls_->SetPreview(preview);
+    }
+    UpdateScrollshotStatus();
+    if (progress.finished) {
+        // The worker ended on its own. Keep what it stitched.
+        static_cast<void>(StopScrollshotCapture());
+    }
+}
+
+void CaptureCoordinator::UpdateScrollshotStatus() {
+    if (!scrollshot_controls_ || scrollshot_controls_->view() != ui::ScrollshotControls::View::Capture) {
+        return;
+    }
+    const bool capturing = state_ == SessionState::ScrollshotCapturing && scrollshot_session_ != nullptr;
+    int width = scrollshot_image_.width;
+    int height = scrollshot_image_.height;
+    UINT message = capturing ? IDS_SCROLLSHOT_STATUS_SCROLL : IDS_SCROLLSHOT_STATUS_READY;
+    bool warning = false;
+    bool following = true;
+    if (capturing) {
+        const scrollshot::ScrollshotProgress progress = scrollshot_session_->progress();
+        width = progress.width;
+        height = progress.height;
+        following = progress.condition == scrollshot::ScrollshotCondition::Following;
+        switch (progress.condition) {
+            case scrollshot::ScrollshotCondition::Lost:
+                message = IDS_SCROLLSHOT_STATUS_LOST;
+                warning = true;
+                break;
+            case scrollshot::ScrollshotCondition::AtLimit:
+                message = IDS_SCROLLSHOT_STATUS_LIMIT;
+                break;
+            case scrollshot::ScrollshotCondition::CaptureFailed:
+                message = IDS_SCROLLSHOT_STATUS_CAPTURE_FAILED;
+                warning = true;
+                break;
+            case scrollshot::ScrollshotCondition::Following:
+                break;
+        }
+    }
+    switch (scrollshot_notice_) {
+        case ScrollshotNotice::WheelBlocked:
+            if (capturing && following) { message = IDS_SCROLLSHOT_STATUS_WHEEL; }
+            break;
+        case ScrollshotNotice::DisplayChanged: message = IDS_SCROLLSHOT_STATUS_DISPLAY_CHANGED; break;
+        case ScrollshotNotice::Stopping: message = IDS_SCROLLSHOT_STATUS_STOPPING; warning = true; break;
+        case ScrollshotNotice::Copying: message = IDS_SCROLLSHOT_STATUS_COPYING; break;
+        case ScrollshotNotice::Saving: message = IDS_SCROLLSHOT_STATUS_SAVING; break;
+        case ScrollshotNotice::CopyFailed: message = IDS_SCROLLSHOT_STATUS_COPY_FAILED; warning = true; break;
+        case ScrollshotNotice::SaveFailed: message = IDS_SCROLLSHOT_STATUS_SAVE_FAILED; warning = true; break;
+        case ScrollshotNotice::None: break;
+    }
+    scrollshot_controls_->SetStatus(
+        strings::Format(IDS_SCROLLSHOT_SIZE, {std::to_wstring(width), std::to_wstring(height)}),
+        strings::Get(message), warning);
+}
+
+void CaptureCoordinator::ShowScrollshotNotice(ScrollshotNotice notice) {
+    scrollshot_notice_ = notice;
+    UpdateScrollshotStatus();
+    if (scrollshot_controls_ && scrollshot_controls_->hwnd() != nullptr) {
+        ::RedrawWindow(scrollshot_controls_->hwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+    }
+}
+
+bool CaptureCoordinator::StopScrollshotCapture() {
+    if (state_ == SessionState::ScrollshotReview) {
+        return true;
+    }
+    if (state_ != SessionState::ScrollshotCapturing || !scrollshot_session_) {
+        return false;
+    }
+    if (!scrollshot_session_->Stop(kScrollshotStopDeadline)) {
+        // The worker is still inside a capture call. The request stays; the
+        // next action tries again.
+        scrollshot_notice_ = ScrollshotNotice::Stopping;
+        UpdateScrollshotStatus();
+        return false;
+    }
+    if (scrollshot_controls_) {
+        scrollshot::ScrollshotPreview preview;
+        scrollshot_session_->CopyPreview(kScrollshotPreviewRows, preview);
+        scrollshot_controls_->SetPreview(preview);
+    }
+    scrollshot_image_ = scrollshot_session_->TakeResult();
+    scrollshot_session_.reset();
+    if (scrollshot_notice_ == ScrollshotNotice::Stopping || scrollshot_notice_ == ScrollshotNotice::WheelBlocked) {
+        scrollshot_notice_ = ScrollshotNotice::None;
+    }
+    RequestTransition(SessionState::ScrollshotReview);
+    if (overlay_) { overlay_->StopScrollshotCapture(); }
+    if (scrollshot_image_.empty()) {
+        // Only memory exhaustion while composing the result leads here.
+        platform::LogMessage(L"Scrollshot stopped without an image");
+        ui::ShowErrorMessage(host_window_, strings::Get(IDS_SCROLLSHOT_START_FAILED));
+        RequestTransition(SessionState::Idle);
+        EndSession();
+        return false;
+    }
+    platform::LogMessage(L"Scrollshot stopped: %d x %d", scrollshot_image_.width, scrollshot_image_.height);
+    UpdateScrollshotStatus();
+    return true;
+}
+
+void CaptureCoordinator::CopyScrollshot() {
+    if (state_ != SessionState::ScrollshotCapturing && state_ != SessionState::ScrollshotReview) {
+        return;
+    }
+    scrollshot_busy_ = true;
+    if (scrollshot_controls_) { scrollshot_controls_->SetBusy(true); }
+    const HCURSOR previous_cursor = ::SetCursor(::LoadCursorW(nullptr, IDC_WAIT));
+    bool copied = false;
+    if (StopScrollshotCapture()) {
+        // Encoding a tall image takes a moment on this thread.
+        ShowScrollshotNotice(ScrollshotNotice::Copying);
+        // A very tall image can exceed what the clipboard accepts. The image
+        // stays, and the status points to Save.
+        copied = platform::CopyImageToClipboard(host_window_, scrollshot_image_);
+        scrollshot_notice_ = copied ? ScrollshotNotice::None : ScrollshotNotice::CopyFailed;
+    }
+    ::SetCursor(previous_cursor);
+    scrollshot_busy_ = false;
+    if (copied) {
+        platform::LogMessage(L"Scrollshot copied to the clipboard");
+        ui::ShowCaptureCopiedNotice(scrollshot_region_);
+        RequestTransition(SessionState::Idle);
+        EndSession();
+        return;
+    }
+    if (IsScrollshotState(state_)) {
+        if (scrollshot_controls_) { scrollshot_controls_->SetBusy(false); }
+        UpdateScrollshotStatus();
+    }
+}
+
+void CaptureCoordinator::SaveScrollshot() {
+    if (state_ != SessionState::ScrollshotCapturing && state_ != SessionState::ScrollshotReview) {
+        return;
+    }
+    scrollshot_busy_ = true;
+    if (!StopScrollshotCapture()) {
+        scrollshot_busy_ = false;
+        return;
+    }
+    // The preview is topmost and must not cover the system dialog.
+    if (scrollshot_controls_ && scrollshot_controls_->preview_hwnd() != nullptr) {
+        ::ShowWindow(scrollshot_controls_->preview_hwnd(), SW_HIDE);
+    }
+    HWND owner = scrollshot_controls_ && scrollshot_controls_->hwnd() != nullptr ? scrollshot_controls_->hwnd()
+                                                                                 : host_window_;
+    const auto destination = platform::ShowSaveImageDialog(
+        owner, platform::TimestampedFileName(L"Easnap", L"png"), settings_.last_save_directory);
+    scrollshot_busy_ = false;
+    if (!initialized_ || state_ != SessionState::ScrollshotReview) {
+        return;  // The session ended while the dialog was open.
+    }
+    if (scrollshot_controls_) { scrollshot_controls_->SetFrame(scrollshot_region_); }
+    if (!destination.has_value()) {
+        return;  // Cancelled: the island and the image stay.
+    }
+    const HCURSOR previous_cursor = ::SetCursor(::LoadCursorW(nullptr, IDC_WAIT));
+    ShowScrollshotNotice(ScrollshotNotice::Saving);
+    const bool saved = platform::SaveImage(scrollshot_image_, *destination);
+    ::SetCursor(previous_cursor);
+    if (!saved) {
+        scrollshot_notice_ = ScrollshotNotice::SaveFailed;
+        UpdateScrollshotStatus();
+        return;
+    }
+    settings_.last_save_directory = platform::DirectoryOf(*destination);
+    platform::LogMessage(L"Scrollshot saved");
+    RequestTransition(SessionState::Idle);
+    EndSession();
+}
+
+void CaptureCoordinator::EditScrollshot() {
+    if (state_ != SessionState::ScrollshotCapturing && state_ != SessionState::ScrollshotReview) {
+        return;
+    }
+    scrollshot_busy_ = true;
+    const bool stopped = StopScrollshotCapture();
+    scrollshot_busy_ = false;
+    if (!stopped) {
+        return;
+    }
+
+    // The picture may use the work area of the frame's monitor, less a margin
+    // and the room the tool islands need below it.
+    const platform::MonitorInfo monitor = platform::MonitorForRect(scrollshot_region_);
+    const float scale = monitor.scale();
+    const LONG margin = ui::theme::Scaled(12, scale);
+    RECT area{monitor.work_area.left + margin, monitor.work_area.top + margin, monitor.work_area.right - margin,
+              monitor.work_area.bottom - ui::theme::Scaled(kDocumentToolsReserveDip, scale)};
+    if (platform::RectWidth(area) < 2 * margin || platform::RectHeight(area) < 2 * margin) {
+        area = monitor.work_area;
+    }
+
+    // After a display change the workspace windows describe monitors that no
+    // longer exist. Their owned islands go first, then the workspace is rebuilt.
+    const bool rebuild = !overlay_ || !overlay_->visible();
+    if (rebuild) {
+        if (editor_) { editor_->Destroy(); }
+        editor_.reset();
+        editor_retired_ = false;
+        if (scrollshot_controls_) { scrollshot_controls_->Destroy(); }
+        scrollshot_controls_.reset();
+        scrollshot_controls_retired_ = false;
+        EnsureOverlay();
+        session_monitors_ = platform::EnumerateMonitors();
+        const POINT centre{(monitor.bounds.left + monitor.bounds.right) / 2,
+                           (monitor.bounds.top + monitor.bounds.bottom) / 2};
+        if (!overlay_->Show(capture::DesktopSnapshot{}, centre)) {
+            // Without a workspace the image is still safe in the island.
+            ui::ShowErrorMessage(host_window_, strings::Get(IDS_SCROLLSHOT_START_FAILED));
+            EnsureScrollshotControls();
+            if (scrollshot_controls_->Show(ui::ScrollshotControls::View::Capture, scrollshot_region_, nullptr)) {
+                UpdateScrollshotStatus();
+            }
+            return;
+        }
+    }
+
+    std::unique_ptr<editor::ScreenshotEditor> editor = CreateEditor();
+    if (!editor->OpenDocument(scrollshot_image_, area, scrollshot_region_.left, &settings_,
+                              overlay_->panel_owner_window())) {
+        // The editor takes the image only when it opened: nothing is lost.
+        ui::ShowErrorMessage(scrollshot_controls_ ? scrollshot_controls_->hwnd() : host_window_,
+                             L"Easnap could not open the screenshot tools.");
+        if (rebuild) {
+            EnsureScrollshotControls();
+            if (scrollshot_controls_->Show(ui::ScrollshotControls::View::Capture, scrollshot_region_,
+                                           overlay_->panel_owner_window())) {
+                UpdateScrollshotStatus();
+            }
+        }
+        return;
+    }
+    if (!RequestTransition(SessionState::ScreenshotEditing)) {
+        scrollshot_image_ = editor->TakeImage();
+        return;
+    }
+    if (scrollshot_controls_) { scrollshot_controls_->Hide(); }
+    editor_ = std::move(editor);
+    editor_retired_ = false;
+    scrollshot_notice_ = ScrollshotNotice::None;
+    const editor::ImageView view = editor_->view();
+    overlay_->BeginDocumentView(view.viewport);
+    PublishDocumentView(view);
+    // The workspace takes the keyboard and the wheel: scrolling, zooming and
+    // the editor's shortcuts all arrive through it.
+    ::SetForegroundWindow(overlay_->owner_window());
+    ::SetFocus(overlay_->owner_window());
+}
+
+void CaptureCoordinator::DiscardScrollshot() {
+    if (!IsScrollshotState(state_)) {
+        return;
+    }
+    RequestTransition(SessionState::Idle);
+    EndSession();
+}
+
+void CaptureCoordinator::ShowScrollshotHelp() {
+    std::wstring text = strings::Get(IDS_SCROLLSHOT_HELP_BODY);
+    if (platform::WheelFollowsFocus()) {
+        text += strings::Get(IDS_SCROLLSHOT_HELP_WHEEL);
+    }
+    HWND owner = scrollshot_controls_ && scrollshot_controls_->hwnd() != nullptr ? scrollshot_controls_->hwnd()
+                                                                                 : host_window_;
+    ui::ShowMessage(owner, text.c_str(), strings::Get(IDS_SCROLLSHOT_HELP_TITLE), MB_OK | MB_ICONINFORMATION);
+}
+
+void CaptureCoordinator::StopScrollshotForShutdown() {
+    // Destroying the session stops and joins its worker.
+    scrollshot_session_.reset();
+    scrollshot_image_ = {};
+}
+
 void CaptureCoordinator::OpenEditor(const RECT& region) {
     if (editor_ && editor_->hwnd()) {
         editor_->SetRegion(region);
         editor_->Show();
         return;
     }
+    editor_ = CreateEditor();
+    if (!editor_->Open(region, &settings_, overlay_->panel_owner_window())) {
+        ui::ShowErrorMessage(host_window_, L"Easnap could not open the screenshot tools.");
+        OnOverlayCancelled();
+    }
+}
+
+std::unique_ptr<editor::ScreenshotEditor> CaptureCoordinator::CreateEditor() {
     editor::ScreenshotEditor::Callbacks callbacks;
     callbacks.on_appearance = [this](AppearanceTheme value) { SetAppearanceTheme(value); };
     callbacks.on_closed = [this](bool exported) { OnEditorClosed(exported); };
@@ -1230,11 +1737,20 @@ void CaptureCoordinator::OpenEditor(const RECT& region) {
     callbacks.on_image_invalidated = [this](const RECT& damage) {
         if (overlay_) { overlay_->InvalidateImage(damage); }
     };
-    editor_ = std::make_unique<editor::ScreenshotEditor>(std::move(callbacks));
-    if (!editor_->Open(region, &settings_, overlay_->panel_owner_window())) {
-        ui::ShowErrorMessage(host_window_, L"Easnap could not open the screenshot tools.");
-        OnOverlayCancelled();
+    callbacks.on_scrollshot = [this] { OnScrollshotAction(ScrollshotAction::Start); };
+    callbacks.on_view_changed = [this](const editor::ImageView& view) { PublishDocumentView(view); };
+    return std::make_unique<editor::ScreenshotEditor>(std::move(callbacks));
+}
+
+void CaptureCoordinator::PublishDocumentView(const editor::ImageView& view) {
+    if (!overlay_ || !overlay_->document_view()) {
+        return;
     }
+    const int percent = static_cast<int>(view.zoom * 100.0f + 0.5f);
+    overlay_->SetDocumentView(
+        view.viewport, view.top_fraction(), view.visible_fraction(),
+        strings::Format(IDS_DOCUMENT_VIEW_LABEL, {std::to_wstring(view.image_width),
+                                                  std::to_wstring(view.image_height), std::to_wstring(percent)}));
 }
 
 void CaptureCoordinator::OnOverlayCancelled() {
@@ -1304,6 +1820,56 @@ void CaptureCoordinator::OnDisplayChanged() {
     if (state_ == SessionState::Idle) {
         return;
     }
+    if (state_ == SessionState::ScrollshotCapturing || state_ == SessionState::ScrollshotReview) {
+        if (SameDisplayLayout(session_monitors_, platform::EnumerateMonitors())) {
+            return;
+        }
+        // The frame no longer describes a place on the desktop, but what was
+        // stitched is the user's work. Stop capturing and keep the image; the
+        // island moves to a monitor that exists and all four actions remain.
+        platform::LogMessage(L"Display layout changed during a Scrollshot - capture stopped, image kept");
+        if (state_ == SessionState::ScrollshotCapturing && !StopScrollshotCapture()) {
+            return;  // Still stopping, or the session ended without an image.
+        }
+        session_monitors_ = platform::EnumerateMonitors();
+        scrollshot_notice_ = ScrollshotNotice::DisplayChanged;
+        if (overlay_) { overlay_->Hide(); }
+        if (scrollshot_controls_) {
+            scrollshot_controls_->SetFrame(scrollshot_region_);
+            UpdateScrollshotStatus();
+            scrollshot_controls_->Activate();
+        }
+        return;
+    }
+    if (state_ == SessionState::ScreenshotEditing && editor_ && editor_->document_mode()) {
+        if (SameDisplayLayout(session_monitors_, platform::EnumerateMonitors())) {
+            return;
+        }
+        // A stitched image does not depend on the desktop it was taken from.
+        // Its annotations are drawn into it and it goes back to review, where
+        // it can be copied, saved or opened for editing again.
+        platform::LogMessage(L"Display layout changed while editing a Scrollshot - image kept");
+        platform::BgraImage image = editor_->CompositeCommitted();
+        if (image.empty()) { image = editor_->TakeImage(); }
+        editor_->Hide();
+        editor_retired_ = true;
+        if (image.empty() || !RequestTransition(SessionState::ScrollshotReview)) {
+            OnOverlayCancelled();
+            return;
+        }
+        scrollshot_image_ = std::move(image);
+        session_monitors_ = platform::EnumerateMonitors();
+        scrollshot_notice_ = ScrollshotNotice::DisplayChanged;
+        if (overlay_) { overlay_->Hide(); }
+        EnsureScrollshotControls();
+        if (scrollshot_controls_->Show(ui::ScrollshotControls::View::Capture, scrollshot_region_,
+                                       overlay_ ? overlay_->panel_owner_window() : nullptr)) {
+            UpdateScrollshotStatus();
+            scrollshot_controls_->Activate();
+        }
+        ScheduleCleanup();
+        return;
+    }
     if (overlay_ && overlay_->visible()) {
         // Work-area notifications (taskbar auto-hide, a docked app bar) arrive
         // here too and leave the frozen snapshot valid. Only a changed monitor
@@ -1363,8 +1929,15 @@ void CaptureCoordinator::OnDeferredCleanup() {
             recording_controls_.reset();
         }
     }
-    // The editor and configuring recording island share this owner. Active
-    // recording has already detached it in RetireWorkspace.
+    if (scrollshot_controls_retired_) {
+        scrollshot_controls_retired_ = false;
+        if (scrollshot_controls_) {
+            scrollshot_controls_->Destroy();
+            scrollshot_controls_.reset();
+        }
+    }
+    // The editor, the configuring recording island and the Scrollshot island
+    // share this owner. Active recording has already detached it in RetireWorkspace.
     if (overlay_retired_) {
         overlay_retired_ = false;
         if (overlay_) {
@@ -1403,6 +1976,15 @@ void CaptureCoordinator::EndSession() {
         recording_controls_->Hide();
         recording_controls_retired_ = true;
     }
+    if (scrollshot_controls_) {
+        scrollshot_controls_->Hide();
+        scrollshot_controls_retired_ = true;
+    }
+    // Ending the session ends any capture still running and drops its image.
+    scrollshot_session_.reset();
+    scrollshot_image_ = {};
+    scrollshot_notice_ = ScrollshotNotice::None;
+    scrollshot_busy_ = false;
     if (trim_window_) {
         trim_window_->Hide();
         trim_window_retired_ = true;
@@ -1412,6 +1994,7 @@ void CaptureCoordinator::EndSession() {
 
 bool CaptureCoordinator::ProcessDialogMessage(MSG& message) const {
     if (editor_ && editor_->ProcessDialogMessage(message)) { return true; }
+    if (scrollshot_controls_ && scrollshot_controls_->ProcessDialogMessage(message)) { return true; }
     if (overlay_ && overlay_->ProcessDialogMessage(message)) { return true; }
     if (recording_controls_ && recording_controls_->visible() &&
         recording_controls_->ProcessDialogMessage(message)) {

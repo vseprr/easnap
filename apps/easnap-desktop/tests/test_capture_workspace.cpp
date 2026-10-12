@@ -2,6 +2,7 @@
 // Production workspace policy + real editor/configuration integration.
 // A private window station/desktop gives these tests their own OS clipboard.
 #include "ui/capture_workspace.h"
+#include "strings/strings.h"
 #include "ui/overlay.h"
 #include "ui/recording_controls.h"
 #include "editor/screenshot_editor.h"
@@ -853,6 +854,8 @@ void FramePerformance() {
 } // namespace
 
 int main(int argc, char** argv) {
+    // Assertions name controls by their English text, whatever Windows speaks.
+    easnap::strings::SetPreference(easnap::strings::LanguagePreference::English);
     CHECK(::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
     if (argc > 1 && std::string_view(argv[1]) == "--frame-performance") {
         ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
