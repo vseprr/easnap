@@ -366,6 +366,16 @@ add_test(NAME redaction_renderer_logic COMMAND test_redaction_renderer)
 # unoptimized Debug build on the hosted runner needs about 24 s.
 set_tests_properties(redaction_renderer_logic PROPERTIES LABELS "unit;editor" TIMEOUT 120)
 
+# The stitching engine has no window, thread or capture dependency: synthetic
+# documents cut along scripted scroll trajectories must come back exactly.
+add_executable(test_scrollshot_stitch
+    test_scrollshot_stitch.cpp
+    ../src/scrollshot/stitch_engine.cpp)
+target_include_directories(test_scrollshot_stitch PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(test_scrollshot_stitch PRIVATE easnap_project_options)
+add_test(NAME scrollshot_stitch_logic COMMAND test_scrollshot_stitch)
+set_tests_properties(scrollshot_stitch_logic PROPERTIES LABELS "unit;scrollshot" TIMEOUT 240)
+
 add_executable(test_capture_overlay
     test_capture_overlay.cpp
     ../src/ui/overlay.cpp
