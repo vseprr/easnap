@@ -408,7 +408,7 @@ void LockedToolCompletion() {
         if (::OpenClipboard(nullptr)) {
             HGLOBAL dib = ::GetClipboardData(CF_DIB);
             const auto* header = static_cast<const BITMAPINFOHEADER*>(::GlobalLock(dib));
-            CHECK(header && header->biWidth == 160 && std::abs(header->biHeight) == 120 && header->biBitCount == 32);
+            CHECK(header && header->biWidth == 160 && header->biHeight == 120 && header->biBitCount == 32);  // Bottom-up.
             if (header && header->biWidth == 160 && std::abs(header->biHeight) == 120 && header->biBitCount == 32) {
                 const auto* pixels = reinterpret_cast<const uint32_t*>(reinterpret_cast<const BYTE*>(header) + header->biSize);
                 for (int y = 0; y < 120; ++y) {

@@ -36,9 +36,9 @@ For v1.1.0-beta.1, in this order:
 
 1. Done: Scrollshot stitching engine, capture session, workspace integration
    and editing of the stitched image.
-2. Diagnostics and data safety: log file, crash dumps, confirmation before
-   work is lost, recovery of unfinished recordings, specific error messages,
-   including a recording region the H.264 encoder cannot accept.
+2. Done: diagnostics and data safety. Log file, crash reports, confirmation
+   before work is lost, recovery of unsaved recordings, specific recording
+   start messages, and the H.264 picture-size rule.
 3. The remaining user-visible text in English and Turkish.
 4. Settings window, About, update check, launch behaviour.
 5. Compatibility: Windows N editions, the real minimum Windows version.

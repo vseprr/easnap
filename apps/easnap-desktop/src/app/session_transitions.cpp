@@ -70,4 +70,28 @@ bool IsSessionTransitionLegal(SessionState from, SessionState to) noexcept {
     return false;
 }
 
+PendingWork PendingWorkFor(SessionState state, bool image_at_risk) noexcept {
+    switch (state) {
+        case SessionState::RecordingActive:
+        case SessionState::RecordingPaused:
+        case SessionState::RecordingFinalizing:
+            return PendingWork::Recording;
+        case SessionState::RecordingTrimming:
+            return PendingWork::UnsavedRecording;
+        case SessionState::Exporting:
+            return PendingWork::Export;
+        case SessionState::ScrollshotCapturing:
+        case SessionState::ScrollshotReview:
+            return PendingWork::Image;
+        case SessionState::ScreenshotEditing:
+            return image_at_risk ? PendingWork::Image : PendingWork::None;
+        case SessionState::Idle:
+        case SessionState::RegionSelecting:
+        case SessionState::ScreenshotExporting:
+        case SessionState::RecordingConfiguring:
+        case SessionState::ScrollshotConfiguring:
+            return PendingWork::None;
+    }
+    return PendingWork::None;
+}
 }  // namespace easnap::app

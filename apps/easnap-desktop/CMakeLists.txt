@@ -107,6 +107,8 @@ set(EASNAP_SOURCES
     src/recording/recording_session.cpp
     src/recording/audio_timeline.h
     src/recording/audio_timeline.cpp
+    src/platform/diagnostics.h
+    src/platform/diagnostics.cpp
     src/platform/platform_utils.h
     src/platform/platform_utils.cpp)
 
@@ -127,6 +129,7 @@ add_executable(EasnapPreviewHost WIN32
     src/ui/paint_buffer.h
     src/media/preview_video_endpoint.cpp
     src/media/preview_transport.cpp
+    src/platform/diagnostics.cpp
     src/platform/platform_utils.cpp)
 target_include_directories(EasnapPreviewHost PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"

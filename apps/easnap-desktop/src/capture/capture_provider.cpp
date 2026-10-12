@@ -301,6 +301,7 @@ struct OutputDuplication {
     bool unusable{false};  ///< Set once this output proved it only returns black.
     ComPtr<ID3D11Texture2D> region_staging;  ///< Reused readback target for region capture.
     bool delivered_content{false};  ///< Real pixels were seen; later black frames are content.
+    bool last_frame_composed{false};  ///< The frame last acquired carried a desktop update.
     RegionCaptureFailureDiagnostic unusable_failure;
 
     void ReleaseFrame() {
@@ -337,6 +338,7 @@ public:
                 frame.image.Reset(static_cast<int>(platform::RectWidth(monitor.bounds)),
                                   static_cast<int>(platform::RectHeight(monitor.bounds)));
                 frame.image.MakeOpaque();
+                frame.captured = false;
             }
             out.monitors.push_back(std::move(frame));
         }
@@ -422,7 +424,8 @@ private:
         for (const MonitorInfo& monitor : monitors) {
             const RECT overlap = platform::IntersectRects(region, monitor.bounds);
             if (!platform::IsEmptyRect(overlap) && ::EqualRect(&overlap, &region)) {
-                result = CaptureMonitorRegion(monitor, region, out, options.wait_milliseconds);
+                result = CaptureMonitorRegion(monitor, region, out, options.wait_milliseconds,
+                                              options.await_first_composed_frame);
                 if (result.status != RegionCaptureStatus::FrameAcquired) {
                     return result;
                 }
@@ -482,7 +485,8 @@ private:
     }
 
     RegionCaptureResult CaptureMonitorRegion(const MonitorInfo& monitor, const RECT& region,
-                                              BgraImage& out, uint32_t wait_milliseconds) {
+                                              BgraImage& out, uint32_t wait_milliseconds,
+                                              bool await_first_composed_frame = false) {
         RegionCaptureResult result;
         if (!using_fallback_ && EnsureDuplication()) {
             const int index = FindOutputIndex(monitor);
@@ -511,7 +515,15 @@ private:
                         result.status = RegionCaptureStatus::NoNewFrame;
                         return result;
                     }
-                    if (acquired == FrameAcquireStatus::Acquired) {
+                    if (acquired == FrameAcquireStatus::Acquired && await_first_composed_frame &&
+                        !output.last_frame_composed) {
+                        // Black because nothing has been composed for this
+                        // duplication yet, not because of what is on screen.
+                        // This picture comes from GDI; the next one asks again.
+                        result.primary_failure = {
+                            RegionCaptureFailureStage::DuplicationBlankFrame,
+                            RegionCaptureFailureCodeKind::None, 0};
+                    } else if (acquired == FrameAcquireStatus::Acquired) {
                         LogMessage(L"Duplication returned a blank recording region; using the GDI blit");
                         output.unusable = true;
                         output.unusable_failure = {
@@ -704,6 +716,7 @@ private:
 
         BgraImage provisional;
         bool have_provisional = false;
+        output.last_frame_composed = false;
 
         for (int attempt = 0; attempt < attempts; ++attempt) {
             DXGI_OUTDUPL_FRAME_INFO info{};
@@ -766,6 +779,7 @@ private:
             }
 
             const bool carries_desktop_update = info.LastPresentTime.QuadPart != 0 || info.AccumulatedFrames != 0;
+            output.last_frame_composed = carries_desktop_update;
             if (carries_desktop_update && !ImageLooksBlank(candidate)) {
                 out = std::move(candidate);
                 return FrameAcquireStatus::Acquired;
@@ -857,6 +871,15 @@ const wchar_t* RegionCaptureFailureStageName(
 void DesktopSnapshot::Clear() {
     monitors.clear();
     virtual_bounds = RECT{0, 0, 0, 0};
+}
+
+bool DesktopSnapshot::RegionComplete(const RECT& region) const noexcept {
+    for (const MonitorFrame& frame : monitors) {
+        if (!frame.captured && !platform::IsEmptyRect(platform::IntersectRects(frame.desktop_rect, region))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool DesktopSnapshot::CropRegion(const RECT& region, BgraImage& out) const {

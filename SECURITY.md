@@ -1,4 +1,4 @@
-﻿# Security policy
+# Security policy
 
 Easnap handles screen and audio content. Use synthetic media when reproducing a
 problem and report security vulnerabilities privately.
@@ -24,6 +24,15 @@ separate security branches.
   permissions restricted to the current user and SYSTEM.
 - Export stages output before publication. Failed or cancelled publication
   preserves the source for recovery.
+- A finished recording that was neither saved nor discarded when Easnap ended
+  stays in its session directory and is offered at the next start.
+- A log is kept in `%LOCALAPPDATA%\Easnap\logs` (three files of one megabyte).
+  Its lines carry no path, file name, window title or typed text.
+- When Easnap or its preview helper fails, a crash report is written to
+  `%LOCALAPPDATA%\Easnap\crashes`; the three newest are kept. A report has no
+  copy of the process's memory heap, but it holds the call stack of every
+  thread, which can contain fragments of what was being handled. Nothing is
+  sent anywhere: look at a report before you attach it to an issue.
 - Recording Copy places a file reference on the clipboard. Files still used by
   the clipboard are retained; unreferenced stale sessions can be cleaned later.
 - Live sessions hold an exclusive lease. The preview helper uses private IPC,

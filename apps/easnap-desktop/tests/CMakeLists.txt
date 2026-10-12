@@ -337,7 +337,7 @@ target_include_directories(test_region_selector PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
     "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
 
-target_link_libraries(test_region_selector PRIVATE easnap_project_options
+target_link_libraries(test_region_selector PRIVATE easnap_project_options easnap_strings
     d3d11 d2d1 dwrite dxgi dxguid windowscodecs
     mfplat mfuuid mfreadwrite
     shlwapi comctl32 shell32 ole32 oleaut32 uuid
@@ -407,6 +407,21 @@ target_link_libraries(test_scrollshot_layout PRIVATE easnap_project_options
     user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
 add_test(NAME scrollshot_layout_logic COMMAND test_scrollshot_layout)
 set_tests_properties(scrollshot_layout_logic PROPERTIES LABELS "unit;scrollshot;editor" TIMEOUT 30)
+
+# The log file through the production sink, and crash reports from a second
+# process that installs the production handler and fails on purpose.
+add_executable(test_diagnostics
+    test_diagnostics.cpp
+    ../src/platform/diagnostics.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_diagnostics PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_diagnostics PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+add_test(NAME diagnostics_log_and_crash_reports COMMAND test_diagnostics)
+set_tests_properties(diagnostics_log_and_crash_reports PROPERTIES LABELS "unit;diagnostics" TIMEOUT 120)
 
 # Both string tables, read from this executable's resources through the
 # production accessor.
@@ -497,6 +512,30 @@ add_test(NAME scrollshot_workspace_production
 set_tests_properties(scrollshot_workspace_production PROPERTIES
     LABELS "integration;scrollshot;workspace;editor;isolated-desktop" TIMEOUT 90)
 
+# Questions asked before work is lost: the dialog with named buttons, the
+# tracking of nested dialog loops and the editor's discard confirmation.
+add_executable(test_data_safety
+    test_data_safety.cpp
+    ../src/ui/capture_workspace.cpp
+    ../src/ui/overlay.cpp
+    ../src/ui/capture_magnifier.cpp
+    ../src/ui/region_selector.cpp
+    ../src/ui/ui_theme.cpp
+    ../src/ui/native_controls.cpp
+    ../src/editor/screenshot_editor.cpp
+    ../src/editor/image_viewport.cpp
+    ../src/editor/redaction_renderer.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_data_safety PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_data_safety PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
+add_test(NAME data_safety_questions
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_data_safety>)
+set_tests_properties(data_safety_questions PROPERTIES
+    LABELS "integration;ui;editor;isolated-desktop" TIMEOUT 60)
+
 # Scrollshot against the real desktop: a second process shows a known document,
 # real wheel and keyboard input scrolls it through the open frame, and the
 # production session and provider must return it pixel for pixel.
@@ -578,7 +617,7 @@ set_tests_properties(ui_modernization_native PROPERTIES
     LABELS "integration;ui;accessibility;theme;preview" TIMEOUT 90)
 
 foreach(ui_target test_region_selector test_redaction_renderer test_capture_overlay test_capture_workspace
-                  test_scrollshot_workspace test_scrollshot_desktop test_ui_modernization)
+                  test_scrollshot_workspace test_scrollshot_desktop test_data_safety test_ui_modernization)
     target_link_libraries(${ui_target} PRIVATE uxtheme gdiplus oleacc dwmapi)
 endforeach()
 

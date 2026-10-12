@@ -691,7 +691,7 @@ LRESULT CALLBACK ScreenshotEditor::PropertyProc(HWND hwnd,UINT message,WPARAM wp
         if(!self->document_.in_transaction()) { self->context_owns_transaction_=true; self->document_.BeginTransaction(); }
     }
     if(message==WM_KEYDOWN && wparam==VK_ESCAPE) {
-        self->context_owns_transaction_=false; self->document_.CancelTransaction(); self->Close(false); return 0;
+        self->context_owns_transaction_=false; self->document_.CancelTransaction(); self->RequestDiscard(); return 0;
     }
     const LRESULT result=::DefSubclassProc(hwnd,message,wparam,lparam);
     if(clear_hover) { self->SyncWatermarkClear(); }
@@ -1247,7 +1247,7 @@ void ScreenshotEditor::NotifyMutation(uint64_t previous_revision) {
 }
 
 void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
-    if (!visible_) { return; }
+    if (!visible_ || modal_active_) { return; }
     switch (message) {
         case WM_LBUTTONDOWN: if (FeatureUsed()) { BeginStroke(point); } break;
         case WM_LBUTTONDBLCLK: {
@@ -1274,7 +1274,7 @@ void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
 }
 
 void ScreenshotEditor::Keyboard(UINT message, WPARAM key, LPARAM flags) {
-    if (visible_) { HandleMessage(hwnd_, message, key, flags); }
+    if (visible_ && !modal_active_) { HandleMessage(hwnd_, message, key, flags); }
 }
 
 bool ScreenshotEditor::CompleteCopy() {
@@ -1282,6 +1282,18 @@ bool ScreenshotEditor::CompleteCopy() {
     ui::ShowCaptureCopiedNotice(region_);
     Close(true);
     return true;
+}
+
+void ScreenshotEditor::RequestDiscard() {
+    if (modal_active_) { return; }  // Already asking, or a file dialog is open.
+    if ((has_annotations() || document_mode_) && callbacks_.on_confirm_discard) {
+        // The workspace stays enabled under the question; it must not draw.
+        modal_active_ = true;
+        const bool discard = callbacks_.on_confirm_discard();
+        modal_active_ = false;
+        if (!discard) { return; }
+    }
+    Close(false);
 }
 
 void ScreenshotEditor::Close(bool exported) {
@@ -1491,7 +1503,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         }
         case WM_COMMAND: {
             const int id=LOWORD(wparam),notification=HIWORD(wparam);
-            if(id==IDCANCEL) { Close(false); return 0; }
+            if(id==IDCANCEL) { RequestDiscard(); return 0; }
             if(id==2600 && notification==CBN_DROPDOWN) {
                 COMBOBOXINFO info{sizeof(info)}; ::GetComboBoxInfo(Control(2600),&info);
                 ::SetWindowLongPtrW(info.hwndList,GWL_STYLE,::GetWindowLongPtrW(info.hwndList,GWL_STYLE)&~WS_BORDER);
@@ -1773,14 +1785,14 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 }
             }
             if (wparam == VK_ESCAPE) {
-                Close(false);
+                RequestDiscard();
                 return 0;
             }
             return 0;
         }
 
         case WM_CLOSE:
-            Close(false);
+            RequestDiscard();
             return 0;
 
         case WM_DESTROY:
@@ -1817,7 +1829,7 @@ const ScreenshotEditor::ToolbarItem* ScreenshotEditor::HitTestToolbar(POINT clie
 }
 
 void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
-    if(item.kind==ToolbarItem::Kind::Command && item.command==kCommandCancel) { Close(false); return; }
+    if(item.kind==ToolbarItem::Kind::Command && item.command==kCommandCancel) { RequestDiscard(); return; }
     if(item.kind==ToolbarItem::Kind::Command && item.command==kCommandScrollshot) {
         if(!has_image() && callbacks_.on_scrollshot) { callbacks_.on_scrollshot(); }
         return;

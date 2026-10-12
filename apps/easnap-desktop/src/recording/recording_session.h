@@ -31,6 +31,17 @@ enum class RecordingSessionState {
     Aborted,
 };
 
+/// Which part of starting a recording failed, for a message that names the
+/// next step. The technical cause is in `last_error` and in the log.
+enum class RecordingStartFailure {
+    None,
+    Storage,   ///< The private temporary session could not be created.
+    Audio,     ///< The audio device or its format.
+    Encoder,   ///< The writer did not accept the picture size or found no encoder.
+    Capture,   ///< The screen region could not be captured.
+    Internal,  ///< Threads or memory.
+};
+
 inline constexpr std::size_t kAudioSegmentDiagnosticCapacity = 4;
 inline constexpr std::size_t kAudioPacketTimelineDiagnosticCapacity = 16;
 inline constexpr std::size_t kSilenceWriteDiagnosticCapacity = 8;
@@ -157,6 +168,9 @@ public:
     [[nodiscard]] std::optional<media::TemporarySession> temporary_session() const;
     [[nodiscard]] std::wstring finalized_path() const;
     [[nodiscard]] std::wstring last_error() const;
+    [[nodiscard]] RecordingStartFailure start_failure() const noexcept {
+        return start_failure_.load(std::memory_order_acquire);
+    }
 
 private:
     friend std::unique_ptr<RecordingSession> CreateVideoRecordingSession(
@@ -197,7 +211,7 @@ private:
     void SetAudioAccepting(bool accepting) noexcept;
     [[nodiscard]] bool AudioEnabled() const noexcept;
     void RecordFailure(std::wstring message) noexcept;
-    void RollBackStartup(std::wstring message) noexcept;
+    void RollBackStartup(std::wstring message, RecordingStartFailure failure) noexcept;
     void StopWorkersAndJoin() noexcept;
     [[nodiscard]] uint64_t BoundedFramePayloadBytes() const noexcept;
 
@@ -213,6 +227,7 @@ private:
     std::optional<media::TemporarySession> temporary_session_;
     std::wstring finalized_path_;
     std::wstring last_error_;
+    std::atomic<RecordingStartFailure> start_failure_{RecordingStartFailure::None};
 
     std::thread consumer_thread_;
     capture::SaturatingCounter written_frames_;

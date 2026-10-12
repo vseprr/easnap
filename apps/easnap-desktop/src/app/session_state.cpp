@@ -257,14 +257,184 @@ void CaptureCoordinator::Shutdown() {
     trim_export_.reset();
     recording_session_.reset();
     capture_provider_.reset();
-    temp_store_.reset();
     snapshot_.Clear();
     trim_source_path_.clear();
     trim_artifact_.Clear();
+    // The completion controller refers to the store: it goes first.
     recording_completion_.reset();
+    temp_store_.reset();
     state_ = SessionState::Idle;
     initialized_ = false;
     host_window_ = nullptr;
+}
+
+// --- Exit, session end and recovery ------------------------------------------
+
+PendingWork CaptureCoordinator::pending_work() const {
+    if (!initialized_) {
+        return PendingWork::None;
+    }
+    const bool image_at_risk = editor_ && editor_->visible() &&
+                               (editor_->has_annotations() || editor_->document_mode());
+    return PendingWorkFor(state_, image_at_risk);
+}
+
+HWND CaptureCoordinator::DialogOwner() const {
+    if (trim_window_ && trim_window_->visible()) { return trim_window_->hwnd(); }
+    if (recording_controls_ && recording_controls_->visible()) { return recording_controls_->hwnd(); }
+    if (scrollshot_controls_ && scrollshot_controls_->visible()) { return scrollshot_controls_->hwnd(); }
+    if (editor_ && editor_->visible() && editor_->hwnd() != nullptr) { return editor_->hwnd(); }
+    return host_window_;
+}
+
+bool CaptureCoordinator::ConfirmDiscardImage(HWND owner, bool scrollshot) {
+    return ui::ConfirmDestructive(
+        owner, strings::Get(scrollshot ? IDS_DISCARD_SCROLLSHOT_TEXT : IDS_DISCARD_IMAGE_TEXT),
+        strings::Get(IDS_DISCARD_IMAGE_TITLE), strings::Get(IDS_DISCARD_CONFIRM), strings::Get(IDS_DISCARD_KEEP));
+}
+
+bool CaptureCoordinator::ConfirmExit() {
+    if (!initialized_) {
+        return true;
+    }
+    // One of the application's dialogs or menus is running its own message
+    // loop. Its caller is on the stack and must find its objects when it
+    // returns, so the application cannot be taken down from here.
+    if (platform::ModalLoopActive() || ui::PopupActive()) {
+        ::MessageBeep(MB_ICONWARNING);
+        if (HWND active = ::GetActiveWindow()) {
+            FLASHWINFO flash{sizeof(flash), active, FLASHW_CAPTION, 3, 0};
+            ::FlashWindowEx(&flash);
+        }
+        return false;
+    }
+    UINT text = 0;
+    switch (pending_work()) {
+        case PendingWork::None: return true;
+        case PendingWork::Recording: text = IDS_EXIT_RECORDING; break;
+        case PendingWork::UnsavedRecording: text = IDS_EXIT_UNSAVED_RECORDING; break;
+        case PendingWork::Export: text = IDS_EXIT_EXPORT; break;
+        case PendingWork::Image: text = IDS_EXIT_IMAGE; break;
+    }
+    platform::LogMessage(L"Exit requested with unsaved work (state %d)", static_cast<int>(state_));
+    return ui::ConfirmDestructive(DialogOwner(), strings::Get(text), strings::Get(IDS_EXIT_TITLE),
+                                  strings::Get(IDS_EXIT_CONFIRM), strings::Get(IDS_EXIT_STAY));
+}
+
+const wchar_t* CaptureCoordinator::ShutdownBlockReason() const {
+    switch (pending_work()) {
+        case PendingWork::Recording: return strings::Get(IDS_SHUTDOWN_REASON_RECORDING);
+        case PendingWork::UnsavedRecording:
+        case PendingWork::Export: return strings::Get(IDS_SHUTDOWN_REASON_UNSAVED);
+        case PendingWork::Image: return strings::Get(IDS_SHUTDOWN_REASON_IMAGE);
+        case PendingWork::None: break;
+    }
+    return nullptr;
+}
+
+void CaptureCoordinator::PrepareForSessionEnd() {
+    if (!initialized_) {
+        return;
+    }
+    platform::LogMessage(L"The Windows session is ending (state %d)", static_cast<int>(state_));
+    PersistSettings();
+    // A recording that is still running is closed, so that there is a file to
+    // offer again. Windows allows a few seconds for this.
+    if (recording_finalizer_.has_worker()) {
+        recording_finalizer_.Join();
+    } else if (recording_session_ &&
+               (state_ == SessionState::RecordingActive || state_ == SessionState::RecordingPaused)) {
+        static_cast<void>(recording_session_->Stop());
+    }
+    if (trim_export_) {
+        trim_export_->CancelAndWait();
+    }
+    if (recording_session_ && temp_store_) {
+        const std::optional<media::TemporarySession> session = recording_session_->temporary_session();
+        const bool finished =
+            recording_session_->state() == recording::RecordingSessionState::Finalized &&
+            !ExistingRecordingDataPath(*recording_session_).empty();
+        // Marked and no longer owned: neither the end of this process nor the
+        // sweep of the next start deletes it.
+        if (session.has_value() && finished && temp_store_->MarkRecoverable(*session)) {
+            static_cast<void>(temp_store_->ReleaseSession(*session));
+            platform::LogMessage(L"The unsaved recording is kept for the next start");
+        }
+    }
+}
+
+void CaptureCoordinator::OfferRecoveredRecordings() {
+    if (!initialized_ || !temp_store_ || state_ != SessionState::Idle) {
+        return;
+    }
+    enum : int { kSave = 100, kDelete = 101, kLater = 102 };
+    for (const media::TemporarySession& session : temp_store_->AdoptRecoverableSessions()) {
+        const std::wstring source = session.recording_path();
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        if (::GetFileAttributesExW(source.c_str(), GetFileExInfoStandard, &data) == FALSE) {
+            static_cast<void>(temp_store_->DeleteSession(session));
+            continue;
+        }
+        // When and how large, in the user's own date and time format.
+        std::wstring when;
+        FILETIME local{};
+        SYSTEMTIME time{};
+        if (::FileTimeToLocalFileTime(&data.ftLastWriteTime, &local) != FALSE &&
+            ::FileTimeToSystemTime(&local, &time) != FALSE) {
+            wchar_t date_text[64]{}, time_text[64]{};
+            ::GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, &time, nullptr, date_text,
+                              ARRAYSIZE(date_text), nullptr);
+            ::GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, &time, nullptr, time_text,
+                              ARRAYSIZE(time_text));
+            when = std::wstring(date_text) + L" " + time_text;
+        }
+        const ULONGLONG bytes = (static_cast<ULONGLONG>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+        const ULONGLONG megabytes = std::max<ULONGLONG>(1, (bytes + 512 * 1024) / (1024 * 1024));
+        const std::wstring text = strings::Format(IDS_RECOVERY_TEXT, {when, std::to_wstring(megabytes)});
+        const int choice = ui::ShowChoice(
+            host_window_, text.c_str(), strings::Get(IDS_RECOVERY_TITLE),
+            {{kSave, strings::Get(IDS_RECOVERY_SAVE)},
+             {kDelete, strings::Get(IDS_RECOVERY_DELETE), true},
+             {kLater, strings::Get(IDS_NOT_NOW)}},
+            kSave, kLater);
+        if (!initialized_ || !temp_store_) {
+            return;
+        }
+        if (choice == kDelete) {
+            platform::LogMessage(L"An unsaved recording from an earlier run was deleted on request");
+            static_cast<void>(temp_store_->DeleteSession(session));
+            continue;
+        }
+        bool saved = false;
+        if (choice == kSave) {
+            // No owner: the hidden host window would pin the dialog to the
+            // corner of the primary display.
+            const auto destination = ShowSaveRecordingDialog(
+                nullptr, media::RecordingFormat::Mp4,
+                platform::TimestampedFileName(L"Easnap", RecordingFileExtension(media::RecordingFormat::Mp4)),
+                settings_.last_save_directory);
+            if (!initialized_ || !temp_store_) {
+                return;
+            }
+            if (destination.has_value()) {
+                saved = ::CopyFileW(source.c_str(), destination->c_str(), FALSE) != FALSE;
+                if (saved) {
+                    settings_.last_save_directory = platform::DirectoryOf(*destination);
+                    PersistSettings();
+                    platform::LogMessage(L"An unsaved recording from an earlier run was saved");
+                } else {
+                    platform::LogMessage(L"Saving a recovered recording failed (error %lu)", ::GetLastError());
+                    ui::ShowErrorMessage(host_window_, strings::Get(IDS_RECOVERY_SAVE_FAILED));
+                }
+            }
+        }
+        if (saved) {
+            static_cast<void>(temp_store_->DeleteSession(session));
+        } else {
+            // Not now, cancelled or failed: it stays and is offered again.
+            static_cast<void>(temp_store_->ReleaseSession(session));
+        }
+    }
 }
 
 bool CaptureCoordinator::IsTransitionLegal(SessionState from, SessionState to) noexcept {
@@ -416,7 +586,10 @@ void CaptureCoordinator::OnWorkspaceEditingChanged(CaptureMode mode, const RECT&
 void CaptureCoordinator::OnWorkspaceRegionChanged(const RECT& region) {
     if (editor_) { editor_->SetRegion(region, overlay_ && overlay_->selector().interacting()); }
     recording_region_ = MakeRecordingRegionEncoderCompatible(region);
-    if (recording_controls_) { recording_controls_->SetRegion(region); }
+    if (recording_controls_) {
+        recording_controls_->SetRegion(region);
+        if (state_ == SessionState::RecordingConfiguring) { recording_controls_->SetError(RecordingRegionError()); }
+    }
     if (state_ == SessionState::ScrollshotConfiguring && scrollshot_controls_) {
         scrollshot_region_ = region;
         scrollshot_controls_->SetFrame(region);
@@ -440,9 +613,15 @@ bool CaptureCoordinator::PrepareWorkspaceScreenshot() {
     ::DwmFlush();
     capture::DesktopSnapshot final_snapshot;
     platform::BgraImage image;
-    const bool captured = capture_provider_ &&
-        capture_provider_->CaptureDesktop(settings_.capture_cursor, final_snapshot) &&
-        final_snapshot.CropRegion(region, image) && editor_->SetImage(std::move(image));
+    // A display that could not be read would leave a black part in the image.
+    // That is a failed capture: the editor says so and the frame stays for
+    // another try.
+    const bool read = capture_provider_ && capture_provider_->CaptureDesktop(settings_.capture_cursor, final_snapshot);
+    const bool complete = read && final_snapshot.RegionComplete(region);
+    if (read && !complete) {
+        platform::LogMessage(L"A display under the selection could not be read; no screenshot was taken");
+    }
+    const bool captured = complete && final_snapshot.CropRegion(region, image) && editor_->SetImage(std::move(image));
     if (captured) {
         overlay_->FixScreenshot();
         snapshot_.Clear();
@@ -490,6 +669,8 @@ void CaptureCoordinator::BeginRecordingConfiguration(const RECT& region) {
         EndSession();
         return;
     }
+    // Said at once, while the frame can still be made smaller.
+    recording_controls_->SetError(RecordingRegionError());
     ScheduleCleanup();
 }
 
@@ -500,6 +681,10 @@ void CaptureCoordinator::OnRecordingStart(
         return;
     }
 
+    if (const std::wstring too_large = RecordingRegionError(); !too_large.empty()) {
+        if (recording_controls_) { recording_controls_->SetError(too_large); }
+        return;
+    }
     if (recording_controls_) { recording_controls_->SetError({}); }
     // Keep the same provisional windows available until Start succeeds.
     if (overlay_) { overlay_->Hide(); }
@@ -518,12 +703,13 @@ void CaptureCoordinator::OnRecordingStart(
     recording_session_ =
         recording::CreateVideoRecordingSession(*temp_store_, options);
     if (!recording_session_) {
-        OnRecordingStartFailed(L"Easnap could not create the recording pipeline.");
+        OnRecordingStartFailed(L"The recording pipeline could not be created",
+                               recording::RecordingStartFailure::Internal);
         return;
     }
 
     if (!recording_session_->Start()) {
-        OnRecordingStartFailed(recording_session_->last_error());
+        OnRecordingStartFailed(recording_session_->last_error(), recording_session_->start_failure());
         return;
     }
     if (!RequestTransition(SessionState::RecordingActive)) {
@@ -547,24 +733,41 @@ void CaptureCoordinator::OnRecordingStart(
     ScheduleCleanup();
 }
 
-void CaptureCoordinator::OnRecordingStartFailed(const std::wstring& message) {
+void CaptureCoordinator::OnRecordingStartFailed(const std::wstring& message,
+                                                recording::RecordingStartFailure failure) {
     platform::LogMessage(L"Recording start failed: %ls", message.c_str());
-    std::wstring retained;
     if (recording_session_) {
         recording_session_->Abort();
-        retained = ExistingRecordingDataPath(*recording_session_);
-        recording_session_.reset(); // Private store still owns partial media.
+        // What a failed start wrote cannot be played. Its directory goes now,
+        // not when Easnap exits.
+        const std::optional<media::TemporarySession> session = recording_session_->temporary_session();
+        recording_session_.reset();
+        if (session.has_value() && temp_store_ && !temp_store_->DeleteSession(*session)) {
+            platform::LogMessage(L"The directory of a failed recording start could not be removed yet");
+        }
     }
     if (overlay_) { overlay_->Resume(); }
+    UINT next_step = IDS_RECORD_START_INTERNAL;
+    switch (failure) {
+        case recording::RecordingStartFailure::Audio: next_step = IDS_RECORD_START_AUDIO; break;
+        case recording::RecordingStartFailure::Encoder: next_step = IDS_RECORD_START_ENCODER; break;
+        case recording::RecordingStartFailure::Storage: next_step = IDS_RECORD_START_STORAGE; break;
+        case recording::RecordingStartFailure::Capture: next_step = IDS_RECORD_START_CAPTURE; break;
+        case recording::RecordingStartFailure::Internal:
+        case recording::RecordingStartFailure::None: break;
+    }
     if (recording_controls_) {
-        recording_controls_->SetError(L"Could not start recording. Check the audio source and try again.");
+        recording_controls_->SetError(std::wstring(strings::Get(IDS_RECORD_START_FAILED)) + L" " +
+                                      strings::Get(next_step));
         recording_controls_->Activate();
     }
-    if (!retained.empty()) {
-        const std::wstring detail = message + L"\n\nTemporary media was preserved at:\n" + retained;
-        ui::ShowMessage(recording_controls_ ? recording_controls_->hwnd() : host_window_, detail.c_str(),
-                      L"Easnap", MB_OK | MB_ICONWARNING);
-    }
+}
+
+std::wstring CaptureCoordinator::RecordingRegionError() const {
+    if (RecordingRegionFitsH264(recording_region_)) { return {}; }
+    return strings::Format(IDS_RECORD_REGION_TOO_LARGE,
+                           {std::to_wstring(platform::RectWidth(recording_region_)),
+                            std::to_wstring(platform::RectHeight(recording_region_))});
 }
 
 void CaptureCoordinator::OnRecordingCancel() {
@@ -701,19 +904,21 @@ void CaptureCoordinator::FinishRecordingWorkflow(bool finalized) {
     const SessionState next = StateAfterRecordingFinalization(
         finalized, !retained_path.empty());
     if (next == SessionState::RecordingTrimming && RequestTransition(next)) {
+        // From here on the recording is the user's to save or discard. Should
+        // Easnap end before that decision, the next start offers it again.
+        if (const std::optional<media::TemporarySession> session = recording_session_->temporary_session();
+            session.has_value() && temp_store_) {
+            static_cast<void>(temp_store_->MarkRecoverable(*session));
+        }
         BeginTrimWorkflow(retained_path);
         return;
     }
 
-    std::wstring message = recording_session_->last_error();
-    if (message.empty()) {
-        message = finalized
-                      ? L"Easnap finalized the recording, but the temporary working media could not be found."
-                      : L"Easnap could not complete the recording.";
-    }
+    platform::LogMessage(L"Recording could not be completed: %ls", recording_session_->last_error().c_str());
+    std::wstring message = strings::Get(IDS_RECORDING_UNFINISHED);
     if (!retained_path.empty()) {
-        message += L"\n\nTemporary media data was preserved at:\n" +
-                   retained_path;
+        // Not playable as it is, and deleted with the session when Easnap exits.
+        message += L"\n\n" + strings::Format(IDS_RECORDING_UNFINISHED_KEPT, {retained_path});
     }
     ui::ShowMessage(host_window_, message.c_str(), L"Easnap",
                   MB_OK | MB_ICONWARNING);
@@ -779,9 +984,7 @@ void CaptureCoordinator::BeginTrimWorkflow(const std::wstring& source_path) {
 
     if (!trim_window_ || !trim_export_ ||
         !trim_window_->Open(trim_source_path_, recording_region_)) {
-        ui::ShowErrorMessage(
-            host_window_,
-            L"Easnap could not open the trim view. The finalized recording remains in temporary storage until Easnap exits.");
+        ui::ShowErrorMessage(host_window_, strings::Get(IDS_RECORDING_KEPT_FOR_RECOVERY));
         FinishTrimWorkflow(false);
         return;
     }
@@ -1004,12 +1207,15 @@ void CaptureCoordinator::OnTrimWindowClosed() {
         state_ != SessionState::Exporting) {
         return;
     }
-    const int answer = ui::ShowMessage(
+    const bool discard = ui::ConfirmDestructive(
         trim_window_ != nullptr ? trim_window_->hwnd() : host_window_,
-        L"Discard this recording?\n\nThe unsaved recording and its temporary trim data will be permanently deleted.",
-        L"Discard recording", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
+        strings::Get(IDS_DISCARD_RECORDING_TEXT), strings::Get(IDS_DISCARD_RECORDING_TITLE),
+        strings::Get(IDS_DISCARD_CONFIRM), strings::Get(IDS_DISCARD_RECORDING_KEEP));
+    if (state_ != SessionState::RecordingTrimming && state_ != SessionState::Exporting) {
+        return;  // The export finished and closed the session while the question was open.
+    }
     const TrimCloseAction action =
-        PlanTrimClose(answer == IDYES, state_ == SessionState::Exporting);
+        PlanTrimClose(discard, state_ == SessionState::Exporting);
     if (action == TrimCloseAction::CancelExportThenDiscard) {
         trim_close_pending_ = true;
         OnTrimExportCancel();
@@ -1214,6 +1420,10 @@ void CaptureCoordinator::FinishTrimWorkflow(bool delete_active_session) {
         platform::LogMessage(
             L"Temporary recording cleanup was deferred because a file remained in use");
     }
+    if (!delete_active_session && active_session.has_value() && temp_store_) {
+        // Kept for the next start: no longer owned, so exit does not delete it.
+        static_cast<void>(temp_store_->ReleaseSession(*active_session));
+    }
     trim_source_path_.clear();
     trim_artifact_.Clear();
     pending_trim_action_ = PendingTrimAction::None;
@@ -1374,6 +1584,10 @@ void CaptureCoordinator::StartScrollshotCapture() {
     options.notify_window = host_window_;
     options.notify_message = kMsgScrollshotProgress;
     options.preview_width = ui::ScrollshotControls::PreviewPixelWidth(region);
+    // Windows lets a process duplicate an output once. The workspace's own
+    // provider gives its duplication up, or the capture would fall back to GDI.
+    snapshot_.Clear();
+    if (capture_provider_) { capture_provider_->Release(); }
     // The first picture is taken with the workspace on screen: its surfaces are
     // excluded from capture, and the shading is rearranged so that nothing
     // translucent contains the frame. Neither is visible, so a failure only
@@ -1402,8 +1616,6 @@ void CaptureCoordinator::StartScrollshotCapture() {
     if (editor_) { editor_->Hide(); }
     if (recording_controls_) { recording_controls_->Hide(); }
     overlay_->BeginScrollshotCapture();
-    snapshot_.Clear();
-    if (capture_provider_) { capture_provider_->Release(); }
 
     // Reached from the tools island, the Start island was never shown.
     EnsureScrollshotControls();
@@ -1516,6 +1728,7 @@ bool CaptureCoordinator::StopScrollshotCapture() {
         scrollshot_session_->CopyPreview(kScrollshotPreviewRows, preview);
         scrollshot_controls_->SetPreview(preview);
     }
+    const uint32_t fallback_frames = scrollshot_session_->progress().fallback_frames;
     scrollshot_image_ = scrollshot_session_->TakeResult();
     scrollshot_session_.reset();
     if (scrollshot_notice_ == ScrollshotNotice::Stopping || scrollshot_notice_ == ScrollshotNotice::WheelBlocked) {
@@ -1532,6 +1745,9 @@ bool CaptureCoordinator::StopScrollshotCapture() {
         return false;
     }
     platform::LogMessage(L"Scrollshot stopped: %d x %d", scrollshot_image_.width, scrollshot_image_.height);
+    if (fallback_frames != 0) {
+        platform::LogMessage(L"Scrollshot read %u of its pictures through the GDI fallback", fallback_frames);
+    }
     UpdateScrollshotStatus();
     return true;
 }
@@ -1690,6 +1906,16 @@ void CaptureCoordinator::DiscardScrollshot() {
     if (!IsScrollshotState(state_)) {
         return;
     }
+    // More than the first picture means the user has scrolled for it.
+    const int height = scrollshot_session_ ? scrollshot_height_ : scrollshot_image_.height;
+    if (state_ != SessionState::ScrollshotConfiguring && height > platform::RectHeight(scrollshot_region_)) {
+        scrollshot_busy_ = true;
+        const bool discard = ConfirmDiscardImage(DialogOwner(), true);
+        scrollshot_busy_ = false;
+        if (!discard || !IsScrollshotState(state_)) {
+            return;
+        }
+    }
     RequestTransition(SessionState::Idle);
     EndSession();
 }
@@ -1727,6 +1953,9 @@ std::unique_ptr<editor::ScreenshotEditor> CaptureCoordinator::CreateEditor() {
     editor::ScreenshotEditor::Callbacks callbacks;
     callbacks.on_appearance = [this](AppearanceTheme value) { SetAppearanceTheme(value); };
     callbacks.on_closed = [this](bool exported) { OnEditorClosed(exported); };
+    callbacks.on_confirm_discard = [this] {
+        return ConfirmDiscardImage(DialogOwner(), editor_ && editor_->document_mode());
+    };
     callbacks.on_feature_used = [this] { if (overlay_) { overlay_->workspace().EditorFeatureUsed(); } };
     callbacks.on_prepare_image = [this] { return PrepareWorkspaceScreenshot(); };
     callbacks.on_document_committed = [this] {
@@ -1766,42 +1995,6 @@ void CaptureCoordinator::OnEditorClosed(bool exported) {
         RequestTransition(SessionState::Idle);
     }
     editor_retired_ = true;
-    EndSession();
-}
-
-void CaptureCoordinator::OnEscapeRequested() {
-    if (state_ == SessionState::Idle) {
-        return;
-    }
-    if (state_ == SessionState::RecordingConfiguring) {
-        OnRecordingCancel();
-        return;
-    }
-    if (state_ == SessionState::RecordingActive ||
-        state_ == SessionState::RecordingPaused) {
-        OnRecordingStop();
-        return;
-    }
-    if (state_ == SessionState::RecordingFinalizing) {
-        if (recording_controls_) {
-            recording_controls_->Activate();
-        }
-        return;
-    }
-    if (state_ == SessionState::RecordingTrimming ||
-        state_ == SessionState::Exporting) {
-        OnTrimWindowClosed();
-        return;
-    }
-    if (editor_ && editor_->visible()) {
-        editor_->Close(false);
-        return;
-    }
-    if (overlay_ && overlay_->visible()) {
-        overlay_->HandleCancelled();
-        return;
-    }
-    RequestTransition(SessionState::Idle);
     EndSession();
 }
 
@@ -1916,6 +2109,14 @@ void CaptureCoordinator::ScheduleCleanup() {
 }
 
 void CaptureCoordinator::OnDeferredCleanup() {
+    // A dialog of one of these windows may be running its own message loop,
+    // with a frame of that window's code below it on the stack. Destroying the
+    // window now would pull it away under that frame; try again shortly.
+    if (platform::ModalLoopActive() || ui::PopupActive()) {
+        if (host_window_ != nullptr) { ::SetTimer(host_window_, kTimerDeferredCleanup, 100, nullptr); }
+        return;
+    }
+    if (host_window_ != nullptr) { ::KillTimer(host_window_, kTimerDeferredCleanup); }
     if (editor_retired_) {
         editor_retired_ = false;
         if (editor_) {

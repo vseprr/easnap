@@ -40,6 +40,7 @@ enum class AudioSource;
 }
 namespace easnap::recording {
 class RecordingSession;
+enum class RecordingStartFailure;
 }
 
 namespace easnap::app {
@@ -56,6 +57,9 @@ inline constexpr UINT kMsgTrimExportCompleted = WM_APP + 13;
 /// Posted by a Scrollshot capture worker when its progress changed. WPARAM
 /// carries the capture's generation; pixels never travel in the message.
 inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
+/// Timer on the host window: retired windows are destroyed once no dialog of
+/// theirs is running its own message loop any more.
+inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
 
 /// The full v1 session lifecycle. Recording states exist already so Phase 2 only
 /// adds behaviour, never new control flow.
@@ -98,8 +102,6 @@ public:
 
     /// Ctrl + Shift + A (or the configured shortcut) was pressed.
     void OnGlobalHotkey();
-    /// Escape from any overlay/editor surface.
-    void OnEscapeRequested();
     /// WM_DISPLAYCHANGE / monitor layout change while a session is open.
     void OnDisplayChanged();
     /// Handles kMsgSessionCleanup: destroys windows retired during callbacks.
@@ -121,7 +123,21 @@ public:
     void SetAppearanceTheme(AppearanceTheme preference);
     void OnVisualSettingsChanged();
 
-    [[nodiscard]] HWND host_window() const noexcept { return host_window_; }
+    /// What ending the application now would lose.
+    [[nodiscard]] PendingWork pending_work() const;
+    /// Tray Exit or a close request. Refuses while one of the application's
+    /// dialogs is open and asks before work is lost. True when the host window
+    /// may be destroyed.
+    [[nodiscard]] bool ConfirmExit();
+    /// What Windows shows while it holds a sign-out or shutdown back for the
+    /// user to decide; null when nothing would be lost.
+    [[nodiscard]] const wchar_t* ShutdownBlockReason() const;
+    /// Windows is ending the session and will not wait. Closes a running
+    /// recording and keeps every finished one for the next start. No window
+    /// is destroyed: a dialog may be on the stack.
+    void PrepareForSessionEnd();
+    /// Offers the recordings an earlier run left unsaved: save, delete or later.
+    void OfferRecoveredRecordings();
 
 private:
     CaptureCoordinator() = default;
@@ -142,7 +158,7 @@ private:
     void OpenEditor(const RECT& region);
     void BeginRecordingConfiguration(const RECT& region);
     void OnRecordingStart(RecordingConfiguration configuration);
-    void OnRecordingStartFailed(const std::wstring& message);
+    void OnRecordingStartFailed(const std::wstring& message, recording::RecordingStartFailure failure);
     void OnRecordingCancel();
     void OnRecordingPause();
     void OnRecordingResume();
@@ -176,6 +192,12 @@ private:
     enum class ScrollshotNotice { None, WheelBlocked, DisplayChanged, Stopping, Copying, Saving, CopyFailed, SaveFailed };
     /// Shows `notice` on the island at once, before work that blocks this thread.
     void ShowScrollshotNotice(ScrollshotNotice notice);
+    /// The visible surface a question about the current session belongs to.
+    [[nodiscard]] HWND DialogOwner() const;
+    /// "Discard this image?" for the editor and the Scrollshot island.
+    [[nodiscard]] bool ConfirmDiscardImage(HWND owner, bool scrollshot);
+    /// The message for a region H.264 cannot hold, or empty when it fits.
+    [[nodiscard]] std::wstring RecordingRegionError() const;
     void EnsureScrollshotControls();
     void BeginScrollshotConfiguration(const RECT& region);
     void OnScrollshotAction(ScrollshotAction action);

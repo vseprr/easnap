@@ -121,6 +121,8 @@ void ScrollshotSession::CaptureLoop() {
     capture_options.include_cursor = false;  // The pointer is never part of a scrollshot.
     capture_options.wait_milliseconds = kChangeWaitMilliseconds;
     capture_options.require_every_output = true;
+    // The desktop usually stands still when a capture starts.
+    capture_options.await_first_composed_frame = true;
 
     platform::BgraImage frame;
     platform::BgraImage previous;
@@ -148,6 +150,10 @@ void ScrollshotSession::CaptureLoop() {
             progress_changed_ = true;
         }
         if (captured.status == capture::RegionCaptureStatus::FrameAcquired && !frame.empty()) {
+            if (captured.primary_failure.stage != capture::RegionCaptureFailureStage::None) {
+                const std::scoped_lock lock(mutex_);
+                ++progress_.fallback_frames;
+            }
             const bool identical =
                 frame.width == previous.width && frame.height == previous.height &&
                 std::memcmp(frame.pixels.data(), previous.pixels.data(),

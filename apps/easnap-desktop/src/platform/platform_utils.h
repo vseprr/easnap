@@ -91,6 +91,15 @@ struct MonitorInfo {
     [[nodiscard]] float scale() const noexcept { return static_cast<float>(dpi) / 96.0f; }
 };
 
+struct WindowsVersion {
+    DWORD major{0};
+    DWORD minor{0};
+    DWORD build{0};
+};
+/// The version of Windows that is running, not the one an application
+/// manifest makes the documented version functions report.
+[[nodiscard]] WindowsVersion CurrentWindowsVersion() noexcept;
+
 /// Call first in every process entry point, before any library is loaded.
 void RestrictDllSearchPath();
 void EnableDpiAwareness();
@@ -278,9 +287,28 @@ bool RemoveDirectoryTree(const std::wstring& path);
 // Diagnostics (privacy preserving: never log pixels, paths or typed text)
 // ---------------------------------------------------------------------------
 
+/// Writes one line to the debugger and to the log sink, if one is set. A line
+/// must never contain user content: no path, file name, window title or text
+/// the user typed.
 void LogMessage(const wchar_t* format, ...);
 void LogHresult(const wchar_t* what, HRESULT hr);
-void ShowErrorMessage(HWND owner, const wchar_t* text);
+/// Receives every `LogMessage` line, without a line break, on the calling
+/// thread. `platform/diagnostics` sets it to the log file; null stops it.
+using LogSink = void (*)(const wchar_t* line) noexcept;
+void SetLogSink(LogSink sink) noexcept;
+
+/// Marks a system dialog that runs its own message loop on the UI thread.
+/// While one is open, the messages of every window of the application are
+/// dispatched from inside it, so nothing the dialog's caller still refers to
+/// may be destroyed. Exit and session-end handling ask `ModalLoopActive`.
+class ModalLoopScope final {
+public:
+    ModalLoopScope() noexcept;
+    ~ModalLoopScope();
+    ModalLoopScope(const ModalLoopScope&) = delete;
+    ModalLoopScope& operator=(const ModalLoopScope&) = delete;
+};
+[[nodiscard]] bool ModalLoopActive() noexcept;
 
 HICON LoadAppIcon(int desired_size);
 

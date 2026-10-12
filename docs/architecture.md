@@ -50,7 +50,7 @@ All paths below are under `apps/easnap-desktop/src`.
 | `strings/` | Localized text from the English and Turkish resource tables |
 | `recording/` | Active-time recording session, cadence and audio timeline |
 | `media/` | Bounded queues, WASAPI, dual-source mixing/resampling, MP4/GIF writers/exporters and preview |
-| `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers and private storage |
+| `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers, private storage, log file and crash reports |
 
 Native Windows APIs also appear in UI, capture and media code. `ui_theme.h`
 centralizes shared workspace styling; individual surfaces retain their own
@@ -365,9 +365,23 @@ and replacing the destination only on success, the same staged publication
 recordings use.
 
 Each new session holds an exclusive `.session-lock` handle for its live lifetime.
-A different store/process cannot collect it. Released/crashed marked sessions
-remain collectable; unknown unmarked legacy directories are preserved rather
-than assumed stale. Protected directory permissions remain unchanged.
+A different store/process cannot collect it. Released or crashed sessions are
+collected at the next start, with one exception: a session marked recoverable
+holds a finished recording the user has neither saved nor discarded. The next
+start adopts it and offers the recording. A directory without a lease file is
+left alone for an hour and removed after that. Protected directory permissions
+remain unchanged.
+
+Exit, close and the end of the Windows session ask `PendingWorkFor` what would
+be lost. Exit is refused while one of the application's dialogs runs its own
+message loop, and retired windows are not destroyed during such a loop. See
+[ADR-031](decisions/ADR-031-unsaved-work-survives.md).
+
+`platform/diagnostics` appends every log line to
+`%LOCALAPPDATA%\Easnap\logs\easnap.log` (three files of one megabyte) and
+writes a minidump without the heap to `%LOCALAPPDATA%\Easnap\crashes` when
+either executable fails. Log lines carry no user content. See
+[ADR-030](decisions/ADR-030-log-file-and-crash-reports.md).
 
 Recording format, GIF preset, cursor and audio preferences are saved to the
 per-user settings file after recording starts successfully. The tray cursor

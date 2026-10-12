@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -180,12 +181,18 @@ bool PutClipboardDib(const BgraImage& image) {
     *header = BITMAPINFOHEADER{};
     header->biSize = sizeof(BITMAPINFOHEADER);
     header->biWidth = image.width;
-    header->biHeight = -image.height;  // top-down
+    // Bottom-up. A top-down DIB is a valid bitmap, but not every reader of the
+    // clipboard accepts one: .NET's Clipboard.GetImage returns nothing for it.
+    header->biHeight = image.height;
     header->biPlanes = 1;
     header->biBitCount = 32;
     header->biCompression = BI_RGB;
     header->biSizeImage = static_cast<DWORD>(pixel_bytes);
-    std::memcpy(header + 1, image.pixels.data(), pixel_bytes);
+    auto* const rows = reinterpret_cast<uint32_t*>(header + 1);
+    const size_t row_bytes = static_cast<size_t>(image.width) * sizeof(uint32_t);
+    for (int y = 0; y < image.height; ++y) {
+        std::memcpy(rows + static_cast<size_t>(image.height - 1 - y) * image.width, image.row(y), row_bytes);
+    }
     ::GlobalUnlock(memory);
 
     if (::SetClipboardData(CF_DIB, memory) == nullptr) {
@@ -914,7 +921,10 @@ std::optional<std::wstring> ShowSaveImageDialog(HWND owner, const std::wstring& 
         }
     }
 
-    hr = dialog->Show(owner);
+    {
+        const ModalLoopScope modal;
+        hr = dialog->Show(owner);
+    }
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
         return std::nullopt;
     }
@@ -1123,23 +1133,47 @@ bool RemoveDirectoryTree(const std::wstring& path) {
 // Diagnostics
 // ---------------------------------------------------------------------------
 
+namespace {
+std::atomic<LogSink> g_log_sink{nullptr};
+}  // namespace
+
+WindowsVersion CurrentWindowsVersion() noexcept {
+    using VersionFunction = LONG(WINAPI*)(OSVERSIONINFOW*);
+    const auto query = reinterpret_cast<VersionFunction>(
+        reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion")));
+    OSVERSIONINFOW info{};
+    info.dwOSVersionInfoSize = sizeof(info);
+    if (query == nullptr || query(&info) != 0) {
+        return {};
+    }
+    return {info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber};
+}
+
+void SetLogSink(LogSink sink) noexcept { g_log_sink.store(sink, std::memory_order_release); }
+
 void LogMessage(const wchar_t* format, ...) {
-    wchar_t buffer[512]{};
+    wchar_t buffer[1024]{};
     va_list args;
     va_start(args, format);
     ::vswprintf(buffer, ARRAYSIZE(buffer), format, args);
     va_end(args);
+    buffer[ARRAYSIZE(buffer) - 1] = L'\0';  // A line that did not fit is cut, not dropped.
 
-    wchar_t line[600]{};
+    if (const LogSink sink = g_log_sink.load(std::memory_order_acquire)) { sink(buffer); }
+    wchar_t line[1100]{};
     ::swprintf(line, ARRAYSIZE(line), L"[easnap] %s\n", buffer);
     ::OutputDebugStringW(line);
 }
 
 void LogHresult(const wchar_t* what, HRESULT hr) { LogMessage(L"%s failed (hr=0x%08X)", what, static_cast<unsigned>(hr)); }
 
-void ShowErrorMessage(HWND owner, const wchar_t* text) {
-    ::MessageBoxW(owner, text, L"Easnap", MB_OK | MB_ICONWARNING);
-}
+namespace {
+int g_modal_loops = 0;  // UI thread only.
+}  // namespace
+
+ModalLoopScope::ModalLoopScope() noexcept { ++g_modal_loops; }
+ModalLoopScope::~ModalLoopScope() { --g_modal_loops; }
+bool ModalLoopActive() noexcept { return g_modal_loops != 0; }
 
 HICON LoadAppIcon(int desired_size) {
     HMODULE module = ::GetModuleHandleW(nullptr);

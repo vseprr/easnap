@@ -58,6 +58,8 @@ not unfinished roadmap instructions.
 - Scrollshot: [stitching engine](decisions/ADR-027-scrollshot-stitching-engine.md),
   [capture workspace](decisions/ADR-028-scrollshot-capture-workspace.md),
   [editing an image larger than the screen](decisions/ADR-029-scrolled-and-zoomed-image-editing.md).
+- Diagnostics and data safety: [log file and crash reports](decisions/ADR-030-log-file-and-crash-reports.md),
+  [unsaved work survives exit, sign-out and crashes](decisions/ADR-031-unsaved-work-survives.md).
 - Development/testing: [incremental execution and desktop ownership](decisions/ADR-025-incremental-test-execution.md),
   [test tiers and desktop isolation](decisions/ADR-026-test-tiers-and-desktop-isolation.md).
 

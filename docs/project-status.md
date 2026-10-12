@@ -21,40 +21,71 @@ Nothing from this branch has been released.
 - **Editing a stitched image.** The screenshot editor opens an image larger
   than the screen, scrolls and zooms it, and exports the whole image
   ([ADR-029](decisions/ADR-029-scrolled-and-zoomed-image-editing.md)).
+- **Log file and crash reports**, both local
+  ([ADR-030](decisions/ADR-030-log-file-and-crash-reports.md)).
+- **Unsaved work survives.** Exit and sign-out ask or are held back, a
+  finished recording is kept and offered at the next start, discarding asks
+  when there is something to lose, and failure messages say what is true
+  ([ADR-031](decisions/ADR-031-unsaved-work-survives.md)).
 - **Localized text, first part.** English and Turkish string tables with one
-  accessor. The mode bar, the copied notice and all Scrollshot text use it.
-  The roughly 330 older strings are still English literals in the code.
+  accessor. The mode bar, dialogs' standard buttons, the copied notice and all
+  Scrollshot, exit, recovery and diagnostics text use it. The roughly 330
+  older strings are still English literals in the code.
 - The capture provider can return a plain image of a region and wait for the
   desktop to change (`CaptureRegionImage`).
+- An image copied to the clipboard is written bottom-up; .NET applications
+  could not read the top-down bitmap Easnap wrote before.
 
 ### Validated on the branch
 
 One development PC, Windows 10 build 19045, NVIDIA GPU, two 1920x1080 displays
-at 125%; visible-desktop tests ran on the secondary display.
+at 125%; visible-desktop tests and manual checks ran on the secondary display.
 
-- Release x64 with warnings as errors builds. The Standard tier passed 32 of
-  32 in one run on 2026-10-13.
-- `scrollshot_real_desktop` passed on the secondary display. A second process
-  showed a 3,160-row document; six single wheel notches, three double notches,
-  a click and two Page Down keys, then wheel notches to the end scrolled it
-  through the open frame. The production session returned 720 x 2,880 pixels
-  from 17 pictures: every pixel equal to what that process drew.
-- `ui_modernization_native` and `annotation_editing_native` passed on the
-  secondary display after the editor's coordinate mapping changed.
+- Release x64 with warnings as errors builds. On 2026-10-13 the Standard tier
+  passed 34 of 34 on the final binaries in one run.
+- **All 42 tests of the Full tier passed on the final binaries, but not in a
+  single run.** One run passed 41; `trim_timeline_seek_stress` stopped with
+  "pointer authentication failed", twice, which is what it does when the real
+  pointer is moved while it uses it. The PC was in use. Run again alone it
+  passed. An earlier Full run of the same day, before the last three capture
+  and clipboard fixes, passed 42 of 42 in one run.
+- `scrollshot_real_desktop`: a second process showed a 3,160-row document; six
+  single wheel notches, three double notches, a click and two Page Down keys,
+  then wheel notches to the end scrolled it through the open frame. The
+  production session returned 720 x 2,880 pixels from 17 pictures, every pixel
+  equal to what that process drew; one picture came through GDI, the rest
+  through Desktop Duplication.
+- `diagnostics_log_and_crash_reports` passes in Release and Debug: eight kinds
+  of failure each leave one valid report.
 - The stitching engine's 232 checks pass in Release and Debug; the session's
-  66, the layout and viewport's 351 and the workspace's 330 pass in Release.
+  66, the layout and viewport's 351, the workspace's 330 and the data-safety
+  test's 50 pass in Release.
+- **The running application, by hand**, driven with real pointer and keyboard
+  input over a test window: shortcut, region drag, the three mode buttons in
+  Turkish, Start by button and by Enter, the scissors button, wheel scrolling
+  to 720 x 1,440 and 720 x 1,680, Save through the system dialog, Edit with
+  scrolling, zooming, a rectangle drawn at the pointed place and a full-size
+  export, Copy by button and by Enter, the discard and exit questions, the
+  sign-out block, a recording of 11 s through trim, an abrupt end of the
+  process followed by the recovery offer ("Not now", then Save), a session end
+  during recording followed by the offer and Delete, and the crash notice
+  appearing once.
 
 Not validated on the branch:
 
-- The complete flow in the running application, from the tray or shortcut to
-  Copy, Save and Edit, has not been exercised by hand. The coordinator code
-  that connects the tested parts has no automated test.
-- The Full and Soak tiers have not been run as a whole. Debug was built and
-  run only for the stitching engine.
-- Scrollshot on real applications (browsers, editors, lists with lazy
-  loading), at a scale other than 125%, on mixed-DPI or portrait monitors, on
-  a second GPU, and through a display change during capture.
-- Turkish text has not been reviewed in the running application.
+- Scrollshot on real applications (browsers, editors, lists that load as they
+  scroll), at a scale other than 125%, on mixed-DPI or portrait monitors, on a
+  second GPU, with wheel routing by focus, and through a display change during
+  capture. The engine's behaviour on such content is covered by synthetic
+  documents only.
+- A real crash of the application: the handler is exercised by a test process
+  that links the same module, not by a failing Easnap.
+- A real sign-out or shutdown: the two session messages were sent to the
+  application by hand.
+- The Soak tier. Debug was built and run only for the stitching engine and the
+  diagnostics test.
+- Turkish text has been seen in the running application where it exists; it
+  has not been reviewed by a second reader.
 
 ### Known limitations of the new work
 
@@ -63,13 +94,19 @@ Not validated on the branch:
 - Copying and saving a very tall image run on the UI thread.
 - At the 48-million-pixel limit, editing holds two buffers of about 190 MB
   and an export allocates a third.
-- Discard, and Esc while editing a stitched image, drop the image without
-  asking.
+- A recording that is still being written when Easnap stops cannot be
+  recovered. A recovered recording is the untrimmed MP4.
 - A screenshot taken with the workspace visible can differ from the screen by
   one level at a few values (measured: 47 as 46, 70 as 69): Windows changes
   them under the translucent, capture-excluded shading window. Scrollshot
   avoids it; screenshots do not yet.
-
+- A recording that starts on a still desktop is read through GDI for its whole
+  length. Scrollshot no longer is; the same remedy has not been applied to
+  recording.
+- Reading a crash report needs the symbol files of the build that wrote it;
+  the release workflow does not keep them yet.
+- Several older error messages still name no next step; they are rewritten
+  with the remaining strings.
 ## Previous slice: v1.0.2 maintenance and hardening
 
 v1.0.1 followed the published v1.0.0 with fixes, hardening and test tooling.
@@ -279,8 +316,6 @@ Carried over from v1.0.0:
 
 Found in the v1.0.1 review and not fixed:
 
-- No size pre-check before H.264 encoding: a region beyond the encoder limit
-  fails at start with a general message.
 - The capture path still allocates a frame image and an NV12 buffer per frame.
 - Up to v1.0.1, an MP4 trim of a recording whose height is not a multiple of
   16 is wrong when exported on a machine without a hardware H.264 encoder
@@ -315,9 +350,9 @@ post-v1 without a promised date.
 ## Next slice
 
 Beta readiness for v1.1.0-beta.1, in the order of the
-[roadmap](../EASNAP_ROADMAP.md): diagnostics and data safety, the remaining
-Turkish text, the settings window, compatibility, release and distribution,
-CI and community files, then the documentation pass. Preserve the native frame, shared
+[roadmap](../EASNAP_ROADMAP.md): the remaining user-visible text in English
+and Turkish, the settings window, compatibility, release and distribution, CI
+and community files, then the documentation pass. Preserve the native frame, shared
 rendering/control path and asynchronous preview boundaries. See
 [ADR-024](decisions/ADR-024-native-trim-frame.md),
 [architecture](architecture.md) and the

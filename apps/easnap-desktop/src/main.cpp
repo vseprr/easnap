@@ -18,8 +18,10 @@
 #include <string>
 
 #include "app/session_state.h"
+#include "platform/diagnostics.h"
 #include "platform/platform_utils.h"
 #include "resource.h"
+#include "strings/strings.h"
 
 // Opt into the version 6 common controls so menus and dialogs use the modern
 // visual style. Doing it from the linker keeps the project free of a hand
@@ -55,7 +57,8 @@ public:
     bool Add(HWND owner, const std::wstring& tooltip) {
         owner_ = owner;
         tooltip_ = tooltip;
-        icon_ = easnap::platform::LoadAppIcon(::GetSystemMetrics(SM_CXSMICON));
+        // Added again after an Explorer restart: the icon is loaded once.
+        if (icon_ == nullptr) { icon_ = easnap::platform::LoadAppIcon(::GetSystemMetrics(SM_CXSMICON)); }
 
         NOTIFYICONDATAW data = MakeData();
         data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
@@ -152,6 +155,24 @@ void ShowAboutDialog(HWND owner) {
     easnap::ui::ShowMessage(owner, text.c_str(), L"About Easnap", MB_OK | MB_ICONINFORMATION);
 }
 
+/// Said once after a run that ended with a crash report.
+void ShowCrashNotice(const std::wstring& directory) {
+    namespace diagnostics = easnap::platform::diagnostics;
+    namespace strings = easnap::strings;
+    if (!diagnostics::PendingCrashReport(directory).has_value()) {
+        return;
+    }
+    diagnostics::AcknowledgeCrashReports(directory);
+    easnap::platform::LogMessage(L"The previous run ended with a crash report");
+    enum : int { kOpen = 100, kLater = 101 };
+    const int choice = easnap::ui::ShowChoice(
+        nullptr, strings::Get(IDS_CRASH_TEXT), strings::Get(IDS_CRASH_TITLE),
+        {{kOpen, strings::Get(IDS_CRASH_OPEN)}, {kLater, strings::Get(IDS_NOT_NOW)}}, kLater, kLater);
+    if (choice == kOpen) {
+        ::ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
+}
+
 void OpenDataFolder() {
     const std::wstring directory = easnap::platform::AppDataDirectory();
     if (directory.empty()) {
@@ -216,7 +237,7 @@ void OnTrayCommand(HWND hwnd, UINT command) {
             ShowAboutDialog(hwnd);
             break;
         case IDM_TRAY_EXIT:
-            ::DestroyWindow(hwnd);
+            if (coordinator.ConfirmExit()) { ::DestroyWindow(hwnd); }
             break;
         default:
             break;
@@ -298,15 +319,33 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             coordinator.OnVisualSettingsChanged();
             return 0;
 
+        case WM_TIMER:
+            if (wparam == easnap::app::kTimerDeferredCleanup) {
+                coordinator.OnDeferredCleanup();
+                return 0;
+            }
+            break;
+
+        case WM_QUERYENDSESSION:
+            // Sign-out or shutdown while work would be lost: Windows shows the
+            // reason and lets the user decide. A process without a visible
+            // window is only listed there when it gives a reason.
+            if (const wchar_t* reason = coordinator.ShutdownBlockReason()) {
+                ::ShutdownBlockReasonCreate(hwnd, reason);
+                return FALSE;
+            }
+            return TRUE;
+
         case WM_ENDSESSION:
+            ::ShutdownBlockReasonDestroy(hwnd);
             if (wparam != FALSE) {
-                coordinator.PersistSettings();
-                coordinator.Shutdown();
+                coordinator.PrepareForSessionEnd();
+                easnap::platform::diagnostics::StopLog();
             }
             return 0;
 
         case WM_CLOSE:
-            ::DestroyWindow(hwnd);
+            if (coordinator.ConfirmExit()) { ::DestroyWindow(hwnd); }
             return 0;
 
         case WM_DESTROY:
@@ -347,6 +386,9 @@ HWND CreateHostWindow(HINSTANCE instance) {
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, _In_ int) {
     easnap::platform::RestrictDllSearchPath();
+    namespace diagnostics = easnap::platform::diagnostics;
+    const std::wstring crash_directory = diagnostics::CrashDirectory();
+    diagnostics::InstallCrashHandler(crash_directory, L"easnap");
     // Single instance: a second launch just tells the user and exits, so the
     // global shortcut and the notification icon always have exactly one owner.
     const easnap::platform::UniqueHandle instance_mutex{::CreateMutexW(nullptr, TRUE, kSingleInstanceMutex)};
@@ -356,6 +398,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
         return 0;
     }
 
+    diagnostics::StartLog(diagnostics::LogDirectory(), L"easnap");
+    {
+        const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
+        easnap::platform::LogMessage(L"Easnap %d.%d.%d started on Windows %lu.%lu build %lu", EASNAP_VERSION_MAJOR,
+                                     EASNAP_VERSION_MINOR, EASNAP_VERSION_PATCH, windows.major, windows.minor,
+                                     windows.build);
+    }
     easnap::platform::EnableDpiAwareness();
 
     const easnap::platform::ComRuntime com;
@@ -397,6 +446,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
                            (L"Ready. Press " + coordinator.settings().HotkeyDisplayText() + L" to capture.").c_str());
     }
 
+    ShowCrashNotice(crash_directory);
+    coordinator.OfferRecoveredRecordings();
+
     MSG message{};
     BOOL result = FALSE;
     while ((result = ::GetMessageW(&message, nullptr, 0, 0)) != 0) {
@@ -414,5 +466,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
     // Release process-wide graphics COM objects while the main apartment is
     // still initialized; the function-static environment is destroyed later.
     easnap::platform::GraphicsEnvironment::Get().Shutdown();
+    easnap::platform::LogMessage(L"Easnap exited");
+    diagnostics::StopLog();
     return static_cast<int>(message.wParam);
 }

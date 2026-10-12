@@ -37,6 +37,9 @@ struct ScrollshotProgress {
     ScrollshotCondition condition{ScrollshotCondition::Following};
     FrameOutcome last_outcome{FrameOutcome::Invalid};
     uint32_t placed_frames{0};
+    /// Pictures that had to be read through the GDI fallback because Desktop
+    /// Duplication was not available for the rectangle.
+    uint32_t fallback_frames{0};
     uint64_t preview_version{0};
     bool finished{false};  ///< The worker has stopped and the result is ready.
 };

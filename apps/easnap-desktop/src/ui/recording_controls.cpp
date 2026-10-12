@@ -208,7 +208,7 @@ public:
         ::SetWindowTextW(pause_resume_, policy.can_resume ? L"Resume" : L"Pause");
         if (finalizing) {
             ::SetWindowTextW(status_,
-                             L"Finishing... Your recording is being saved.");
+                             L"Finishing the recording... It opens for trimming next.");
         }
 
         SetControlVisible(title_, configuring);

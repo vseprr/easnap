@@ -22,6 +22,8 @@ using platform::BgraImage;
 struct MonitorFrame {
     RECT desktop_rect{};  ///< Position of `image` in virtual-screen coordinates.
     BgraImage image;
+    /// False when the monitor could not be read and `image` is black.
+    bool captured{true};
 };
 
 /// A frozen picture of every monitor, taken once when the overlay opens.
@@ -39,6 +41,9 @@ struct DesktopSnapshot {
     /// Composes `region` (virtual-screen coordinates) out of the captured
     /// monitor frames. Areas not covered by a monitor stay opaque black.
     [[nodiscard]] bool CropRegion(const RECT& region, BgraImage& out) const;
+    /// True when every monitor that `region` touches was actually read. A
+    /// picture of a region that is not complete has a black part.
+    [[nodiscard]] bool RegionComplete(const RECT& region) const noexcept;
 };
 
 enum class RegionCaptureStatus { FrameAcquired, NoNewFrame, Failed };
@@ -104,6 +109,12 @@ struct RegionImageOptions {
     /// A monitor's part that cannot be read fails the capture instead of
     /// staying black in an otherwise successful image.
     bool require_every_output{false};
+    /// A duplication that has not been handed a composed frame yet returns a
+    /// black surface. With this set, such a picture is read through GDI and
+    /// duplication is asked again next time, instead of the output being
+    /// given up for the life of the provider. For a capture that starts on a
+    /// desktop that is standing still.
+    bool await_first_composed_frame{false};
 };
 
 /// Captures bounded desktop regions synchronously. Recording calls this only

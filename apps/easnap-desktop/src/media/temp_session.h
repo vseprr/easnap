@@ -11,6 +11,9 @@
 //   which keeps captured media away from other accounts on the machine.
 // * Sessions are removed on normal completion, on discard and on startup (which
 //   collects anything left behind by a crash or a power loss).
+// * The exception is a session marked recoverable: it holds a finished
+//   recording the user has neither saved nor discarded. A later run does not
+//   sweep it; it adopts it and offers the recording again.
 #pragma once
 
 #include <sddl.h>
@@ -59,6 +62,12 @@ public:
     /// Stops owning a session without deleting it. Used only when the Windows
     /// clipboard still references media during process shutdown.
     virtual bool ReleaseSession(const TemporarySession& session) = 0;
+    /// Marks an owned session as holding a finished recording that the user
+    /// has neither saved nor discarded.
+    virtual bool MarkRecoverable(const TemporarySession& session) = 0;
+    /// Takes ownership of every marked session an earlier run left behind.
+    /// From then on DeleteSession and ReleaseSession apply to them.
+    virtual std::vector<TemporarySession> AdoptRecoverableSessions() = 0;
     /// Removes sessions that are not owned by this process instance and are not
     /// explicitly protected by an external lifetime owner.
     /// Returns the number of directories deleted.
@@ -207,6 +216,63 @@ public:
         return owned_.size() != before;
     }
 
+    bool MarkRecoverable(const TemporarySession& session) override {
+        const bool owned = std::any_of(owned_.begin(), owned_.end(), [&session](const OwnedSession& candidate) {
+            return candidate.directory == session.directory;
+        });
+        if (!session.valid() || !owned) {
+            return false;
+        }
+        const HANDLE marker = ::CreateFileW((session.directory + kRecoverableMarker).c_str(), GENERIC_WRITE, 0,
+                                            nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_HIDDEN, nullptr);
+        if (marker == INVALID_HANDLE_VALUE) {
+            platform::LogMessage(L"A finished recording could not be marked for recovery (error %lu)",
+                                 ::GetLastError());
+            return false;
+        }
+        ::CloseHandle(marker);
+        return true;
+    }
+
+    std::vector<TemporarySession> AdoptRecoverableSessions() override {
+        std::vector<TemporarySession> adopted;
+        for (const std::wstring& directory : EnumerateSessions()) {
+            const bool owned = std::any_of(owned_.begin(), owned_.end(), [&directory](const OwnedSession& candidate) {
+                return candidate.directory == directory;
+            });
+            const DWORD attributes = ::GetFileAttributesW(directory.c_str());
+            if (owned || attributes == INVALID_FILE_ATTRIBUTES ||
+                (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 || !IsRecoverable(directory)) {
+                continue;
+            }
+            // The exclusive lease fails while another instance holds the session.
+            const HANDLE lease = ::CreateFileW(
+                (directory + L"\\.session-lock").c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
+                FILE_ATTRIBUTE_HIDDEN | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+            if (lease == INVALID_HANDLE_VALUE) {
+                continue;
+            }
+            try {
+                owned_.emplace_back(directory, lease);
+                TemporarySession session;
+                session.directory = directory;
+                session.id = directory.substr(directory.find_last_of(L'\\') + 1);
+                adopted.push_back(std::move(session));
+            } catch (...) {
+                if (!owned_.empty() && owned_.back().directory == directory) {
+                    owned_.pop_back();
+                } else {
+                    ::CloseHandle(lease);
+                }
+            }
+        }
+        if (!adopted.empty()) {
+            platform::LogMessage(L"Found %d unsaved recording(s) from an earlier run",
+                                 static_cast<int>(adopted.size()));
+        }
+        return adopted;
+    }
+
     int CleanupStaleSessions(
         const std::vector<std::wstring>& protected_directories = {}) override {
         int removed = 0;
@@ -236,9 +302,20 @@ public:
                 GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
                 FILE_ATTRIBUTE_HIDDEN | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
             if (lease == INVALID_HANDLE_VALUE) {
+                // A lease that is in use belongs to a running instance. One
+                // that does not exist belongs to a directory that is being
+                // created, or to the rest of a deletion that could not finish;
+                // after an hour it can only be the latter.
+                if (::GetLastError() == ERROR_FILE_NOT_FOUND && OlderThanAnHour(directory) &&
+                    platform::RemoveDirectoryTree(directory)) {
+                    ++removed;
+                }
                 continue;
             }
             ::CloseHandle(lease);
+            if (IsRecoverable(directory)) {
+                continue;  // Offered again through AdoptRecoverableSessions.
+            }
             if (platform::RemoveDirectoryTree(directory)) {
                 ++removed;
             }
@@ -278,6 +355,33 @@ private:
             }
         }
     };
+
+    static constexpr wchar_t kRecoverableMarker[] = L"\\.recoverable";
+
+    /// Marked, and the recording it promises is there.
+    [[nodiscard]] static bool IsRecoverable(const std::wstring& directory) {
+        if (::GetFileAttributesW((directory + kRecoverableMarker).c_str()) == INVALID_FILE_ATTRIBUTES) {
+            return false;
+        }
+        WIN32_FILE_ATTRIBUTE_DATA recording{};
+        return ::GetFileAttributesExW((directory + L"\\recording.mp4").c_str(), GetFileExInfoStandard, &recording) !=
+                   FALSE &&
+               (recording.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 &&
+               (recording.nFileSizeHigh != 0 || recording.nFileSizeLow != 0);
+    }
+
+    [[nodiscard]] static bool OlderThanAnHour(const std::wstring& directory) {
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        if (::GetFileAttributesExW(directory.c_str(), GetFileExInfoStandard, &data) == FALSE) {
+            return false;
+        }
+        FILETIME now{};
+        ::GetSystemTimeAsFileTime(&now);
+        const ULARGE_INTEGER created{data.ftCreationTime.dwLowDateTime, data.ftCreationTime.dwHighDateTime};
+        const ULARGE_INTEGER current{now.dwLowDateTime, now.dwHighDateTime};
+        constexpr ULONGLONG kHour = 36000000000ull;  // 100 ns units
+        return current.QuadPart > created.QuadPart && current.QuadPart - created.QuadPart > kHour;
+    }
 
     static std::wstring GenerateSessionId() {
         GUID guid{};

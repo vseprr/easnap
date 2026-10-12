@@ -383,7 +383,36 @@ void TestRecordingRegionAndElapsedFormatting() {
 
 }  // namespace
 
+/// What exiting would lose, for every state: the table the exit question and
+/// the shutdown block reason are chosen from.
+void TestPendingWork() {
+    using easnap::app::PendingWork;
+    using easnap::app::PendingWorkFor;
+    struct Row { SessionState state; PendingWork plain; PendingWork with_edits; };
+    const Row rows[] = {
+        {SessionState::Idle, PendingWork::None, PendingWork::None},
+        {SessionState::RegionSelecting, PendingWork::None, PendingWork::None},
+        {SessionState::ScreenshotEditing, PendingWork::None, PendingWork::Image},
+        {SessionState::ScreenshotExporting, PendingWork::None, PendingWork::None},
+        {SessionState::RecordingConfiguring, PendingWork::None, PendingWork::None},
+        {SessionState::RecordingActive, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingPaused, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingFinalizing, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingTrimming, PendingWork::UnsavedRecording, PendingWork::UnsavedRecording},
+        {SessionState::Exporting, PendingWork::Export, PendingWork::Export},
+        {SessionState::ScrollshotConfiguring, PendingWork::None, PendingWork::None},
+        {SessionState::ScrollshotCapturing, PendingWork::Image, PendingWork::Image},
+        {SessionState::ScrollshotReview, PendingWork::Image, PendingWork::Image},
+    };
+    CHECK(sizeof(rows) / sizeof(rows[0]) == easnap::app::kSessionStateCount);
+    for (const Row& row : rows) {
+        CHECK(PendingWorkFor(row.state, false) == row.plain);
+        CHECK(PendingWorkFor(row.state, true) == row.with_edits);
+    }
+}
+
 int main() {
+    TestPendingWork();
     TestIdentityAlwaysLegal();
     TestSessionEntryAndCancellation();
     TestScreenshotBranch();

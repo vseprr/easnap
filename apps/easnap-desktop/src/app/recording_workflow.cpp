@@ -95,6 +95,17 @@ RecordingControlPolicy RecordingControlsForState(SessionState state) noexcept {
     return policy;
 }
 
+bool RecordingRegionFitsH264(const RECT& region) noexcept {
+    constexpr int64_t kMaximumMacroblocks = 36864;
+    constexpr int64_t kMaximumSide = 8688;
+    const int64_t width = static_cast<int64_t>(region.right) - region.left;
+    const int64_t height = static_cast<int64_t>(region.bottom) - region.top;
+    if (width <= 0 || height <= 0 || width > kMaximumSide || height > kMaximumSide) {
+        return false;
+    }
+    return ((width + 15) / 16) * ((height + 15) / 16) <= kMaximumMacroblocks;
+}
+
 RECT MakeRecordingRegionEncoderCompatible(const RECT& region) noexcept {
     RECT result = region;
     const int64_t width = static_cast<int64_t>(result.right) - result.left;

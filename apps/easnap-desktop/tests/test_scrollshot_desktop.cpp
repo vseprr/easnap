@@ -340,7 +340,15 @@ int RunTest() {
     options.region = frame;
     options.generation = 1;
     options.preview_width = ui::ScrollshotControls::PreviewPixelWidth(frame);
-    // As the application does before the first picture.
+    // As the application does before the first picture: it gives up its own
+    // duplication of the output, which a process can hold only once, and
+    // rearranges the shading.
+    capture::RegionImageOptions probe_options;
+    platform::BgraImage probe;
+    const capture::RegionCaptureResult probed = provider->CaptureRegionImage(page_rect, probe_options, probe);
+    const bool duplication_available = probed.status == capture::RegionCaptureStatus::FrameAcquired &&
+                                       probed.primary_failure.stage == capture::RegionCaptureFailureStage::None;
+    provider->Release();
     overlay.ExposeScrollshotFrame(true);
     scrollshot::ScrollshotSession session(capture::CreateRegionCaptureProvider(), options);
     const bool started = session.Start();
@@ -476,6 +484,11 @@ int RunTest() {
         std::printf("Scrolled %d rows with %d inputs: %d x %d stitched from %u pictures, %ls\n", offset, inputs,
                     progress.width, progress.height, progress.placed_frames, scrollshot::ToString(progress.last_outcome));
         CHECK(progress.condition == scrollshot::ScrollshotCondition::Following);
+        // Where Desktop Duplication works at all, the session gets it. Only
+        // what is taken before the first composed frame comes through GDI.
+        std::printf("Desktop Duplication %s; %u pictures came through the GDI fallback\n",
+                    duplication_available ? "available" : "not available here", progress.fallback_frames);
+        if (duplication_available) { CHECK(progress.fallback_frames <= 3); }
 
         const bool stopped = session.Stop(5s);
         CHECK(stopped);

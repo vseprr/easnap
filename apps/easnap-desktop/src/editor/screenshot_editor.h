@@ -131,6 +131,9 @@ public:
     struct Callbacks {
         /// `exported` is true when the user copied or saved successfully.
         std::function<void(bool exported)> on_closed;
+        /// Esc, Discard or a close request would lose annotations or a
+        /// stitched image. Return false to keep the editor open.
+        std::function<bool()> on_confirm_discard;
         std::function<void(app::AppearanceTheme)> on_appearance;
         std::function<void()> on_feature_used;
         // Acquires the final pixels only when an editor feature/completion needs them.
@@ -243,6 +246,9 @@ private:
     void ResetFixedView();
     /// Adopts a document view: viewport, scale and scroll position.
     void ApplyView(const ImageView& view, bool notify = true);
+    /// Esc, the Discard button and a close request. Asks through
+    /// `on_confirm_discard` when annotations or a stitched image would be lost.
+    void RequestDiscard();
     void ScrollDocument(float delta_x, float delta_y);
     void ZoomDocument(float zoom, POINT anchor);
     /// Makes the base bitmap hold image rows [first, end) and returns the rows

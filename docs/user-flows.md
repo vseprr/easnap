@@ -180,7 +180,7 @@ there is none do they lie over the frame.
 | Copy (**Enter** or **Ctrl+C**) | The image goes to the clipboard and the session ends. If the clipboard refuses a very tall image, the image stays and the status points to Save |
 | Save (**Ctrl+S**) | A PNG save dialog. Cancelling it returns to the island with the image |
 | Edit | Opens the stitched image in the screenshot tools |
-| Discard (**Esc**) | Drops the image and ends the session |
+| Discard (**Esc**) | Drops the image and ends the session. Easnap asks first once the capture has grown beyond its first picture |
 
 The keys work while Easnap has the keyboard focus. After a click inside the
 frame the focus is in the other application; **Ctrl+Shift+A** brings it back
@@ -201,7 +201,8 @@ its size and the zoom; a thumb on the right edge shows the position.
 
 Every tool works at every scroll position and zoom. Copy and Save export the
 whole image at its captured resolution with all annotations, not the part on
-show. The view cannot be turned back into a Scrollshot capture.
+show. The view cannot be turned back into a Scrollshot capture. Esc, Discard
+and closing ask before a stitched image is dropped.
 
 ## Record
 
@@ -302,7 +303,7 @@ normal cleanup so pasting remains possible after closing Easnap.
 | Provisional Editing | Ctrl+Arrows | Resize frame |
 | Screenshot Editing | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Screenshot Editing | Ctrl+C / Ctrl+S | Copy / Save |
-| Screenshot Editing | Esc | Cancel pending text, otherwise cancel session |
+| Screenshot Editing | Esc | Cancel pending text, then clear the selection, then cancel the session; asks first when something has been drawn |
 | Scrollshot, before Start | Enter | Start |
 | Scrollshot capture and review | Enter / Ctrl+C | Copy |
 | Scrollshot capture and review | Ctrl+S / Esc | Save / Discard |
@@ -341,6 +342,29 @@ session returns to the four-action island.
 Tray actions include capture, cursor preference, About, opening the local data
 folder and Exit. Settings and private recordings are local to the current user.
 See [SECURITY.md](../SECURITY.md) for clipboard-file lifetime and reporting.
+
+### Exit, sign-out and unexpected endings
+
+Exit asks before work is lost: a recording that is running or not yet saved,
+an export in progress, a screenshot with annotations, a Scrollshot. "Stay" is
+the default answer. While one of Easnap's dialogs is open, Exit only sounds.
+
+A sign-out or shutdown in the same situations is held back by Windows with
+Easnap's reason, so you can go back and save. If the session ends anyway, a
+running recording is closed first.
+
+A finished recording that was neither saved nor discarded is kept when Easnap
+ends without your decision: at sign-out, after a crash, or when the trim view
+could not open. The next start offers it: **Save...** writes it as an MP4
+file, **Delete** removes it, **Not now** keeps it for the start after that. A
+recording that was still being written when Easnap stopped cannot be
+recovered.
+
+After a crash the next start says so once and points to the folder with the
+crash report. Nothing is sent anywhere. The log is
+`%LOCALAPPDATA%\Easnap\logs\easnap.log`; reports are in
+`%LOCALAPPDATA%\Easnap\crashes`. **Open data folder** in the tray menu leads
+to both.
 
 Manual checks should cover real pointer speed, mixed DPI and monitor origins,
 tool gestures versus double-click completion, clipboard contention, and native

@@ -552,7 +552,10 @@ std::optional<std::wstring> ShowSaveRecordingDialog(
         }
     }
 
-    result = dialog->Show(owner);
+    {
+        const platform::ModalLoopScope modal;
+        result = dialog->Show(owner);
+    }
     if (result == HRESULT_FROM_WIN32(ERROR_CANCELLED) || FAILED(result)) {
         return std::nullopt;
     }

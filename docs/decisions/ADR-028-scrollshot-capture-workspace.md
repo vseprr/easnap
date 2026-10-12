@@ -67,6 +67,23 @@ frame any more. The single window returns when the capture stops. The input
 plane (opacity 1 of 255) and the colour-keyed chrome window were measured to
 have no such effect.
 
+### Desktop Duplication, where it is available
+
+Windows lets a process duplicate an output once. The workspace's own provider,
+which took the picture for region selection, therefore gives its duplication
+up before the capture session creates one.
+
+A duplication that has not been handed a composed frame yet returns a black
+surface, and the desktop usually stands still when a capture starts. The
+provider used to take such a surface as proof that the output only returns
+black and read everything through GDI from then on. With
+`RegionImageOptions::await_first_composed_frame` the session treats it as "no
+frame yet": that one picture is read through GDI and duplication is asked
+again. In practice the first picture comes through GDI and every later one
+through duplication, which also lets the worker wait for the desktop to change
+instead of polling. Both paths return the same pixels. Recording keeps the
+earlier rule.
+
 ### The first picture comes before the lock
 
 `StartScrollshotCapture` creates the `ScrollshotSession` and waits, up to
@@ -172,6 +189,9 @@ path.
 - Screenshots keep the single shading window, which moves with the selection
   as one region update. A screenshot taken with the workspace visible can
   therefore differ from the screen by one level at a few values.
+- A recording that starts on a still desktop is read through GDI for its whole
+  length, as before. The option above would lift that; it has not been applied
+  to recording.
 
 ## Validation
 
@@ -188,4 +208,11 @@ path.
   document; the real wheel turned over the frame, a real click and Page Down
   scroll it; the production session and provider return exactly the pixels
   that process drew: no row missing or repeated, no value changed, nothing
-  of Easnap and no pointer in it.
+  of Easnap and no pointer in it. Where duplication works at all, no more
+  than the pictures taken before the first composed frame may come through
+  GDI.
+- In the running application, by hand on the secondary display: mode button
+  and scissors button, Start by button and by Enter, eight to ten wheel
+  notches, Save through the system dialog, Edit with scrolling, zooming and a
+  drawn rectangle, Copy by button and by Enter, Discard with and without the
+  question. Saved and copied images had the expected size.
