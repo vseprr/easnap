@@ -376,6 +376,22 @@ target_link_libraries(test_scrollshot_stitch PRIVATE easnap_project_options)
 add_test(NAME scrollshot_stitch_logic COMMAND test_scrollshot_stitch)
 set_tests_properties(scrollshot_stitch_logic PROPERTIES LABELS "unit;scrollshot" TIMEOUT 240)
 
+# The capture session's worker, preview, notifications and stop barrier against
+# a scripted provider: no desktop is read and no window is shown.
+add_executable(test_scrollshot_session
+    test_scrollshot_session.cpp
+    ../src/scrollshot/scrollshot_session.cpp
+    ../src/scrollshot/stitch_engine.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_scrollshot_session PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_scrollshot_session PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+add_test(NAME scrollshot_session_worker COMMAND test_scrollshot_session)
+set_tests_properties(scrollshot_session_worker PROPERTIES LABELS "unit;scrollshot" TIMEOUT 60)
+
 add_executable(test_capture_overlay
     test_capture_overlay.cpp
     ../src/ui/overlay.cpp

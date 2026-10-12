@@ -362,13 +362,20 @@ public:
                                             media::MediaTime duration,
                                             media::VideoFrame& out) override {
         BgraImage image;
-        RegionCaptureResult result = CaptureRecordingRegion(region, include_cursor, image);
+        RegionImageOptions options;
+        options.include_cursor = include_cursor;
+        RegionCaptureResult result = CaptureRecordingRegion(region, options, image);
         if (result.status != RegionCaptureStatus::FrameAcquired) {
             return result;
         }
         out = media::VideoFrame{
             std::make_shared<const BgraImage>(std::move(image)), timestamp, duration};
         return result;
+    }
+
+    RegionCaptureResult CaptureRegionImage(const RECT& region, const RegionImageOptions& options,
+                                            BgraImage& out) override {
+        return CaptureRecordingRegion(region, options, out);
     }
 
     void Release() noexcept override {
@@ -396,8 +403,9 @@ private:
     /// hands back an empty surface (mixed refresh rates, DisplayPort links,
     /// hybrid GPUs). Falling back for that single output keeps the other
     /// monitors on the fast path instead of degrading the whole capture.
-    RegionCaptureResult CaptureRecordingRegion(const RECT& region, bool include_cursor,
+    RegionCaptureResult CaptureRecordingRegion(const RECT& region, const RegionImageOptions& options,
                                                 BgraImage& out) {
+        const bool include_cursor = options.include_cursor;
         RegionCaptureResult result;
         const RECT normalized = platform::IntersectRects(region, platform::VirtualScreenBounds());
         if (platform::IsEmptyRect(normalized) || !::EqualRect(&normalized, &region)) {
@@ -414,7 +422,7 @@ private:
         for (const MonitorInfo& monitor : monitors) {
             const RECT overlap = platform::IntersectRects(region, monitor.bounds);
             if (!platform::IsEmptyRect(overlap) && ::EqualRect(&overlap, &region)) {
-                result = CaptureMonitorRegion(monitor, region, out);
+                result = CaptureMonitorRegion(monitor, region, out, options.wait_milliseconds);
                 if (result.status != RegionCaptureStatus::FrameAcquired) {
                     return result;
                 }
@@ -439,7 +447,14 @@ private:
             overlaps_monitor = true;
             BgraImage portion;
             const auto copy_start = std::chrono::steady_clock::now();
-            if (!CaptureMonitorWithGdi(overlap, portion)) {
+            RegionCaptureFailureDiagnostic portion_failure;
+            if (!CaptureMonitorWithGdi(overlap, portion, &portion_failure)) {
+                if (options.require_every_output) {
+                    // A black part would be stitched as if it were content.
+                    result.status = RegionCaptureStatus::Failed;
+                    result.fallback_failure = portion_failure;
+                    return result;
+                }
                 LogMessage(L"Monitor region capture failed; that portion remains black");
                 continue;
             }
@@ -467,7 +482,7 @@ private:
     }
 
     RegionCaptureResult CaptureMonitorRegion(const MonitorInfo& monitor, const RECT& region,
-                                              BgraImage& out) {
+                                              BgraImage& out, uint32_t wait_milliseconds) {
         RegionCaptureResult result;
         if (!using_fallback_ && EnsureDuplication()) {
             const int index = FindOutputIndex(monitor);
@@ -480,7 +495,7 @@ private:
                     region.right - monitor.bounds.left, region.bottom - monitor.bounds.top};
                 if (!rotated && !output.unusable) {
                     const FrameAcquireStatus acquired = AcquireFrame(
-                        output, out, &source_region, 0, 1, &result.metrics,
+                        output, out, &source_region, wait_milliseconds, 1, &result.metrics,
                         &result.primary_failure);
                     // Only an output that has never shown content is suspected of
                     // returning black; a fade to black must not demote it to GDI.
@@ -768,7 +783,9 @@ private:
             out = std::move(provisional);
             return FrameAcquireStatus::Acquired;  // Blank; caller decides whether to fall back.
         }
-        if (timeout_ms != 0 || attempts > 1) {
+        // A single attempt is a poll or a deliberate wait for change: an idle
+        // desktop is its normal answer, not something to report.
+        if (attempts > 1) {
             LogMessage(L"Duplication produced no frame within the timeout budget");
         }
         return FrameAcquireStatus::NoNewFrame;

@@ -94,6 +94,18 @@ struct RegionCaptureResult {
 [[nodiscard]] const wchar_t* RegionCaptureFailureStageName(
     RegionCaptureFailureStage stage) noexcept;
 
+/// How one region is captured as a plain image.
+struct RegionImageOptions {
+    bool include_cursor{false};
+    /// How long to wait for the desktop to change before answering
+    /// `NoNewFrame`. Only a region on one duplicated output can wait; every
+    /// other path answers at once with the current pixels.
+    uint32_t wait_milliseconds{0};
+    /// A monitor's part that cannot be read fails the capture instead of
+    /// staying black in an otherwise successful image.
+    bool require_every_output{false};
+};
+
 /// Captures bounded desktop regions synchronously. Recording calls this only
 /// from its dedicated worker and transports results through a bounded queue.
 class IRegionCaptureProvider {
@@ -111,6 +123,11 @@ public:
     virtual RegionCaptureResult CaptureRegionFrame(
         const RECT& region, bool include_cursor, media::MediaTime timestamp,
         media::MediaTime duration, media::VideoFrame& out) = 0;
+
+    /// Captures one region as a plain image through the same per-output path.
+    /// `NoNewFrame` leaves `out` untouched.
+    virtual RegionCaptureResult CaptureRegionImage(
+        const RECT& region, const RegionImageOptions& options, BgraImage& out) = 0;
 
     /// Releases duplication interfaces and GPU resources; safe to call any time.
     virtual void Release() noexcept = 0;

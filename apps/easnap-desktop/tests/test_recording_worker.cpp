@@ -64,6 +64,11 @@ public:
         return {easnap::capture::RegionCaptureStatus::FrameAcquired, {2, 4}};
     }
 
+    easnap::capture::RegionCaptureResult CaptureRegionImage(
+        const RECT&, const easnap::capture::RegionImageOptions&, easnap::platform::BgraImage&) override {
+        return {};  // Unused by the recording worker; a default result is a failure.
+    }
+
     void Release() noexcept override {}
     [[nodiscard]] const wchar_t* name() const override { return L"timeline-test"; }
 
@@ -113,6 +118,11 @@ public:
         return {easnap::capture::RegionCaptureStatus::FrameAcquired, {2, 4}};
     }
 
+    easnap::capture::RegionCaptureResult CaptureRegionImage(
+        const RECT&, const easnap::capture::RegionImageOptions&, easnap::platform::BgraImage&) override {
+        return {};  // Unused by the recording worker; a default result is a failure.
+    }
+
     void Release() noexcept override {}
     [[nodiscard]] const wchar_t* name() const override { return L"transient-failure-test"; }
 
@@ -152,6 +162,11 @@ public:
              0x8007000Eu},
             {easnap::capture::RegionCaptureFailureStage::GdiCreateDibSection,
              easnap::capture::RegionCaptureFailureCodeKind::Win32, 8u}};
+    }
+
+    easnap::capture::RegionCaptureResult CaptureRegionImage(
+        const RECT&, const easnap::capture::RegionImageOptions&, easnap::platform::BgraImage&) override {
+        return {};  // Unused by the recording worker; a default result is a failure.
     }
 
     void Release() noexcept override {}

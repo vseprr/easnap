@@ -55,6 +55,8 @@ set(EASNAP_SOURCES
     src/capture/recording_capture_worker.cpp
     src/scrollshot/stitch_engine.h
     src/scrollshot/stitch_engine.cpp
+    src/scrollshot/scrollshot_session.h
+    src/scrollshot/scrollshot_session.cpp
     src/media/audio_format.h
     src/media/audio_delivery_barrier.h
     src/media/audio_resampler.h
