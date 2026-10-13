@@ -7,13 +7,12 @@ phase boundaries; what is implemented and validated belongs in project status,
 and what each release contained in its
 [release notes](docs/releases/v1.1.0-beta.1.md).
 
-## Current: v1.1.0-beta.1 preparation
+## Current: v1.1.0-beta.1, published
 
-The branch `feature/v1.1-beta` prepares the first beta of v1.1: Scrollshot in
-the application, then the work a public beta needs. Nothing from it has been
-released; the published version of
-[`vseprr/easnap`](https://github.com/vseprr/easnap) is v1.0.2, the second
-maintenance release on top of v1.0.0.
+The first beta of v1.1 was published on 2026-10-13 as a prerelease of
+[`vseprr/easnap`](https://github.com/vseprr/easnap): Scrollshot in the
+application and the work a public beta needs. The latest stable version is
+v1.0.2, the second maintenance release on top of v1.0.0.
 
 | Phase | State |
 |---|---|
@@ -22,8 +21,8 @@ maintenance release on top of v1.0.0.
 | MP4 recording | Implemented |
 | GIF export and recording/trim integration | Implemented |
 | Release hardening | v1.0.0 published; v1.0.1 and v1.0.2 maintenance releases; broader physical validation remains |
-| Scrollshot | Implemented on `feature/v1.1-beta`, including editing of the stitched image; not released |
-| Beta readiness | Implemented on `feature/v1.1-beta`; prepared as v1.1.0-beta.1, not published |
+| Scrollshot | Implemented, including editing of the stitched image; released in v1.1.0-beta.1 |
+| Beta readiness | Implemented; v1.1.0-beta.1 published as a prerelease |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
@@ -41,17 +40,16 @@ For v1.1.0-beta.1, in this order:
    start below Windows 10 build 19041. Neither was seen on such a system.
 6. Done: release and distribution. Package names and checks for the
    prerelease version, package manifests, uninstall behaviour, symbol files,
-   release notes. Not published: the tag, the workflow run and the package
-   manager submissions are the owner's steps.
+   release notes. Published from the tag by the Release workflow; the package
+   manager submissions are the owner's step.
 7. Done: CI and community files. CodeQL, an AddressSanitizer job, issue forms
-   and a pull-request template; skipped tests are reported as skipped. The
-   two new jobs have not run on a hosted runner.
+   and a pull-request template; skipped tests are reported as skipped. Both
+   new jobs pass on the hosted runner.
 8. Done: documentation pass and validation. Thirteen closed reports were
    removed after their conclusions moved into the ADRs they support; the
    Full tier passed 45 of 45 on 2026-10-13.
 
-Next: publishing v1.1.0-beta.1 (the owner's step), then the checks the beta
-could not make on one PC: Windows 11, an N edition, Scrollshot on real
+Next: the checks the beta could not make on one PC: Windows 11, an N edition, Scrollshot on real
 applications, other scale factors, the installer.
 
 Carried over from v1.0.2 and not part of the beta:

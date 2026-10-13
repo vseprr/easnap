@@ -3,12 +3,14 @@
 **Updated:** 2026-10-13
 Read with the [roadmap](../EASNAP_ROADMAP.md) before implementation work.
 
-## Current slice: v1.1.0-beta.1 preparation
+## Current slice: v1.1.0-beta.1, published
 
-Work is on the branch `feature/v1.1-beta`, on top of the published v1.0.2.
-Nothing from this branch has been released.
+The branch `feature/v1.1-beta` was merged into `main` and published on
+2026-10-13 as the prerelease
+[v1.1.0-beta.1](https://github.com/vseprr/easnap/releases/tag/v1.1.0-beta.1).
+The latest stable release is still v1.0.2.
 
-### Implemented on the branch
+### Implemented in the beta
 
 - **Scrollshot.** A third workspace mode joins everything scrolled through a
   locked frame into one tall image; see [user flows](user-flows.md#scrollshot).
@@ -200,11 +202,17 @@ Not validated on the branch:
   copy of the person who owns the development PC. Its Turkish pages, the
   uninstall question and the removal of the sign-in entry are therefore
   unseen.
-- The Release workflow with a prerelease tag, and the manifests against
-  `winget validate` or Scoop. Nothing was pushed, tagged or dispatched.
-- The CodeQL workflow and the AddressSanitizer job on a hosted runner: neither
-  has run. The skipped result of `wasapi_audio_capture` was not seen either;
-  this PC has audio endpoints.
+- The manifests against `winget validate` or Scoop; nothing was submitted to
+  a package manager.
+- The published packages themselves. The Release workflow built them from the
+  tag, checked their SHA-256 files, attested them and created the prerelease
+  draft with the installer, the ZIP and the symbol files; nobody downloaded
+  or ran them before publication.
+- On the hosted runner the CodeQL workflow and the AddressSanitizer job pass,
+  and `wasapi_audio_capture` is reported as skipped. In one
+  AddressSanitizer run `incremental_test_selection`, which takes 5 to 7 s
+  there, ran into its 30 s timeout and passed when the job was repeated; the
+  cause is not known.
 - The look of the Settings dialog on screen. Its windows are excluded from
   capture, so no picture was taken; its text is measured by the text-fit test.
 - A real crash of the application: the handler is exercised by a test process
@@ -323,12 +331,11 @@ post-v1 without a promised date.
 
 ## Next slice
 
-The branch is prepared for v1.1.0-beta.1 and nothing has been published.
-Publishing is the owner's step: merge or tag `v1.1.0-beta.1`, run the Release
-workflow, review the draft ([distribution](distribution.md)). After that the
-beta's feedback decides the work before v1.1.0; the checks listed above as not
-validated (Windows 11, an N edition, Scrollshot on real applications, other
-scale factors, the installer) come first.
+v1.1.0-beta.1 is published. The beta's feedback decides the work before
+v1.1.0; the checks listed above as not validated (Windows 11, an N edition,
+Scrollshot on real applications, other scale factors, the installer) come
+first. The package manager submissions remain the owner's step
+([distribution](distribution.md)).
 Preserve the native frame, shared rendering/control path and asynchronous
 preview boundaries. See [ADR-024](decisions/ADR-024-native-trim-frame.md),
 [architecture](architecture.md) and the
