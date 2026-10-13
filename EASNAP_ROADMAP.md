@@ -39,11 +39,12 @@ For v1.1.0-beta.1, in this order:
 2. Done: diagnostics and data safety. Log file, crash reports, confirmation
    before work is lost, recovery of unsaved recordings, specific recording
    start messages, and the H.264 picture-size rule.
-3. The remaining user-visible text in English and Turkish.
-4. Settings window, About, update check, launch behaviour.
-5. Compatibility: Windows N editions, the real minimum Windows version.
-6. Release and distribution: prerelease versioning, package manifests,
-   uninstall behaviour.
+3. Done: all user-visible text in English and Turkish.
+4. Done: Settings window, About, update check, launch behaviour.
+5. Done: compatibility. Easnap starts on Windows N editions and refuses to
+   start below Windows 10 build 19041. Neither was seen on such a system.
+6. Release and distribution: package names and checks for the prerelease
+   version, package manifests, uninstall behaviour, symbol files.
 7. CI and community files.
 8. Documentation pass and validation.
 

@@ -10,6 +10,8 @@
 #define IDM_TRAY_OPEN_DATA_FOLDER 40003
 #define IDM_TRAY_ABOUT 40004
 #define IDM_TRAY_EXIT 40005
+#define IDM_TRAY_SETTINGS 40006
+#define IDM_TRAY_CHECK_UPDATES 40007
 
 // Hotkey identifiers -------------------------------------------------------
 #define IDH_EASNAP_CAPTURE 1

@@ -90,5 +90,6 @@ inline constexpr uint64_t kModeToolbarFadeDurationMs = 500;
 
 // Brief, non-activating green notice with a lifetime independent of the workspace.
 void ShowCaptureCopiedNotice(const RECT& region);
+void ShowCaptureSavedNotice(const RECT& region);
 void ShowCaptureStatusNotice(const RECT& region, const std::wstring& text);
 } // namespace easnap::ui

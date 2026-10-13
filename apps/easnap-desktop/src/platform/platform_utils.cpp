@@ -629,8 +629,15 @@ ComPtr<IDWriteTextFormat> GraphicsEnvironment::CreateTextFormat(float size_dip, 
     if (dwrite_factory_ == nullptr) {
         return format;
     }
+    // The text drawn with this format is what the user typed. Its language is
+    // the user's, not the interface's, so locale-dependent glyph forms and
+    // font fallback follow the Windows regional format.
+    wchar_t locale[LOCALE_NAME_MAX_LENGTH]{};
+    if (::GetUserDefaultLocaleName(locale, ARRAYSIZE(locale)) == 0) {
+        ::wcscpy_s(locale, L"en-us");
+    }
     const HRESULT hr = dwrite_factory_->CreateTextFormat(family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
-                                                         DWRITE_FONT_STRETCH_NORMAL, size_dip, L"en-us", &format);
+                                                         DWRITE_FONT_STRETCH_NORMAL, size_dip, locale, &format);
     if (FAILED(hr)) {
         LogHresult(L"CreateTextFormat", hr);
     }
@@ -885,7 +892,8 @@ bool CopyImageToClipboard(HWND owner, const BgraImage& image) {
 }
 
 std::optional<std::wstring> ShowSaveImageDialog(HWND owner, const std::wstring& suggested_file_name,
-                                                const std::wstring& initial_directory) {
+                                                const std::wstring& initial_directory,
+                                                const SaveImageDialogText& text) {
     ComPtr<IFileSaveDialog> dialog;
     HRESULT hr = ::CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
     if (FAILED(hr)) {
@@ -893,14 +901,16 @@ std::optional<std::wstring> ShowSaveImageDialog(HWND owner, const std::wstring& 
         return std::nullopt;
     }
 
-    static const COMDLG_FILTERSPEC kFilters[] = {
-        {L"PNG image", L"*.png"},
-        {L"JPEG image", L"*.jpg;*.jpeg"},
+    // Built for each dialog: the type names follow the active language. The
+    // dialog copies the filters.
+    const COMDLG_FILTERSPEC filters[] = {
+        {text.png_type, L"*.png"},
+        {text.jpeg_type, L"*.jpg;*.jpeg"},
     };
-    dialog->SetFileTypes(ARRAYSIZE(kFilters), kFilters);
+    dialog->SetFileTypes(ARRAYSIZE(filters), filters);
     dialog->SetFileTypeIndex(1);
     dialog->SetDefaultExtension(L"png");
-    dialog->SetTitle(L"Save screenshot");
+    dialog->SetTitle(text.title);
     dialog->SetFileName(suggested_file_name.c_str());
 
     DWORD options = 0;
@@ -912,7 +922,9 @@ std::optional<std::wstring> ShowSaveImageDialog(HWND owner, const std::wstring& 
     if (!initial_directory.empty()) {
         ComPtr<IShellItem> folder;
         if (SUCCEEDED(::SHCreateItemFromParsingName(initial_directory.c_str(), nullptr, IID_PPV_ARGS(&folder)))) {
-            dialog->SetDefaultFolder(folder.Get());
+            // SetFolder, not SetDefaultFolder: the dialog would otherwise prefer
+            // the folder it was last closed in over the one asked for.
+            dialog->SetFolder(folder.Get());
         }
     } else if (auto pictures = KnownFolder(FOLDERID_Pictures)) {
         ComPtr<IShellItem> folder;
@@ -966,6 +978,26 @@ std::wstring AppDataDirectory() {
     std::wstring directory = *local + L"\\Easnap";
     EnsureDirectory(directory);
     return directory;
+}
+
+std::wstring UniqueFilePath(const std::wstring& directory, const std::wstring& file_name) {
+    if (directory.empty() || file_name.empty() ||
+        ::GetFileAttributesW(directory.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        return {};
+    }
+    const size_t dot = file_name.find_last_of(L'.');
+    const std::wstring stem = dot == std::wstring::npos ? file_name : file_name.substr(0, dot);
+    const std::wstring extension = dot == std::wstring::npos ? std::wstring() : file_name.substr(dot);
+    std::wstring base = directory;
+    if (base.back() != L'\\' && base.back() != L'/') { base += L'\\'; }
+    for (int attempt = 1; attempt < 1000; ++attempt) {
+        const std::wstring candidate =
+            base + stem + (attempt == 1 ? std::wstring() : L" (" + std::to_wstring(attempt) + L")") + extension;
+        if (::GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            return candidate;
+        }
+    }
+    return {};
 }
 
 std::wstring DirectoryOf(const std::wstring& path) {
@@ -1136,6 +1168,27 @@ bool RemoveDirectoryTree(const std::wstring& path) {
 namespace {
 std::atomic<LogSink> g_log_sink{nullptr};
 }  // namespace
+
+bool SystemUsesDarkApps() noexcept {
+    DWORD light = 1;
+    DWORD size = sizeof(light);
+    const LSTATUS status = ::RegGetValueW(
+        HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"AppsUseLightTheme",
+        RRF_RT_REG_DWORD, nullptr, &light, &size);
+    return status == ERROR_SUCCESS && light == 0;
+}
+
+bool MediaFoundationAvailable() noexcept {
+    // The libraries stay loaded once found; the delay-loaded imports of the
+    // recorder then resolve against them.
+    static const bool available = [] {
+        for (const wchar_t* library : {L"mfplat.dll", L"mfreadwrite.dll"}) {
+            if (::LoadLibraryExW(library, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32) == nullptr) { return false; }
+        }
+        return true;
+    }();
+    return available;
+}
 
 WindowsVersion CurrentWindowsVersion() noexcept {
     using VersionFunction = LONG(WINAPI*)(OSVERSIONINFOW*);

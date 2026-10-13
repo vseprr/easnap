@@ -40,6 +40,18 @@ std::wstring ExistingFileDataPath(const std::wstring& candidate) {
     return size.QuadPart == 0 ? std::wstring{} : candidate;
 }
 
+/// Light or Dark as it is shown: the explicit choice, or what Windows uses.
+AppearanceTheme EffectiveAppearance(const AppSettings& settings) noexcept {
+    if (!settings.appearance_follows_system) { return settings.appearance_theme; }
+    return platform::SystemUsesDarkApps() ? AppearanceTheme::Dark : AppearanceTheme::Light;
+}
+
+/// The recording Save dialog's text in the active language.
+SaveRecordingDialogText RecordingSaveDialogText() {
+    return {strings::Get(IDS_SHELL_SAVE_RECORDING_TITLE), strings::Get(IDS_SHELL_FILE_TYPE_MP4),
+            strings::Get(IDS_SHELL_FILE_TYPE_GIF)};
+}
+
 std::wstring ExistingRecordingDataPath(
     const recording::RecordingSession& session) {
     std::wstring candidate = session.finalized_path();
@@ -83,29 +95,31 @@ const wchar_t* ExportFailureStageName(
     }
 }
 
-const wchar_t* GifFailureAction(
+// One whole sentence per stage: where the stage stands in the sentence differs
+// between languages.
+UINT GifExportFailureMessageId(
     media::TrimExportFailureStage stage) noexcept {
     switch (stage) {
         case media::TrimExportFailureStage::SourceOpen:
         case media::TrimExportFailureStage::SourceValidation:
-            return L"reading the recorded video";
+            return IDS_SESSION_GIF_FAILED_READING;
         case media::TrimExportFailureStage::MediaTypeNegotiation:
-            return L"preparing the recorded video for GIF conversion";
+            return IDS_SESSION_GIF_FAILED_PREPARING;
         case media::TrimExportFailureStage::VideoDecode:
         case media::TrimExportFailureStage::DecodedFrameAccess:
-            return L"decoding the recorded video";
+            return IDS_SESSION_GIF_FAILED_DECODING;
         case media::TrimExportFailureStage::SourceReset:
-            return L"starting the final GIF encoding pass";
+            return IDS_SESSION_GIF_FAILED_FINAL_PASS;
         case media::TrimExportFailureStage::PaletteQuantization:
-            return L"building the GIF color palette";
+            return IDS_SESSION_GIF_FAILED_PALETTE;
         case media::TrimExportFailureStage::GifEncoding:
-            return L"encoding GIF frames";
+            return IDS_SESSION_GIF_FAILED_ENCODING;
         case media::TrimExportFailureStage::StagingWrite:
-            return L"writing the GIF output";
+            return IDS_SESSION_GIF_FAILED_WRITING;
         case media::TrimExportFailureStage::Publication:
-            return L"publishing the completed GIF";
+            return IDS_SESSION_GIF_FAILED_PUBLISHING;
         default:
-            return L"converting the recording to GIF";
+            return IDS_SESSION_GIF_FAILED_CONVERTING;
     }
 }
 
@@ -124,10 +138,7 @@ void LogTrimExportFailure(const media::TrimExportFailure& failure) {
 
 std::wstring GifExportFailureMessage(
     media::TrimExportFailureStage stage) {
-    std::wstring message = L"GIF export failed while ";
-    message += GifFailureAction(stage);
-    message += L". The source recording was kept so you can retry.";
-    return message;
+    return strings::Get(GifExportFailureMessageId(stage));
 }
 
 }  // namespace
@@ -199,7 +210,7 @@ bool CaptureCoordinator::Initialize(HWND host_window) {
     }
     host_window_ = host_window;
     settings_ = AppSettings::Load();
-    ui::theme::ApplyPreference(settings_.appearance_theme);
+    ui::theme::ApplyPreference(EffectiveAppearance(settings_));
 
     // Collect anything a previous crash left behind before the user notices it.
     temp_store_ = media::CreateTemporarySessionStore();
@@ -412,14 +423,14 @@ void CaptureCoordinator::OfferRecoveredRecordings() {
             const auto destination = ShowSaveRecordingDialog(
                 nullptr, media::RecordingFormat::Mp4,
                 platform::TimestampedFileName(L"Easnap", RecordingFileExtension(media::RecordingFormat::Mp4)),
-                settings_.last_save_directory);
+                settings_.VideoStartDirectory(), RecordingSaveDialogText());
             if (!initialized_ || !temp_store_) {
                 return;
             }
             if (destination.has_value()) {
                 saved = ::CopyFileW(source.c_str(), destination->c_str(), FALSE) != FALSE;
                 if (saved) {
-                    settings_.last_save_directory = platform::DirectoryOf(*destination);
+                    settings_.last_video_directory = platform::DirectoryOf(*destination);
                     PersistSettings();
                     platform::LogMessage(L"An unsaved recording from an earlier run was saved");
                 } else {
@@ -455,6 +466,18 @@ bool CaptureCoordinator::RequestTransition(SessionState next) {
 
 void CaptureCoordinator::OnGlobalHotkey() {
     if (!initialized_) {
+        return;
+    }
+    // A dialog is waiting for an answer: Settings, About, a save dialog, a
+    // question about unsaved work. It comes forward; no capture starts over it
+    // and no other surface takes the keyboard away from it.
+    if (platform::ModalLoopActive()) {
+        if (HWND dialog = ::GetActiveWindow()) {
+            ::SetForegroundWindow(dialog);
+            FLASHWINFO flash{sizeof(flash), dialog, FLASHW_CAPTION, 3, 0};
+            ::FlashWindowEx(&flash);
+        }
+        platform::LogMessage(L"Hotkey ignored: a dialog is waiting for an answer");
         return;
     }
     if (state_ != SessionState::Idle) {
@@ -500,14 +523,14 @@ bool CaptureCoordinator::BeginCaptureSession() {
         capture_provider_ = capture::CreateRegionCaptureProvider();
     }
     if (!capture_provider_) {
-        ui::ShowErrorMessage(host_window_, L"Easnap could not initialise a screen capture provider.");
+        ui::ShowErrorMessage(host_window_, strings::Get(IDS_SESSION_CAPTURE_PROVIDER_FAILED));
         RequestTransition(SessionState::Idle);
         return false;
     }
 
     snapshot_.Clear();
     if (!capture_provider_->CaptureDesktop(settings_.capture_cursor, snapshot_) || snapshot_.empty()) {
-        ui::ShowErrorMessage(host_window_, L"Easnap could not read the desktop image.");
+        ui::ShowErrorMessage(host_window_, strings::Get(IDS_SESSION_DESKTOP_READ_FAILED));
         capture_provider_->Release();
         RequestTransition(SessionState::Idle);
         return false;
@@ -516,7 +539,7 @@ bool CaptureCoordinator::BeginCaptureSession() {
     EnsureOverlay();
 
     if (!overlay_->Show(snapshot_, initiating_pointer)) {
-        ui::ShowErrorMessage(host_window_, L"Easnap could not open the capture overlay.");
+        ui::ShowErrorMessage(host_window_, strings::Get(IDS_SESSION_OVERLAY_OPEN_FAILED));
         EndSession();
         return false;
     }
@@ -549,7 +572,13 @@ void CaptureCoordinator::EnsureOverlay() {
         callbacks.on_editor_wheel = [this](int delta, bool control, bool shift, POINT point) {
             if (editor_) { editor_->Wheel(delta, control, shift, point); }
         };
+        callbacks.on_recording_unavailable = [this] {
+            platform::LogMessage(L"Record was chosen, but Media Foundation is not installed");
+            ui::ShowMessage(DialogOwner(), strings::Get(IDS_MODE_RECORD_UNSUPPORTED), L"Easnap",
+                            MB_OK | MB_ICONINFORMATION);
+        };
         overlay_ = std::make_unique<ui::OverlayController>(std::move(callbacks));
+        overlay_->SetRecordingAvailable(platform::MediaFoundationAvailable());
     }
     overlay_retired_ = false;
 }
@@ -637,7 +666,7 @@ void CaptureCoordinator::BeginRecordingConfiguration(const RECT& region) {
     recording_region_ = MakeRecordingRegionEncoderCompatible(region);
     if (platform::IsEmptyRect(recording_region_)) {
         ui::ShowErrorMessage(
-            host_window_, L"The selected region is too small to record.");
+            host_window_, strings::Get(IDS_SESSION_RECORD_REGION_TOO_SMALL));
         return;
     }
     if (!RequestTransition(SessionState::RecordingConfiguring)) {
@@ -664,7 +693,7 @@ void CaptureCoordinator::BeginRecordingConfiguration(const RECT& region) {
     if (!recording_controls_ ||
         !recording_controls_->ShowConfiguring(region, configuration, true, overlay_->panel_owner_window())) {
         ui::ShowErrorMessage(
-            host_window_, L"Easnap could not open the recording controls.");
+            host_window_, strings::Get(IDS_SESSION_RECORD_CONTROLS_OPEN_FAILED));
         RequestTransition(SessionState::Idle);
         EndSession();
         return;
@@ -998,7 +1027,7 @@ void CaptureCoordinator::OnTrimSaveRequested(media::MediaTime start,
         recording_options_.format,
         platform::TimestampedFileName(
             L"Easnap", RecordingFileExtension(recording_options_.format)),
-        settings_.last_save_directory);
+        settings_.VideoStartDirectory(), RecordingSaveDialogText());
     if (!destination.has_value()) {
         return;
     }
@@ -1071,7 +1100,7 @@ void CaptureCoordinator::BeginTrimAction(
                 pending_trim_action_ = PendingTrimAction::None;
                 if (trim_window_) {
                     trim_window_->SetStatus(
-                        L"Copy preparation failed. The source recording was kept so you can retry.",
+                        strings::Get(IDS_SESSION_TRIM_COPY_PREPARE_FAILED),
                         true);
                 }
                 return;
@@ -1089,7 +1118,7 @@ void CaptureCoordinator::BeginTrimAction(
             pending_trim_action_ = PendingTrimAction::None;
             if (trim_window_) {
                 trim_window_->SetStatus(
-                    L"Copy preparation failed. The source recording was kept so you can retry.",
+                    strings::Get(IDS_SESSION_TRIM_COPY_PREPARE_FAILED),
                     true);
             }
             return;
@@ -1106,7 +1135,7 @@ void CaptureCoordinator::BeginTrimAction(
             pending_trim_action_ = PendingTrimAction::None;
             if (trim_window_) {
                 trim_window_->SetStatus(
-                    L"The selected Save destination is unavailable or not durable. The source was kept.",
+                    strings::Get(IDS_SESSION_TRIM_SAVE_DESTINATION_UNAVAILABLE),
                     true);
             }
             return;
@@ -1134,7 +1163,7 @@ void CaptureCoordinator::StartTrimExport(media::MediaTime start,
     if (destination_path.empty() && directory.empty()) {
         if (trim_window_) {
             trim_window_->SetStatus(
-                L"The temporary recording location is unavailable. The source was kept.",
+                strings::Get(IDS_SESSION_TRIM_TEMP_LOCATION_UNAVAILABLE),
                 true);
         }
         return;
@@ -1157,7 +1186,7 @@ void CaptureCoordinator::StartTrimExport(media::MediaTime start,
     if (!trim_export_->Start(std::move(request))) {
         if (trim_window_) {
             trim_window_->SetStatus(
-                L"The trim export could not start. The source recording was kept.",
+                strings::Get(IDS_SESSION_TRIM_EXPORT_START_FAILED),
                 true);
         }
         pending_trim_action_ = PendingTrimAction::None;
@@ -1171,7 +1200,7 @@ void CaptureCoordinator::StartTrimExport(media::MediaTime start,
         trim_export_->CancelAndWait();
         if (trim_window_) {
             trim_window_->SetStatus(
-                L"The trim export was stopped because the session state changed.",
+                strings::Get(IDS_SESSION_TRIM_EXPORT_STATE_CHANGED),
                 true);
         }
         pending_trim_action_ = PendingTrimAction::None;
@@ -1273,7 +1302,7 @@ void CaptureCoordinator::OnTrimExportCompleted(uint64_t export_generation) {
                 trim_export_to_save_ = false;
                 pending_trim_action_ = PendingTrimAction::None;
                 pending_save_destination_.clear();
-                settings_.last_save_directory =
+                settings_.last_video_directory =
                     platform::DirectoryOf(snapshot.result_path);
                 platform::LogMessage(
                     L"[Completion] Save action completed in %llu ms",
@@ -1288,7 +1317,7 @@ void CaptureCoordinator::OnTrimExportCompleted(uint64_t export_generation) {
             CompletePendingTrimAction();
             if (trim_window_ && trim_window_->visible() && trim_window_->exporting()) {
                 trim_window_->SetExportResult(
-                    L"The requested action could not be completed. The temporary recording was kept so you can retry.", true);
+                    strings::Get(IDS_SESSION_TRIM_ACTION_FAILED), true);
             }
             break;
         case TrimExportStatus::Cancelled:
@@ -1300,7 +1329,7 @@ void CaptureCoordinator::OnTrimExportCompleted(uint64_t export_generation) {
             pending_trim_action_ = PendingTrimAction::None;
             pending_save_destination_.clear();
             trim_window_->SetExportResult(
-                L"Trim export cancelled. The source recording was kept.");
+                strings::Get(IDS_SESSION_TRIM_EXPORT_CANCELLED));
             break;
         case TrimExportStatus::Failed:
             LogTrimExportFailure(snapshot.failure);
@@ -1316,7 +1345,7 @@ void CaptureCoordinator::OnTrimExportCompleted(uint64_t export_generation) {
                     GifExportFailureMessage(snapshot.failure.stage), true);
             } else {
                 trim_window_->SetExportResult(
-                    L"Trim export failed. The source recording was kept so you can retry.",
+                    strings::Get(IDS_SESSION_TRIM_EXPORT_FAILED),
                     true);
             }
             break;
@@ -1329,7 +1358,7 @@ void CaptureCoordinator::OnTrimExportCompleted(uint64_t export_generation) {
             pending_trim_action_ = PendingTrimAction::None;
             pending_save_destination_.clear();
             trim_window_->SetExportResult(
-                L"Trim export ended unexpectedly. The source recording was kept.",
+                strings::Get(IDS_SESSION_TRIM_EXPORT_ENDED),
                 true);
             break;
     }
@@ -1353,12 +1382,12 @@ void CaptureCoordinator::CompletePendingTrimAction() {
                                          pending_save_replace_)) {
             if (trim_window_) {
                 trim_window_->SetExportResult(
-                    L"Save failed. The temporary recording was kept so you can retry.",
+                    strings::Get(IDS_SESSION_TRIM_SAVE_FAILED),
                     true);
             }
             return;
         }
-        settings_.last_save_directory = platform::DirectoryOf(destination);
+        settings_.last_video_directory = platform::DirectoryOf(destination);
         platform::LogMessage(
             L"[Completion] Save action completed in %llu ms",
             ::GetTickCount64() - pending_trim_action_started_ms_);
@@ -1381,7 +1410,7 @@ void CaptureCoordinator::CompletePendingTrimAction() {
                                                          recording_options_.format)) {
         if (trim_window_) {
             trim_window_->SetExportResult(
-                L"Copy failed. The temporary recording was kept so you can retry.",
+                strings::Get(IDS_SESSION_TRIM_COPY_FAILED),
                 true);
         }
         return;
@@ -1798,8 +1827,26 @@ void CaptureCoordinator::SaveScrollshot() {
     }
     HWND owner = scrollshot_controls_ && scrollshot_controls_->hwnd() != nullptr ? scrollshot_controls_->hwnd()
                                                                                  : host_window_;
+    // Quick save: straight into the chosen folder. If that cannot be written,
+    // the dialog below still offers every other place.
+    if (settings_.quick_save_images && !settings_.image_folder.empty()) {
+        const std::wstring quick =
+            platform::UniqueFilePath(settings_.image_folder, platform::TimestampedFileName(L"Easnap", L"png"));
+        ShowScrollshotNotice(ScrollshotNotice::Saving);
+        if (!quick.empty() && platform::SaveImage(scrollshot_image_, quick)) {
+            scrollshot_busy_ = false;
+            platform::LogMessage(L"Scrollshot saved without a dialog");
+            ui::ShowCaptureSavedNotice(scrollshot_region_);
+            RequestTransition(SessionState::Idle);
+            EndSession();
+            return;
+        }
+        scrollshot_notice_ = ScrollshotNotice::None;
+        UpdateScrollshotStatus();
+    }
     const auto destination = platform::ShowSaveImageDialog(
-        owner, platform::TimestampedFileName(L"Easnap", L"png"), settings_.last_save_directory);
+        owner, platform::TimestampedFileName(L"Easnap", L"png"), settings_.ImageStartDirectory(),
+        ui::SaveImageDialogLabels());
     scrollshot_busy_ = false;
     if (!initialized_ || state_ != SessionState::ScrollshotReview) {
         return;  // The session ended while the dialog was open.
@@ -1817,7 +1864,7 @@ void CaptureCoordinator::SaveScrollshot() {
         UpdateScrollshotStatus();
         return;
     }
-    settings_.last_save_directory = platform::DirectoryOf(*destination);
+    settings_.last_image_directory = platform::DirectoryOf(*destination);
     platform::LogMessage(L"Scrollshot saved");
     RequestTransition(SessionState::Idle);
     EndSession();
@@ -1875,7 +1922,7 @@ void CaptureCoordinator::EditScrollshot() {
                               overlay_->panel_owner_window())) {
         // The editor takes the image only when it opened: nothing is lost.
         ui::ShowErrorMessage(scrollshot_controls_ ? scrollshot_controls_->hwnd() : host_window_,
-                             L"Easnap could not open the screenshot tools.");
+                             strings::Get(IDS_SESSION_EDITOR_OPEN_FAILED));
         if (rebuild) {
             EnsureScrollshotControls();
             if (scrollshot_controls_->Show(ui::ScrollshotControls::View::Capture, scrollshot_region_,
@@ -1944,7 +1991,7 @@ void CaptureCoordinator::OpenEditor(const RECT& region) {
     }
     editor_ = CreateEditor();
     if (!editor_->Open(region, &settings_, overlay_->panel_owner_window())) {
-        ui::ShowErrorMessage(host_window_, L"Easnap could not open the screenshot tools.");
+        ui::ShowErrorMessage(host_window_, strings::Get(IDS_SESSION_EDITOR_OPEN_FAILED));
         OnOverlayCancelled();
     }
 }
@@ -2218,13 +2265,30 @@ void CaptureCoordinator::SetAppearanceTheme(AppearanceTheme preference) {
     // This settings object contains accepted recording preferences only. Pending
     // panel values stay in RecordingConfiguration until a successful Start.
     settings_.appearance_theme = preference;
-    ui::theme::ApplyPreference(preference);
-    ui::theme::NotifyWindows();
+    settings_.appearance_follows_system = false;
+    RefreshAppearance();
     PersistSettings(); // One failure log, no modal interruption or redraw retry.
 }
 
+void CaptureCoordinator::SetAppearanceFollowsSystem() {
+    settings_.appearance_follows_system = true;
+    RefreshAppearance();
+    PersistSettings();
+}
+
+void CaptureCoordinator::RefreshAppearance() {
+    ui::theme::ApplyPreference(EffectiveAppearance(settings_));
+    ui::theme::NotifyWindows();
+}
+
 void CaptureCoordinator::OnVisualSettingsChanged() {
-    ui::theme::RefreshSystemColors();
+    // Windows changed colours, contrast or its application mode. Following
+    // Windows means taking the new mode over now.
+    if (settings_.appearance_follows_system) {
+        ui::theme::ApplyPreference(EffectiveAppearance(settings_));
+    } else {
+        ui::theme::RefreshSystemColors();
+    }
     ui::theme::NotifyWindows();
 }
 

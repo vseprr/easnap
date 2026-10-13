@@ -333,7 +333,7 @@ void NativeMaterialChecks() {
             Shot(button,name.c_str());
         }
         ::EnableWindow(button,TRUE);
-        HMENU menu=ui::CreateAppearanceMenu();
+        HMENU menu=ui::CreateAppearanceMenu(false);
         {
             ui::MenuThemeScope themed(editor.hwnd(),menu);
             MENUITEMINFOW item{sizeof(item)};item.fMask=MIIM_FTYPE|MIIM_DATA; CHECK(::GetMenuItemInfoW(menu,0,TRUE,&item));
@@ -747,6 +747,12 @@ void TextDispatchPainting() {
                     editor.ImagePointer(WM_LBUTTONDOWN,test::OnTestPoint({780,570})); editor.ImagePointer(WM_LBUTTONUP,test::OnTestPoint({780,570}));
                     editor.ImagePointer(WM_LBUTTONDBLCLK,test::OnTestPoint({180,195}));
                     host=::FindWindowW(L"EasnapScreenshotEditor",L"Edit annotation text"); edit=::GetDlgItem(host,2700); CHECK(edit);
+                    // The button comes up again, as after a real double-click. Until
+                    // then the text box holds the mouse, and any pointer movement on
+                    // the desktop extends its selection under the comparisons below.
+                    POINT released=test::OnTestPoint({180,195}); ::ScreenToClient(edit,&released);
+                    ::SendMessageW(edit,WM_LBUTTONUP,0,MAKELPARAM(released.x,released.y));
+                    CHECK(::GetCapture()!=edit);
                 }
                 bool recorded=false;
                 const auto caret_bounds=[&] {
@@ -760,6 +766,7 @@ void TextDispatchPainting() {
                     ::HideCaret(edit); const auto before=PresentedControl(edit); ::ShowCaret(edit);
                     const RECT bounds=Bounds(edit);
                     ::SendMessageW(edit,message,wparam,lparam);
+                    const auto dispatched_at=::GetTickCount64();
                     // Sample before servicing WM_PAINT: either the previous custom
                     // frame or the new one is coherent, native glyphs/backing are not.
                     ::HideCaret(edit); const auto shown=PresentedControl(edit),expected=RenderControl(edit); ::ShowCaret(edit);
@@ -784,7 +791,30 @@ void TextDispatchPainting() {
                         }
                         return true;
                     };
-                    CHECK(same_content(before) || same_content(expected));
+                    const bool coherent=same_content(before) || same_content(expected);
+                    if(!coherent) {
+                        // Where the presented frame departs from both candidates,
+                        // next to the two caret rectangles that were excluded.
+                        const auto departs=[&](const platform::BgraImage& frame) {
+                            RECT area{shown.width,shown.height,0,0};
+                            if(shown.width!=frame.width || shown.height!=frame.height) { return area; }
+                            for(int y=0;y<shown.height;++y) for(int x=0;x<shown.width;++x) {
+                                const POINT point{x,y};
+                                if(::PtInRect(&old_caret,point) || ::PtInRect(&new_caret,point) || shown.row(y)[x]==frame.row(y)[x]) { continue; }
+                                area.left=std::min(area.left,static_cast<LONG>(x)); area.top=std::min(area.top,static_cast<LONG>(y));
+                                area.right=std::max(area.right,static_cast<LONG>(x+1)); area.bottom=std::max(area.bottom,static_cast<LONG>(y+1));
+                            }
+                            return area;
+                        };
+                        const RECT from_before=departs(before),from_expected=departs(expected);
+                        std::printf("Text dispatch mode=%d theme=%d reopened=%d message=%u size=%dx%d before=%dx%d expected=%dx%d "
+                            "departs_from_before=%ld,%ld,%ld,%ld departs_from_expected=%ld,%ld,%ld,%ld old_caret=%ld,%ld,%ld,%ld new_caret=%ld,%ld,%ld,%ld\n",
+                            mode,static_cast<int>(theme),reopened,message,shown.width,shown.height,before.width,before.height,expected.width,expected.height,
+                            from_before.left,from_before.top,from_before.right,from_before.bottom,
+                            from_expected.left,from_expected.top,from_expected.right,from_expected.bottom,
+                            old_caret.left,old_caret.top,old_caret.right,old_caret.bottom,new_caret.left,new_caret.top,new_caret.right,new_caret.bottom);
+                    }
+                    CHECK(coherent);
                     // WM_PAINT is asynchronous. Wait for the settled frame with a
                     // deadline; one fixed pump is a timing assumption that fails
                     // when the machine is busy. The settled frame itself is exact.
@@ -816,6 +846,21 @@ void TextDispatchPainting() {
                         if((same_size && content_differences==0) || ::GetTickCount64()>=settle_deadline) { break; }
                     }
                     CHECK(Same(settled_caret,caret_bounds()));
+                    // A key leaves the caret on: it must not vanish for a blink
+                    // interval while the user types. Only judged while the blink
+                    // that follows the key cannot have turned it off yet.
+                    DWORD selection_start{},selection_end{};
+                    ::SendMessageW(edit,EM_GETSEL,reinterpret_cast<WPARAM>(&selection_start),reinterpret_cast<LPARAM>(&selection_end));
+                    const auto with_caret=PresentedControl(edit);
+                    if(same_size && selection_start==selection_end && ::GetTickCount64()-dispatched_at<::GetCaretBlinkTime()/2) {
+                        bool caret_drawn=false;
+                        for(LONG y=std::max<LONG>(0,settled_caret.top);y<std::min<LONG>(settled.height,settled_caret.bottom) && !caret_drawn;++y) {
+                            for(LONG x=std::max<LONG>(0,settled_caret.left);x<std::min<LONG>(settled.width,settled_caret.right);++x) {
+                                if(with_caret.row(y)[x]!=settled.row(y)[x]) { caret_drawn=true; break; }
+                            }
+                        }
+                        CHECK(caret_drawn);
+                    }
                     if(differences || !same_size) {
                         std::printf("Text settled mode=%d theme=%d reopened=%d message=%u size_match=%d differences=%zu outside_caret=%zu bounds=%ld,%ld,%ld,%ld caret=%ld,%ld,%ld,%ld\n",
                             mode,static_cast<int>(theme),reopened,message,same_size,differences,content_differences,

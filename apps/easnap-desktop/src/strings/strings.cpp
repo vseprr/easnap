@@ -76,8 +76,6 @@ Language Current() noexcept {
     return SystemLanguage();
 }
 
-const wchar_t* LocaleName() noexcept { return Current() == Language::Turkish ? L"tr-tr" : L"en-us"; }
-
 const wchar_t* Get(UINT id, Language language) noexcept {
     if (id < IDS_FIRST || id > IDS_LAST) { return L""; }
     return Loaded().text[language == Language::Turkish ? 1 : 0][id - IDS_FIRST].c_str();

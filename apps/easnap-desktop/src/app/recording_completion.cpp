@@ -510,7 +510,8 @@ void RecordingCompletionController::Shutdown() {
 std::optional<std::wstring> ShowSaveRecordingDialog(
     HWND owner, media::RecordingFormat format,
     const std::wstring& suggested_file_name,
-    const std::wstring& initial_directory) {
+    const std::wstring& initial_directory,
+    const SaveRecordingDialogText& text) {
     ComPtr<IFileSaveDialog> dialog;
     HRESULT result = ::CoCreateInstance(CLSID_FileSaveDialog, nullptr,
                                         CLSCTX_INPROC_SERVER,
@@ -518,19 +519,21 @@ std::optional<std::wstring> ShowSaveRecordingDialog(
     if (FAILED(result)) {
         return std::nullopt;
     }
-    static const COMDLG_FILTERSPEC kMp4Filters[] = {
-        {L"MP4 video", L"*.mp4"},
+    // Built for each dialog: the type name follows the active language. The
+    // dialog copies the filter.
+    const COMDLG_FILTERSPEC mp4_filters[] = {
+        {text.mp4_type, L"*.mp4"},
     };
-    static const COMDLG_FILTERSPEC kGifFilters[] = {
-        {L"Animated GIF", L"*.gif"},
+    const COMDLG_FILTERSPEC gif_filters[] = {
+        {text.gif_type, L"*.gif"},
     };
     const COMDLG_FILTERSPEC* filters =
-        format == media::RecordingFormat::Gif ? kGifFilters : kMp4Filters;
+        format == media::RecordingFormat::Gif ? gif_filters : mp4_filters;
     dialog->SetFileTypes(1, filters);
     dialog->SetFileTypeIndex(1);
     dialog->SetDefaultExtension(
         format == media::RecordingFormat::Gif ? L"gif" : L"mp4");
-    dialog->SetTitle(L"Save recording");
+    dialog->SetTitle(text.title);
     dialog->SetFileName(suggested_file_name.c_str());
 
     DWORD options = 0;
@@ -542,7 +545,7 @@ std::optional<std::wstring> ShowSaveRecordingDialog(
         ComPtr<IShellItem> folder;
         if (SUCCEEDED(::SHCreateItemFromParsingName(
                 initial_directory.c_str(), nullptr, IID_PPV_ARGS(&folder)))) {
-            dialog->SetDefaultFolder(folder.Get());
+            dialog->SetFolder(folder.Get());  // The folder asked for, not the one used last.
         }
     } else if (const auto videos = platform::KnownFolder(FOLDERID_Videos)) {
         ComPtr<IShellItem> folder;

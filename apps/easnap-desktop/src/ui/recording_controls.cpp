@@ -1,10 +1,12 @@
 #include "ui/recording_controls.h"
 
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <utility>
 
 #include "platform/platform_utils.h"
+#include "strings/strings.h"
 #include "ui/ui_theme.h"
 #include "ui/native_controls.h"
 #include <windowsx.h>
@@ -103,7 +105,7 @@ public:
         }
 
         panel_ = ::CreateWindowExW(
-            kPanelExStyle, kPanelClassName, L"Easnap - Recording", kPanelStyle,
+            kPanelExStyle, kPanelClassName, strings::Get(IDS_SESSION_RECORD_PANEL_TITLE), kPanelStyle,
             CW_USEDEFAULT, CW_USEDEFAULT, 1, 1, nullptr, nullptr,
             ::GetModuleHandleW(nullptr), this);
         if (panel_ == nullptr || !CreatePanelControls()) {
@@ -196,7 +198,7 @@ public:
         const app::RecordingCapabilities capabilities =
             app::CapabilitiesForRecordingFormat(owner_.configuration_.format);
 
-        const wchar_t* title = L"Configure recording";
+        const wchar_t* title = strings::Get(IDS_SESSION_RECORD_CONFIGURE_TITLE);
         if (owner_.state_ == app::SessionState::RecordingActive) {
             title = L"Recording";
         } else if (owner_.state_ == app::SessionState::RecordingPaused) {
@@ -205,10 +207,10 @@ public:
             title = L"Finalizing recording";
         }
         ::SetWindowTextW(title_, title);
-        ::SetWindowTextW(pause_resume_, policy.can_resume ? L"Resume" : L"Pause");
+        ::SetWindowTextW(pause_resume_, strings::Get(policy.can_resume ? IDS_SESSION_RECORD_RESUME
+                                                                       : IDS_SESSION_RECORD_PAUSE));
         if (finalizing) {
-            ::SetWindowTextW(status_,
-                             L"Finishing the recording... It opens for trimming next.");
+            ::SetWindowTextW(status_, strings::Get(IDS_SESSION_RECORD_FINISHING));
         }
 
         SetControlVisible(title_, configuring);
@@ -290,7 +292,10 @@ public:
         const bool configuring = owner_.state_ == app::SessionState::RecordingConfiguring;
         const bool active = owner_.state_ == app::SessionState::RecordingActive ||
                             owner_.state_ == app::SessionState::RecordingPaused;
-        const int desired_width = ScaleDip(active ? kActivePanelWidthDip : kPanelWidthDip, scale);
+        // "Stop" fits 80 DIP. A longer caption in another language widens the
+        // button, and the island with it, instead of being cut.
+        const int stop_extra = active ? std::max(0, StopButtonWidthDip(scale) - 80) : 0;
+        const int desired_width = ScaleDip((active ? kActivePanelWidthDip : kPanelWidthDip) + stop_extra, scale);
         const int client_width = std::min(desired_width, static_cast<int>(available.right - available.left));
         const bool narrow = client_width < ScaleDip(340, scale);
         const int client_height_dip = configuring ? (narrow ? 344 : 296) + (error_.empty() ? 0 : 60) : 60;
@@ -575,23 +580,23 @@ private:
 
     [[nodiscard]] bool CreatePanelControls() {
         title_ = CreateControl(L"STATIC", L"Record screen", SS_LEFT, kIdTitle);
-        start_ = CreateControl(L"BUTTON", L"Start recording", WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDOK);
-        appearance_ = CreateControl(L"BUTTON", L"Appearance", WS_TABSTOP | BS_PUSHBUTTON, kIdAppearance);
+        start_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_START), WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDOK);
+        appearance_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_APPEARANCE), WS_TABSTOP | BS_PUSHBUTTON, kIdAppearance);
         format_label_ = CreateControl(L"STATIC", L"Format", SS_LEFT, kIdFormatLabel);
-        format_mp4_ = CreateControl(L"BUTTON", L"MP4", WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdFormatMp4);
-        format_gif_ = CreateControl(L"BUTTON", L"GIF", WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdFormatGif);
-        audio_label_ = CreateControl(L"STATIC", L"Audio", SS_LEFT, kIdAudioLabel);
-        audio_system_ = CreateControl(L"BUTTON", L"System audio", WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdAudioSystem);
-        audio_microphone_ = CreateControl(L"BUTTON", L"Microphone", WS_TABSTOP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdAudioMicrophone);
-        gif_quality_label_ = CreateControl(L"STATIC", L"GIF quality", SS_LEFT, kIdGifQualityLabel);
-        gif_high_quality_ = CreateControl(L"BUTTON", L"High quality", WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdGifHighQuality);
-        gif_low_size_ = CreateControl(L"BUTTON", L"Low size", WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdGifLowSize);
-        include_cursor_ = CreateControl(L"BUTTON", L"Include cursor", WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdIncludeCursor);
-        cancel_ = CreateControl(L"BUTTON", L"Cancel", WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
+        format_mp4_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_FORMAT_MP4), WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdFormatMp4);
+        format_gif_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_FORMAT_GIF), WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdFormatGif);
+        audio_label_ = CreateControl(L"STATIC", strings::Get(IDS_SESSION_RECORD_AUDIO_LABEL), SS_LEFT, kIdAudioLabel);
+        audio_system_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_SYSTEM_AUDIO), WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdAudioSystem);
+        audio_microphone_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_MICROPHONE), WS_TABSTOP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdAudioMicrophone);
+        gif_quality_label_ = CreateControl(L"STATIC", strings::Get(IDS_SESSION_RECORD_GIF_QUALITY_LABEL), SS_LEFT, kIdGifQualityLabel);
+        gif_high_quality_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_GIF_HIGH_QUALITY), WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdGifHighQuality);
+        gif_low_size_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_GIF_LOW_SIZE), WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdGifLowSize);
+        include_cursor_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_INCLUDE_CURSOR), WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdIncludeCursor);
+        cancel_ = CreateControl(L"BUTTON", strings::Get(IDS_DIALOG_CANCEL), WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
         elapsed_ = CreateControl(L"STATIC", L"00:00:00", SS_CENTER | SS_CENTERIMAGE, kIdElapsed);
         status_ = CreateControl(L"STATIC", L"", SS_LEFT, kIdStatus);
-        pause_resume_ = CreateControl(L"BUTTON", L"Pause", WS_TABSTOP | BS_CHECKBOX | BS_PUSHLIKE, kIdPauseResume);
-        stop_ = CreateControl(L"BUTTON", L"Stop", WS_TABSTOP | BS_PUSHBUTTON, kIdStop);
+        pause_resume_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_PAUSE), WS_TABSTOP | BS_CHECKBOX | BS_PUSHLIKE, kIdPauseResume);
+        stop_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_STOP), WS_TABSTOP | BS_PUSHBUTTON, kIdStop);
         for (HWND control : {title_, start_, appearance_, format_label_, format_mp4_, format_gif_, audio_label_,
              audio_system_, audio_microphone_, gif_quality_label_, gif_high_quality_, gif_low_size_, include_cursor_,
              cancel_, elapsed_, status_, pause_resume_, stop_}) {
@@ -611,7 +616,7 @@ private:
             info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
             info.hwnd = panel_;
             info.uId = reinterpret_cast<UINT_PTR>(appearance_);
-            info.lpszText = const_cast<wchar_t*>(L"Appearance - Light or Dark");
+            info.lpszText = const_cast<wchar_t*>(strings::Get(IDS_SESSION_RECORD_APPEARANCE_TOOLTIP));
             ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
             StyleTooltip(tooltip_);
         }
@@ -719,6 +724,11 @@ private:
                       : (microphone ? media::AudioSource::Microphone : media::AudioSource::None);
     }
 
+    /// At least the 80 DIP the English caption needs.
+    [[nodiscard]] int StopButtonWidthDip(float scale) const {
+        return std::max(80, static_cast<int>(std::ceil(static_cast<float>(ButtonContentWidth(stop_)) / scale)));
+    }
+
     void LayoutPanelControls(float scale, int client_width, int client_height) {
         const int width = static_cast<int>(static_cast<float>(client_width) / scale);
         const bool narrow = width < 340;
@@ -746,9 +756,10 @@ private:
         } else if (owner_.state_ == app::SessionState::RecordingFinalizing) {
             move(status_, 36, 8, width - 52, 44);
         } else {
+            const int stop = StopButtonWidthDip(scale);
             move(pause_resume_, 28, 10, 40, 40);
-            move(elapsed_, 72, 10, width - 164, 40);
-            move(stop_, width - 88, 10, 80, 40);
+            move(elapsed_, 72, 10, width - 84 - stop, 40);
+            move(stop_, width - 8 - stop, 10, stop, 40);
         }
         static_cast<void>(client_height);
     }

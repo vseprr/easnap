@@ -120,7 +120,13 @@ public:
     [[nodiscard]] AppSettings& settings() noexcept { return settings_; }
     [[nodiscard]] const AppSettings& settings() const noexcept { return settings_; }
     bool PersistSettings();
+    /// An explicit Light or Dark choice; ends following Windows.
     void SetAppearanceTheme(AppearanceTheme preference);
+    /// Light or Dark as Windows is set for applications, from now on.
+    void SetAppearanceFollowsSystem();
+    /// Applies the appearance the settings describe to every window. Call
+    /// after changing the appearance fields of `settings()`.
+    void RefreshAppearance();
     void OnVisualSettingsChanged();
 
     /// What ending the application now would lose.

@@ -259,15 +259,18 @@ void TestLog(const std::wstring& directory) {
     CHECK(!current.empty() && current.back().find("the last line") != std::string::npos);
 
     // A file already at its limit is set aside when the log starts.
-    CHECK(diagnostics::StartLog(directory, L"rotating", options));
-    for (int i = 0; i < 120; ++i) { LogMessage(L"fill %03d ......................................", i); }
+    options.max_bytes = 1024 * 1024;
+    CHECK(diagnostics::StartLog(directory, L"limit", options));
+    for (int i = 0; i < 40; ++i) { LogMessage(L"fill %03d ......................................", i); }
     diagnostics::StopLog();
+    CHECK(Lines(ReadFile(directory + L"\\limit.log")).size() == 40);  // About 3 kilobytes, far below its megabyte.
     options.max_bytes = 1024;
-    CHECK(diagnostics::StartLog(directory, L"rotating", options));
+    CHECK(diagnostics::StartLog(directory, L"limit", options));
     LogMessage(L"fresh file");
     diagnostics::StopLog();
-    const std::vector<std::string> fresh = Lines(ReadFile(directory + L"\\rotating.log"));
+    const std::vector<std::string> fresh = Lines(ReadFile(directory + L"\\limit.log"));
     CHECK(fresh.size() == 1 && fresh[0].find("fresh file") != std::string::npos);
+    CHECK(Lines(ReadFile(directory + L"\\limit.1.log")).size() == 40);
 }
 
 // --- Crash reports ---------------------------------------------------------------------

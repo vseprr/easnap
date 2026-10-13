@@ -339,6 +339,32 @@ void UpdateButtonStyle(HWND button, ButtonStyle style) {
         ::InvalidateRect(button, nullptr, FALSE);
     }
 }
+int ButtonContentWidth(HWND button) {
+    DWORD_PTR reference{};
+    if (!button || !::GetWindowSubclass(button, ButtonProc, kButtonSubclass, &reference)) { return 0; }
+    const ButtonStyle& style = reinterpret_cast<ButtonData*>(reference)->style;
+    if (style.icon_only || style.swatch) { return 0; }
+    wchar_t text[256]{};
+    const int length = ::GetWindowTextW(button, text, ARRAYSIZE(text));
+    if (length == 0) { return 0; }
+    const float scale = static_cast<float>(::GetDpiForWindow(button)) / 96.0f;
+    SIZE extent{};
+    if (HDC dc = ::CreateCompatibleDC(nullptr)) {
+        const HGDIOBJ previous = ::SelectObject(dc, reinterpret_cast<HFONT>(::SendMessageW(button, WM_GETFONT, 0, 0)));
+        ::GetTextExtentPoint32W(dc, text, length, &extent);
+        ::SelectObject(dc, previous);
+        ::DeleteDC(dc);
+    }
+    // The same insets PaintButton applies: 6 around the face, 6 beside the
+    // caption, and what an icon or a check mark takes on the left.
+    int lead = theme::Scaled(6, scale);
+    const auto type = ::GetWindowLongPtrW(button, GWL_STYLE) & BS_TYPEMASK;
+    if (style.icon != Icon::None) { lead = theme::Scaled(10 + 18 + 6, scale); }
+    else if ((type == BS_AUTOCHECKBOX || type == BS_AUTORADIOBUTTON || type == BS_RADIOBUTTON) && !style.segmented) {
+        lead = theme::Scaled(10 + 10 + 8, scale);
+    }
+    return 2 * theme::Scaled(6, scale) + lead + static_cast<int>(extent.cx) + theme::Scaled(6, scale);
+}
 namespace {
 LRESULT CALLBACK BufferedTextProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM lparam,UINT_PTR id,DWORD_PTR) {
     if(message==WM_PRINT) { return ::DefWindowProcW(hwnd,message,wparam,lparam); }
@@ -605,13 +631,15 @@ bool ActivateFocusedButton(MSG& message, HWND parent) {
     ::SendMessageW(message.hwnd, BM_CLICK, 0, 0);
     return true;
 }
-HMENU CreateAppearanceMenu() {
+HMENU CreateAppearanceMenu(bool follows_system) {
     HMENU menu = ::CreatePopupMenu();
     if (menu) {
-        ::AppendMenuW(menu, MF_STRING, kAppearanceLight, L"Light");
-        ::AppendMenuW(menu, MF_STRING, kAppearanceDark, L"Dark");
-        ::CheckMenuRadioItem(menu, kAppearanceLight, kAppearanceDark,
-            theme::Preference() == app::AppearanceTheme::Dark ? kAppearanceDark : kAppearanceLight, MF_BYCOMMAND);
+        ::AppendMenuW(menu, MF_STRING, kAppearanceSystem, strings::Get(IDS_SETTINGS_SAME_AS_WINDOWS));
+        ::AppendMenuW(menu, MF_STRING, kAppearanceLight, strings::Get(IDS_SHELL_APPEARANCE_LIGHT));
+        ::AppendMenuW(menu, MF_STRING, kAppearanceDark, strings::Get(IDS_SHELL_APPEARANCE_DARK));
+        ::CheckMenuRadioItem(menu, kAppearanceLight, kAppearanceSystem,
+            follows_system ? kAppearanceSystem
+                : theme::Preference() == app::AppearanceTheme::Dark ? kAppearanceDark : kAppearanceLight, MF_BYCOMMAND);
     }
     return menu;
 }
@@ -815,15 +843,15 @@ bool StyleWindowChrome(HWND window,bool resizable) {
     }();
     if(!registered) { return false; }
     auto data=std::make_unique<WindowChrome>(); data->owner=window; data->resizable=resizable;
-    data->header=::CreateWindowExW(WS_EX_CONTROLPARENT,L"EasnapWindowChrome",L"Window controls",WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN,0,0,1,1,window,nullptr,::GetModuleHandleW(nullptr),data.get());
+    data->header=::CreateWindowExW(WS_EX_CONTROLPARENT,L"EasnapWindowChrome",strings::Get(IDS_SHELL_CHROME_CONTROLS),WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN,0,0,1,1,window,nullptr,::GetModuleHandleW(nullptr),data.get());
     if(!data->header) { return false; }
     const auto button=[&](const wchar_t* title,Icon icon) {
         HWND control=::CreateWindowExW(0,L"BUTTON",title,WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,0,0,1,1,data->header,nullptr,::GetModuleHandleW(nullptr),nullptr);
         if(control && !StyleButton(control,{icon,ButtonRole::Standard,true})) { ::DestroyWindow(control); return static_cast<HWND>(nullptr); }
         return control;
     };
-    data->close=button(L"Close",Icon::Discard);
-    if(resizable) { data->minimize=button(L"Minimize",Icon::Minimize); data->maximize=button(L"Maximize or restore",Icon::Maximize); }
+    data->close=button(strings::Get(IDS_SHELL_CHROME_CLOSE),Icon::Discard);
+    if(resizable) { data->minimize=button(strings::Get(IDS_SHELL_CHROME_MINIMIZE),Icon::Minimize); data->maximize=button(strings::Get(IDS_SHELL_CHROME_MAXIMIZE),Icon::Maximize); }
     if(!data->close || (resizable && (!data->minimize || !data->maximize)) ||
         !::SetWindowSubclass(window,ChromeParentProc,kChromeSubclass,reinterpret_cast<DWORD_PTR>(data.get()))) {
         ::DestroyWindow(data->header); return false;
@@ -955,6 +983,9 @@ int ShowChoice(HWND owner,const wchar_t* text,const wchar_t* title,const std::ve
     dialog.choices=choices; dialog.default_value=default_value; dialog.cancel=cancel_value;
     const int answer=RunMessageDialog(owner,dialog);
     return answer<=0 ? cancel_value:answer;  // -1 and 0 report that no dialog ran.
+}
+platform::SaveImageDialogText SaveImageDialogLabels() {
+    return {strings::Get(IDS_SHELL_SAVE_IMAGE_TITLE),strings::Get(IDS_SHELL_FILE_TYPE_PNG),strings::Get(IDS_SHELL_FILE_TYPE_JPEG)};
 }
 bool ConfirmDestructive(HWND owner,const wchar_t* text,const wchar_t* title,const wchar_t* confirm,const wchar_t* keep) {
     return ShowChoice(owner,text,title,{{IDYES,confirm,true},{IDNO,keep}},IDNO,IDNO)==IDYES;

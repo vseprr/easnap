@@ -209,6 +209,46 @@ void FrameAroundContent() {
     CHECK(at(pixels, 200, 150) == blank);
 }
 
+// --- A Windows edition without Media Foundation ---------------------------------------
+
+void RecordingUnavailable() {
+    const auto monitors = platform::EnumerateMonitors();
+    if (monitors.empty()) { return; }
+    const platform::MonitorInfo monitor = test::SelectedTestMonitor() ? *test::SelectedTestMonitor() : monitors.front();
+    const capture::DesktopSnapshot snapshot = FlatSnapshot(monitors);
+
+    int refused = 0, mode_changes = 0;
+    ui::OverlayController::Callbacks callbacks;
+    callbacks.on_editing_changed = [&](CaptureMode, const RECT&) { ++mode_changes; };
+    callbacks.on_recording_unavailable = [&] { ++refused; };
+    ui::OverlayController overlay(std::move(callbacks));
+    overlay.SetRecordingAvailable(false);
+    CHECK(overlay.Show(snapshot, POINT{monitor.bounds.left + 200, monitor.bounds.top + 200}));
+
+    const HWND modes = ::FindWindowW(L"EasnapCaptureModes", nullptr);
+    const HWND record = ::GetDlgItem(modes, 3002);
+    // The button stays in the bar and can be chosen: choosing it is how the
+    // reason is given.
+    CHECK(record != nullptr && ::IsWindowEnabled(record) != FALSE && WindowText(record) == L"Record");
+    overlay.EnterEditing();
+    overlay.selector().SetSelection(RECT{monitor.bounds.left + 300, monitor.bounds.top + 200,
+                                         monitor.bounds.left + 900, monitor.bounds.top + 600});
+    overlay.RegionChanged();
+    const int changes_before = mode_changes;
+    ::SendMessageW(modes, WM_COMMAND, MAKEWPARAM(3002, BN_CLICKED), reinterpret_cast<LPARAM>(record));
+    CHECK(refused == 1 && overlay.mode() == CaptureMode::Screenshot && mode_changes == changes_before);
+    CHECK(::SendMessageW(record, BM_GETCHECK, 0, 0) == BST_UNCHECKED);
+    CHECK(::SendMessageW(::GetDlgItem(modes, 3000), BM_GETCHECK, 0, 0) == BST_CHECKED);
+    ::SendMessageW(modes, WM_COMMAND, MAKEWPARAM(3002, BN_CLICKED), reinterpret_cast<LPARAM>(record));
+    CHECK(refused == 2 && overlay.mode() == CaptureMode::Screenshot);  // Asked again, told again.
+
+    // Once the media features are there the same button enters the mode.
+    overlay.SetRecordingAvailable(true);
+    ::SendMessageW(modes, WM_COMMAND, MAKEWPARAM(3002, BN_CLICKED), reinterpret_cast<LPARAM>(record));
+    CHECK(refused == 2 && overlay.mode() == CaptureMode::Record && mode_changes == changes_before + 1);
+    overlay.Destroy();
+}
+
 // --- Overlay phases ----------------------------------------------------------------
 
 void OverlayPhases() {
@@ -944,6 +984,7 @@ int main() {
     Policy();
     FrameAroundContent();
     OverlayPhases();
+    RecordingUnavailable();
     Controls();
     ToolsIslandButton();
     DocumentEditing();

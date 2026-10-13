@@ -52,6 +52,11 @@ void DrawIcon(HDC dc, const RECT& rect, Icon icon, COLORREF color, float scale);
 // focus, enabled state and Windows accessibility provider.
 [[nodiscard]] bool StyleButton(HWND button, ButtonStyle style = {});
 void UpdateButtonStyle(HWND button, ButtonStyle style);
+/// The client width a styled button needs to show its whole caption, in
+/// pixels of its window; 0 for a button that draws no caption. Layout uses
+/// it, so a caption that is longer in another language widens its button
+/// instead of being cut.
+[[nodiscard]] int ButtonContentWidth(HWND button);
 [[nodiscard]] bool StyleSlider(HWND slider);
 [[nodiscard]] bool StyleInput(HWND input);
 [[nodiscard]] bool StyleLabel(HWND label);
@@ -72,7 +77,9 @@ void PaintNativePanel(HWND window, float scale, bool grip = false);
 
 inline constexpr UINT kAppearanceLight = 41001;
 inline constexpr UINT kAppearanceDark = 41002;
-[[nodiscard]] HMENU CreateAppearanceMenu();
+inline constexpr UINT kAppearanceSystem = 41003;
+/// Same as Windows, Light, Dark. `follows_system` marks the first one.
+[[nodiscard]] HMENU CreateAppearanceMenu(bool follows_system);
 
 // Native menu/dialog semantics stay with USER32; only owned presentation changes.
 class MenuThemeScope final {
@@ -86,6 +93,8 @@ private:
     std::unique_ptr<State> state_;
 };
 int ShowMessage(HWND owner, const wchar_t* text, const wchar_t* title, UINT flags);
+/// The image Save dialog's text in the active language.
+[[nodiscard]] platform::SaveImageDialogText SaveImageDialogLabels();
 /// One button of `ShowChoice`. The value is what the call returns for it.
 struct DialogChoice {
     int value{0};

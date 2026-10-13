@@ -141,5 +141,6 @@ void ShowCaptureNotice(const RECT& region,const std::wstring& text,bool status) 
 }
 } // namespace
 void ShowCaptureCopiedNotice(const RECT& region) { ShowCaptureNotice(region,strings::Get(IDS_NOTICE_COPIED),false); }
+void ShowCaptureSavedNotice(const RECT& region) { ShowCaptureNotice(region,strings::Get(IDS_NOTICE_SAVED),false); }
 void ShowCaptureStatusNotice(const RECT& region,const std::wstring& text) { ShowCaptureNotice(region,text,true); }
 } // namespace easnap::ui

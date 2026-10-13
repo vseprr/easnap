@@ -20,7 +20,6 @@ namespace easnap::editor {
 namespace {
 
 constexpr wchar_t kEditorClassName[] = L"EasnapScreenshotEditor";
-constexpr wchar_t kEditorTitle[] = L"Easnap Editor";
 
 /// Native movable tool island; image planes belong to the capture workspace.
 constexpr DWORD kEditorStyle = WS_POPUP | WS_CLIPCHILDREN;
@@ -513,7 +512,8 @@ bool ScreenshotEditor::CreateToolbarControls() {
     using namespace ui;
     constexpr std::array<Icon, 11> tools{Icon::Cursor, Icon::Pen, Icon::Arrow, Icon::Rectangle,
         Icon::Ellipse, Icon::Text, Icon::Mosaic, Icon::Line, Icon::Tag, Icon::Spotlight, Icon::Watermark};
-    constexpr std::array<const wchar_t*, 8> colors{L"Red", L"Amber", L"Green", L"Blue", L"Violet", L"White", L"Black", L"Gray"};
+    constexpr std::array<UINT, 8> colors{IDS_EDITOR_COLOR_RED, IDS_EDITOR_COLOR_AMBER, IDS_EDITOR_COLOR_GREEN, IDS_EDITOR_COLOR_BLUE,
+        IDS_EDITOR_COLOR_VIOLET, IDS_EDITOR_COLOR_WHITE, IDS_EDITOR_COLOR_BLACK, IDS_EDITOR_COLOR_GRAY};
     tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
         WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0,0,0,0, hwnd_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
     StyleTooltip(tooltip_);
@@ -526,17 +526,17 @@ bool ScreenshotEditor::CreateToolbarControls() {
                 style.icon = tools[static_cast<size_t>(item.tool)];
                 break;
             case ToolbarItem::Kind::Color:
-                name = std::wstring(colors[static_cast<size_t>(item.identifier - 2100)]) + L" annotation color";
+                name = strings::Get(colors[static_cast<size_t>(item.identifier - 2100)]);
                 style.swatch = true;
                 style.content_color = RGB(static_cast<BYTE>(std::lround(item.color.r * 255)),
                     static_cast<BYTE>(std::lround(item.color.g * 255)), static_cast<BYTE>(std::lround(item.color.b * 255)));
                 break;
             case ToolbarItem::Kind::Thickness:
-                name = L"Line thickness " + std::to_wstring(static_cast<int>(item.thickness)) + L" pixels";
+                name = strings::Format(IDS_EDITOR_THICKNESS_BUTTON, {std::to_wstring(static_cast<int>(item.thickness))});
                 style.sample = 2; style.sample_size = kBrushSizeOptions[static_cast<size_t>(item.identifier-2200)];
                 break;
             case ToolbarItem::Kind::BrushSize:
-                name = L"Mosaic brush " + std::to_wstring(static_cast<int>(item.brush_size)) + L" pixels";
+                name = strings::Format(IDS_EDITOR_BRUSH_SIZE_BUTTON, {std::to_wstring(static_cast<int>(item.brush_size))});
                 style.sample = 2; style.sample_size = item.brush_size;
                 break;
             case ToolbarItem::Kind::Option:
@@ -554,13 +554,13 @@ bool ScreenshotEditor::CreateToolbarControls() {
                 break;
             case ToolbarItem::Kind::Command:
                 style.icon_only = true;
-                if (item.command == kCommandUndo) { style.icon = Icon::Undo; name = L"Undo (Ctrl+Z)"; }
-                if (item.command == kCommandRedo) { style.icon = Icon::Redo; name = L"Redo (Ctrl+Y)"; }
-                if (item.command == kCommandClear) { style.icon = Icon::Clear; name = L"Clear annotations"; }
+                if (item.command == kCommandUndo) { style.icon = Icon::Undo; name = strings::Get(IDS_EDITOR_UNDO_BUTTON); }
+                if (item.command == kCommandRedo) { style.icon = Icon::Redo; name = strings::Get(IDS_EDITOR_REDO_BUTTON); }
+                if (item.command == kCommandClear) { style.icon = Icon::Clear; name = strings::Get(IDS_EDITOR_CLEAR_BUTTON); }
                 if (item.command == kCommandCopy) { style.icon = Icon::Check; style.role = ButtonRole::Success; }
-                if (item.command == kCommandSave) { style.icon = Icon::Save; name=L"Save (Ctrl+S)"; }
-                if (item.command == kCommandCancel) { style.icon = Icon::Discard; name=L"Discard (Esc)"; }
-                if (item.command == kCommandTheme) { style.icon = Icon::Appearance; name=L"Switch Light / Dark theme"; }
+                if (item.command == kCommandSave) { style.icon = Icon::Save; name=strings::Get(IDS_EDITOR_SAVE_BUTTON); }
+                if (item.command == kCommandCancel) { style.icon = Icon::Discard; name=strings::Get(IDS_EDITOR_DISCARD_BUTTON); }
+                if (item.command == kCommandTheme) { style.icon = Icon::Appearance; name=strings::Get(IDS_EDITOR_THEME_BUTTON); }
                 if (item.command == kCommandScrollshot) { style.icon = Icon::Scissors; name = strings::Get(IDS_SCROLLSHOT_TOOL); }
                 break;
         }
@@ -634,22 +634,22 @@ void ScreenshotEditor::CreateContextControls() {
         if(child && ::lstrcmpW(cls,L"STATIC")==0 && !ui::StyleLabel(child)) { ::DestroyWindow(child); return static_cast<HWND>(nullptr); }
         return child;
     };
-    HWND font=make(L"COMBOBOX",L"Font size in points",CBS_DROPDOWN|CBS_AUTOHSCROLL|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS,2600);
+    HWND font=make(L"COMBOBOX",strings::Get(IDS_EDITOR_FONT_SIZE_NAME),CBS_DROPDOWN|CBS_AUTOHSCROLL|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS,2600);
     if(font) {
         for(const wchar_t* value:{L"12 pt",L"16 pt",L"24 pt",L"36 pt",L"48 pt",L"60 pt",L"72 pt",L"96 pt"}) { ::SendMessageW(font,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(value)); }
         ::SendMessageW(font,CB_LIMITTEXT,10,0); static_cast<void>(ui::StyleInput(font));
-        ui::SetAccessibleName(font,L"Font size in points");
+        ui::SetAccessibleName(font,strings::Get(IDS_EDITOR_FONT_SIZE_NAME));
     }
     for(int id:{2601,2602,2603}) {
-        HWND slider=make(TRACKBAR_CLASSW,id==2601 ? L"Effect strength" : id==2602 ? L"Opacity percent" : L"Watermark size in points",TBS_HORZ|TBS_NOTICKS, id);
+        HWND slider=make(TRACKBAR_CLASSW,strings::Get(id==2601 ? IDS_EDITOR_EFFECT_STRENGTH_NAME : id==2602 ? IDS_EDITOR_OPACITY_NAME : IDS_EDITOR_WATERMARK_SIZE_NAME),TBS_HORZ|TBS_NOTICKS, id);
         ::SendMessageW(slider,TBM_SETRANGE,TRUE,MAKELPARAM(id==2603 ? 8:0,id==2603 ? 96:100));
         ::SendMessageW(slider,TBM_SETPAGESIZE,0,10); static_cast<void>(ui::StyleSlider(slider));
     }
     HWND text=make(L"EDIT",L"",ES_AUTOHSCROLL,2604);
-    ::SendMessageW(text,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(L"Max. 16 characters"));
+    ::SendMessageW(text,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(strings::Get(IDS_EDITOR_WATERMARK_TEXT_CUE)));
     ::SendMessageW(text,EM_SETLIMITTEXT,16,0); static_cast<void>(ui::StyleInput(text));
-    ui::SetAccessibleName(text,L"Watermark text");
-    HWND clear=make(L"BUTTON",L"Clear watermark text",BS_PUSHBUTTON,2605);
+    ui::SetAccessibleName(text,strings::Get(IDS_EDITOR_WATERMARK_TEXT_NAME));
+    HWND clear=make(L"BUTTON",strings::Get(IDS_EDITOR_WATERMARK_CLEAR_BUTTON),BS_PUSHBUTTON,2605);
     ui::ButtonStyle clear_style; clear_style.icon=ui::Icon::Discard; clear_style.icon_only=true; clear_style.segmented=true;
     clear_style.circular=true;
     static_cast<void>(ui::StyleButton(clear,clear_style));
@@ -755,10 +755,10 @@ void ScreenshotEditor::SyncContext(bool layout) {
     slider(2601,style.strength);
     slider(2602,style.opacity);
     slider(2603,style.font_size);
-    const std::wstring strength=(style.effect==EffectMode::Blur ? L"Blur intensity ":L"Block size ")+std::to_wstring(static_cast<int>(style.effect==EffectMode::Blur ? style.strength : 2+style.strength*0.7f))+(style.effect==EffectMode::Blur ? L"%":L" px");
+    const std::wstring strength=strings::Format(style.effect==EffectMode::Blur ? IDS_EDITOR_BLUR_INTENSITY_VALUE:IDS_EDITOR_BLOCK_SIZE_VALUE,{std::to_wstring(static_cast<int>(style.effect==EffectMode::Blur ? style.strength : 2+style.strength*0.7f))});
     label(2611,strength.c_str());
-    label(2612,(L"Opacity "+std::to_wstring(static_cast<int>(style.opacity))+L"%").c_str());
-    label(2613,(L"Size "+std::to_wstring(static_cast<int>(style.font_size))+L" pt").c_str());
+    label(2612,strings::Format(IDS_EDITOR_OPACITY_VALUE,{std::to_wstring(static_cast<int>(style.opacity))}).c_str());
+    label(2613,strings::Format(IDS_EDITOR_SIZE_VALUE,{std::to_wstring(static_cast<int>(style.font_size))}).c_str());
     syncing_context_=false;
 }
 void ScreenshotEditor::PlaceContext(bool follow_frame) {
@@ -961,16 +961,16 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         if(x>pad && x+width>limit) { x=pad; y+=row; }
         const D2D1_RECT_F r{x,y+(row-kToolButton*s)/2,x+width,y+(row+kToolButton*s)/2}; x+=width+gap; return r;
     };
-    struct Entry { ToolId tool; const wchar_t* name; };
-    constexpr Entry tools[]={{ToolId::Pointer,L"Select / move"},{ToolId::Rectangle,L"Rectangle"},{ToolId::Ellipse,L"Ellipse"},
-        {ToolId::Line,L"Line"},{ToolId::Arrow,L"Arrow"},{ToolId::Pen,L"Pen"},{ToolId::Text,L"Text"},{ToolId::Tag,L"Tag"},
-        {ToolId::Mosaic,L"Blur / Pixelate"},{ToolId::Spotlight,L"Spotlight"},{ToolId::Watermark,L"Watermark"}};
+    struct Entry { ToolId tool; UINT name; };
+    constexpr Entry tools[]={{ToolId::Pointer,IDS_EDITOR_TOOL_POINTER},{ToolId::Rectangle,IDS_EDITOR_TOOL_RECTANGLE},{ToolId::Ellipse,IDS_EDITOR_TOOL_ELLIPSE},
+        {ToolId::Line,IDS_EDITOR_TOOL_LINE},{ToolId::Arrow,IDS_EDITOR_TOOL_ARROW},{ToolId::Pen,IDS_EDITOR_TOOL_PEN},{ToolId::Text,IDS_EDITOR_TOOL_TEXT},{ToolId::Tag,IDS_EDITOR_TOOL_TAG},
+        {ToolId::Mosaic,IDS_EDITOR_TOOL_MOSAIC},{ToolId::Spotlight,IDS_EDITOR_TOOL_SPOTLIGHT},{ToolId::Watermark,IDS_EDITOR_TOOL_WATERMARK}};
     for(const auto& entry:tools) {
         if(entry.tool==ToolId::Mosaic) {
             const auto split=place(8*s); main_separators_.push_back({static_cast<LONG>((split.left+split.right)/2),static_cast<LONG>(split.top+8*s),static_cast<LONG>((split.left+split.right)/2+1),static_cast<LONG>(split.bottom-8*s)});
         }
         ToolbarItem item; item.tool=entry.tool; item.identifier=2000+static_cast<int>(entry.tool);
-        item.label=item.tooltip=entry.name; item.rect=place(kToolButton*s); toolbar_.push_back(item);
+        item.label=item.tooltip=strings::Get(entry.name); item.rect=place(kToolButton*s); toolbar_.push_back(item);
     }
     { const auto split=place(kGroupGap*s); main_separators_.push_back({static_cast<LONG>((split.left+split.right)/2),static_cast<LONG>(split.top+8*s),static_cast<LONG>((split.left+split.right)/2+1),static_cast<LONG>(split.bottom-8*s)}); }
     {
@@ -981,8 +981,9 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         const auto split=place(8*s); main_separators_.push_back({static_cast<LONG>((split.left+split.right)/2),static_cast<LONG>(split.top+8*s),static_cast<LONG>((split.left+split.right)/2+1),static_cast<LONG>(split.bottom-8*s)});
     }
     struct Command { int id; const wchar_t* name; };
-    constexpr Command commands[]={{kCommandUndo,L"Undo"},{kCommandRedo,L"Redo"},{kCommandClear,L"Clear annotations"},
-        {kCommandTheme,L"Switch theme"},{kCommandSave,L"Save"},{kCommandCancel,L"Discard"},{kCommandCopy,L"Copy to clipboard (Ctrl+C)"}};
+    // Only Copy keeps its name from here; CreateToolbarControls names the others.
+    const Command commands[]={{kCommandUndo,L"Undo"},{kCommandRedo,L"Redo"},{kCommandClear,L"Clear annotations"},
+        {kCommandTheme,L"Switch theme"},{kCommandSave,L"Save"},{kCommandCancel,L"Discard"},{kCommandCopy,strings::Get(IDS_EDITOR_COPY_BUTTON)}};
     for(const auto& entry:commands) {
         ToolbarItem item; item.kind=ToolbarItem::Kind::Command; item.command=entry.id; item.identifier=2400+entry.id;
         item.label=item.tooltip=entry.name; item.rect=place(kCommandButton*s); toolbar_.push_back(item);
@@ -1000,16 +1001,16 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         const auto r=place(8*s);
         context_separators_.push_back({static_cast<LONG>((r.left+r.right)/2),static_cast<LONG>(r.top+8*s),static_cast<LONG>((r.left+r.right)/2+1),static_cast<LONG>(r.bottom-8*s)});
     };
-    const auto option=[&](int id,const wchar_t* name,bool shown,float width=kToolButton) {
-        ToolbarItem item; item.kind=ToolbarItem::Kind::Option; item.identifier=id; item.label=item.tooltip=name; item.shown=shown;
+    const auto option=[&](int id,UINT name,bool shown,float width=kToolButton) {
+        ToolbarItem item; item.kind=ToolbarItem::Kind::Option; item.identifier=id; item.label=item.tooltip=strings::Get(name); item.shown=shown;
         if(shown) { item.rect=place(width*s); widest=std::max(widest,item.rect.right+pad); } toolbar_.push_back(item);
     };
-    option(2500,L"Plain text",text); option(2501,L"Filled text",text); option(2502,L"Outlined text",text);
-    option(2511,L"Pixelate",effect); option(2510,L"Smooth blur",effect);
+    option(2500,IDS_EDITOR_OPTION_PLAIN_TEXT,text); option(2501,IDS_EDITOR_OPTION_FILLED_TEXT,text); option(2502,IDS_EDITOR_OPTION_OUTLINED_TEXT,text);
+    option(2511,IDS_EDITOR_OPTION_PIXELATE,effect); option(2510,IDS_EDITOR_OPTION_BLUR,effect);
     if(effect) { separator(); }
-    option(2520,L"Brush and brush size",effect,48); option(2521,L"Rectangular region",effect);
+    option(2520,IDS_EDITOR_OPTION_BRUSH,effect,48); option(2521,IDS_EDITOR_OPTION_REGION,effect);
     if(effect) { separator(); field(2611,125); field(2601,155); }
-    option(2530,L"Rectangle spotlight",spot); option(2531,L"Ellipse spotlight",spot); option(2532,L"Rounded spotlight",spot);
+    option(2530,IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE,spot); option(2531,IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE,spot); option(2532,IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED,spot);
     if(spot) { separator(); field(2612,110); field(2602,155); }
     if(text || tag) { field(2600,96); separator(); }
     if(watermark) { field(2604,140); separator(); }
@@ -1158,7 +1159,7 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     BuildToolbar(std::min(kIslandWidth * scale_,
         static_cast<float>(platform::RectWidth(platform::MonitorForRect(screen_region).work_area))));
     const RECT window = InitialWindowRect(screen_region);
-    hwnd_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, kEditorTitle, kEditorStyle,
+    hwnd_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, strings::Get(IDS_EDITOR_WINDOW_TITLE), kEditorStyle,
                               static_cast<int>(window.left), static_cast<int>(window.top),
                               static_cast<int>(platform::RectWidth(window)),
                               static_cast<int>(platform::RectHeight(window)), owner, nullptr,
@@ -1172,8 +1173,9 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     ::GetClientRect(hwnd_, &client);
     LayoutClient(static_cast<int>(platform::RectWidth(client)), static_cast<int>(platform::RectHeight(client)));
 
-    context_=::CreateWindowExW(kEditorExStyle|WS_EX_LAYERED,kEditorClassName,L"Annotation options",kEditorStyle,window.left,window.bottom+8,
+    context_=::CreateWindowExW(kEditorExStyle|WS_EX_LAYERED,kEditorClassName,strings::Get(IDS_EDITOR_CONTEXT_TITLE),kEditorStyle,window.left,window.bottom+8,
         static_cast<int>(window.right-window.left),48,hwnd_,nullptr,::GetModuleHandleW(nullptr),this);
+    // This title identifies the pop-up to tests (FindWindow); it is not localized.
     brush_popup_=::CreateWindowExW(kEditorExStyle,kEditorClassName,L"Brush sizes",kEditorStyle,window.left,window.bottom,
         static_cast<int>(132*scale_),static_cast<int>((kToolbarRowHeight+6)*scale_),hwnd_,nullptr,::GetModuleHandleW(nullptr),this);
     if(brush_popup_) { ::SetWindowDisplayAffinity(brush_popup_,0x11); }
@@ -1229,7 +1231,7 @@ void ScreenshotEditor::SetRegion(const RECT& region, bool interacting) {
 bool ScreenshotEditor::EnsureImage() {
     if (has_image()) { return true; }
     if (callbacks_.on_prepare_image && callbacks_.on_prepare_image() && has_image()) { return true; }
-    ui::ShowCaptureStatusNotice(region_,L"Could not capture the image - try again");
+    ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_CAPTURE_FAILED));
     Invalidate();
     return false;
 }
@@ -1520,7 +1522,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 while(end && std::iswspace(*end)) { ++end; }
                 if(end && ::lstrcmpiW(end,L"pt")==0) { end+=2; }
                 if(end && *end==0 && std::isfinite(size) && size>=6 && size<=288) { auto value=ContextStyle(); value.font_size=static_cast<float>(size); ChangeStyle(value); }
-                else { ui::ShowCaptureStatusNotice(region_,L"Font size must be 6–288 pt"); SyncContext(); Invalidate(); }
+                else { ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_FONT_SIZE_RANGE)); SyncContext(); Invalidate(); }
                 if(notification==CBN_KILLFOCUS) { CommitContextTransaction(); }
                 return 0;
             }
@@ -2018,6 +2020,7 @@ void ScreenshotEditor::StartTextEditing(std::optional<size_t> index,POINT point)
         document_.Apply(std::move(a)); index=document_.annotations().size()-1;
     }
     selected_=index; pending_=document_.annotations()[*index]; editing_text_=true; has_pending_=false;
+    // This title identifies the text host to tests (FindWindow); it is not localized.
     text_host_=::CreateWindowExW(kEditorExStyle,kEditorClassName,L"Edit annotation text",kEditorStyle,
         point.x,point.y,100,50,hwnd_,nullptr,::GetModuleHandleW(nullptr),this);
     if(text_host_) {
@@ -2026,11 +2029,11 @@ void ScreenshotEditor::StartTextEditing(std::optional<size_t> index,POINT point)
     }
     if(!text_edit_) {
         if(text_host_) { ::DestroyWindow(text_host_); text_host_=nullptr; }
-        document_.CancelTransaction(); editing_text_=false; selected_.reset(); ui::ShowCaptureStatusNotice(region_,L"Could not open text editor"); Invalidate(); return;
+        document_.CancelTransaction(); editing_text_=false; selected_.reset(); ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_TEXT_EDITOR_FAILED)); Invalidate(); return;
     }
     ::SendMessageW(text_edit_,EM_SETLIMITTEXT,65535,0);
     last_text_double_=0;
-    ui::SetAccessibleName(text_edit_,L"Annotation text");
+    ui::SetAccessibleName(text_edit_,strings::Get(IDS_EDITOR_TEXT_NAME));
     ::SetWindowSubclass(text_edit_,TextEditProc,1,reinterpret_cast<DWORD_PTR>(this));
     ::SetWindowDisplayAffinity(text_host_,0x11); LayoutTextEditor();
     ::ShowWindow(text_host_,SW_SHOWNORMAL); ::SetFocus(text_edit_);
@@ -2133,6 +2136,12 @@ LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd,UINT message,WPARAM wp
         message==WM_SETTEXT || message==WM_SETFOCUS || message==WM_KILLFOCUS || message==WM_SIZE ||
         message==WM_CUT || message==WM_PASTE || message==WM_CLEAR || message==WM_UNDO || message==EM_UNDO ||
         message==WM_IME_COMPOSITION || message==WM_IME_ENDCOMPOSITION || message==WM_TIMER || message==WM_CAPTURECHANGED;
+    // The native caret stays hidden for the whole dispatch. EDIT would show it
+    // at its own GDI position first; it is placed against the rendered text
+    // below, by which time the control is invalid, and Windows does not erase
+    // a caret inside an update region. The first column would stay inverted
+    // until the next paint.
+    const bool caret_hidden=changes_pixels && ::HideCaret(hwnd)!=FALSE;
     const auto result=[&] {
         ++self->text_dispatch_depth_;
         ui::NativeRedrawGuard redraw(hwnd,changes_pixels);
@@ -2163,6 +2172,8 @@ LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd,UINT message,WPARAM wp
             }
         }
     }
+    // Fails harmlessly when the dispatch gave the caret away.
+    if(caret_hidden && ::IsWindow(hwnd)) { ::ShowCaret(hwnd); }
     return result;
 }
 void ScreenshotEditor::PaintTextEditor(HDC dc) {
@@ -2471,13 +2482,13 @@ bool ScreenshotEditor::CopyToClipboard() {
     completing_ = false;
     const platform::BgraImage image = Composite();
     if (image.empty()) {
-        ui::ShowCaptureStatusNotice(region_,L"Nothing to copy");
+        ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_COPY));
         Invalidate();
         return false;
     }
     if (!platform::CopyImageToClipboard(hwnd_, image)) {
         // Failure safety: the session stays open so no capture is lost.
-        ui::ShowCaptureStatusNotice(region_,L"Clipboard is unavailable - try again or use Save");
+        ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
         Invalidate();
         return false;
     }
@@ -2491,13 +2502,23 @@ bool ScreenshotEditor::SaveToFile() {
     if (!visible_) { return false; }
     const platform::BgraImage image = Composite();
     if (image.empty()) {
-        ui::ShowCaptureStatusNotice(region_,L"Nothing to save");
+        ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_SAVE));
         Invalidate();
         return false;
     }
 
     const std::wstring suggested = platform::TimestampedFileName(L"Easnap", L"png");
-    const std::wstring initial = settings_ != nullptr ? settings_->last_save_directory : std::wstring();
+    // Quick save: straight into the chosen folder. If that cannot be written,
+    // the dialog below still offers every other place.
+    if (settings_ != nullptr && settings_->quick_save_images && !settings_->image_folder.empty()) {
+        const std::wstring quick = platform::UniqueFilePath(settings_->image_folder, suggested);
+        if (!quick.empty() && platform::SaveImage(image, quick)) {
+            platform::LogMessage(L"Screenshot saved without a dialog");
+            ui::ShowCaptureSavedNotice(region_);
+            return true;
+        }
+    }
+    const std::wstring initial = settings_ != nullptr ? settings_->ImageStartDirectory() : std::wstring();
     // Topmost owned islands and combo lists must not cover a native file dialog.
     // Freeze their timers/placement during its nested message loop.
     modal_active_=true;
@@ -2507,7 +2528,7 @@ bool ScreenshotEditor::SaveToFile() {
     ::SendMessageW(Control(2600),CB_SHOWDROPDOWN,FALSE,0);
     if(tooltip_) { ::SendMessageW(tooltip_,TTM_POP,0,0); ::SendMessageW(tooltip_,TTM_ACTIVATE,FALSE,0); }
     ::ShowWindow(context_,SW_HIDE);
-    const auto destination = platform::ShowSaveImageDialog(hwnd_, suggested, initial);
+    const auto destination = platform::ShowSaveImageDialog(hwnd_, suggested, initial, ui::SaveImageDialogLabels());
     modal_active_=false;
     if(tooltip_) { ::SendMessageW(tooltip_,TTM_ACTIVATE,TRUE,0); }
     if(visible_) { PlaceContext(); }
@@ -2515,12 +2536,12 @@ bool ScreenshotEditor::SaveToFile() {
         return false;  // Cancelled: keep editing.
     }
     if (!platform::SaveImage(image, *destination)) {
-        ui::ShowCaptureStatusNotice(region_,L"Save failed - the capture is still here, try another location");
+        ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED));
         Invalidate();
         return false;
     }
     if (settings_ != nullptr) {
-        settings_->last_save_directory = platform::DirectoryOf(*destination);
+        settings_->last_image_directory = platform::DirectoryOf(*destination);
     }
     platform::LogMessage(L"Screenshot exported successfully");
     return true;

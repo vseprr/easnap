@@ -100,6 +100,14 @@ struct WindowsVersion {
 /// manifest makes the documented version functions report.
 [[nodiscard]] WindowsVersion CurrentWindowsVersion() noexcept;
 
+/// False where Windows has no Media Foundation: the N and KN editions until
+/// the Media Feature Pack is installed. Easnap loads these libraries on first
+/// use, so it starts there; recording, trimming and export are not available.
+[[nodiscard]] bool MediaFoundationAvailable() noexcept;
+
+/// True when Windows is set to dark mode for applications.
+[[nodiscard]] bool SystemUsesDarkApps() noexcept;
+
 /// Call first in every process entry point, before any library is loaded.
 void RestrictDllSearchPath();
 void EnableDpiAwareness();
@@ -269,11 +277,23 @@ bool CopyImageToClipboard(HWND owner, const BgraImage& image);
 /// System save dialog (IFileSaveDialog). Returns std::nullopt when cancelled.
 /// Only the picker may decide the destination: no user-provided path fragment
 /// ever reaches the file system directly (see docs/threat model notes).
+/// The dialog's text comes from the caller: this layer is also built into the
+/// preview helper and into tests that carry no string tables.
+struct SaveImageDialogText {
+    const wchar_t* title{L"Save screenshot"};
+    const wchar_t* png_type{L"PNG image"};
+    const wchar_t* jpeg_type{L"JPEG image"};
+};
 std::optional<std::wstring> ShowSaveImageDialog(HWND owner,
                                                 const std::wstring& suggested_file_name,
-                                                const std::wstring& initial_directory);
+                                                const std::wstring& initial_directory,
+                                                const SaveImageDialogText& text = {});
 
 std::optional<std::wstring> KnownFolder(REFKNOWNFOLDERID folder_id);
+/// A path in `directory` that no file uses yet: `file_name`, or the same name
+/// with " (2)", " (3)" ... before its extension. Empty when the directory does
+/// not exist.
+[[nodiscard]] std::wstring UniqueFilePath(const std::wstring& directory, const std::wstring& file_name);
 /// %LOCALAPPDATA%\Easnap, created on demand.
 std::wstring AppDataDirectory();
 std::wstring DirectoryOf(const std::wstring& path);

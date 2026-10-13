@@ -69,12 +69,10 @@ void TestLanguageSelection() {
     SetPreference(LanguagePreference::English);
     CHECK(Current() == Language::English);
     CHECK(std::wstring(Get(IDS_MODE_RECORD)) == L"Record");
-    CHECK(std::wstring(LocaleName()) == L"en-us");
 
     SetPreference(LanguagePreference::Turkish);
     CHECK(Current() == Language::Turkish);
     CHECK(std::wstring(Get(IDS_MODE_RECORD)) == L"Kayıt");  // The table is read as UTF-8.
-    CHECK(std::wstring(LocaleName()) == L"tr-tr");
 
     SetPreference(LanguagePreference::System);
     CHECK(Preference() == LanguagePreference::System);
@@ -97,6 +95,8 @@ void TestFormatAndUnknownIds() {
     // A missing argument leaves nothing behind; a surplus one is ignored.
     CHECK(Format(IDS_SCROLLSHOT_SIZE, {L"7"}) == L"7 × ");
     CHECK(Format(IDS_SCROLLSHOT_SIZE, {L"1", L"2", L"3"}) == L"1 × 2");
+    // A tab in a table separates a menu item from its shortcut.
+    CHECK(Format(IDS_SHELL_TRAY_CAPTURE, {L"Ctrl + Shift + A"}) == L"Capture\tCtrl + Shift + A");
     SetPreference(LanguagePreference::Turkish);
     CHECK(Format(IDS_DOCUMENT_VIEW_LABEL, {L"1280", L"5430", L"75"}) == L"1280 × 5430   %75");
     SetPreference(LanguagePreference::English);

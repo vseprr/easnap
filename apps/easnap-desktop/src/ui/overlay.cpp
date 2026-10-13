@@ -242,8 +242,8 @@ public:
         HINSTANCE instance = ::GetModuleHandleW(nullptr);
 
         dim_ = ::CreateWindowExW(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, kDimClassName,
-                                 L"Easnap capture overlay", WS_POPUP, left, top, width, height, nullptr, nullptr,
-                                 instance, this);
+                                 strings::Get(IDS_SHELL_OVERLAY_WINDOW), WS_POPUP, left, top, width, height, nullptr,
+                                 nullptr, instance, this);
         if (dim_ == nullptr) {
             platform::LogMessage(L"CreateWindowEx(overlay dim) failed (error %lu)", ::GetLastError());
             return false;
@@ -255,12 +255,12 @@ public:
         }
 
         shade_ = ::CreateWindowExW(WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_NOACTIVATE|WS_EX_TOPMOST|WS_EX_TOOLWINDOW,
-            kChromeClassName,L"Easnap outside shading",WS_POPUP,left,top,width,height,dim_,nullptr,instance,this);
+            kChromeClassName,strings::Get(IDS_SHELL_OVERLAY_SHADE_WINDOW),WS_POPUP,left,top,width,height,dim_,nullptr,instance,this);
         if(!shade_ || !::SetLayeredWindowAttributes(shade_,0,0,LWA_ALPHA)) { Destroy(); return false; }
 
         image_ = ::CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-            kImageClassName, L"Easnap screenshot canvas", WS_POPUP, left, top, 1, 1, shade_, nullptr,
+            kImageClassName, strings::Get(IDS_SHELL_OVERLAY_IMAGE_WINDOW), WS_POPUP, left, top, 1, 1, shade_, nullptr,
             instance, this);
         if (!image_ || !::SetLayeredWindowAttributes(image_,0,0,LWA_ALPHA)) {
             Destroy();
@@ -270,8 +270,8 @@ public:
         // Ownership keeps chrome above the inline image, which is above dimming.
         chrome_ = ::CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-            kChromeClassName, L"Easnap capture chrome", WS_POPUP, left, top, width, height, image_, nullptr,
-            instance, this);
+            kChromeClassName, strings::Get(IDS_SHELL_OVERLAY_CHROME_WINDOW), WS_POPUP, left, top, width, height, image_,
+            nullptr, instance, this);
         if (chrome_ == nullptr) {
             platform::LogMessage(L"CreateWindowEx(overlay chrome) failed (error %lu)", ::GetLastError());
             Destroy();
@@ -288,7 +288,7 @@ public:
             const RECT panel = ToolbarPanel();
             mode_toolbar_ = ::CreateWindowExW(
                 WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_CONTROLPARENT,
-                kModeToolbarClassName, L"Easnap capture modes", WS_POPUP | WS_CLIPCHILDREN,
+                kModeToolbarClassName, strings::Get(IDS_SHELL_OVERLAY_MODES_WINDOW), WS_POPUP | WS_CLIPCHILDREN,
                 left + panel.left, top + panel.top, panel.right - panel.left, panel.bottom - panel.top,
                 chrome_, nullptr, instance, this);
             if (!mode_toolbar_ || !::SetLayeredWindowAttributes(mode_toolbar_, theme::kChromeColorKey,
@@ -300,8 +300,8 @@ public:
 
         magnifier_ = ::CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-            kMagnifierClassName, L"Easnap pixel magnifier", WS_POPUP, left, top, 1, 1, dim_, nullptr,
-            instance, this);
+            kMagnifierClassName, strings::Get(IDS_SHELL_OVERLAY_MAGNIFIER_WINDOW), WS_POPUP, left, top, 1, 1, dim_,
+            nullptr, instance, this);
         if (magnifier_ == nullptr ||
             !::SetLayeredWindowAttributes(magnifier_, 0, 255, LWA_ALPHA)) {
             Destroy();
@@ -552,8 +552,8 @@ public:
             for (HWND& strip : shade_strips_) {
                 strip = ::CreateWindowExW(
                     WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
-                    kChromeClassName, L"Easnap outside shading", WS_POPUP, monitor_.bounds.left, monitor_.bounds.top,
-                    1, 1, dim_, nullptr, instance, this);
+                    kChromeClassName, strings::Get(IDS_SHELL_OVERLAY_SHADE_WINDOW), WS_POPUP, monitor_.bounds.left,
+                    monitor_.bounds.top, 1, 1, dim_, nullptr, instance, this);
                 if (!strip || !::SetLayeredWindowAttributes(strip, 0, theme::kDimAlpha, LWA_ALPHA) ||
                     !::SetWindowDisplayAffinity(strip, 0x11)) {
                     platform::LogMessage(L"The outside shading could not be split (error %lu)", ::GetLastError());
@@ -1039,6 +1039,7 @@ private:
         }
         const app::CaptureMode mode = kModes[static_cast<size_t>(index)];
         if (mode == app::CaptureMode::Scrollshot && !CaptureExclusionSupported()) { return; }
+        if (!controller_.AllowMode(mode)) { return; }
         controller_.SetMode(mode);
         if (controller_.mode() != app::CaptureMode::Record) { ::SetFocus(dim_); }
     }
@@ -1143,8 +1144,8 @@ private:
                 }
             }
         }
-        controller_.SetNotice(copied ? L"Color copied" :
-            (color ? L"Could not copy color" : L"Snapshot pixel unavailable"));
+        controller_.SetNotice(strings::Get(copied ? IDS_SHELL_COLOR_COPIED :
+            (color ? IDS_SHELL_COLOR_COPY_FAILED : IDS_SHELL_COLOR_UNAVAILABLE)));
         ::SetTimer(dim_, kNoticeTimerId, kNoticeTimeoutMs, nullptr);
     }
 
@@ -1179,13 +1180,13 @@ private:
         ::InflateRect(&center, -1, -1);
         theme::FrameSolid(dc, center, theme::kDim, 1);
 
-        wchar_t coordinates[64]{};
-        swprintf_s(coordinates, L"X: %ld   Y: %ld", cursor.x, cursor.y);
+        const std::wstring coordinates = strings::Format(
+            IDS_SHELL_MAGNIFIER_COORDINATES, {std::to_wstring(cursor.x), std::to_wstring(cursor.y)});
         const auto color = controller_.SamplePixel(cursor);
         const std::wstring value = color ? FormatCaptureColor(
-            *color, controller_.color_readout().representation()) : L"Pixel unavailable";
+            *color, controller_.color_readout().representation()) : strings::Get(IDS_SHELL_MAGNIFIER_NO_PIXEL);
         const std::array<const wchar_t*, 3> labels{
-            value.c_str(), coordinates, L"Ctrl+C  |  Shift RGB/HEX"};
+            value.c_str(), coordinates.c_str(), strings::Get(IDS_SHELL_MAGNIFIER_HINT)};
         for (size_t i = 0; i < labels.size(); ++i) {
             const LONG top = padding * 2 + grid + static_cast<LONG>(i) * line;
             const RECT row{padding, top, client.right - padding, top + line};
@@ -1486,6 +1487,12 @@ void OverlayController::Destroy() {
     frame_exposed_ = false;
     document_label_.clear();
     notice_.clear();
+}
+
+bool OverlayController::AllowMode(app::CaptureMode mode) {
+    if (mode != app::CaptureMode::Record || recording_available_) { return true; }
+    if (callbacks_.on_recording_unavailable) { callbacks_.on_recording_unavailable(); }
+    return false;
 }
 
 void OverlayController::SetMode(app::CaptureMode mode) {

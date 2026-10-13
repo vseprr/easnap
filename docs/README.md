@@ -60,6 +60,9 @@ not unfinished roadmap instructions.
   [editing an image larger than the screen](decisions/ADR-029-scrolled-and-zoomed-image-editing.md).
 - Diagnostics and data safety: [log file and crash reports](decisions/ADR-030-log-file-and-crash-reports.md),
   [unsaved work survives exit, sign-out and crashes](decisions/ADR-031-unsaved-work-survives.md).
+- Shell and compatibility: [interface text in string tables](decisions/ADR-032-interface-text-in-string-tables.md),
+  [Settings, the capture shortcut and how Easnap starts](decisions/ADR-033-settings-shortcut-and-launch-behaviour.md),
+  [Media Foundation on first use](decisions/ADR-034-media-foundation-on-first-use.md).
 - Development/testing: [incremental execution and desktop ownership](decisions/ADR-025-incremental-test-execution.md),
   [test tiers and desktop isolation](decisions/ADR-026-test-tiers-and-desktop-isolation.md).
 

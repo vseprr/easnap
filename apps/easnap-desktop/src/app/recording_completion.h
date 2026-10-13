@@ -140,9 +140,17 @@ private:
     bool shutdown_{false};
 };
 
+/// The dialog's text comes from the caller, which has the string tables.
+struct SaveRecordingDialogText {
+    const wchar_t* title{L"Save recording"};
+    const wchar_t* mp4_type{L"MP4 video"};
+    const wchar_t* gif_type{L"Animated GIF"};
+};
+
 [[nodiscard]] std::optional<std::wstring> ShowSaveRecordingDialog(
     HWND owner, media::RecordingFormat format,
     const std::wstring& suggested_file_name,
-    const std::wstring& initial_directory);
+    const std::wstring& initial_directory,
+    const SaveRecordingDialogText& text = {});
 
 }  // namespace easnap::app

@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "platform/platform_utils.h"
+#include "strings/strings.h"
 #include "ui/trim_layout.h"
 #include "ui/ui_theme.h"
 #include "ui/native_controls.h"
@@ -22,7 +23,6 @@ namespace {
 constexpr wchar_t kWindowClassName[] = L"EasnapTrimWindow";
 constexpr wchar_t kTimelineClassName[] = L"EasnapTrimTimeline";
 constexpr wchar_t kVideoClassName[] = L"EasnapTrimVideo";
-constexpr wchar_t kWindowTitle[] = L"Easnap - Trim recording";
 static_assert(kTrimChromeHeightDip == kWindowChromeHeight);
 constexpr UINT kPreviewEventMessage = WM_APP + 1;
 constexpr UINT_PTR kStatusTimerId = 1;
@@ -88,21 +88,22 @@ std::wstring FormatTime(media::MediaTime value) {
     return text;
 }
 
-const wchar_t* PreviewOperationText(
+// One whole sentence per failed operation; %1 receives the HRESULT.
+UINT PreviewFailurePattern(
     media::MediaPreviewOperation operation) noexcept {
     switch (operation) {
         case media::MediaPreviewOperation::Open:
-            return L"opening";
+            return IDS_TRIM_PREVIEW_FAILED_OPEN;
         case media::MediaPreviewOperation::Play:
-            return L"starting playback";
+            return IDS_TRIM_PREVIEW_FAILED_PLAY;
         case media::MediaPreviewOperation::Pause:
-            return L"pausing playback";
+            return IDS_TRIM_PREVIEW_FAILED_PAUSE;
         case media::MediaPreviewOperation::Seek:
-            return L"seeking";
+            return IDS_TRIM_PREVIEW_FAILED_SEEK;
         case media::MediaPreviewOperation::Playback:
-            return L"during playback";
+            return IDS_TRIM_PREVIEW_FAILED_PLAYBACK;
         default:
-            return L"processing media";
+            return IDS_TRIM_PREVIEW_FAILED_OTHER;
     }
 }
 
@@ -111,10 +112,8 @@ std::wstring PreviewFailureText(
     wchar_t code[16]{};
     _snwprintf_s(code, _TRUNCATE, L"0x%08lX",
                  static_cast<unsigned long>(snapshot.error));
-    return L"Preview failed while " +
-           std::wstring(PreviewOperationText(snapshot.failed_operation)) +
-           L" (HRESULT " + code +
-           L"). The finalized source recording was kept.";
+    return strings::Format(PreviewFailurePattern(snapshot.failed_operation),
+                           {code});
 }
 
 }  // namespace
@@ -144,7 +143,8 @@ bool TrimWindow::Open(const std::wstring& source_path,
                    (platform::RectHeight(monitor.work_area) - height) / 2;
 
     hwnd_ = ::CreateWindowExW(
-        kWindowExStyle, kWindowClassName, kWindowTitle, kWindowStyle,
+        kWindowExStyle, kWindowClassName,
+        strings::Get(IDS_TRIM_WINDOW_TITLE), kWindowStyle,
         static_cast<int>(x), static_cast<int>(y), static_cast<int>(width),
         static_cast<int>(height), nullptr, nullptr, ::GetModuleHandleW(nullptr),
         this);
@@ -161,7 +161,7 @@ bool TrimWindow::Open(const std::wstring& source_path,
                    static_cast<int>(platform::RectHeight(client)));
     RebuildFonts();
     UpdateEnabledState();
-    SetStatus(L"Opening preview...");
+    SetStatus(strings::Get(IDS_TRIM_STATUS_OPENING));
 
     preview_ = media::CreateMfPlayPreview();
     if (preview_ == nullptr ||
@@ -169,9 +169,7 @@ bool TrimWindow::Open(const std::wstring& source_path,
         if (preview_ != nullptr) {
             SetStatus(PreviewFailureText(preview_->snapshot()), true);
         } else {
-            SetStatus(
-                L"Preview could not be created. The source recording was kept.",
-                true);
+            SetStatus(strings::Get(IDS_TRIM_PREVIEW_UNAVAILABLE), true);
         }
         UpdateEnabledState();
     }
@@ -199,7 +197,7 @@ void TrimWindow::SetExporting(bool exporting, bool cancelling) {
     }
     if(exporting_) {
         status_message_.clear(); status_error_=false;
-        SetAccessibleName(progress_,cancelling_ ? L"Cancelling export" : L"Export progress");
+        SetAccessibleName(progress_,strings::Get(cancelling_ ? IDS_TRIM_PROGRESS_CANCELLING_NAME : IDS_TRIM_PROGRESS_NAME));
     }
     UpdateStatusLayout();
     UpdateEnabledState();
@@ -684,7 +682,8 @@ bool TrimWindow::CreateControls() {
         0,0,1,1,hwnd_,nullptr,::GetModuleHandleW(nullptr),this);
     time_label_ = CreateControl(L"STATIC", L"00:00:00.000 / 00:00:00.000",
                                SS_RIGHT, -1);
-    range_label_ = CreateControl(L"STATIC", L"In —   Out —", SS_LEFT, -1);
+    range_label_ = CreateControl(L"STATIC", strings::Get(IDS_TRIM_RANGE_PLACEHOLDER),
+                                 SS_LEFT, -1);
     status_ = ::CreateWindowExW(
         0, L"EDIT", L"Opening preview…",
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL |
@@ -692,23 +691,24 @@ bool TrimWindow::CreateControls() {
         0, 0, 1, 1, hwnd_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
     if(status_ && !StyleLabel(status_)) { return false; }
     timeline_ = ::CreateWindowExW(
-        0, kTimelineClassName, L"Trim timeline",
+        0, kTimelineClassName, strings::Get(IDS_TRIM_TIMELINE_NAME),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 1, 1, hwnd_, nullptr,
         ::GetModuleHandleW(nullptr), this);
-    play_pause_ = CreateControl(L"BUTTON", L"Play",
+    play_pause_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_PLAY_BUTTON),
                                 WS_TABSTOP | BS_PUSHBUTTON, kIdPlayPause);
-    set_in_ = CreateControl(L"BUTTON", L"Set In",
+    set_in_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SET_IN_BUTTON),
                             WS_TABSTOP | BS_PUSHBUTTON, kIdSetIn);
-    set_out_ = CreateControl(L"BUTTON", L"Set Out",
+    set_out_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SET_OUT_BUTTON),
                              WS_TABSTOP | BS_PUSHBUTTON, kIdSetOut);
-    save_ = CreateControl(L"BUTTON", L"Save",
+    save_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SAVE_BUTTON),
                           WS_TABSTOP | BS_DEFPUSHBUTTON, IDOK);
-    copy_ = CreateControl(L"BUTTON", L"Copy",
+    copy_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_COPY_BUTTON),
                           WS_TABSTOP | BS_PUSHBUTTON, kIdCopy);
-    cancel_export_ = CreateControl(L"BUTTON", L"Cancel export",
+    cancel_export_ = CreateControl(L"BUTTON",
+                                   strings::Get(IDS_TRIM_CANCEL_EXPORT_BUTTON),
                                    WS_TABSTOP | BS_PUSHBUTTON,
                                    kIdCancelExport);
-    discard_ = CreateControl(L"BUTTON", L"Discard",
+    discard_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_DISCARD_BUTTON),
                              WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
     progress_ = CreateControl(PROGRESS_CLASSW, L"", PBS_SMOOTH, -1);
     if(progress_ && !StyleProgress(progress_)) { return false; }
@@ -869,10 +869,10 @@ void TrimWindow::UpdatePreviewState() {
             ShowErrorMessage(hwnd_, failure.c_str());
         }
     } else if (snapshot.play_requested) {
-        ::SetWindowTextW(play_pause_, L"Pause");
+        ::SetWindowTextW(play_pause_, strings::Get(IDS_TRIM_PAUSE_BUTTON));
         UpdateButtonStyle(play_pause_, {Icon::Pause});
     } else {
-        ::SetWindowTextW(play_pause_, L"Play");
+        ::SetWindowTextW(play_pause_, strings::Get(IDS_TRIM_PLAY_BUTTON));
         UpdateButtonStyle(play_pause_, {Icon::Play});
     }
     UpdatePosition();
@@ -909,10 +909,10 @@ void TrimWindow::UpdateLabels() {
     }
     const std::wstring time = FormatTime(range_.current()) + L" / " +
                               FormatTime(range_.source_duration());
-    const std::wstring selected = L"In " + FormatTime(range_.in()) +
-                                  L"    Out " + FormatTime(range_.out()) +
-                                  L"    Selected " +
-                                  FormatTime(range_.out() - range_.in());
+    const std::wstring selected = strings::Format(
+        IDS_TRIM_RANGE_READOUT,
+        {FormatTime(range_.in()), FormatTime(range_.out()),
+         FormatTime(range_.out() - range_.in())});
     const bool changed=range_text_!=selected || time_text_!=time;
     if(time_text_!=time) { time_text_=time; ::SetWindowTextW(time_label_,time.c_str()); }
     if(range_text_!=selected) { range_text_=selected; ::SetWindowTextW(range_label_,selected.c_str()); }
@@ -1041,10 +1041,10 @@ void TrimWindow::ReconcileRangeEdit() {
 
 void TrimWindow::SetInFromCurrent() {
     if (!range_.SetIn(range_.current())) {
-        SetStatus(L"In must be earlier than Out.", true);
+        SetStatus(strings::Get(IDS_TRIM_STATUS_IN_INVALID), true);
         return;
     }
-    SetStatus(L"In point updated.");
+    SetStatus(strings::Get(IDS_TRIM_STATUS_IN_UPDATED));
     ReconcileRangeEdit();
     UpdateLabels();
     ::InvalidateRect(timeline_, nullptr, FALSE);
@@ -1052,11 +1052,10 @@ void TrimWindow::SetInFromCurrent() {
 
 void TrimWindow::SetOutFromCurrent() {
     if (!range_.SetOut(range_.current())) {
-        SetStatus(L"Out must be later than In and within the source duration.",
-                  true);
+        SetStatus(strings::Get(IDS_TRIM_STATUS_OUT_INVALID), true);
         return;
     }
-    SetStatus(L"Out point updated.");
+    SetStatus(strings::Get(IDS_TRIM_STATUS_OUT_UPDATED));
     ReconcileRangeEdit();
     UpdateLabels();
     ::InvalidateRect(timeline_, nullptr, FALSE);
@@ -1148,8 +1147,8 @@ void TrimWindow::PaintTimeline(HWND hwnd, HDC print_dc) {
                      in_x + ScaleDip(18, scale_), layout_.timeline_label_height};
         RECT out_text{out_x - ScaleDip(18, scale_), 0,
                       out_x + ScaleDip(18, scale_), layout_.timeline_label_height};
-        ::DrawTextW(dc, L"In", 2, &in_text, DT_CENTER | DT_BOTTOM | DT_SINGLELINE);
-        ::DrawTextW(dc, L"Out", 3, &out_text, DT_CENTER | DT_BOTTOM | DT_SINGLELINE);
+        ::DrawTextW(dc, strings::Get(IDS_TRIM_MARKER_IN), -1, &in_text, DT_CENTER | DT_BOTTOM | DT_SINGLELINE);
+        ::DrawTextW(dc, strings::Get(IDS_TRIM_MARKER_OUT), -1, &out_text, DT_CENTER | DT_BOTTOM | DT_SINGLELINE);
         if(previous_font) { ::SelectObject(dc,previous_font); }
     }
     if(timeline_focus_==1 && ::GetFocus()==hwnd && !(::SendMessageW(hwnd,WM_QUERYUISTATE,0,0)&UISF_HIDEFOCUS) && range_.valid()) {

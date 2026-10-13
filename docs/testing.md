@@ -105,6 +105,11 @@ the origin of the virtual screen.
 Audio is not isolated by any of this. `wasapi_audio_capture` plays a short
 test tone through the default output device and records it back.
 
+Neither is the clipboard: there is one per logon session.
+`capture_workspace_production` (Standard tier) copies a test image and
+`annotation_editing_native` (visible desktop) copies the word "Paste". Whatever
+was on the clipboard before is gone after either of them.
+
 ### A separate machine
 
 The application is Win32, uses Desktop Duplication, Media Foundation and
@@ -143,6 +148,9 @@ UI animation is time-based.
 - Use the visible desktop only for what cannot be observed otherwise, add the
   test to `interactive_desktop_tests`, and place windows with `OnTestMonitor`
   so they follow the chosen display.
+- A simulated gesture has to end the way the real one does. A double-click
+  that is sent without the button release leaves a native control holding the
+  mouse, and every movement of the real pointer then changes its state.
 - Send real input only after verifying which window will receive it
   (`WindowFromPoint`, `GetForegroundWindow`), so it can never land in a window
   of the person using the PC. `test_scrollshot_desktop.cpp` shows the pattern,
@@ -152,6 +160,12 @@ UI animation is time-based.
 - Do not synchronise with a fixed sleep. Wait for the condition with a
   deadline; a fixed sleep is a timing assumption that fails under load.
 - Label long repeats `soak` and keep a short variant in the normal tiers.
+- Code that writes to the registry takes the key as a parameter and is tested
+  against a key the test creates and removes (`test_startup_entry.cpp`).
+- Text that a window shows is checked in every language by
+  `text_fits_in_every_language`; a new window or island belongs in it.
+- `executable_imports` reads the built `Easnap.exe`. A new import that Windows
+  N editions lack has to be delay-loaded, or that test fails.
 
 ## Diagnostics that are not registered tests
 

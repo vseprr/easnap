@@ -5,8 +5,11 @@ These are implemented behaviors. Validation and remaining work are recorded in
 
 ## Start and select
 
-Press **Ctrl+Shift+A** or choose **Capture** from the tray to enter Standby.
-Reusing the shortcut during a session brings that session forward.
+Press **Ctrl+Shift+A** (the shortcut can be changed in
+[Settings](#settings-and-the-tray-menu)), choose **Capture** from the tray
+menu, click the tray icon, or start Easnap again while it runs. Each enters
+Standby. Reusing the shortcut during a session brings that session forward;
+while one of Easnap's dialogs is open it brings that dialog forward.
 
 In Standby, hover a monitor for its selection or drag a custom region.
 A click enters Editing with the current proposal; a completed drag enters it
@@ -206,7 +209,9 @@ and closing ask before a stitched image is dropped.
 
 ## Record
 
-Choose Record while the workspace is provisional. Configure:
+Choose Record while the workspace is provisional. On a Windows N or KN edition
+without the Media Feature Pack, Record says that recording needs it and the
+mode does not change; screenshots and Scrollshot work there. Configure:
 
 | Choice | Behavior |
 |---|---|
@@ -219,10 +224,12 @@ Switching to GIF hides audio controls and records without audio, while retaining
 the MP4 audio choice. Format, preset, audio and cursor choices survive mode round
 trips and are saved for later sessions after Start succeeds. Cancelling
 configuration does not save newly selected recording preferences. Appearance is
-available in the tray and as a one-click Light/Dark toggle in the configuration
-panel and screenshot island. Light/Dark changes apply and
-save immediately while leaving those pending recording choices untouched. Windows
-high contrast temporarily uses system colors without replacing that preference.
+available in Settings and the tray (Same as Windows, Light, Dark) and as a
+one-click Light/Dark toggle in the configuration panel and screenshot island;
+the toggle chooses one of the two and stops following Windows. A change
+applies and is saved immediately while leaving those pending recording choices
+untouched. Windows high contrast temporarily uses system colors without
+replacing that preference.
 
 Drag the configuration or active recording panel from its grip, informational
 labels or any other noninteractive space. Buttons and settings retain their own
@@ -294,7 +301,8 @@ normal cleanup so pasting remains possible after closing Easnap.
 
 | Context | Input | Action |
 |---|---|---|
-| Global | Ctrl+Shift+A | Open or reactivate the current capture session |
+| Global | Ctrl+Shift+A, or the shortcut chosen in Settings | Open or reactivate the current capture session |
+| Settings, shortcut button waiting | A combination with Ctrl, Alt or Win / Esc | Take it over / keep the current one |
 | Standby | Enter | Open Editing |
 | Standby | Shift | Toggle magnifier RGB/HEX |
 | Standby | Ctrl+C | Copy magnifier color |
@@ -339,9 +347,39 @@ a valid place with a notice; Edit rebuilds the workspace. While a stitched
 image is being edited, the annotations are drawn into the image and the
 session returns to the four-action island.
 
-Tray actions include capture, cursor preference, About, opening the local data
-folder and Exit. Settings and private recordings are local to the current user.
+Settings and private recordings are local to the current user.
 See [SECURITY.md](../SECURITY.md) for clipboard-file lifetime and reporting.
+
+## Settings and the tray menu
+
+Easnap lives in the notification area. The first start on a computer says so
+once, with the shortcut. The menu of the icon offers **Capture**, **Include
+cursor**, **Appearance**, **Settings...**, **Open data folder**, **Check for
+updates**, **About** and **Exit**.
+
+**Settings...** opens while no capture is in progress. Cancel changes nothing.
+
+| Setting | Effect |
+|---|---|
+| Language | Same as Windows, English or Türkçe. Applies at once to everything opened afterwards. |
+| Appearance | Same as Windows, Light or Dark. "Same as Windows" also follows a later change of the Windows setting. |
+| Capture shortcut | Click the button, then press the new combination. It needs Ctrl, Alt or the Windows key. A combination another application holds is refused by name. Esc keeps the current one. |
+| Start Easnap when I sign in to Windows | Easnap then starts quietly in the notification area. |
+| Include the mouse cursor | The same choice as in the tray menu and the recording panel. |
+| Screenshots folder, Recordings folder | Where the Save dialogs open. Not set: the folder used last. |
+| Save screenshots here without asking | With a screenshots folder: Save writes a PNG named after the time into it and says so. An existing file is never replaced. If the folder cannot be written, the Save dialog opens. |
+
+When another application holds the shortcut at start, a notification says so;
+the tooltip of the icon and the menu then name clicking the icon as the way to
+capture.
+
+**About** shows the version, the shortcut and the Windows build. **Copy
+details** puts the version, Windows build, language, shortcut and display
+layout on the clipboard for a bug report. **Check for updates** opens the
+releases page in the browser; Easnap itself connects to nothing.
+
+Easnap needs Windows 10 version 2004 (build 19041) or later and says so
+instead of starting on an older build.
 
 ### Exit, sign-out and unexpected endings
 

@@ -28,8 +28,6 @@ void SetPreference(LanguagePreference preference) noexcept;
 [[nodiscard]] Language Current() noexcept;
 /// The language `System` resolves to on this computer.
 [[nodiscard]] Language SystemLanguage() noexcept;
-/// Locale name of the active language for DirectWrite: "en-us" or "tr-tr".
-[[nodiscard]] const wchar_t* LocaleName() noexcept;
 
 /// Text for `id` in the active language. A string missing from the Turkish
 /// table falls back to English; an unknown id yields an empty string.

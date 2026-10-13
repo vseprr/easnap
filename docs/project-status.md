@@ -27,14 +27,31 @@ Nothing from this branch has been released.
   finished recording is kept and offered at the next start, discarding asks
   when there is something to lose, and failure messages say what is true
   ([ADR-031](decisions/ADR-031-unsaved-work-survives.md)).
-- **Localized text, first part.** English and Turkish string tables with one
-  accessor. The mode bar, dialogs' standard buttons, the copied notice and all
-  Scrollshot, exit, recovery and diagnostics text use it. The roughly 330
-  older strings are still English literals in the code.
+- **English and Turkish.** All text the user reads comes from two string
+  tables; the language follows Windows or the choice in Settings
+  ([ADR-032](decisions/ADR-032-interface-text-in-string-tables.md)). Controls
+  whose Turkish text is longer size themselves to it.
+- **Settings and the shell.** A Settings dialog (language, appearance
+  including "same as Windows", shortcut, start with Windows, cursor, folders,
+  saving screenshots without a dialog), About with details for a bug report,
+  "Check for updates", a taken shortcut reported in a notification instead of
+  a dialog, a second start that captures, a quiet start at sign-in and a
+  refusal to start below Windows 10 build 19041
+  ([ADR-033](decisions/ADR-033-settings-shortcut-and-launch-behaviour.md)).
+- **Windows N editions.** `Easnap.exe` no longer needs Media Foundation to
+  start; Record explains what is missing
+  ([ADR-034](decisions/ADR-034-media-foundation-on-first-use.md)).
+- **Version text.** The build is 1.1.0-beta.1: `EASNAP_VERSION_PRERELEASE` in
+  the root `CMakeLists.txt` adds the label to the numeric version, and the
+  version resource carries it together with the prerelease flag.
 - The capture provider can return a plain image of a region and wait for the
   desktop to change (`CaptureRegionImage`).
 - An image copied to the clipboard is written bottom-up; .NET applications
   could not read the top-down bitmap Easnap wrote before.
+- **Text box caret.** While typing into a text annotation, the native caret
+  could leave a one-pixel inverted column at the position the native control
+  computes, until the next paint. The caret is now hidden for the whole
+  message.
 
 ### Validated on the branch
 
@@ -42,13 +59,23 @@ One development PC, Windows 10 build 19045, NVIDIA GPU, two 1920x1080 displays
 at 125%; visible-desktop tests and manual checks ran on the secondary display.
 
 - Release x64 with warnings as errors builds. On 2026-10-13 the Standard tier
-  passed 34 of 34 on the final binaries in one run.
-- **All 42 tests of the Full tier passed on the final binaries, but not in a
-  single run.** One run passed 41; `trim_timeline_seek_stress` stopped with
-  "pointer authentication failed", twice, which is what it does when the real
-  pointer is moved while it uses it. The PC was in use. Run again alone it
-  passed. An earlier Full run of the same day, before the last three capture
-  and clipboard fixes, passed 42 of 42 in one run.
+  passed 37 of 37 on the final binaries in one run.
+- **The Full tier passed 45 of 45 in one run, without a retry**, on the build
+  before the last changes to the shell (the shortcut while a dialog is open,
+  the Settings shortcut handling, Turkish wording). Those files are not part
+  of any visible-desktop test.
+- **`annotation_editing_native` is no longer intermittent, for two reasons
+  that were found.** A build that failed it deterministically (24 checks, four
+  runs in a row) showed a one-pixel column at the native caret position: the
+  product defect described above. The occasional failure on a reopened text
+  box came from the test: its simulated double-click never released the
+  button, the native control kept the mouse, and movement of the real pointer
+  changed the selection under the comparison. With the caret corrected the
+  test passed 4 of 4 standalone runs; with both corrections 3 of 3 and in the
+  Full run. With a script moving the pointer continuously the text-box checks
+  passed while later checks of the same test, which use the real pointer by
+  design, failed as expected. The experiment recorded under v1.0.1 (a 30 ms
+  wait after reopening, 4 of 5 runs failing) passes 5 of 5 now.
 - `scrollshot_real_desktop`: a second process showed a 3,160-row document; six
   single wheel notches, three double notches, a click and two Page Down keys,
   then wheel notches to the end scrolled it through the open frame. The
@@ -57,19 +84,40 @@ at 125%; visible-desktop tests and manual checks ran on the secondary display.
   through Desktop Duplication.
 - `diagnostics_log_and_crash_reports` passes in Release and Debug: eight kinds
   of failure each leave one valid report.
-- The stitching engine's 232 checks pass in Release and Debug; the session's
-  66, the layout and viewport's 351, the workspace's 330 and the data-safety
-  test's 50 pass in Release.
+- The stitching engine's 232 checks pass in Release and Debug; in Release the
+  session's 66, the layout and viewport's 351, the workspace's 337, the
+  data-safety and Settings dialog's 93 and the text-fit test's 392 (every
+  production window and island in both languages).
+- `startup_entry_registry` writes, reads and removes the sign-in entry in a
+  key of its own and finds the real `Run` key unchanged. `executable_imports`
+  finds no Media Foundation library among the imports `Easnap.exe` needs to
+  start.
 - **The running application, by hand**, driven with real pointer and keyboard
-  input over a test window: shortcut, region drag, the three mode buttons in
-  Turkish, Start by button and by Enter, the scissors button, wheel scrolling
-  to 720 x 1,440 and 720 x 1,680, Save through the system dialog, Edit with
-  scrolling, zooming, a rectangle drawn at the pointed place and a full-size
-  export, Copy by button and by Enter, the discard and exit questions, the
-  sign-out block, a recording of 11 s through trim, an abrupt end of the
-  process followed by the recovery offer ("Not now", then Save), a session end
-  during recording followed by the offer and Delete, and the crash notice
-  appearing once.
+  input over a test window:
+  - Scrollshot and data safety: shortcut, region drag, the three mode buttons
+    in Turkish, Start by button and by Enter, the scissors button, wheel
+    scrolling to 720 x 1,440 and 720 x 1,680, Save through the system dialog,
+    Edit with scrolling, zooming, a rectangle drawn at the pointed place and a
+    full-size export, Copy by button and by Enter, the discard and exit
+    questions, the sign-out block, a recording of 11 s through trim, an abrupt
+    end of the process followed by the recovery offer ("Not now", then Save),
+    a session end during recording followed by the offer and Delete, and the
+    crash notice appearing once.
+  - Settings and the shell: the dialog in Turkish, English and Turkish again
+    with the language and appearance stored each time; the shortcut button
+    taking Ctrl+Alt+F9 and Ctrl+Alt+Q, taking Easnap's own shortcut again,
+    refusing Shift+K and keeping the dialog on Esc; no capture starting from
+    the shortcut while the dialog is open and the shortcut working again
+    afterwards; Cancel changing nothing; the `Run` key untouched; About and
+    Copy details; a second start opening the workspace with the keyboard; a
+    start with `--startup` beside a running Easnap doing nothing; an older
+    `settings.ini` read and rewritten with its theme kept.
+  - Saving without a dialog: two screenshots saved into a test folder under
+    two names, 720 x 480 each, no dialog.
+  - Recording with the delay-loaded build: neither Media Foundation library in
+    the process at start, both there once the recording ran, 3 s recorded,
+    trim window, Delete; a recording left by a killed process offered at the
+    next start and deleted.
 
 Not validated on the branch:
 
@@ -78,19 +126,31 @@ Not validated on the branch:
   second GPU, with wheel routing by focus, and through a display change during
   capture. The engine's behaviour on such content is covered by synthetic
   documents only.
+- **A Windows N edition, any Windows 11, any build other than 19045.** The
+  refusal below build 19041 and the Record message on an N edition have not
+  been seen on such a system.
+- **"Start with Windows" in the running application.** The registry code is
+  tested against a key of its own; the box was not ticked in the real
+  application, because that writes the user's `Run` key. The quiet start at
+  sign-in was therefore not seen either.
+- "Same as Windows" appearance following a change of the Windows setting, and
+  high contrast: both need a change to Windows settings.
+- The folder picker of Settings, "Check for updates" and "Website": they open
+  a system dialog or the browser and were not driven.
+- The look of the Settings dialog on screen. Its windows are excluded from
+  capture, so no picture was taken; its text is measured by the text-fit test.
 - A real crash of the application: the handler is exercised by a test process
   that links the same module, not by a failing Easnap.
 - A real sign-out or shutdown: the two session messages were sent to the
   application by hand.
 - The Soak tier. Debug was built and run only for the stitching engine and the
   diagnostics test.
-- Turkish text has been seen in the running application where it exists; it
-  has not been reviewed by a second reader.
+- Turkish text has been read in the running application; it has not been
+  reviewed by a second reader.
 
 ### Known limitations of the new work
 
-- Scrollshot needs Windows 10 version 2004 (build 19041). It is manual and
-  vertical; the image only grows downwards.
+- Scrollshot is manual and vertical; the image only grows downwards.
 - Copying and saving a very tall image run on the UI thread.
 - At the 48-million-pixel limit, editing holds two buffers of about 190 MB
   and an export allocates a third.
@@ -105,8 +165,13 @@ Not validated on the branch:
   recording.
 - Reading a crash report needs the symbol files of the build that wrote it;
   the release workflow does not keep them yet.
-- Several older error messages still name no next step; they are rewritten
-  with the remaining strings.
+- A window that is open when the language changes keeps its text; only the
+  Settings dialog can be open then, and it closes.
+- HDR displays are unverified: no HDR output was available.
+- Tests share the user's clipboard: `capture_workspace_production` and
+  `annotation_editing_native` replace its content.
+- The log receives one line per audio packet for the first packets of every
+  recording; these lines are diagnostic and carry no content.
 ## Previous slice: v1.0.2 maintenance and hardening
 
 v1.0.1 followed the published v1.0.0 with fixes, hardening and test tooling.
@@ -255,10 +320,11 @@ display while the PC was in use.
   - `trim_timeline_seek_soak` failed with "pointer authentication failed": the
     real pointer was moved while the test was using it. That is the test
     working as designed, not a product failure.
-  - `annotation_editing_native` is intermittent. Within this slice it failed
+  - `annotation_editing_native` was intermittent. Within this slice it failed
     in four suite runs and passed in every standalone repetition (11 of 11)
     and in the final rerun. Its failing assertions compare the presented text
-    box with the source-backed renderer. See the open item below.
+    box with the source-backed renderer. The causes were found on the v1.1
+    branch; see [the current slice](#validated-on-the-branch).
 - Timing on this machine: the Full tier ran 26 background tests in 91 s and 7
   visible-desktop tests in 274 s. The previous suite of 36 took 790 s. The
   Soak tier ran 31 background tests in 195 s and 8 visible-desktop tests in
@@ -291,12 +357,12 @@ Not validated:
 - The installer was not tried on a clean machine or another Windows version.
 - No scale factor other than 125 % and no mixed-DPI layout was used physically.
 
-Open item from validation: when the editor test was changed to wait about
-30 ms before a key press in a reopened text box, the presented text box stayed
-different from the source-backed renderer for more than 1.5 s in 4 of 5 runs.
-That change was discarded because it made the test fail, but the observation
-may point at a real repaint gap after reopening a text annotation and has not
-been investigated.
+Open item from validation, closed on the v1.1 branch: when the editor test
+was changed to wait about 30 ms before a key press in a reopened text box, the
+presented text box stayed different from the source-backed renderer for more
+than 1.5 s in 4 of 5 runs. The test's double-click never released the button,
+so the native control kept the mouse and followed the real pointer. With the
+release added, the same wait passes 5 of 5.
 
 ## Known limitations and unresolved risks
 
@@ -342,18 +408,17 @@ Found in the v1.0.1 review and not fixed:
   problem at low resolution is not established.
 - CI is pinned to `windows-2022` because the project uses the Visual Studio
   17 2022 generator; moving to a newer toolchain is pending.
-- `annotation_editing_native` is intermittent (see Validation).
 
 Camera, Mouse Effects, device pickers and OCR are not implemented. OCR remains
 post-v1 without a promised date.
 
 ## Next slice
 
-Beta readiness for v1.1.0-beta.1, in the order of the
-[roadmap](../EASNAP_ROADMAP.md): the remaining user-visible text in English
-and Turkish, the settings window, compatibility, release and distribution, CI
-and community files, then the documentation pass. Preserve the native frame, shared
-rendering/control path and asynchronous preview boundaries. See
-[ADR-024](decisions/ADR-024-native-trim-frame.md),
+For v1.1.0-beta.1, in the order of the [roadmap](../EASNAP_ROADMAP.md):
+release and distribution (package names and checks for the prerelease
+version, package manifests, uninstall behaviour, symbol files, release notes),
+CI and community files, then the documentation pass and the final validation.
+Preserve the native frame, shared rendering/control path and asynchronous
+preview boundaries. See [ADR-024](decisions/ADR-024-native-trim-frame.md),
 [architecture](architecture.md) and the
 [window guide](ui/window-implementation-guide.md).

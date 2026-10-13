@@ -1,7 +1,8 @@
-Easnap @PROJECT_VERSION@ | Windows x64
+Easnap @EASNAP_VERSION_TEXT@ | Windows x64
 ==================================
 
-Screen capture, annotation, MP4 recording and GIF export for Windows 10 and 11.
+Screenshots with annotations, scrolling screenshots, MP4 recording and GIF
+export. Needs Windows 10 version 2004 (build 19041) or later, 64-bit.
 
 START
 Extract the entire ZIP to a folder you can write to. Open bin\Easnap.exe.
@@ -14,26 +15,29 @@ Visual C++ runtime is needed. Windows media components are required. The same
 release also offers a per-user installer if you prefer a Start menu entry.
 
 USE
-Select a region, then take a screenshot or start an MP4/GIF recording.
-Annotate screenshots, or adjust a recording's start and end in the trim window.
-Use Save or Copy to publish the result. GIF export does not contain audio.
+Select a region, then take a screenshot, a scrolling screenshot or start an
+MP4/GIF recording. Annotate screenshots, or adjust a recording's start and end
+in the trim window. Use Save or Copy to publish the result. GIF export does
+not contain audio.
 
 UPDATE OR REMOVE
 Exit Easnap from the notification-area menu before replacing its folder.
 Extract a new release into a new folder and replace both executables together.
 To remove the application, exit it and delete its extracted folder.
 
-Settings, diagnostics and temporary recordings are stored under
-%LOCALAPPDATA%\Easnap, separate from this portable folder. Preserve recoverable
-recordings before removing that data. Copied recording files can remain there
-while the clipboard still refers to them.
+Settings, the log, crash reports and temporary recordings are stored under
+%LOCALAPPDATA%\Easnap, separate from this portable folder. Nothing in it is
+sent anywhere. A recording you had not saved when Easnap ended is kept there
+and offered at the next start; save or delete it before removing that data.
+Copied recording files can remain there while the clipboard still refers to
+them.
 
 RELEASE NOTES AND SUPPORT
-@PROJECT_HOMEPAGE_URL@/releases/tag/v@PROJECT_VERSION@
+@PROJECT_HOMEPAGE_URL@/releases/tag/v@EASNAP_VERSION_TEXT@
 @PROJECT_HOMEPAGE_URL@/issues
 
 See the release notes for known limitations and the tested Windows/display
-configurations. Scrollshot and OCR are planned; they are not in this release.
+configurations. Text recognition (OCR) is planned; it is not in this release.
 The binaries are unsigned. Published SHA-256 checksums verify download
 integrity; they do not constitute a code-signing certificate.
 

@@ -423,6 +423,28 @@ target_link_libraries(test_diagnostics PRIVATE easnap_project_options
 add_test(NAME diagnostics_log_and_crash_reports COMMAND test_diagnostics)
 set_tests_properties(diagnostics_log_and_crash_reports PROPERTIES LABELS "unit;diagnostics" TIMEOUT 120)
 
+# The "start with Windows" entry, written to a registry key the test owns.
+add_executable(test_startup_entry
+    test_startup_entry.cpp
+    ../src/platform/startup_entry.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_startup_entry PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_startup_entry PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+add_test(NAME startup_entry_registry COMMAND test_startup_entry)
+set_tests_properties(startup_entry_registry PROPERTIES LABELS "unit;settings" TIMEOUT 30)
+
+# The import tables of the built Easnap.exe: Media Foundation must not be
+# needed to start, or Windows N editions cannot run Easnap at all.
+add_executable(test_executable_imports test_executable_imports.cpp)
+target_link_libraries(test_executable_imports PRIVATE easnap_project_options)
+add_dependencies(test_executable_imports easnap-desktop)
+add_test(NAME executable_imports COMMAND test_executable_imports $<TARGET_FILE:easnap-desktop>)
+set_tests_properties(executable_imports PROPERTIES LABELS "unit;compatibility" TIMEOUT 30)
+
 # Both string tables, read from this executable's resources through the
 # production accessor.
 add_executable(test_strings test_strings.cpp)
@@ -512,6 +534,35 @@ add_test(NAME scrollshot_workspace_production
 set_tests_properties(scrollshot_workspace_production PROPERTIES
     LABELS "integration;scrollshot;workspace;editor;isolated-desktop" TIMEOUT 90)
 
+# Every caption and label fits its control in English and in Turkish.
+add_executable(test_text_fit
+    test_text_fit.cpp
+    ../src/ui/capture_workspace.cpp
+    ../src/ui/overlay.cpp
+    ../src/ui/capture_magnifier.cpp
+    ../src/ui/region_selector.cpp
+    ../src/ui/recording_controls.cpp
+    ../src/ui/scrollshot_controls.cpp
+    ../src/ui/scrollshot_layout.cpp
+    ../src/ui/ui_theme.cpp
+    ../src/ui/native_controls.cpp
+    ../src/editor/screenshot_editor.cpp
+    ../src/editor/image_viewport.cpp
+    ../src/editor/redaction_renderer.cpp
+    ../src/app/recording_workflow.cpp
+    ../src/ui/settings_dialog.cpp
+    ../src/app/app_settings.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_text_fit PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_text_fit PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
+add_test(NAME text_fits_in_every_language
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_text_fit>)
+set_tests_properties(text_fits_in_every_language PROPERTIES
+    LABELS "integration;ui;localization;isolated-desktop" TIMEOUT 60)
+
 # Questions asked before work is lost: the dialog with named buttons, the
 # tracking of nested dialog loops and the editor's discard confirmation.
 add_executable(test_data_safety
@@ -525,6 +576,9 @@ add_executable(test_data_safety
     ../src/editor/screenshot_editor.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
+    ../src/ui/settings_dialog.cpp
+    ../src/app/app_settings.cpp
+    ../src/app/recording_workflow.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_data_safety PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -617,7 +671,8 @@ set_tests_properties(ui_modernization_native PROPERTIES
     LABELS "integration;ui;accessibility;theme;preview" TIMEOUT 90)
 
 foreach(ui_target test_region_selector test_redaction_renderer test_capture_overlay test_capture_workspace
-                  test_scrollshot_workspace test_scrollshot_desktop test_data_safety test_ui_modernization)
+                  test_scrollshot_workspace test_scrollshot_desktop test_data_safety test_text_fit
+                  test_ui_modernization)
     target_link_libraries(${ui_target} PRIVATE uxtheme gdiplus oleacc dwmapi)
 endforeach()
 

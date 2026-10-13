@@ -109,6 +109,10 @@ set(EASNAP_SOURCES
     src/recording/audio_timeline.cpp
     src/platform/diagnostics.h
     src/platform/diagnostics.cpp
+    src/platform/startup_entry.h
+    src/platform/startup_entry.cpp
+    src/ui/settings_dialog.h
+    src/ui/settings_dialog.cpp
     src/platform/platform_utils.h
     src/platform/platform_utils.cpp)
 
@@ -177,6 +181,14 @@ target_link_libraries(easnap-desktop PRIVATE
     gdi32
     advapi32
     propsys dwmapi uiautomationcore)
+
+# Windows N and KN editions have no Media Foundation until the Media Feature
+# Pack is installed. Loading it on first use lets Easnap start there; the
+# Record mode then explains what is missing (platform::MediaFoundationAvailable).
+if(MSVC)
+    target_link_options(easnap-desktop PRIVATE /DELAYLOAD:mfplat.dll /DELAYLOAD:mfreadwrite.dll)
+    target_link_libraries(easnap-desktop PRIVATE delayimp)
+endif()
 
 # Per-monitor v2 DPI awareness is declared in resources/easnap.manifest. Do not
 # set VS_DPI_AWARE: it embeds per-monitor v1, which a process cannot raise

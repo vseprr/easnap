@@ -43,14 +43,15 @@ All paths below are under `apps/easnap-desktop/src`.
 | Area | Responsibility |
 |---|---|
 | `app/` | Coordinator, transition policy, settings, recording/finalization, trim and completion orchestration |
-| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls, Scrollshot island and preview, and trim view |
+| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls, Scrollshot island and preview, trim view, and the message and Settings dialogs |
 | `editor/` | Screenshot document, commands/history, tools, reversible effects, the scrolled and zoomed view, inline rendering and full-resolution composite |
 | `capture/` | Desktop acquisition, per-output fallback and capture worker |
 | `scrollshot/` | Stitching engine and the capture session that feeds it |
-| `strings/` | Localized text from the English and Turkish resource tables |
+| `strings/` | Localized text from the English and Turkish resource tables ([ADR-032](decisions/ADR-032-interface-text-in-string-tables.md)) |
 | `recording/` | Active-time recording session, cadence and audio timeline |
 | `media/` | Bounded queues, WASAPI, dual-source mixing/resampling, MP4/GIF writers/exporters and preview |
-| `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers, private storage, log file and crash reports |
+| `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers, private storage, log file and crash reports, the sign-in start entry |
+| `main.cpp` | The shell: single instance, notification icon and menu, the capture shortcut, Settings and About, session end |
 
 Native Windows APIs also appear in UI, capture and media code. `ui_theme.h`
 centralizes shared workspace styling; individual surfaces retain their own
@@ -383,18 +384,38 @@ writes a minidump without the heap to `%LOCALAPPDATA%\Easnap\crashes` when
 either executable fails. Log lines carry no user content. See
 [ADR-030](decisions/ADR-030-log-file-and-crash-reports.md).
 
+Every word the user reads comes from the string tables through `strings::Get`;
+the language follows Windows or the choice in Settings. Low-level files that
+many tests compile take their captions from the caller instead
+([ADR-032](decisions/ADR-032-interface-text-in-string-tables.md)).
+
+The shell owns what reaches outside the process. One instance holds the
+notification icon and the capture shortcut; a second start posts a registered
+message to it and ends. The Settings dialog edits a copy of the values and the
+shell applies them: language, appearance, shortcut (given up while the dialog
+is open, so that the dialog can read any combination), the sign-in entry in
+the user's `Run` key, folders and quick save. While one of the application's
+dialogs runs, the shortcut only brings that dialog forward. See
+[ADR-033](decisions/ADR-033-settings-shortcut-and-launch-behaviour.md).
+
+`Easnap.exe` binds Media Foundation on first use, so that it starts on Windows
+editions that lack it; the coordinator tells the workspace whether recording
+is available ([ADR-034](decisions/ADR-034-media-foundation-on-first-use.md)).
+
 Recording format, GIF preset, cursor and audio preferences are saved to the
 per-user settings file after recording starts successfully. The tray cursor
 toggle also persists immediately. Initial cursor/audio defaults are off/None;
 saved user choices apply to later sessions. Appearance is separately persisted
-as Light/Dark through that same INI, immediately on user selection, without
-accepting pending recording choices. Semantic tokens and a presentation-only
+as System/Light/Dark through that same INI, immediately on user selection,
+without accepting pending recording choices; System follows the application
+mode of Windows, also while Easnap runs. Semantic tokens and a presentation-only
 UI-thread message update retained surfaces. High contrast overrides effective
 colors without overwriting the preference. The timeline exposes three native
 UI Automation RangeValue children backed by the existing trim model; see
 [ADR-016](decisions/ADR-016-shared-appearance-and-native-controls.md).
-Core operation uses no telemetry or
-network service. See [SECURITY.md](../SECURITY.md) and ADR-011.
+Easnap uses no telemetry and opens no network connection; "Check for updates"
+hands the releases page to the browser. See [SECURITY.md](../SECURITY.md) and
+ADR-011.
 
 ## Validation boundaries
 

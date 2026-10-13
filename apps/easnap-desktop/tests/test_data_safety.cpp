@@ -11,8 +11,10 @@
 #include "editor/screenshot_editor.h"
 #include "strings/strings.h"
 #include "ui/native_controls.h"
+#include "ui/settings_dialog.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <functional>
 #include <string>
@@ -159,6 +161,121 @@ void Dialogs() {
     CHECK(g_dialogs_seen == 8);
 }
 
+// --- Settings ---------------------------------------------------------------------------
+
+void SetModifierKeys(std::initializer_list<int> keys) {
+    std::array<BYTE, 256> state{};
+    for (const int key : keys) { state[static_cast<size_t>(key)] = 0x80; }
+    ::SetKeyboardState(state.data());
+}
+
+void SettingsDialog() {
+    using ui::SettingsDialogModel;
+    const int dialogs_before = g_dialogs_seen;
+    ui::SettingsDialogCallbacks callbacks;
+    std::vector<std::pair<UINT, UINT>> probed;
+    callbacks.shortcut_available = [&](UINT modifiers, UINT key) {
+        probed.emplace_back(modifiers, key);
+        return key != 'Z';  // Another application holds everything with Z.
+    };
+    int folder_requests = 0;
+    callbacks.choose_folder = [&](HWND, const std::wstring& current) {
+        ++folder_requests;
+        return current.empty() ? std::wstring(L"D:\\Captures") : std::wstring();  // The second time: cancelled.
+    };
+
+    SettingsDialogModel model;
+    CHECK(model.language == app::LanguageSetting::System && model.appearance_follows_system);
+    OnNextDialog([&](HWND dialog) {
+        CHECK(platform::ModalLoopActive());
+        CHECK(WindowText(dialog) == L"Easnap settings");
+        const auto item = [&](int id) { return ::GetDlgItem(dialog, id); };
+        const auto text = [&](int id) { return WindowText(item(id)); };
+        const auto click = [&](int id) { ::SendMessageW(item(id), BM_CLICK, 0, 0); };
+        // What the model says is what the dialog shows.
+        CHECK(::SendMessageW(item(ui::kSettingsLanguage), CB_GETCOUNT, 0, 0) == 3);
+        CHECK(::SendMessageW(item(ui::kSettingsLanguage), CB_GETCURSEL, 0, 0) == 0);
+        CHECK(::SendMessageW(item(ui::kSettingsAppearance), CB_GETCURSEL, 0, 0) == 0);
+        CHECK(text(ui::kSettingsShortcut) == L"Ctrl + Shift + A");
+        CHECK(text(ui::kSettingsImageFolder) == L"Not set: the folder used last");
+        CHECK(::IsWindowEnabled(item(ui::kSettingsImageReset)) == FALSE);
+        CHECK(::IsWindowEnabled(item(ui::kSettingsQuickSave)) == FALSE);  // Nothing to save into yet.
+        CHECK(::GetDlgCtrlID(::GetFocus()) == ui::kSettingsLanguage);
+        CHECK((::SendMessageW(dialog, DM_GETDEFID, 0, 0) & 0xffff) == IDOK);
+
+        ::SendMessageW(item(ui::kSettingsLanguage), CB_SETCURSEL, 2, 0);
+        ::SendMessageW(item(ui::kSettingsAppearance), CB_SETCURSEL, 2, 0);
+        click(ui::kSettingsStartWithWindows);
+        click(ui::kSettingsCaptureCursor);
+
+        // A folder makes quick saving available; cancelling the picker changes nothing.
+        click(ui::kSettingsImageChange);
+        CHECK(text(ui::kSettingsImageFolder) == L"D:\\Captures" && folder_requests == 1);
+        CHECK(::IsWindowEnabled(item(ui::kSettingsImageReset)) != FALSE);
+        CHECK(::IsWindowEnabled(item(ui::kSettingsQuickSave)) != FALSE);
+        click(ui::kSettingsImageChange);
+        CHECK(text(ui::kSettingsImageFolder) == L"D:\\Captures" && folder_requests == 2);
+        click(ui::kSettingsQuickSave);
+        click(ui::kSettingsVideoChange);
+        click(ui::kSettingsVideoReset);  // Set and cleared again.
+        CHECK(text(ui::kSettingsVideoFolder) == L"Not set: the folder used last");
+
+        // The shortcut button waits for a combination. Tab, Enter and Esc are
+        // keys for it now, not for the dialog.
+        HWND shortcut = item(ui::kSettingsShortcut);
+        click(ui::kSettingsShortcut);
+        CHECK(text(ui::kSettingsShortcut) == L"Press the new shortcut..." && !text(ui::kSettingsShortcutHint).empty());
+        CHECK((::SendMessageW(shortcut, WM_GETDLGCODE, 0, 0) & DLGC_WANTALLKEYS) != 0);
+        SetModifierKeys({VK_SHIFT});
+        ::SendMessageW(shortcut, WM_KEYDOWN, VK_SHIFT, 0);  // A modifier alone: still waiting.
+        ::SendMessageW(shortcut, WM_KEYDOWN, 'K', 0);       // Shift+K would take a capital letter away.
+        CHECK(text(ui::kSettingsShortcut) == L"Press the new shortcut..." && probed.empty());
+        SetModifierKeys({VK_CONTROL});
+        ::SendMessageW(shortcut, WM_KEYDOWN, 'Z', 0);       // Taken by another application.
+        CHECK(probed.size() == 1 && probed.back() == std::pair<UINT, UINT>(MOD_CONTROL, 'Z'));
+        CHECK(text(ui::kSettingsShortcut) == L"Ctrl + Shift + A");
+        CHECK(text(ui::kSettingsShortcutHint).find(L"Ctrl + Z") != std::wstring::npos);
+        click(ui::kSettingsShortcut);
+        SetModifierKeys({});
+        ::SendMessageW(shortcut, WM_KEYDOWN, VK_ESCAPE, 0);  // Esc keeps the shortcut and the dialog.
+        CHECK(text(ui::kSettingsShortcut) == L"Ctrl + Shift + A" && ::IsWindow(dialog));
+        CHECK((::SendMessageW(shortcut, WM_GETDLGCODE, 0, 0) & DLGC_WANTALLKEYS) == 0);
+        click(ui::kSettingsShortcut);
+        SetModifierKeys({VK_CONTROL, VK_MENU});
+        ::SendMessageW(shortcut, WM_SYSKEYDOWN, 'Q', 0);
+        SetModifierKeys({});
+        CHECK(text(ui::kSettingsShortcut) == L"Ctrl + Alt + Q" && text(ui::kSettingsShortcutHint).empty());
+        click(IDOK);
+    });
+    CHECK(ui::ShowSettingsDialog(nullptr, model, callbacks));
+    CHECK(!platform::ModalLoopActive());
+    CHECK(model.language == app::LanguageSetting::Turkish);
+    CHECK(!model.appearance_follows_system && model.appearance_theme == app::AppearanceTheme::Dark);
+    CHECK(model.hotkey_modifiers == (MOD_CONTROL | MOD_ALT) && model.hotkey_virtual_key == 'Q');
+    CHECK(model.start_with_windows && model.capture_cursor);
+    CHECK(model.image_folder == L"D:\\Captures" && model.quick_save_images && model.video_folder.empty());
+
+    // Cancel changes nothing, whatever was touched; the dialog opens on what it was given.
+    const SettingsDialogModel accepted = model;
+    OnNextDialog([&](HWND dialog) {
+        CHECK(::SendMessageW(::GetDlgItem(dialog, ui::kSettingsLanguage), CB_GETCURSEL, 0, 0) == 2);
+        CHECK(::SendMessageW(::GetDlgItem(dialog, ui::kSettingsAppearance), CB_GETCURSEL, 0, 0) == 2);
+        CHECK(WindowText(::GetDlgItem(dialog, ui::kSettingsShortcut)) == L"Ctrl + Alt + Q");
+        CHECK(::SendMessageW(::GetDlgItem(dialog, ui::kSettingsQuickSave), BM_GETCHECK, 0, 0) == BST_CHECKED);
+        ::SendMessageW(::GetDlgItem(dialog, ui::kSettingsLanguage), CB_SETCURSEL, 1, 0);
+        ::SendMessageW(::GetDlgItem(dialog, ui::kSettingsImageReset), BM_CLICK, 0, 0);
+        // Without a folder there is nowhere to save without asking.
+        CHECK(::SendMessageW(::GetDlgItem(dialog, ui::kSettingsQuickSave), BM_GETCHECK, 0, 0) == BST_UNCHECKED);
+        CHECK(::IsWindowEnabled(::GetDlgItem(dialog, ui::kSettingsQuickSave)) == FALSE);
+        ::SendMessageW(dialog, WM_CLOSE, 0, 0);
+    });
+    CHECK(!ui::ShowSettingsDialog(nullptr, model, callbacks));
+    CHECK(model.language == accepted.language && model.image_folder == accepted.image_folder &&
+          model.quick_save_images == accepted.quick_save_images && model.hotkey_virtual_key == accepted.hotkey_virtual_key);
+    CHECK(g_dialogs_seen == dialogs_before + 2);
+    CHECK(ui::ShortcutText(MOD_WIN | MOD_SHIFT, VK_F2) == L"Shift + Win + F2");
+}
+
 // --- The editor asks before it discards -----------------------------------------------
 
 platform::BgraImage Picture(int width, int height) {
@@ -292,6 +409,7 @@ int main() {
     CHECK(::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
     ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     Dialogs();
+    SettingsDialog();
     EditorDiscard();
     platform::GraphicsEnvironment::Get().Shutdown();
     ::CoUninitialize();

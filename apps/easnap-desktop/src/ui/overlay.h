@@ -52,6 +52,8 @@ public:
         /// A wheel turn over a fixed image: delta, Ctrl, Shift (or a
         /// horizontal wheel), pointer position on the desktop.
         std::function<void(int, bool, bool, POINT)> on_editor_wheel;
+        /// Record was chosen where recording cannot work. The mode did not change.
+        std::function<void()> on_recording_unavailable;
     };
 
     explicit OverlayController(Callbacks callbacks);
@@ -103,6 +105,12 @@ public:
     /// Changes only the pending capture mode. The shared selector is untouched.
     void SetMode(app::CaptureMode mode);
     [[nodiscard]] app::CaptureMode mode() const noexcept { return workspace_.mode(); }
+    /// Recording needs Media Foundation, which some editions of Windows lack.
+    /// Where it is missing the Record button explains that instead of
+    /// switching the mode.
+    void SetRecordingAvailable(bool available) noexcept { recording_available_ = available; }
+    /// True when the mode may be entered; otherwise the owner has been told.
+    [[nodiscard]] bool AllowMode(app::CaptureMode mode);
     [[nodiscard]] CaptureWorkspace& workspace() noexcept { return workspace_; }
     [[nodiscard]] const CaptureWorkspace& workspace() const noexcept { return workspace_; }
     [[nodiscard]] HWND owner_window() const noexcept;
@@ -157,6 +165,7 @@ private:
     bool visible_{false};
     bool document_view_{false};
     bool frame_exposed_{false};
+    bool recording_available_{true};
     float document_top_{0.0f};
     float document_visible_{1.0f};
     std::wstring document_label_;
