@@ -68,4 +68,5 @@ A finished investigation leaves its conclusion in an ADR; the report itself is
 not kept. Avoid duplicating phase histories across these files.
 
 
-Raw diagnostic media, machine-specific tool settings and historical evidence files are retained locally and are not part of the public repository.
+Raw diagnostic media and machine-specific tool settings are not part of the
+public repository.
