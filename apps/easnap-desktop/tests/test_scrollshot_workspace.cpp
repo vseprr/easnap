@@ -469,13 +469,17 @@ void Controls() {
     CHECK(!Overlaps(island_rect, frame) && !controls.island_over_frame());
     CHECK(controls.preview_hwnd() != nullptr && ::IsWindowVisible(controls.preview_hwnd()) == FALSE);
 
-    // The island follows the frame while it is being adjusted.
+    // The island follows the frame while it is being adjusted. Moving the
+    // frame up keeps an island that is below it below it; on a monitor too
+    // short for that place the island is on another side, and moving up would
+    // make room below and change the side, so the frame only moves sideways.
+    const LONG up = island_rect.top >= frame.bottom ? -120 : 0;
     RECT moved = frame;
-    ::OffsetRect(&moved, -200, -120);
+    ::OffsetRect(&moved, -200, up);
     controls.SetFrame(moved);
     RECT followed{};
     ::GetWindowRect(island, &followed);
-    CHECK(followed.left == island_rect.left - 200 && followed.top == island_rect.top - 120);
+    CHECK(followed.left == island_rect.left - 200 && followed.top == island_rect.top + up);
     controls.SetFrame(frame);
 
     // --- Capture view: exactly Edit, Save, Discard and Copy ------------------
@@ -723,10 +727,13 @@ void DocumentEditing() {
     CHECK(view.viewport.top == area.top && view.viewport.bottom == area.bottom);
     const RECT region = editor.region();
     CHECK(::EqualRect(&region, &view.viewport));
-    // The tools island belongs to the viewport: below it, inside the work area.
+    // The tools island belongs to the viewport: inside the work area, and
+    // below the viewport on a monitor that has room to spare there.
     RECT island{};
     ::GetWindowRect(editor.hwnd(), &island);
-    CHECK(island.top >= view.viewport.bottom && island.bottom <= monitor.work_area.bottom);
+    const bool room_below = monitor.work_area.bottom - view.viewport.bottom >= 2 * platform::RectHeight(island);
+    CHECK(island.top >= monitor.work_area.top && island.bottom <= monitor.work_area.bottom);
+    CHECK(!room_below || island.top >= view.viewport.bottom);
     // The Scrollshot button is not offered on a stitched image.
     CHECK(::IsWindowEnabled(::GetDlgItem(editor.hwnd(), 2408)) == FALSE);
 
