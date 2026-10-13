@@ -1,6 +1,7 @@
 # ADR-009 — MP4 trim boundaries, timeline normalization, and publication
 
 **Status:** Accepted  
+**Amended by:** [ADR-021](ADR-021-recording-startup-timeline-and-session-leases.md) (trim submits the original decoded sample)  
 **Date:** 2026-08-31
 
 ## Context
@@ -24,7 +25,11 @@ these stable backend boundary semantics through ADR-010/011.
    Foundation source reader. Its primary Windows 10 path supplies one shared
    `IMFDXGIDeviceManager` to the source reader and sink writer, negotiates NV12,
    and forwards bounded decoded samples directly to H.264 encoding. DXGI-backed
-   samples remain on D3D11 surfaces. If D3D/native-NV12 negotiation is
+   samples remain on D3D11 surfaces, with one exception (v1.0.2): a frame that
+   the decoder padded beyond its display aperture is repacked into one
+   contiguous NV12 picture (`PackNv12Picture`) unless the encoder is
+   Direct3D-aware and reads the picture inside the padded surface
+   (`EncoderReadsSurfaces`). If D3D/native-NV12 negotiation is
    unavailable, it first accepts system-memory NV12 and finally retains the
    bounded RGB32/BGRA production fallback. AAC remains one bounded float-PCM
    sample at a time. The exporter does not depend on `RecordingSession`.

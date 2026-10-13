@@ -139,20 +139,22 @@ bool RecordingSession::Start() {
     try {
         temporary_session_ = store_.CreateSession();
         if (!temporary_session_.has_value() || !temporary_session_->valid()) {
-            RollBackStartup(L"Creating the restricted temporary recording session failed");
+            RollBackStartup(L"Creating the restricted temporary recording session failed",
+                            RecordingStartFailure::Storage);
             return false;
         }
 
         const std::wstring output_path = temporary_session_->recording_path();
         writer_ = media::CreateMediaFoundationWriter();
         if (writer_ == nullptr) {
-            RollBackStartup(L"Creating the Media Foundation writer failed");
+            RollBackStartup(L"Creating the Media Foundation writer failed", RecordingStartFailure::Internal);
             return false;
         }
 
         if (AudioEnabled()) {
             if (audio_provider_ == nullptr) {
-                RollBackStartup(L"Creating the WASAPI audio capture provider failed");
+                RollBackStartup(L"Creating the WASAPI audio capture provider failed",
+                                RecordingStartFailure::Audio);
                 return false;
             }
             all_worker_threads_stopped_.store(false, std::memory_order_release);
@@ -161,16 +163,18 @@ bool RecordingSession::Start() {
                     OnAudioPacket(packet);
                 });
             if (audio_result != media::AudioCaptureResult::Ok) {
-                RollBackStartup(AudioStartFailure(audio_result));
+                RollBackStartup(AudioStartFailure(audio_result), RecordingStartFailure::Audio);
                 return false;
             }
             audio_format_ = audio_provider_->negotiated_format();
             if (!audio_format_.valid()) {
-                RollBackStartup(L"WASAPI returned an invalid negotiated audio format");
+                RollBackStartup(L"WASAPI returned an invalid negotiated audio format",
+                                RecordingStartFailure::Audio);
                 return false;
             }
             if (!audio_timeline_.Reset(audio_format_)) {
-                RollBackStartup(L"Initializing the sample-accurate audio timeline failed");
+                RollBackStartup(L"Initializing the sample-accurate audio timeline failed",
+                                RecordingStartFailure::Audio);
                 return false;
             }
         }
@@ -186,7 +190,7 @@ bool RecordingSession::Start() {
             if (message.empty()) {
                 message = L"Opening the Media Foundation writer failed";
             }
-            RollBackStartup(std::move(message));
+            RollBackStartup(std::move(message), RecordingStartFailure::Encoder);
             return false;
         }
 
@@ -196,23 +200,25 @@ bool RecordingSession::Start() {
             consumer_thread_ = std::thread(&RecordingSession::ConsumerMain, this);
         } catch (...) {
             consumer_running_.store(false, std::memory_order_release);
-            RollBackStartup(L"Starting the bounded video consumer thread failed");
+            RollBackStartup(L"Starting the bounded video consumer thread failed",
+                            RecordingStartFailure::Internal);
             return false;
         }
 
         if (!capture_worker_->Start()) {
-            RollBackStartup(L"Starting the desktop capture worker failed");
+            RollBackStartup(L"Starting the desktop capture worker failed", RecordingStartFailure::Capture);
             return false;
         }
         if (AudioEnabled() && !BeginAudioSegment()) {
-            RollBackStartup(L"Anchoring the audio stream to recording active time failed");
+            RollBackStartup(L"Anchoring the audio stream to recording active time failed",
+                            RecordingStartFailure::Audio);
             return false;
         }
     } catch (const std::bad_alloc&) {
-        RollBackStartup(L"Allocating recording-session state failed");
+        RollBackStartup(L"Allocating recording-session state failed", RecordingStartFailure::Internal);
         return false;
     } catch (...) {
-        RollBackStartup(L"Starting the recording session failed unexpectedly");
+        RollBackStartup(L"Starting the recording session failed unexpectedly", RecordingStartFailure::Internal);
         return false;
     }
 
@@ -1228,7 +1234,8 @@ void RecordingSession::RecordFailure(std::wstring message) noexcept {
     state_.store(RecordingSessionState::Failed, std::memory_order_release);
 }
 
-void RecordingSession::RollBackStartup(std::wstring message) noexcept {
+void RecordingSession::RollBackStartup(std::wstring message, RecordingStartFailure failure) noexcept {
+    start_failure_.store(failure, std::memory_order_release);
     RecordFailure(std::move(message));
     StopWorkersAndJoin();
     if (writer_ != nullptr) {

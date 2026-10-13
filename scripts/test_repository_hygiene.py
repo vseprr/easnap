@@ -7,7 +7,8 @@ import sys
 import tempfile
 import unittest
 
-from check_repository_hygiene import private_files, read_allowlist, unexpected_media
+from check_repository_hygiene import (broken_links, heading_anchors, private_files,
+                                      read_allowlist, unexpected_media)
 
 
 class RepositoryHygieneTests(unittest.TestCase):
@@ -77,6 +78,47 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertEqual(private_files(private | public), sorted(private))
         self.assertEqual(private_files({'DOCS/EVIDENCE/run.json', r'.agents\hooks.json'}),
                          sorted({'DOCS/EVIDENCE/run.json', r'.agents\hooks.json'}))
+
+    def test_broken_links_and_anchors_are_reported(self):
+        root = Path(__file__).resolve().parent.parent
+        local = root / '.local'
+        local.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix='hygiene-links-', dir=local) as directory:
+            fixture = Path(directory)
+            (fixture / 'docs/sub').mkdir(parents=True)
+            (fixture / 'docs/guide.md').write_text(
+                '# Guide\n\n## Known limits (beta)\n\n## `Code` and *style*\n\n## Twice\n\n## Twice\n',
+                encoding='utf-8')
+            (fixture / 'docs/sub/page.md').write_text(
+                '[ok](../guide.md) [anchor](../guide.md#known-limits-beta) [code](../guide.md#code-and-style)\n'
+                '[second](../guide.md#twice-1) [self](#here) [dir](../sub) [web](https://example.org/x.md)\n'
+                '[mail](mailto:someone@example.org) <img src="../picture.png"> <a href="#here">x</a>\n'
+                '[gone](../missing.md) [private](../../notes/private.md) [bad](../guide.md#no-such-part)\n'
+                '[outside](../../../elsewhere.md) [nowhere](#absent)\n'
+                '```\n[in a code block](never.md)\n```\n`[inline](never.md)`\n\n## Here\n',
+                encoding='utf-8')
+            (fixture / 'notes').mkdir()
+            (fixture / 'notes/private.md').write_text('# Exists on disk, not in the inventory\n',
+                                                       encoding='utf-8')
+            tracked = ['docs/guide.md', 'docs/sub/page.md', 'docs/picture.png']
+            self.assertEqual(broken_links(fixture, tracked), [
+                'docs/sub/page.md: ../missing.md',
+                'docs/sub/page.md: ../../notes/private.md',
+                'docs/sub/page.md: ../guide.md#no-such-part (no such heading)',
+                'docs/sub/page.md: ../../../elsewhere.md',
+                'docs/sub/page.md: #absent (no such heading)'])
+            self.assertEqual(broken_links(fixture, ['docs/guide.md']), [])
+        self.assertEqual(heading_anchors('# v1.0.2\n## A [link](x.md) here\n'),
+                         {'v102', 'a-link-here'})
+
+    def test_documents_of_this_repository_have_no_broken_links(self):
+        root = Path(__file__).resolve().parent.parent
+        result = subprocess.run(['git', 'ls-files', '-z'], cwd=root, check=False,
+                                stdout=subprocess.PIPE)
+        if result.returncode != 0:
+            self.skipTest('not a Git checkout')
+        paths = result.stdout.decode('utf-8').rstrip('\0').split('\0')
+        self.assertEqual(broken_links(root, paths), [])
 
     def test_inventory_command_rejects_private_and_unreviewed_files(self):
         root = Path(__file__).resolve().parent.parent

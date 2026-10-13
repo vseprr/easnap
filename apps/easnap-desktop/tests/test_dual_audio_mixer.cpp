@@ -311,7 +311,7 @@ void TestSourceSilentActiveSilentActiveTransitions() {
     }
 
     // System Audio goes silent for 200 ms (gap of 2,000,000 hundred-nanoseconds).
-    // Now packet 1 arrives at t = 200 ms: exceeds 50 ms continuity tolerance, so it re-anchors.
+    // Now packet 1 arrives at t = 200 ms: beyond the continuity tolerance (240 frames, 5 ms), so it re-anchors.
     CHECK(mixer.Push(DualAudioInput::SystemAudio,
                      ConstantPacket(format, 480, 2'000'000, 0.6F)) ==
           DualAudioMixerPushResult::Success);

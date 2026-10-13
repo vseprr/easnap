@@ -61,6 +61,13 @@ public:
         return true;
     }
 
+    bool MarkRecoverable(const TemporarySession& session) override {
+        marked.push_back(session.directory);
+        return true;
+    }
+
+    std::vector<TemporarySession> AdoptRecoverableSessions() override { return {}; }
+
     int CleanupStaleSessions(
         const std::vector<std::wstring>& protected_directories = {}) override {
         ++cleanup_count;
@@ -72,6 +79,7 @@ public:
         return root;
     }
 
+    std::vector<std::wstring> marked;
     int created_count{0};
     int delete_count{0};
     int release_count{0};
@@ -310,6 +318,107 @@ void TestLiveTemporarySessionLease() {
     CHECK(owner->ReleaseSession(*session));
     CHECK(collector->CleanupStaleSessions(protected_directories) == 1);
     CHECK(!std::filesystem::exists(session->directory));
+}
+
+/// A finished recording that was neither saved nor discarded survives the
+/// instance that made it, and the sweep of the next one, until someone decides.
+void TestRecoverableSession() {
+    auto first = easnap::media::CreateTemporarySessionStore();
+    auto second = easnap::media::CreateTemporarySessionStore();
+    // Sessions of the person running the test are never touched.
+    const std::vector<std::wstring> foreign = second->EnumerateSessions();
+    const auto session = first->CreateSession();
+    CHECK(session.has_value());
+    if (!session) {
+        return;
+    }
+    const auto adopt_mine = [&](easnap::media::ITemporarySessionStore& store)
+        -> std::optional<TemporarySession> {
+        std::optional<TemporarySession> mine;
+        for (const TemporarySession& adopted : store.AdoptRecoverableSessions()) {
+            if (adopted.directory == session->directory) {
+                mine = adopted;
+            } else {
+                store.ReleaseSession(adopted);  // Found on this computer: left as it was.
+            }
+        }
+        return mine;
+    };
+    WriteBytes(session->recording_path(), "finished-recording");
+    CHECK(!second->MarkRecoverable(*session));  // Only the owner can mark it.
+    CHECK(first->MarkRecoverable(*session));
+
+    // While its owner runs, another instance neither sweeps nor adopts it.
+    CHECK(second->CleanupStaleSessions(foreign) == 0);
+    CHECK(!adopt_mine(*second).has_value());
+
+    // The owner ends without a decision: a crash, or the end of the session.
+    CHECK(first->ReleaseSession(*session));
+    first.reset();
+    CHECK(std::filesystem::exists(session->recording_path()));
+    CHECK(second->CleanupStaleSessions(foreign) == 0);
+    CHECK(std::filesystem::exists(session->recording_path()));
+    std::optional<TemporarySession> adopted = adopt_mine(*second);
+    CHECK(adopted.has_value() && adopted->id == session->id &&
+          adopted->recording_path() == session->recording_path());
+    CHECK(!adopt_mine(*second).has_value());  // Adopted once.
+
+    // "Not now": it stays for the run after that.
+    if (adopted) {
+        CHECK(second->ReleaseSession(*adopted));
+    }
+    second.reset();
+    auto third = easnap::media::CreateTemporarySessionStore();
+    adopted = adopt_mine(*third);
+    CHECK(adopted.has_value());
+    // A decision is final.
+    if (adopted) {
+        CHECK(third->DeleteSession(*adopted));
+    }
+    CHECK(!std::filesystem::exists(session->directory));
+
+    // A mark without a recording promises nothing and is swept like the rest.
+    const auto empty = third->CreateSession();
+    CHECK(empty.has_value());
+    if (empty) {
+        CHECK(third->MarkRecoverable(*empty));
+        CHECK(third->ReleaseSession(*empty));
+        bool offered = false;
+        for (const TemporarySession& candidate : third->AdoptRecoverableSessions()) {
+            offered = offered || candidate.directory == empty->directory;
+            third->ReleaseSession(candidate);
+        }
+        CHECK(!offered);
+        CHECK(third->CleanupStaleSessions(foreign) == 1);
+        CHECK(!std::filesystem::exists(empty->directory));
+    }
+
+    // A directory without a lease is being created - unless it is old: then it
+    // is what a deletion left behind, and it goes.
+    const std::filesystem::path debris =
+        std::filesystem::path(third->root_directory()) / L"easnap-test-leaseless-session";
+    std::error_code ignored;
+    std::filesystem::remove_all(debris, ignored);
+    CHECK(std::filesystem::create_directory(debris));
+    WriteBytes(debris / L"recording.mp4", "left-behind");
+    CHECK(third->CleanupStaleSessions(foreign) == 0);
+    CHECK(std::filesystem::exists(debris));
+    HANDLE directory = ::CreateFileW(debris.c_str(), FILE_WRITE_ATTRIBUTES,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                     OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    CHECK(directory != INVALID_HANDLE_VALUE);
+    if (directory != INVALID_HANDLE_VALUE) {
+        FILETIME now{};
+        ::GetSystemTimeAsFileTime(&now);
+        ULARGE_INTEGER earlier{now.dwLowDateTime, now.dwHighDateTime};
+        earlier.QuadPart -= 2ull * 36000000000ull;  // Two hours.
+        const FILETIME created{earlier.LowPart, earlier.HighPart};
+        CHECK(::SetFileTime(directory, &created, nullptr, nullptr) != FALSE);
+        ::CloseHandle(directory);
+        CHECK(third->CleanupStaleSessions(foreign) == 1);
+    }
+    CHECK(!std::filesystem::exists(debris));
+    std::filesystem::remove_all(debris, ignored);
 }
 
 void TestClipboardPublicationAcl() {
@@ -609,6 +718,7 @@ void TestDiscardArtifactAndClosePolicy() {
 
 int main() {
     TestLiveTemporarySessionLease();
+    TestRecoverableSession();
     TestClipboardPublicationAcl();
     TestGifSaveAndClipboardPublication();
     TestDurableSavePublication();

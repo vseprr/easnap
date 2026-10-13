@@ -5,6 +5,8 @@
 #include <cmath>
 #include <new>
 
+#include "strings/strings.h"
+
 namespace easnap::ui {
 namespace {
 struct TimelineState {
@@ -50,10 +52,15 @@ public:
         if (!Alive()) { return UIA_E_ELEMENTNOTAVAILABLE; }
         const auto snapshot = state_->read();
         if (property == UIA_NamePropertyId || property == UIA_AutomationIdPropertyId || property == UIA_HelpTextPropertyId) {
-            static constexpr const wchar_t* names[]{L"In point", L"Playback position", L"Out point"};
+            // Automation ids are fixed English identifiers that clients look
+            // elements up by; only the name and the help text are localized.
+            static constexpr const wchar_t* ids[]{L"In point", L"Playback position", L"Out point"};
+            static constexpr UINT names[]{IDS_TRIM_TIMELINE_IN_NAME, IDS_TRIM_TIMELINE_POSITION_NAME, IDS_TRIM_TIMELINE_OUT_NAME};
             const wchar_t* text = property == UIA_HelpTextPropertyId
-                ? L"Seconds. Arrow keys adjust; Shift adjusts In and Ctrl adjusts Out. Export follows media sample boundaries."
-                : (index_ < 0 ? L"Trim timeline" : names[index_]);
+                ? strings::Get(IDS_TRIM_TIMELINE_HELP)
+                : property == UIA_AutomationIdPropertyId
+                    ? (index_ < 0 ? L"Trim timeline" : ids[index_])
+                    : strings::Get(index_ < 0 ? IDS_TRIM_TIMELINE_NAME : names[index_]);
             result->vt = VT_BSTR; result->bstrVal = ::SysAllocString(text);
             return result->bstrVal ? S_OK : E_OUTOFMEMORY;
         }

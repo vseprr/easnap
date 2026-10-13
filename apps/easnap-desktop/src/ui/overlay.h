@@ -23,6 +23,16 @@ namespace easnap::ui {
 
 class OverlayWindow;
 
+/// What the keyboard or the wheel asked of a Scrollshot while the workspace,
+/// not one of its islands, had the focus.
+enum class ScrollshotCommand {
+    Start,         ///< Enter while the frame is still adjustable.
+    Copy,          ///< Enter or Ctrl+C while capturing or reviewing.
+    Save,          ///< Ctrl+S.
+    Discard,       ///< Esc.
+    WheelBlocked,  ///< A wheel turn over the frame arrived here instead of the content.
+};
+
 /// Owns every overlay window and the shared selection state.
 class OverlayController {
 public:
@@ -38,6 +48,15 @@ public:
         std::function<void(UINT, POINT)> on_image_pointer;
         std::function<void(UINT, WPARAM, LPARAM)> on_editor_key;
         std::function<void(HDC, const RECT&, const RECT&)> on_paint_image;
+        std::function<void(ScrollshotCommand)> on_scrollshot_command;
+        /// A wheel turn over a fixed image: delta, Ctrl, Shift (or a
+        /// horizontal wheel), pointer position on the desktop.
+        std::function<void(int, bool, bool, POINT)> on_editor_wheel;
+        /// Record was chosen where recording cannot work. The mode did not change.
+        std::function<void()> on_recording_unavailable;
+        /// The user moved the mode island along its edge. Islands that stay
+        /// clear of it place themselves again.
+        std::function<void()> on_mode_island_moved;
     };
 
     explicit OverlayController(Callbacks callbacks);
@@ -54,6 +73,34 @@ public:
     /// Restores the existing workspace after acquiring final pixels off-screen.
     void Resume();
     void FixScreenshot();
+    /// Locks the frame for a scrolling capture and opens the input plane
+    /// inside it, so the wheel and the pointer reach the content underneath
+    /// while everything outside the frame stays inert.
+    void BeginScrollshotCapture();
+    /// Closes the input plane again. The frame stays locked.
+    void StopScrollshotCapture();
+    /// Rearranges the shading outside the frame so that no translucent window
+    /// contains the frame, and waits until the compositor shows it. Windows
+    /// passes every pixel under a translucent capture-excluded window through
+    /// a blend that changes a few values by one level - in captures too, and
+    /// even where a window region cuts the window away. Call before the first
+    /// picture of a scrolling capture. The screen looks the same. Ends with
+    /// `false`, StopScrollshotCapture or Destroy.
+    void ExposeScrollshotFrame(bool exposed);
+    [[nodiscard]] bool frame_exposed() const noexcept { return frame_exposed_; }
+    void RequestScrollshotCommand(ScrollshotCommand command);
+    /// Shows a fixed image that is larger than its frame: the workspace of a
+    /// stopped Scrollshot, or a freshly shown one, becomes the viewport
+    /// `viewport` onto that image. The frame can no longer be changed by hand.
+    void BeginDocumentView(const RECT& viewport);
+    /// The viewport moved, scrolled or zoomed. The fractions describe the part
+    /// of the image above and inside it; `label` replaces the size readout.
+    void SetDocumentView(const RECT& viewport, float top_fraction, float visible_fraction, std::wstring label);
+    [[nodiscard]] bool document_view() const noexcept { return document_view_; }
+    [[nodiscard]] float document_top_fraction() const noexcept { return document_top_; }
+    [[nodiscard]] float document_visible_fraction() const noexcept { return document_visible_; }
+    [[nodiscard]] const std::wstring& document_label() const noexcept { return document_label_; }
+    void EditorWheel(int delta, bool control, bool shift, POINT point);
     /// Destroys all windows and releases device resources.
     void Destroy();
 
@@ -61,8 +108,19 @@ public:
     /// Changes only the pending capture mode. The shared selector is untouched.
     void SetMode(app::CaptureMode mode);
     [[nodiscard]] app::CaptureMode mode() const noexcept { return workspace_.mode(); }
+    /// Recording needs Media Foundation, which some editions of Windows lack.
+    /// Where it is missing the Record button explains that instead of
+    /// switching the mode.
+    void SetRecordingAvailable(bool available) noexcept { recording_available_ = available; }
+    /// True when the mode may be entered; otherwise the owner has been told.
+    [[nodiscard]] bool AllowMode(app::CaptureMode mode);
     [[nodiscard]] CaptureWorkspace& workspace() noexcept { return workspace_; }
     [[nodiscard]] const CaptureWorkspace& workspace() const noexcept { return workspace_; }
+    /// The mode island in desktop pixels, for the islands that never cover
+    /// it. Empty once modes can no longer be switched: it fades away then.
+    [[nodiscard]] RECT mode_island_rect() const;
+    /// Called by the window that owns the mode island after the user dragged it.
+    void ModeIslandMoved();
     [[nodiscard]] HWND owner_window() const noexcept;
     /// Editor/configuration popups belong above the complete presentation stack,
     /// not to the input plane beneath the shading and image windows.
@@ -99,6 +157,10 @@ public:
     void SetNotice(std::wstring text);
 
 private:
+    /// Hides the mode island while the frame is dragged or resized, and puts
+    /// it back, placed for the new frame, when the gesture ends.
+    void UpdateModeIsland();
+
     Callbacks callbacks_;
     RegionSelector selector_;
     std::vector<std::unique_ptr<OverlayWindow>> windows_;
@@ -112,7 +174,14 @@ private:
     WorkspacePointerSequence pointer_sequence_;
     bool pointer_active_{false};
     bool selection_started_{false};
+    bool frame_pressed_{false};
     bool visible_{false};
+    bool document_view_{false};
+    bool frame_exposed_{false};
+    bool recording_available_{true};
+    float document_top_{0.0f};
+    float document_visible_{1.0f};
+    std::wstring document_label_;
 };
 
 }  // namespace easnap::ui

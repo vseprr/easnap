@@ -11,7 +11,6 @@ input. The endpoints can expose different sample rates, channel layouts, sample
 representations, packet cadences, and independent QPC epochs. Arrival order is
 therefore not a valid alignment clock.
 
-This decision supersedes the original `Both` deferral in ADR-006 and ADR-007.
 The current MP4 configuration exposes Both through the shared capability model
 in ADR-014.
 
@@ -33,7 +32,7 @@ in ADR-014.
    frame grid. Within an established continuous run for each source, sample-count
    continuity is preserved across packet boundaries so normal OS packet scheduling
    and QPC jitter cannot create audible micro-gaps, duplicated samples, or clicks.
-   Gaps exceeding tolerance (50 ms) and explicit discontinuities re-anchor cleanly
+   Gaps exceeding tolerance (240 frames, 5 ms at 48 kHz) and explicit discontinuities re-anchor cleanly
    to the observed QPC timestamp. A 100 ms look-behind absorbs normal endpoint
    scheduling skew without sleeping for alignment or mixing by arrival order.
    Missing source frames are silence, including late endpoint startup and

@@ -1,33 +1,37 @@
 # Easnap design system
 
-Win32 presentation baseline, accepted by the user on 2026-09-21. All text,
-trim/window, playhead, export, preview-opening and recording-island corrections
-from that session are resolved and closed. New or changed windows must follow
-the [window implementation guide](window-implementation-guide.md) and
-[ADR-024](../decisions/ADR-024-native-trim-frame.md). See
-[ADR-017](../decisions/ADR-017-neumorphic-editor-and-editable-annotations.md) for
-the current decisions, [ADR-016](../decisions/ADR-016-shared-appearance-and-native-controls.md)
-for theme ownership, and [validation](neumorphic-validation.md) for actual evidence.
-The accepted corrections are detailed in
-[ADR-022](../decisions/ADR-022-text-input-and-content-sized-trim.md) and
-[text/trim validation](text-trim-validation.md).
+The implemented Win32 presentation: colours, materials, geometry and control
+behaviour. New or changed windows follow the
+[window implementation guide](window-implementation-guide.md) and
+[ADR-024](../decisions/ADR-024-native-trim-frame.md). The decisions behind
+these values are in
+[ADR-016](../decisions/ADR-016-shared-appearance-and-native-controls.md)
+(theme ownership),
+[ADR-017](../decisions/ADR-017-neumorphic-editor-and-editable-annotations.md)
+(material and editor) and
+[ADR-022](../decisions/ADR-022-text-input-and-content-sized-trim.md) (text
+input and the trim window).
 
 ## Reference and implementation values
 
-The behavior screenshots specify tools, selection rules and compact layout.
-Their flat styling is not the material reference. The supplied neumorphic image
-and source analysis (`../ui-references/theme/neumorphism-inceleme.md`, retained locally) inform light
-direction, related surfaces and soft depth. The extracted 26 effect styles use
-Illustrator coordinates; their blur/offset values are not imported as Easnap
-DIPs or Direct2D standard deviations. Raw blend codes remain uninterpreted.
-Recessed CH/VOL source geometry is separately blurred edge artwork. Easnap uses
-clipped inverse-mask shading to reproduce that appearance. Its recessed slider
-channel and entire Dark palette are deliberate adaptations.
+The material follows a neumorphic reference image that is not part of the
+repository: light from the upper left, related surfaces, soft depth. Its
+effect styles were drawn in Illustrator coordinates; their blur and offset
+values are not Easnap DIPs or Direct2D standard deviations and were not
+imported. The recessed controls of the reference are separately blurred edge
+artwork; Easnap reproduces that appearance with clipped inverse-mask shading.
+The recessed slider channel and the entire Dark palette are adaptations made
+for Easnap.
 
 ## Shared tokens
 
 The authority is `apps/easnap-desktop/src/ui/ui_theme.{h,cpp}`. Annotation colors
 are content values and never come from the current application palette.
+
+Text colours (main, supporting, disabled and success) have a contrast of at
+least 4.5:1, and the control boundary and keyboard focus colours at least 3:1,
+against the panel, raised, recessed, hover, pressed and selected surfaces of
+both palettes; `ui_modernization_native` asserts this (`PaletteContrast`).
 
 | Role | Light | Dark |
 |---|---|---|
@@ -65,7 +69,7 @@ soft paired upper-left highlight and lower-right shadow; inverted masks clipped
 to the face supply recessed edges. Base application choices are 6 DIP mask
 padding, 2 DIP light offset and a blur sigma of one third of that padding. These
 are calibrated implementation values, not source measurements. Geometry/DPI are
-part of the cache key. The accepted optimization also keeps up to 32 colored
+part of the cache key. The renderer also keeps up to 32 colored
 rasters per UI thread, keyed by the effective palette/fill, dimensions, offsets,
 radius, animated depth and drop-shadow setting. Complete rounded ends retain
 their blur support; a horizontally constant center strip stretches without
@@ -79,18 +83,19 @@ target. `SPI_GETCLIENTAREAANIMATION` and high contrast disable animation. Slider
 thumbs and timeline handles track input directly, with no easing delay. Actual
 perceived smoothness still requires interactive desktop review.
 
-## Geometry and controls — accepted 2026-09-21 baseline
+## Geometry and controls
 
 UI layout values are DIPs scaled once to physical pixels. Shared Segoe UI uses
-13 DIP control text, 12 DIP supporting text and 15 DIP semibold headings/time.
+13 DIP control text and 15 DIP semibold headings and time; the trim window
+uses 12.5 DIP for its text and dialogs 14 DIP.
 Typical spacing is 4/8/16 DIP; panel/control radius tokens are 14/8 DIP. Icons use
 GDI+ vector paths on one 24-unit grid, normally displayed at 18 DIP. Rounded
 geometry is antialiased. Overlay vector drawing imports GDI clip regions, and
 label damage includes the one-pixel antialias fringe.
 
-| Surface | Accepted composition |
+| Surface | Composition |
 |---|---|
-| Modes | Screenshot / Record native choices with a dot grip; horizontal grip/blank dragging; 500 ms retirement fade, with disabled semantics and stable visuals |
+| Modes | Screenshot / Scrollshot / Record native choices with a dot grip, one width for all three from the widest label in the active language; horizontal grip/blank dragging; 500 ms retirement fade, with disabled semantics and stable visuals |
 | Main editor island | Up to 780 DIP, 48 DIP high at normal widths; 34 DIP icons, grip and contrasting group separators in both palettes; no footer |
 | Contextual island | Selected-object or tool-default properties only; icon text modes and themed pt presets, stroke/colors, compact effect/spotlight controls, or watermark input; brush sizes use a third mini island |
 | Recording configuration | Existing responsive 390 DIP layout, prominent Start, MP4/GIF and audio/quality/cursor controls, one-click theme button and Cancel |
@@ -98,11 +103,15 @@ label damage includes the one-pixel antialias fringe.
 | Trim | Shared custom caption with native side/bottom resize frame and move/minimize/maximize/close behavior, preview, recessed timeline, raised gray oval In/Out handles without caps, slender playhead with restrained coral glow, transport and neutral Save with coral ink |
 | Menus / dialogs | Native menu ownership with scoped material item drawing; application confirmations use custom rounded chrome and a native modal dialog with real default/cancel actions |
 
-The two editor islands prefer below the frame, then above, and clamp as a group
-to the monitor work area. Full-monitor selections center the group; recording
-configuration follows the same full-monitor rule. Their grip/blank-space drag never starts from an
+The two editor islands are placed as a group by `ui/island_layout`: below the
+frame, above it, beside it on the right or left, and over the bottom of the
+frame only when nothing outside has room; never over the mode island
+([ADR-036](../decisions/ADR-036-island-placement-around-the-frame.md)).
+Full-monitor selections center the group; recording configuration follows the
+same rule. Their grip/blank-space drag never starts from an
 interactive child. Frame-resize press hides both, including the contextual
-island, and release/capture loss restores them without acquisition. Trim opens
+island, and the mode island; release/capture loss restores them without
+acquisition. Trim opens
 from the recording aspect ratio and available work area with readable DPI-scaled
 controls. Manual resizing keeps a 480 x 400 client-DIP minimum, adding the
 native frame when computing outer tracking dimensions and capping to the work
@@ -117,8 +126,8 @@ from ADR-024; do not restore whole-frame removal or top-level WVR_REDRAW.
 Preview-helper positioning remains asynchronous. Tutorial/footer text is removed from
 all capture and trim states. Operational failures use separate transient notices.
 
-The accepted EXPORT-01 correction on 2026-09-21 retains the recessed progress
-track and rounded coral fill. The duplicate sheen over the fill ends is removed.
+Export progress is a recessed track with a rounded coral fill and no sheen
+over the ends of the fill.
 
 ## Annotation content and input
 
@@ -151,10 +160,11 @@ color is white. Point presets are 12/16/24/36/48/60/72/96, with validated custom
 6–288 pt input. Size always affects the whole object. Content point-to-pixel
 conversion retains capture DPI rather than changing with the UI theme/monitor.
 
-In the accepted TEXT-02 correction, EDIT remains visible for native input and
-caret ownership. Its synchronous glyph/background GDI draw receives an empty
-clip region. Only the separate source-backed custom painter draws annotation
-pixels, so typing does not expose a second native glyph or rectangular backing.
+The native EDIT control stays visible for input and caret ownership, but its
+own glyph and background drawing is suppressed. Only the source-backed custom
+painter draws annotation pixels, so typing does not expose a second native
+glyph or a rectangular backing. The native caret is hidden for the duration of
+each message and shown again at the position of the rendered text.
 
 Blur and pixelation are separate effect choices, each supporting brush and
 region. Strength maps to blur radius or block size; pixel changes are rebuilt

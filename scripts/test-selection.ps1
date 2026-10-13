@@ -118,7 +118,7 @@ function Select-EasnapTestWork([object[]]$Tests, [hashtable]$Fingerprints, [hash
     return [PSCustomObject]@{ Run=$run; Cached=$cached; Deferred=$deferred; Excluded=$excluded }
 }
 
-function Get-EasnapJUnitPasses([string]$Report, [string[]]$Selected) {
+function Read-EasnapJUnitCases([string]$Report) {
     if (-not (Test-Path -LiteralPath $Report)) { return @() }
     $settings = New-Object System.Xml.XmlReaderSettings
     $settings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
@@ -126,9 +126,23 @@ function Get-EasnapJUnitPasses([string]$Report, [string[]]$Selected) {
     $reader = [Xml.XmlReader]::Create($Report, $settings)
     try { $xml = New-Object Xml.XmlDocument; $xml.XmlResolver = $null; $xml.Load($reader) }
     finally { $reader.Dispose() }
-    return @($xml.SelectNodes('//testcase') | Where-Object {
+    return @($xml.SelectNodes('//testcase'))
+}
+
+function Get-EasnapJUnitPasses([string]$Report, [string[]]$Selected) {
+    return @(Read-EasnapJUnitCases $Report | Where-Object {
         $_.GetAttribute('name') -in $Selected -and
         -not $_.SelectSingleNode('failure|error|skipped') -and
         $_.GetAttribute('status') -notin @('notrun', 'disabled')
+    } | ForEach-Object { $_.GetAttribute('name') })
+}
+
+# Tests that said they cannot run in this environment (exit code 77 with
+# SKIP_RETURN_CODE). They neither passed nor failed.
+function Get-EasnapJUnitSkips([string]$Report, [string[]]$Selected) {
+    return @(Read-EasnapJUnitCases $Report | Where-Object {
+        $_.GetAttribute('name') -in $Selected -and
+        -not $_.SelectSingleNode('failure|error') -and
+        ($_.SelectSingleNode('skipped') -or $_.GetAttribute('status') -eq 'notrun')
     } | ForEach-Object { $_.GetAttribute('name') })
 }

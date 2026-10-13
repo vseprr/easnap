@@ -77,6 +77,12 @@ struct RecordingControlPolicy {
 /// at most one pixel from the right/bottom edges.
 [[nodiscard]] RECT MakeRecordingRegionEncoderCompatible(const RECT& region) noexcept;
 
+/// False for a picture no H.264 encoder may produce: up to level 5.2 a frame
+/// holds at most 36,864 macroblocks of 16 x 16 pixels and measures at most
+/// 8,688 pixels on a side. An encoder may accept less than that; it reports so
+/// when recording starts.
+[[nodiscard]] bool RecordingRegionFitsH264(const RECT& region) noexcept;
+
 /// Formats the shared active-time media clock as HH:MM:SS.
 [[nodiscard]] std::wstring FormatRecordingElapsed(uint64_t active_duration_100ns);
 

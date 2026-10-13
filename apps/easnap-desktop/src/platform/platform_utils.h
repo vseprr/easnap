@@ -91,6 +91,23 @@ struct MonitorInfo {
     [[nodiscard]] float scale() const noexcept { return static_cast<float>(dpi) / 96.0f; }
 };
 
+struct WindowsVersion {
+    DWORD major{0};
+    DWORD minor{0};
+    DWORD build{0};
+};
+/// The version of Windows that is running, not the one an application
+/// manifest makes the documented version functions report.
+[[nodiscard]] WindowsVersion CurrentWindowsVersion() noexcept;
+
+/// False where Windows has no Media Foundation: the N and KN editions until
+/// the Media Feature Pack is installed. Easnap loads these libraries on first
+/// use, so it starts there; recording, trimming and export are not available.
+[[nodiscard]] bool MediaFoundationAvailable() noexcept;
+
+/// True when Windows is set to dark mode for applications.
+[[nodiscard]] bool SystemUsesDarkApps() noexcept;
+
 /// Call first in every process entry point, before any library is loaded.
 void RestrictDllSearchPath();
 void EnableDpiAwareness();
@@ -98,6 +115,10 @@ void EnableDpiAwareness();
 [[nodiscard]] MonitorInfo MonitorForPoint(POINT pt);
 [[nodiscard]] MonitorInfo MonitorForRect(const RECT& rect);
 [[nodiscard]] RECT VirtualScreenBounds();
+/// True when Windows sends the mouse wheel to the focused window instead of
+/// the one under the pointer ("Scroll inactive windows when I hover over
+/// them" is off). A window that keeps the focus then takes every wheel turn.
+[[nodiscard]] bool WheelFollowsFocus() noexcept;
 
 [[nodiscard]] RECT NormalizedRect(POINT a, POINT b);
 [[nodiscard]] RECT IntersectRects(const RECT& a, const RECT& b);
@@ -255,12 +276,24 @@ bool CopyImageToClipboard(HWND owner, const BgraImage& image);
 
 /// System save dialog (IFileSaveDialog). Returns std::nullopt when cancelled.
 /// Only the picker may decide the destination: no user-provided path fragment
-/// ever reaches the file system directly (see docs/threat model notes).
+/// ever reaches the file system directly (see SECURITY.md).
+/// The dialog's text comes from the caller: this layer is also built into the
+/// preview helper and into tests that carry no string tables.
+struct SaveImageDialogText {
+    const wchar_t* title{L"Save screenshot"};
+    const wchar_t* png_type{L"PNG image"};
+    const wchar_t* jpeg_type{L"JPEG image"};
+};
 std::optional<std::wstring> ShowSaveImageDialog(HWND owner,
                                                 const std::wstring& suggested_file_name,
-                                                const std::wstring& initial_directory);
+                                                const std::wstring& initial_directory,
+                                                const SaveImageDialogText& text = {});
 
 std::optional<std::wstring> KnownFolder(REFKNOWNFOLDERID folder_id);
+/// A path in `directory` that no file uses yet: `file_name`, or the same name
+/// with " (2)", " (3)" ... before its extension. Empty when the directory does
+/// not exist.
+[[nodiscard]] std::wstring UniqueFilePath(const std::wstring& directory, const std::wstring& file_name);
 /// %LOCALAPPDATA%\Easnap, created on demand.
 std::wstring AppDataDirectory();
 std::wstring DirectoryOf(const std::wstring& path);
@@ -274,9 +307,28 @@ bool RemoveDirectoryTree(const std::wstring& path);
 // Diagnostics (privacy preserving: never log pixels, paths or typed text)
 // ---------------------------------------------------------------------------
 
+/// Writes one line to the debugger and to the log sink, if one is set. A line
+/// must never contain user content: no path, file name, window title or text
+/// the user typed.
 void LogMessage(const wchar_t* format, ...);
 void LogHresult(const wchar_t* what, HRESULT hr);
-void ShowErrorMessage(HWND owner, const wchar_t* text);
+/// Receives every `LogMessage` line, without a line break, on the calling
+/// thread. `platform/diagnostics` sets it to the log file; null stops it.
+using LogSink = void (*)(const wchar_t* line) noexcept;
+void SetLogSink(LogSink sink) noexcept;
+
+/// Marks a system dialog that runs its own message loop on the UI thread.
+/// While one is open, the messages of every window of the application are
+/// dispatched from inside it, so nothing the dialog's caller still refers to
+/// may be destroyed. Exit and session-end handling ask `ModalLoopActive`.
+class ModalLoopScope final {
+public:
+    ModalLoopScope() noexcept;
+    ~ModalLoopScope();
+    ModalLoopScope(const ModalLoopScope&) = delete;
+    ModalLoopScope& operator=(const ModalLoopScope&) = delete;
+};
+[[nodiscard]] bool ModalLoopActive() noexcept;
 
 HICON LoadAppIcon(int desired_size);
 

@@ -18,8 +18,12 @@
 #include <string>
 
 #include "app/session_state.h"
+#include "platform/diagnostics.h"
 #include "platform/platform_utils.h"
+#include "platform/startup_entry.h"
 #include "resource.h"
+#include "strings/strings.h"
+#include "ui/settings_dialog.h"
 
 // Opt into the version 6 common controls so menus and dialogs use the modern
 // visual style. Doing it from the linker keeps the project free of a hand
@@ -55,7 +59,8 @@ public:
     bool Add(HWND owner, const std::wstring& tooltip) {
         owner_ = owner;
         tooltip_ = tooltip;
-        icon_ = easnap::platform::LoadAppIcon(::GetSystemMetrics(SM_CXSMICON));
+        // Added again after an Explorer restart: the icon is loaded once.
+        if (icon_ == nullptr) { icon_ = easnap::platform::LoadAppIcon(::GetSystemMetrics(SM_CXSMICON)); }
 
         NOTIFYICONDATAW data = MakeData();
         data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
@@ -93,6 +98,17 @@ public:
         }
     }
 
+    void SetTooltip(const std::wstring& tooltip) {
+        tooltip_ = tooltip;
+        if (!added_) {
+            return;
+        }
+        NOTIFYICONDATAW data = MakeData();
+        data.uFlags = NIF_TIP | NIF_SHOWTIP;
+        ::wcsncpy_s(data.szTip, tooltip_.c_str(), _TRUNCATE);
+        ::Shell_NotifyIconW(NIM_MODIFY, &data);
+    }
+
     void ShowBalloon(const wchar_t* title, const wchar_t* text) const {
         if (!added_) {
             return;
@@ -120,36 +136,206 @@ private:
     bool added_{false};
 };
 
+constexpr wchar_t kWebsite[] = L"https://github.com/vseprr/easnap";
+constexpr wchar_t kReleasesPage[] = L"https://github.com/vseprr/easnap/releases";
+/// A second launch posts this to the running instance: start a capture.
+constexpr wchar_t kActivateMessageName[] = L"Easnap.StartCapture";
+constexpr int kProbeHotkeyId = 2;
+
 TrayIcon g_tray;
 UINT g_taskbar_created_message = 0;
+UINT g_activate_message = 0;
 bool g_hotkey_registered = false;
 
+/// The tooltip says how to capture: with the shortcut, or by clicking when
+/// another application holds the shortcut.
 std::wstring TrayTooltip() {
-    return std::wstring(kProductName) + L" - " + CaptureCoordinator::Instance().settings().HotkeyDisplayText() +
-           L" to capture";
+    return easnap::strings::Format(g_hotkey_registered ? IDS_SHELL_TRAY_TOOLTIP : IDS_TRAY_TOOLTIP_NO_SHORTCUT,
+                                   {CaptureCoordinator::Instance().settings().HotkeyDisplayText()});
 }
 
 bool RegisterCaptureHotkey(HWND hwnd) {
     const auto& settings = CaptureCoordinator::Instance().settings();
-    if (::RegisterHotKey(hwnd, IDH_EASNAP_CAPTURE, settings.hotkey_modifiers | MOD_NOREPEAT,
-                         settings.hotkey_virtual_key) != FALSE) {
-        g_hotkey_registered = true;
-        return true;
+    g_hotkey_registered = ::RegisterHotKey(hwnd, IDH_EASNAP_CAPTURE, settings.hotkey_modifiers | MOD_NOREPEAT,
+                                           settings.hotkey_virtual_key) != FALSE;
+    if (!g_hotkey_registered) {
+        easnap::platform::LogMessage(L"RegisterHotKey failed (error %lu)", ::GetLastError());
     }
-    easnap::platform::LogMessage(L"RegisterHotKey failed (error %lu)", ::GetLastError());
-    return false;
+    return g_hotkey_registered;
+}
+
+void UnregisterCaptureHotkey(HWND hwnd) {
+    if (g_hotkey_registered) {
+        ::UnregisterHotKey(hwnd, IDH_EASNAP_CAPTURE);
+        g_hotkey_registered = false;
+    }
+}
+
+easnap::strings::LanguagePreference ToPreference(easnap::app::LanguageSetting language) {
+    switch (language) {
+        case easnap::app::LanguageSetting::English: return easnap::strings::LanguagePreference::English;
+        case easnap::app::LanguageSetting::Turkish: return easnap::strings::LanguagePreference::Turkish;
+        case easnap::app::LanguageSetting::System: break;
+    }
+    return easnap::strings::LanguagePreference::System;
+}
+
+bool CopyTextToClipboard(HWND owner, const std::wstring& text) {
+    if (::OpenClipboard(owner) == FALSE) {
+        return false;
+    }
+    bool copied = false;
+    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    if (HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+        if (void* target = ::GlobalLock(memory)) {
+            ::memcpy(target, text.c_str(), bytes);
+            ::GlobalUnlock(memory);
+            copied = ::EmptyClipboard() != FALSE && ::SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
+        }
+        if (!copied) { ::GlobalFree(memory); }
+    }
+    ::CloseClipboard();
+    return copied;
+}
+
+/// What a bug report needs, as plain text: versions and the display layout.
+/// No path, no file name, nothing the user created.
+std::wstring DiagnosticDetails() {
+    const auto& settings = CaptureCoordinator::Instance().settings();
+    const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
+    std::wstring text = std::wstring(L"Easnap ") + EASNAP_VERSION_TEXT_W + L"\r\n";
+    text += L"Windows " + std::to_wstring(windows.major) + L"." + std::to_wstring(windows.minor) + L" build " +
+            std::to_wstring(windows.build) + L"\r\n";
+    text += std::wstring(L"Interface language: ") +
+            (easnap::strings::Current() == easnap::strings::Language::Turkish ? L"Turkish" : L"English") + L"\r\n";
+    text += std::wstring(L"Capture shortcut: ") + settings.HotkeyDisplayText() +
+            (g_hotkey_registered ? L"" : L" (not available)") + L"\r\n";
+    text += std::wstring(L"Scrollshot available: ") + (easnap::ui::CaptureExclusionSupported() ? L"yes" : L"no") + L"\r\n";
+    const auto monitors = easnap::platform::EnumerateMonitors();
+    text += L"Displays: " + std::to_wstring(monitors.size()) + L"\r\n";
+    for (const auto& monitor : monitors) {
+        text += L"  " + std::to_wstring(easnap::platform::RectWidth(monitor.bounds)) + L" x " +
+                std::to_wstring(easnap::platform::RectHeight(monitor.bounds)) + L" at " +
+                std::to_wstring(monitor.bounds.left) + L"," + std::to_wstring(monitor.bounds.top) + L", " +
+                std::to_wstring(static_cast<int>(monitor.scale() * 100.0f + 0.5f)) + L"%" +
+                (monitor.primary ? L", primary" : L"") + L"\r\n";
+    }
+    return text;
 }
 
 void ShowAboutDialog(HWND owner) {
-    const std::wstring text =
-        std::wstring(kProductName) + L" " + std::to_wstring(EASNAP_VERSION_MAJOR) + L"." +
-        std::to_wstring(EASNAP_VERSION_MINOR) + L"." + std::to_wstring(EASNAP_VERSION_PATCH) +
-        L"\n\nA local-first screen capture tool for Windows 10.\n"
-        L"Screenshots never leave this computer: Easnap makes no network calls and collects no telemetry.\n\n"
-        L"Capture shortcut: " +
-        CaptureCoordinator::Instance().settings().HotkeyDisplayText() +
-        L"\n\nMIT licensed. See LICENSE and SECURITY.md in the repository.";
-    easnap::ui::ShowMessage(owner, text.c_str(), L"About Easnap", MB_OK | MB_ICONINFORMATION);
+    namespace strings = easnap::strings;
+    const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
+    const std::wstring text = strings::Format(
+        IDS_ABOUT_TEXT, {EASNAP_VERSION_TEXT_W, CaptureCoordinator::Instance().settings().HotkeyDisplayText(),
+                         std::to_wstring(windows.build)});
+    enum : int { kCopy = 100, kWeb = 101, kClose = 102 };
+    const int choice = easnap::ui::ShowChoice(
+        nullptr, text.c_str(), strings::Get(IDS_SHELL_ABOUT_TITLE),
+        {{kCopy, strings::Get(IDS_ABOUT_COPY_DETAILS)}, {kWeb, strings::Get(IDS_ABOUT_WEBSITE)},
+         {kClose, strings::Get(IDS_SHELL_CHROME_CLOSE)}},
+        kClose, kClose);
+    if (choice == kCopy) {
+        CopyTextToClipboard(owner, DiagnosticDetails());
+    } else if (choice == kWeb) {
+        ::ShellExecuteW(nullptr, L"open", kWebsite, nullptr, nullptr, SW_SHOWNORMAL);
+    }
+}
+
+/// The Settings dialog, and what accepting it changes outside the settings
+/// file: the registered shortcut, the startup entry, language and appearance.
+void ShowSettings(HWND hwnd) {
+    namespace strings = easnap::strings;
+    auto& coordinator = CaptureCoordinator::Instance();
+    if (coordinator.state() != SessionState::Idle) {
+        return;
+    }
+    auto& settings = coordinator.settings();
+    const std::wstring executable = easnap::platform::CurrentExecutablePath();
+    easnap::ui::SettingsDialogModel model;
+    model.language = settings.language;
+    model.appearance_follows_system = settings.appearance_follows_system;
+    model.appearance_theme = settings.appearance_theme;
+    model.hotkey_modifiers = settings.hotkey_modifiers;
+    model.hotkey_virtual_key = settings.hotkey_virtual_key;
+    model.start_with_windows = easnap::platform::StartupEntryEnabled(executable);
+    model.capture_cursor = settings.capture_cursor;
+    model.image_folder = settings.image_folder;
+    model.video_folder = settings.video_folder;
+    model.quick_save_images = settings.quick_save_images;
+    const bool started_with_windows = model.start_with_windows;
+
+    easnap::ui::SettingsDialogCallbacks callbacks;
+    // Registering under a second identifier tells whether the combination is
+    // free without giving up the shortcut that works now.
+    callbacks.shortcut_available = [hwnd](UINT modifiers, UINT key) {
+        if (::RegisterHotKey(hwnd, kProbeHotkeyId, modifiers | MOD_NOREPEAT, key) == FALSE) {
+            return false;
+        }
+        ::UnregisterHotKey(hwnd, kProbeHotkeyId);
+        return true;
+    };
+    callbacks.choose_folder = [](HWND owner, const std::wstring& current) {
+        return easnap::ui::ChooseFolder(owner, current, easnap::strings::Get(IDS_SETTINGS_FOLDER_PICK_TITLE));
+    };
+    // The shortcut is given up while the dialog is open. Windows hands a
+    // registered combination to its owner and never to the window that wants
+    // to read it, and Easnap's own is the one most likely to be pressed here.
+    UnregisterCaptureHotkey(hwnd);
+    if (!easnap::ui::ShowSettingsDialog(nullptr, model, callbacks) || coordinator.state() != SessionState::Idle) {
+        RegisterCaptureHotkey(hwnd);
+        g_tray.SetTooltip(TrayTooltip());
+        return;
+    }
+
+    settings.language = model.language;
+    strings::SetPreference(ToPreference(settings.language));
+    settings.appearance_follows_system = model.appearance_follows_system;
+    settings.appearance_theme = model.appearance_theme;
+    coordinator.RefreshAppearance();
+    settings.capture_cursor = model.capture_cursor;
+    settings.image_folder = model.image_folder;
+    settings.video_folder = model.video_folder;
+    settings.quick_save_images = model.quick_save_images;
+    const UINT previous_modifiers = settings.hotkey_modifiers;
+    const UINT previous_key = settings.hotkey_virtual_key;
+    settings.hotkey_modifiers = model.hotkey_modifiers;
+    settings.hotkey_virtual_key = model.hotkey_virtual_key;
+    if (!RegisterCaptureHotkey(hwnd) &&
+        (previous_modifiers != settings.hotkey_modifiers || previous_key != settings.hotkey_virtual_key)) {
+        // Taken between the check and now: keep what worked before.
+        settings.hotkey_modifiers = previous_modifiers;
+        settings.hotkey_virtual_key = previous_key;
+        RegisterCaptureHotkey(hwnd);
+    }
+    const bool startup_refused = model.start_with_windows != started_with_windows &&
+                                 !easnap::platform::SetStartupEntry(model.start_with_windows, executable);
+    coordinator.PersistSettings();
+    g_tray.SetTooltip(TrayTooltip());
+    easnap::platform::LogMessage(L"Settings changed");
+    if (startup_refused) {
+        // The next visit to Settings shows the entry as it really is.
+        easnap::platform::LogMessage(L"The startup entry could not be changed");
+        easnap::ui::ShowErrorMessage(nullptr, strings::Get(IDS_SETTINGS_STARTUP_FAILED));
+    }
+}
+
+/// Said once after a run that ended with a crash report.
+void ShowCrashNotice(const std::wstring& directory) {
+    namespace diagnostics = easnap::platform::diagnostics;
+    namespace strings = easnap::strings;
+    if (!diagnostics::PendingCrashReport(directory).has_value()) {
+        return;
+    }
+    diagnostics::AcknowledgeCrashReports(directory);
+    easnap::platform::LogMessage(L"The previous run ended with a crash report");
+    enum : int { kOpen = 100, kLater = 101 };
+    const int choice = easnap::ui::ShowChoice(
+        nullptr, strings::Get(IDS_CRASH_TEXT), strings::Get(IDS_CRASH_TITLE),
+        {{kOpen, strings::Get(IDS_CRASH_OPEN)}, {kLater, strings::Get(IDS_NOT_NOW)}}, kLater, kLater);
+    if (choice == kOpen) {
+        ::ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    }
 }
 
 void OpenDataFolder() {
@@ -167,21 +353,28 @@ void ShowTrayMenu(HWND hwnd) {
         return;
     }
 
+    namespace strings = easnap::strings;
     auto& coordinator = CaptureCoordinator::Instance();
-    const std::wstring capture_item = L"Capture\t" + coordinator.settings().HotkeyDisplayText();
+    // The tab in the pattern separates the label from the right-aligned shortcut.
+    const std::wstring capture_item = g_hotkey_registered
+        ? strings::Format(IDS_SHELL_TRAY_CAPTURE, {coordinator.settings().HotkeyDisplayText()})
+        : std::wstring(strings::Get(IDS_TRAY_CAPTURE_NO_SHORTCUT));
     const UINT capture_flags = coordinator.state() == SessionState::Idle ? MF_STRING : (MF_STRING | MF_GRAYED);
 
     ::AppendMenuW(menu, capture_flags, IDM_TRAY_CAPTURE, capture_item.c_str());
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING | (coordinator.settings().capture_cursor ? MF_CHECKED : MF_UNCHECKED),
-                  IDM_TRAY_CAPTURE_CURSOR, L"Include mouse cursor");
-    if (HMENU appearance = easnap::ui::CreateAppearanceMenu()) {
-        ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(appearance), L"Appearance");
+                  IDM_TRAY_CAPTURE_CURSOR, strings::Get(IDS_SHELL_TRAY_INCLUDE_CURSOR));
+    if (HMENU appearance = easnap::ui::CreateAppearanceMenu(coordinator.settings().appearance_follows_system)) {
+        ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(appearance), strings::Get(IDS_SHELL_TRAY_APPEARANCE));
     }
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_OPEN_DATA_FOLDER, L"Open data folder");
+    // Settings change what a running session was built with: offered while idle.
+    ::AppendMenuW(menu, capture_flags, IDM_TRAY_SETTINGS, strings::Get(IDS_TRAY_SETTINGS));
+    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_OPEN_DATA_FOLDER, strings::Get(IDS_SHELL_TRAY_OPEN_DATA_FOLDER));
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_ABOUT, L"About Easnap");
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_EXIT, L"Exit");
+    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_CHECK_UPDATES, strings::Get(IDS_TRAY_CHECK_UPDATES));
+    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_ABOUT, strings::Get(IDS_SHELL_TRAY_ABOUT));
+    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_EXIT, strings::Get(IDS_SHELL_TRAY_EXIT));
 
     POINT cursor{};
     ::GetCursorPos(&cursor);
@@ -212,11 +405,18 @@ void OnTrayCommand(HWND hwnd, UINT command) {
         case IDM_TRAY_OPEN_DATA_FOLDER:
             OpenDataFolder();
             break;
+        case IDM_TRAY_SETTINGS:
+            ShowSettings(hwnd);
+            break;
+        case IDM_TRAY_CHECK_UPDATES:
+            // The browser opens the releases page. Easnap itself asks nobody.
+            ::ShellExecuteW(nullptr, L"open", kReleasesPage, nullptr, nullptr, SW_SHOWNORMAL);
+            break;
         case IDM_TRAY_ABOUT:
             ShowAboutDialog(hwnd);
             break;
         case IDM_TRAY_EXIT:
-            ::DestroyWindow(hwnd);
+            if (coordinator.ConfirmExit()) { ::DestroyWindow(hwnd); }
             break;
         default:
             break;
@@ -228,6 +428,11 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
 
     if (message == g_taskbar_created_message && g_taskbar_created_message != 0) {
         g_tray.Restore();
+        return 0;
+    }
+    if (message == g_activate_message && g_activate_message != 0) {
+        // Easnap was started again: that is a request to capture.
+        coordinator.OnGlobalHotkey();
         return 0;
     }
 
@@ -260,6 +465,10 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
                     ? easnap::app::AppearanceTheme::Dark : easnap::app::AppearanceTheme::Light);
                 return 0;
             }
+            if (LOWORD(wparam) == easnap::ui::kAppearanceSystem) {
+                coordinator.SetAppearanceFollowsSystem();
+                return 0;
+            }
             OnTrayCommand(hwnd, LOWORD(wparam));
             return 0;
 
@@ -273,6 +482,10 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
 
         case easnap::app::kMsgTrimExportCompleted:
             coordinator.OnTrimExportCompleted(static_cast<uint64_t>(wparam));
+            return 0;
+
+        case easnap::app::kMsgScrollshotProgress:
+            coordinator.OnScrollshotProgress(static_cast<uint64_t>(wparam));
             return 0;
 
         case WM_CLIPBOARDUPDATE:
@@ -294,15 +507,33 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             coordinator.OnVisualSettingsChanged();
             return 0;
 
+        case WM_TIMER:
+            if (wparam == easnap::app::kTimerDeferredCleanup) {
+                coordinator.OnDeferredCleanup();
+                return 0;
+            }
+            break;
+
+        case WM_QUERYENDSESSION:
+            // Sign-out or shutdown while work would be lost: Windows shows the
+            // reason and lets the user decide. A process without a visible
+            // window is only listed there when it gives a reason.
+            if (const wchar_t* reason = coordinator.ShutdownBlockReason()) {
+                ::ShutdownBlockReasonCreate(hwnd, reason);
+                return FALSE;
+            }
+            return TRUE;
+
         case WM_ENDSESSION:
+            ::ShutdownBlockReasonDestroy(hwnd);
             if (wparam != FALSE) {
-                coordinator.PersistSettings();
-                coordinator.Shutdown();
+                coordinator.PrepareForSessionEnd();
+                easnap::platform::diagnostics::StopLog();
             }
             return 0;
 
         case WM_CLOSE:
-            ::DestroyWindow(hwnd);
+            if (coordinator.ConfirmExit()) { ::DestroyWindow(hwnd); }
             return 0;
 
         case WM_DESTROY:
@@ -341,29 +572,61 @@ HWND CreateHostWindow(HINSTANCE instance) {
 
 }  // namespace
 
-int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, _In_ int) {
+int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR command_line, _In_ int) {
     easnap::platform::RestrictDllSearchPath();
-    // Single instance: a second launch just tells the user and exits, so the
-    // global shortcut and the notification icon always have exactly one owner.
+    namespace diagnostics = easnap::platform::diagnostics;
+    const std::wstring crash_directory = diagnostics::CrashDirectory();
+    diagnostics::InstallCrashHandler(crash_directory, L"easnap");
+    // Started by the entry Settings writes for sign-in: stay quiet.
+    const bool started_at_sign_in = command_line != nullptr && ::wcsstr(command_line, easnap::platform::kStartupArgument) != nullptr;
+    g_activate_message = ::RegisterWindowMessageW(kActivateMessageName);
+
+    // Single instance, so the global shortcut and the notification icon have
+    // exactly one owner. Starting Easnap again is a request to capture: the
+    // running instance is told, and this process ends.
     const easnap::platform::UniqueHandle instance_mutex{::CreateMutexW(nullptr, TRUE, kSingleInstanceMutex)};
     if (!instance_mutex || ::GetLastError() == ERROR_ALREADY_EXISTS) {
-        easnap::ui::ShowMessage(nullptr, L"Easnap is already running. Look for its icon in the notification area.", kProductName,
-                      MB_OK | MB_ICONINFORMATION);
+        HWND running = ::FindWindowW(kHostClassName, kProductName);
+        if (running != nullptr && g_activate_message != 0) {
+            if (!started_at_sign_in) {
+                // This process was just started by the user and may hand the
+                // foreground on; without that the workspace opens without the keyboard.
+                DWORD running_process = 0;
+                ::GetWindowThreadProcessId(running, &running_process);
+                ::AllowSetForegroundWindow(running_process);
+                ::PostMessageW(running, g_activate_message, 0, 0);
+            }
+        } else {
+            easnap::ui::ShowMessage(nullptr, easnap::strings::Get(IDS_SHELL_ALREADY_RUNNING), kProductName,
+                                    MB_OK | MB_ICONINFORMATION);
+        }
         return 0;
     }
 
+    diagnostics::StartLog(diagnostics::LogDirectory(), L"easnap");
+    const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
+    easnap::platform::LogMessage(L"Easnap %ls started on Windows %lu.%lu build %lu", EASNAP_VERSION_TEXT_W, windows.major,
+                                 windows.minor, windows.build);
+    // Windows 10 version 2004. Earlier builds cannot keep Easnap's own windows
+    // out of a recording or a scrolling screenshot, and nothing is tested there.
+    if (windows.build != 0 && (windows.major < 10 || (windows.major == 10 && windows.build < 19041))) {
+        const std::wstring text = easnap::strings::Format(IDS_WINDOWS_TOO_OLD, {std::to_wstring(windows.build)});
+        ::MessageBoxW(nullptr, text.c_str(), kProductName, MB_OK | MB_ICONWARNING);
+        return 1;
+    }
     easnap::platform::EnableDpiAwareness();
 
     const easnap::platform::ComRuntime com;
     if (!com.ok()) {
-        easnap::ui::ShowMessage(nullptr, L"Easnap could not initialise COM and cannot continue.", kProductName,
+        easnap::ui::ShowMessage(nullptr, easnap::strings::Get(IDS_SHELL_COM_FAILED), kProductName,
                       MB_OK | MB_ICONERROR);
         return 1;
     }
 
     HWND host = CreateHostWindow(instance);
     if (host == nullptr) {
-        easnap::ui::ShowMessage(nullptr, L"Easnap could not create its message window.", kProductName, MB_OK | MB_ICONERROR);
+        easnap::ui::ShowMessage(nullptr, easnap::strings::Get(IDS_SHELL_HOST_WINDOW_FAILED), kProductName,
+                      MB_OK | MB_ICONERROR);
         return 1;
     }
 
@@ -372,26 +635,36 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
         ::DestroyWindow(host);
         return 1;
     }
+    // Text shown before this line follows Windows; from here the choice in Settings applies.
+    easnap::strings::SetPreference(ToPreference(coordinator.settings().language));
 
     // Explorer broadcasts this when it restarts and every tray icon is lost.
     g_taskbar_created_message = ::RegisterWindowMessageW(L"TaskbarCreated");
     ::ChangeWindowMessageFilterEx(host, g_taskbar_created_message, MSGFLT_ALLOW, nullptr);
 
+    // The tooltip and the menu say whether the shortcut works, so the icon is
+    // added after the attempt to register it.
+    const bool shortcut_works = RegisterCaptureHotkey(host);
     if (!g_tray.Add(host, TrayTooltip())) {
-        easnap::ui::ShowMessage(nullptr, L"Easnap could not create its notification-area icon.", kProductName,
+        easnap::ui::ShowMessage(nullptr, easnap::strings::Get(IDS_SHELL_TRAY_ICON_FAILED), kProductName,
                       MB_OK | MB_ICONERROR);
     }
-
-    if (!RegisterCaptureHotkey(host)) {
-        const std::wstring text = L"Easnap could not register " +
-                                  coordinator.settings().HotkeyDisplayText() +
-                                  L". Another application is already using that shortcut.\n\n"
-                                  L"You can still start a capture from the notification-area icon.";
-        easnap::ui::ShowMessage(nullptr, text.c_str(), kProductName, MB_OK | MB_ICONWARNING);
-    } else {
-        g_tray.ShowBalloon(kProductName,
-                           (L"Ready. Press " + coordinator.settings().HotkeyDisplayText() + L" to capture.").c_str());
+    const std::wstring shortcut = coordinator.settings().HotkeyDisplayText();
+    if (!shortcut_works) {
+        // Another application holds the shortcut. Said in a notification, not
+        // in a dialog that would have to be dismissed at every start.
+        if (!started_at_sign_in) {
+            g_tray.ShowBalloon(kProductName, easnap::strings::Format(IDS_TRAY_SHORTCUT_UNAVAILABLE, {shortcut}).c_str());
+        }
+    } else if (!coordinator.settings().first_run_notice_shown) {
+        // Where Easnap lives and how to start a capture: said once per computer.
+        g_tray.ShowBalloon(kProductName, easnap::strings::Format(IDS_SHELL_TRAY_READY_BALLOON, {shortcut}).c_str());
+        coordinator.settings().first_run_notice_shown = true;
+        coordinator.PersistSettings();
     }
+
+    ShowCrashNotice(crash_directory);
+    coordinator.OfferRecoveredRecordings();
 
     MSG message{};
     BOOL result = FALSE;
@@ -410,5 +683,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
     // Release process-wide graphics COM objects while the main apartment is
     // still initialized; the function-static environment is destroyed later.
     easnap::platform::GraphicsEnvironment::Get().Shutdown();
+    easnap::platform::LogMessage(L"Easnap exited");
+    diagnostics::StopLog();
     return static_cast<int>(message.wParam);
 }

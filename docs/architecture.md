@@ -19,17 +19,24 @@ The hidden host window in `src/main.cpp` receives application messages.
 forward commands and reflect that state; they do not independently start a
 second capture session.
 
-The normal flows are:
+The normal flows, in the states of `SessionState`
+(`app/session_transitions.h`):
 
 ```text
-Idle → Standby → Editing → screenshot completion → Idle
-                        → Recording ↔ RecordingPaused
-                                    → RecordingFinalizing → Trimming → Idle
+Idle → RegionSelecting → ScreenshotEditing → ScreenshotExporting → Idle
+                       → RecordingConfiguring → RecordingActive ↔ RecordingPaused
+                             → RecordingFinalizing → RecordingTrimming ↔ Exporting → Idle
+                       → ScrollshotConfiguring → ScrollshotCapturing
+                             → ScrollshotReview ↔ ScreenshotEditing → Idle
 ```
 
-Screenshot publication runs while Editing remains active. Successful completion
-transitions through `ScreenshotExporting` to Idle; publication failure leaves
-the existing Editing session available. Recording finalization failures have
+The user-facing documents call `RegionSelecting` Standby and the adjustable
+frame of the three configuring states Editing; those are interaction names of
+the workspace (`ui/capture_workspace.h`), not session states.
+
+Screenshot publication runs while `ScreenshotEditing` remains active. Successful
+completion transitions through `ScreenshotExporting` to Idle; publication
+failure leaves the existing editing session available. Recording finalization failures have
 explicit recovery handling; a failed or partial file is never presented as
 successful export.
 The production transition table remains the authority for permitted edges.
@@ -41,12 +48,15 @@ All paths below are under `apps/easnap-desktop/src`.
 | Area | Responsibility |
 |---|---|
 | `app/` | Coordinator, transition policy, settings, recording/finalization, trim and completion orchestration |
-| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls and trim view |
-| `editor/` | Screenshot document, commands/history, tools, reversible effects, inline rendering and full-resolution composite |
+| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls, Scrollshot island and preview, trim view, and the message and Settings dialogs |
+| `editor/` | Screenshot document, commands/history, tools, reversible effects, the scrolled and zoomed view, inline rendering and full-resolution composite |
 | `capture/` | Desktop acquisition, per-output fallback and capture worker |
+| `scrollshot/` | Stitching engine and the capture session that feeds it |
+| `strings/` | Localized text from the English and Turkish resource tables ([ADR-032](decisions/ADR-032-interface-text-in-string-tables.md)) |
 | `recording/` | Active-time recording session, cadence and audio timeline |
-| `media/` | Bounded queues, WASAPI, dual-source mixing/resampling, MP4/GIF writers/exporters and preview |
-| `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers and private storage |
+| `media/` | Bounded queues, WASAPI, dual-source mixing/resampling, MP4/GIF writers/exporters, preview and the private session store |
+| `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers, the data-folder path and contained deletion, log file and crash reports, the sign-in start entry |
+| `main.cpp` | The shell: single instance, notification icon and menu, the capture shortcut, Settings and About, session end |
 
 Native Windows APIs also appear in UI, capture and media code. `ui_theme.h`
 centralizes shared workspace styling; individual surfaces retain their own
@@ -58,8 +68,8 @@ layout metrics. This is a Windows implementation, not a portable UI abstraction.
 
 Entering Standby captures a monitor snapshot for selection feedback and the
 magnifier. It is not the final editor image. Entering Editing exposes a
-provisional frame over the live desktop; geometry, Screenshot/Record switching
-and mode-specific controls remain available.
+provisional frame over the live desktop; geometry, Screenshot/Scrollshot/Record
+switching and mode-specific controls remain available.
 
 The first screenshot toolbar interaction, including padding or a grip press,
 or an explicit screenshot action requests acquisition. The coordinator keeps
@@ -128,12 +138,18 @@ retain the acquired image's scale when UI DPI changes.
 
 The main, contextual and brush-size islands are separate owned HWNDs. Frame-aware placement,
 blank/grip dragging, resize hiding and capture-loss restoration are presentation
-operations. They do not reacquire the image. Shared controls use cached soft
+operations. They do not reacquire the image. Where an island goes around the
+frame is pure geometry in `ui/island_layout`, shared by the screenshot tools,
+the recording panel and the mode island: outside the frame while anything
+outside has room, never over the mode island, which the overlay places first
+and hides while the frame is dragged
+([ADR-036](decisions/ADR-036-island-placement-around-the-frame.md)). Shared controls use cached soft
 material masks and antialiased vector geometry; local animation timers do not
 invalidate the full capture overlay. See ADR-017 and ADR-018 for input and transform rules.
 
-ADR-019 adds native synchronous-paint suppression, complete buffered control and
-panel paints, and shared custom trim/dialog chrome. The redirected capture image
+Native controls suppress their synchronous paint, controls and panels paint
+complete buffered frames, and the trim window and dialogs share one custom
+chrome (ADR-019). The redirected capture image
 is shown transparently and populated before exposure, preserving display affinity.
 Document movement is unrestricted; source clips apply to content, selection and
 the native editing host. Fully off-canvas effect regions do not alter source pixels.
@@ -196,10 +212,44 @@ even when Windows destroys the owned HWND before its C++ view is released.
 
 The regression path covers all eight resize directions, rapid shrink/grow,
 maximize/restore, both themes and 125% scaling using real HWNDs and desktop
-frames. Native UI/input/capture tests run serially. The guide identifies the
-production symbols and existing tests to reuse for a new surface. This describes
-required coverage; actual pre/post-restart results and the current repair's
-acceptance boundary are recorded in [project status](project-status.md).
+frames. The guide identifies the production symbols and existing tests to
+reuse for a new surface; how the tests are run is in [testing](testing.md),
+and the open resize limitation is in [project status](project-status.md).
+
+## Scrollshot
+
+Scrollshot stitches the pictures of one fixed screen rectangle into a tall
+image while the user scrolls its content.
+
+`scrollshot/stitch_engine.*` has no window, thread, clock or capture
+dependency. It places each submitted frame on a canvas or returns the reason
+it could not: no guess is ever written. It recognises fixed headers, footers
+and side rails, tolerates local changes such as a caret or a hover highlight,
+and refuses ambiguous or low-information fits. See
+[ADR-027](decisions/ADR-027-scrollshot-stitching-engine.md).
+
+`scrollshot/scrollshot_session.*` owns a capture provider and one worker. The
+worker reads the rectangle through `IRegionCaptureProvider::CaptureRegionImage`
+when the desktop changes, submits it, and keeps a reduced preview. The UI
+thread learns about progress through throttled, generation-tagged messages
+and never waits for a picture; stopping has a deadline.
+
+The coordinator starts a capture only when every visible Easnap window is
+excluded from capture, rearranges the outside shading so that no translucent
+window contains the frame, and takes the first picture before it locks the
+frame.
+While capturing, the workspace's input plane has a hole over the frame, so
+Windows delivers pointer and wheel to the application underneath; Easnap
+neither injects nor forwards input. `ScrollshotControls` owns the island and
+the click-through preview; `PlaceScrollshotSurfaces` keeps both outside the
+frame wherever the monitors allow. A stitched image survives a display change.
+See [ADR-028](decisions/ADR-028-scrollshot-capture-workspace.md).
+
+Edit opens the image in the screenshot editor's document mode. `ImageView`
+is the single mapping between desktop and image pixels for every tool; the
+base bitmap is uploaded in bands and the export composites the whole image in
+bands at its captured resolution. See
+[ADR-029](decisions/ADR-029-scrolled-and-zoomed-image-editing.md).
 
 ## Capture and recording
 
@@ -279,8 +329,8 @@ remain native, and the still hides after replay's actual first-sample interval.
 The private protocol distinguishes ordinary paused
 seeks from exclusive-Out PauseAt intent and requires a matching version-4 pair.
 Logical media duration and the final playable video position remain distinct,
-including AAC tails. See ADR-010 and the
-[preview investigation](preview-playback-investigation.md).
+including AAC tails. See
+[ADR-010](decisions/ADR-010-trim-view-ownership-and-orchestration.md).
 
 Exact full-range MP4 Save/Copy reuses the finalized source without re-encoding.
 A new GIF result requires conversion even for the full interval; a previously
@@ -326,22 +376,56 @@ and replacing the destination only on success, the same staged publication
 recordings use.
 
 Each new session holds an exclusive `.session-lock` handle for its live lifetime.
-A different store/process cannot collect it. Released/crashed marked sessions
-remain collectable; unknown unmarked legacy directories are preserved rather
-than assumed stale. Protected directory permissions remain unchanged.
+A different store/process cannot collect it. Released or crashed sessions are
+collected at the next start, with one exception: a session marked recoverable
+holds a finished recording the user has neither saved nor discarded. The next
+start adopts it and offers the recording. A directory without a lease file is
+left alone for an hour and removed after that. Protected directory permissions
+remain unchanged.
+
+Exit, close and the end of the Windows session ask `PendingWorkFor` what would
+be lost. Exit is refused while one of the application's dialogs runs its own
+message loop, and retired windows are not destroyed during such a loop. See
+[ADR-031](decisions/ADR-031-unsaved-work-survives.md).
+
+`platform/diagnostics` appends every log line to
+`%LOCALAPPDATA%\Easnap\logs\easnap.log` (three files of one megabyte) and
+writes a minidump without the heap to `%LOCALAPPDATA%\Easnap\crashes` when
+either executable fails. Log lines carry no user content. See
+[ADR-030](decisions/ADR-030-log-file-and-crash-reports.md).
+
+Every word the user reads comes from the string tables through `strings::Get`;
+the language follows Windows or the choice in Settings. Low-level files that
+many tests compile take their captions from the caller instead
+([ADR-032](decisions/ADR-032-interface-text-in-string-tables.md)).
+
+The shell owns what reaches outside the process. One instance holds the
+notification icon and the capture shortcut; a second start posts a registered
+message to it and ends. The Settings dialog edits a copy of the values and the
+shell applies them: language, appearance, shortcut (given up while the dialog
+is open, so that the dialog can read any combination), the sign-in entry in
+the user's `Run` key, folders and quick save. While one of the application's
+dialogs runs, the shortcut only brings that dialog forward. See
+[ADR-033](decisions/ADR-033-settings-shortcut-and-launch-behaviour.md).
+
+`Easnap.exe` binds Media Foundation on first use, so that it starts on Windows
+editions that lack it; the coordinator tells the workspace whether recording
+is available ([ADR-034](decisions/ADR-034-media-foundation-on-first-use.md)).
 
 Recording format, GIF preset, cursor and audio preferences are saved to the
 per-user settings file after recording starts successfully. The tray cursor
 toggle also persists immediately. Initial cursor/audio defaults are off/None;
 saved user choices apply to later sessions. Appearance is separately persisted
-as Light/Dark through that same INI, immediately on user selection, without
-accepting pending recording choices. Semantic tokens and a presentation-only
+as System/Light/Dark through that same INI, immediately on user selection,
+without accepting pending recording choices; System follows the application
+mode of Windows, also while Easnap runs. Semantic tokens and a presentation-only
 UI-thread message update retained surfaces. High contrast overrides effective
 colors without overwriting the preference. The timeline exposes three native
 UI Automation RangeValue children backed by the existing trim model; see
 [ADR-016](decisions/ADR-016-shared-appearance-and-native-controls.md).
-Core operation uses no telemetry or
-network service. See [SECURITY.md](../SECURITY.md) and ADR-011.
+Easnap uses no telemetry and opens no network connection; "Check for updates"
+hands the releases page to the browser. See [SECURITY.md](../SECURITY.md) and
+ADR-011.
 
 ## Validation boundaries
 

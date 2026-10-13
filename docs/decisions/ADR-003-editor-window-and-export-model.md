@@ -1,16 +1,12 @@
 # ADR-003 — Inline editor island; full-resolution, view-independent export
 
-> 2026-09-16: [ADR-017](ADR-017-neumorphic-editor-and-editable-annotations.md)
-> supersedes toolbar composition, annotation input and effect-cache details.
-> The immutable source, shared compositor and completion ownership remain.
-
 **Status:** Accepted; standalone-window presentation superseded, export invariant retained  
+**Amended by:** [ADR-016](ADR-016-shared-appearance-and-native-controls.md) (toolbar rendering and native accessibility); [ADR-017](ADR-017-neumorphic-editor-and-editable-annotations.md) (toolbar composition, annotation input, effect pixels); [ADR-018](ADR-018-editor-interaction-corrections.md) (acquisition without hiding, icon-only island, 500 ms fade); [ADR-029](ADR-029-scrolled-and-zoomed-image-editing.md) (scrolled and zoomed stitched images)  
 **Date:** 2026-08-27  
 **Amended:** 2026-09-14
 
-Toolbar rendering and native accessibility are amended by
-[ADR-016](ADR-016-shared-appearance-and-native-controls.md): the small island uses
-GDI/native children; the Direct2D image renderer and export model below remain.
+The immutable source, the shared compositor, the export model and completion
+ownership described below remain in force.
 
 ## Context
 
@@ -27,8 +23,11 @@ and mode switching remain available until the first toolbar interaction or
 screenshot action.
 
 The first tool/style/editor command or press anywhere in the island (including
-padding, information strip and the native move grip) requests image preparation from the
-coordinator. It hides overlay and island, calls `DwmFlush`, captures the current
+padding and the native move grip) requests image preparation from the
+coordinator. The theme toggle and the Scrollshot button do not. The coordinator
+keeps overlay and island visible when every visible window of the process is
+excluded from capture (`CanCaptureVisibleWindows`, ADR-018) and hides them
+otherwise. It calls `DwmFlush`, captures the current
 desktop through the existing provider and crops the exact selected region. Only
 a successful `SetImage` fixes it. Capture failure leaves the tools and provisional
 frame retryable. Explicit Copy/Save/double-click also prepare the image on demand.
@@ -36,21 +35,23 @@ Cancellation does not. The Standby snapshot remains the magnifier source, not th
 final editor image.
 
 Once fixed, it holds one immutable region-sized source, one `AnnotationDocument`,
-pending gesture/text, selected tool/style and cumulative mosaic cache. Selection
+pending gesture/text, selected tool/style and the derived redaction image
+(`RedactionRenderer`). Selection
 handles disappear; moving/resizing and mode changes are disabled immediately,
-and the top mode options fade out over 220 ms. `SetRegion`
+and the top mode options fade out over 500 ms. `SetRegion`
 refuses to change an acquired image. Full-monitor and custom regions follow the
 same rule. Its native HWND
-contains the existing wrapping tool/style/command controls, info strip and a grip.
+contains the existing wrapping tool/style/command controls and a grip.
 The island opens beside/below the region, stays inside its monitor work area and
 reserves the top mode toolbar strip. A grip press acquires/fixes the image before
 native island movement; subsequent movement changes neither crop nor document.
 Programmatic placement alone does not acquire an image.
 
 During a frame gesture, geometry and the frame's size label update immediately.
-The island's duplicate size text refreshes on release/capture loss; keyboard
-changes refresh it immediately. Moving the frame does not repaint the island.
-This avoids unnecessary island presentation on each resize update
+The island has no size text (ADR-018). `SetRegion` hides the editor islands
+while the frame is being adjusted and shows them again when the gesture ends
+(ADR-017); a keyboard change places the context island immediately. A frame
+update therefore causes no island presentation
 (ADR-015); image preparation always reads the current region.
 
 `OverlayController` hosts a small opaque native image plane for each monitor's
@@ -79,8 +80,8 @@ Save still uses the existing WIC/native dialog path; Copy still publishes the
 composited image as CF_DIB and PNG. Compositing/publication failure retains the
 session and never falls back to falsely reporting an unannotated image as success.
 
-The green tick, Ctrl+C and eligible Screenshot Content/Annotation double-click all use that
-production copy path. Clipboard success shows a brief green notice and then
+The green tick, Ctrl+C and an eligible Screenshot Content double-click all use that
+production copy path; an Annotation double-click does not copy (ADR-002). Clipboard success shows a brief green notice and then
 closes to Idle; failure keeps the image and controls available. The explicit
 workspace quick-return latch invokes the same path at a successful mutation
 boundary or eligible single-click return (ADR-002), never a second editor or
@@ -95,10 +96,10 @@ its captured desktop coordinates until session retirement.
 Pointer movement invalidates only affected image bounds, including both old and
 new shape bounds. The inline DC renderer binds only that dirty rectangle; it does
 not allocate a full-screen GDI back buffer per movement or repaint dim/chrome.
-Mosaic caches replay strokes in order using each stroke's brush and footprint.
-A later distant stroke cannot alter earlier pixels or block alignment; overlapping
-passes still increase intensity. Undo/redo deterministically rebuilds changed
-mosaic history, while appended strokes reuse the existing cache. Owned island windows are destroyed
+`RedactionRenderer` keeps the derived image equal to every blur, pixelation and
+spotlight effect applied in order to the immutable capture. An edit, undo or
+redo recomputes only the rectangle that the change can influence (v1.0.2).
+Owned island windows are destroyed
 before their overlay owner during deferred cleanup.
 
 Production tests compare full-resolution composited pixels with the native inline

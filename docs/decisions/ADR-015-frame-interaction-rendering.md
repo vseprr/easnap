@@ -14,8 +14,16 @@ child controls and recreated fonts on every region update.
 Native production-window replay confirmed this work: each 160-update case
 invalidated 663,552,000 pixels at 1920 × 1080. Removing overlay work alone left
 Screenshot resize at approximately 7 ms per update; removing its redundant
-island presentation reduced it to approximately 0.45 ms. See the performance
-report for methodology and validation limits.
+island presentation reduced it to approximately 0.45 ms.
+
+Measured on 2026-09-13 with that replay (Release, 1920 × 1080, 160 updates per
+case, median of five interleaved before/after runs): the median time per update
+fell from 8.104 to 0.455 ms for Screenshot move, 8.043 to 0.454 ms for
+Screenshot resize, 7.881 to 0.455 ms for Record move and 7.921 to 0.454 ms for
+Record resize; the Screenshot move p95 fell from 14.148 to 0.582 ms.
+Invalidated pixels per 160 updates fell from 663,552,000 to 5,956,340 (move)
+and 6,099,378 (resize). The replay measures native input and paint work of the
+production windows, not pointer-to-display latency.
 
 ## Decision
 
@@ -32,10 +40,11 @@ report for methodology and validation limits.
   it, position the hidden image, or relayout the recording configuration panel.
   Mode changes, image fixation and resume retain full invalidation.
 - Selection coordinates and the frame's size label update on every distinct
-  geometry change. The island's duplicate size text updates on gesture
+  geometry change. The screenshot island has no size text (ADR-018) and is
+  hidden while the frame is being adjusted (ADR-017). It returns on gesture
   completion, including capture loss and release without a final move message.
-  Keyboard changes update immediately. This avoids a synchronized island
-  presentation during resizing without timers or dropping input coordinates.
+  A keyboard change places the context island immediately. A frame update
+  causes no island presentation, without timers or dropping input coordinates.
 - Suppress duplicate geometry notifications but retain the transition out of an
   active gesture. Recording retains the latest region; retiring the workspace
   lays out its live recording boundaries from that region.
@@ -51,9 +60,8 @@ The small mode-options companion added in ADR-001 reuses it; fixation fade
 changes that window's alpha without adding full-monitor repaint work.
 
 Screenshot capture, immutable image geometry, annotation, undo/redo, clipboard,
-recording, audio, encoding, trim and export semantics are preserved. The island's
-duplicate dimensions may show their pre-gesture value during adjustment; the
-frame's label and capture coordinates remain current.
+recording, audio, encoding, trim and export semantics are preserved. The
+frame's label and capture coordinates remain current during adjustment.
 
 Regression coverage compares full and partial GDI pixels at 100%, 125% and
 200% DPI with positive/negative monitor origins, verifies native geometry and

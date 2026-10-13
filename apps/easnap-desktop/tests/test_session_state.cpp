@@ -1,7 +1,9 @@
 // Easnap unit tests - production session transition rules.
 
 #include <cstdio>
+#include <cwchar>
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "app/app_settings.h"
@@ -38,7 +40,7 @@ void TestIdentityAlwaysLegal() {
 }
 
 void TestSessionEntryAndCancellation() {
-    CHECK(easnap::app::kSessionTransitionCount == 22);
+    CHECK(easnap::app::kSessionTransitionCount == 35);
     CHECK(IsSessionTransitionLegal(SessionState::Idle, SessionState::RegionSelecting));
     CHECK(IsSessionTransitionLegal(SessionState::RegionSelecting, SessionState::Idle));
     CHECK(!IsSessionTransitionLegal(SessionState::Idle, SessionState::RecordingActive));
@@ -74,6 +76,41 @@ void TestRecordingBranch() {
     CHECK(!IsSessionTransitionLegal(SessionState::RecordingPaused, SessionState::Idle));
     CHECK(!IsSessionTransitionLegal(SessionState::RecordingFinalizing, SessionState::RecordingActive));
     CHECK(!IsSessionTransitionLegal(SessionState::Exporting, SessionState::RecordingActive));
+}
+
+void TestScrollshotBranch() {
+    // The mode can be chosen before or after a region exists, and switched
+    // with the other two modes while the frame is provisional.
+    CHECK(IsSessionTransitionLegal(SessionState::RegionSelecting, SessionState::ScrollshotConfiguring));
+    CHECK(IsSessionTransitionLegal(SessionState::ScreenshotEditing, SessionState::ScrollshotConfiguring));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotConfiguring, SessionState::ScreenshotEditing));
+    CHECK(IsSessionTransitionLegal(SessionState::RecordingConfiguring, SessionState::ScrollshotConfiguring));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotConfiguring, SessionState::RecordingConfiguring));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotConfiguring, SessionState::Idle));
+    // Start, and the tools island's button that skips the Start step.
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotConfiguring, SessionState::ScrollshotCapturing));
+    CHECK(IsSessionTransitionLegal(SessionState::ScreenshotEditing, SessionState::ScrollshotCapturing));
+    // Capturing ends in review with the image kept, or with the session.
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotCapturing, SessionState::ScrollshotReview));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotCapturing, SessionState::Idle));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotReview, SessionState::Idle));
+    CHECK(IsSessionTransitionLegal(SessionState::ScrollshotReview, SessionState::ScreenshotEditing));
+    // An edited Scrollshot returns to review when the displays change.
+    CHECK(IsSessionTransitionLegal(SessionState::ScreenshotEditing, SessionState::ScrollshotReview));
+
+    // The frame is locked once capture started, and a stopped capture does
+    // not resume. Recording and Scrollshot never run into each other.
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotCapturing, SessionState::ScrollshotConfiguring));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotCapturing, SessionState::ScreenshotEditing));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotCapturing, SessionState::RecordingConfiguring));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotReview, SessionState::ScrollshotCapturing));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotReview, SessionState::ScrollshotConfiguring));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScrollshotReview, SessionState::RecordingConfiguring));
+    CHECK(!IsSessionTransitionLegal(SessionState::Idle, SessionState::ScrollshotCapturing));
+    CHECK(!IsSessionTransitionLegal(SessionState::Idle, SessionState::ScrollshotConfiguring));
+    CHECK(!IsSessionTransitionLegal(SessionState::RegionSelecting, SessionState::ScrollshotCapturing));
+    CHECK(!IsSessionTransitionLegal(SessionState::RecordingActive, SessionState::ScrollshotCapturing));
+    CHECK(!IsSessionTransitionLegal(SessionState::ScreenshotExporting, SessionState::ScrollshotReview));
 }
 
 void TestRecordingControlPolicy() {
@@ -246,18 +283,95 @@ void TestAppearanceSettingsPersistence() {
     accepted.recording_format = RecordingFormat::Gif;
     accepted.recording_gif.preset = easnap::app::GifExportPreset::LowSize;
     accepted.appearance_theme = AppearanceTheme::Dark;
+    accepted.appearance_follows_system = false;  // An explicit choice.
     CHECK(accepted.Save(path));
     CHECK(AppSettings::Load(path).appearance_theme == AppearanceTheme::Dark);
+    CHECK(!AppSettings::Load(path).appearance_follows_system);
     for (const wchar_t* value : {L"Light", L"dark", L"99", L"", L"System", static_cast<const wchar_t*>(nullptr)}) {
         CHECK(::WritePrivateProfileStringW(L"Easnap", L"AppearanceTheme", value, path.c_str()) != FALSE);
         const auto loaded = AppSettings::Load(path);
         CHECK(loaded.appearance_theme == AppearanceTheme::Light);
+        // Only the exact word, or a file without the key, follows Windows.
+        CHECK(loaded.appearance_follows_system == (value == nullptr || ::wcscmp(value, L"System") == 0));
         CHECK(loaded.recording_audio_source == AudioSource::Both);
         CHECK(loaded.recording_format == RecordingFormat::Gif);
         CHECK(loaded.recording_gif.preset == easnap::app::GifExportPreset::LowSize);
     }
     accepted.appearance_theme = static_cast<AppearanceTheme>(99);
     CHECK(!accepted.Save(path));
+    std::filesystem::remove(path, error);
+}
+
+/// Language, folders and quick save; a Unicode file; keys of earlier versions.
+void TestSettingsLanguageAndFolders() {
+    using easnap::app::LanguageSetting;
+    const auto path = (std::filesystem::temp_directory_path() /
+        (L"easnap_settings_" + std::to_wstring(::GetCurrentProcessId()) + L".ini")).wstring();
+    std::error_code error;
+    std::filesystem::remove(path, error);
+
+    // Nothing saved yet: Windows decides language and appearance.
+    const AppSettings fresh = AppSettings::Load(path);
+    CHECK(fresh.language == LanguageSetting::System && fresh.appearance_follows_system);
+    CHECK(fresh.image_folder.empty() && fresh.video_folder.empty() && !fresh.quick_save_images);
+    CHECK(!fresh.first_run_notice_shown);
+
+    AppSettings chosen;
+    chosen.language = LanguageSetting::Turkish;
+    chosen.image_folder = L"D:\\G\u00F6r\u00FCnt\u00FCler\\\u30B9\u30AF\u30EA\u30FC\u30F3";  // Turkish and Japanese letters.
+    chosen.video_folder = L"D:\\Kay\u0131tlar";
+    chosen.quick_save_images = true;
+    chosen.last_image_directory = L"C:\\Last images";
+    chosen.last_video_directory = L"C:\\Last videos";
+    chosen.first_run_notice_shown = true;
+    CHECK(chosen.Save(path));
+    const AppSettings loaded = AppSettings::Load(path);
+    CHECK(loaded.language == LanguageSetting::Turkish);
+    CHECK(loaded.image_folder == chosen.image_folder && loaded.video_folder == chosen.video_folder);
+    CHECK(loaded.quick_save_images && loaded.first_run_notice_shown);
+    CHECK(loaded.last_image_directory == L"C:\\Last images" && loaded.last_video_directory == L"C:\\Last videos");
+    // A set folder is where a Save dialog starts; otherwise the one used last.
+    CHECK(loaded.ImageStartDirectory() == chosen.image_folder && loaded.VideoStartDirectory() == chosen.video_folder);
+    AppSettings unset = loaded;
+    unset.image_folder.clear();
+    CHECK(unset.ImageStartDirectory() == L"C:\\Last images");
+    {
+        // The file is UTF-16, so every folder name survives.
+        std::ifstream file(path, std::ios::binary);
+        char mark[2]{};
+        file.read(mark, 2);
+        CHECK(static_cast<unsigned char>(mark[0]) == 0xFF && static_cast<unsigned char>(mark[1]) == 0xFE);
+    }
+    for (const wchar_t* value : {L"English", L"Turkish", L"turkish", L"", L"Deutsch"}) {
+        CHECK(::WritePrivateProfileStringW(L"Easnap", L"Language", value, path.c_str()) != FALSE);
+        const LanguageSetting language = AppSettings::Load(path).language;
+        CHECK(language == (::wcscmp(value, L"English") == 0 ? LanguageSetting::English
+                           : ::wcscmp(value, L"Turkish") == 0 ? LanguageSetting::Turkish : LanguageSetting::System));
+    }
+    chosen.language = static_cast<LanguageSetting>(7);
+    CHECK(!chosen.Save(path));
+
+    // A file written by 1.0: system code page, one directory for everything,
+    // and a switch nothing ever read.
+    std::filesystem::remove(path, error);
+    {
+        std::ofstream legacy(path, std::ios::binary);
+        legacy << "[Easnap]\r\nHotkeyModifiers=6\r\nHotkeyVirtualKey=65\r\nCloseEditorAfterCopy=1\r\n"
+                  "LastSaveDirectory=C:\\Old place\r\nAppearanceTheme=Dark\r\n";
+    }
+    AppSettings migrated = AppSettings::Load(path);
+    CHECK(migrated.last_image_directory == L"C:\\Old place" && migrated.last_video_directory == L"C:\\Old place");
+    CHECK(migrated.appearance_theme == easnap::app::AppearanceTheme::Dark && !migrated.appearance_follows_system);
+    CHECK(migrated.hotkey_modifiers == 6 && migrated.hotkey_virtual_key == 65);
+    CHECK(migrated.Save(path));
+    wchar_t retired[64]{};
+    ::GetPrivateProfileStringW(L"Easnap", L"LastSaveDirectory", L"<gone>", retired, 64, path.c_str());
+    CHECK(std::wstring(retired) == L"<gone>");
+    ::GetPrivateProfileStringW(L"Easnap", L"CloseEditorAfterCopy", L"<gone>", retired, 64, path.c_str());
+    CHECK(std::wstring(retired) == L"<gone>");
+    const AppSettings again = AppSettings::Load(path);
+    CHECK(again.last_image_directory == L"C:\\Old place" && again.appearance_theme == easnap::app::AppearanceTheme::Dark);
+    CHECK(again.hotkey_modifiers == 6 && again.hotkey_virtual_key == 65);
     std::filesystem::remove(path, error);
 }
 
@@ -348,17 +462,65 @@ void TestRecordingRegionAndElapsedFormatting() {
 
 }  // namespace
 
+/// What exiting would lose, for every state: the table the exit question and
+/// the shutdown block reason are chosen from.
+void TestPendingWork() {
+    using easnap::app::PendingWork;
+    using easnap::app::PendingWorkFor;
+    struct Row { SessionState state; PendingWork plain; PendingWork with_edits; };
+    const Row rows[] = {
+        {SessionState::Idle, PendingWork::None, PendingWork::None},
+        {SessionState::RegionSelecting, PendingWork::None, PendingWork::None},
+        {SessionState::ScreenshotEditing, PendingWork::None, PendingWork::Image},
+        {SessionState::ScreenshotExporting, PendingWork::None, PendingWork::None},
+        {SessionState::RecordingConfiguring, PendingWork::None, PendingWork::None},
+        {SessionState::RecordingActive, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingPaused, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingFinalizing, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingTrimming, PendingWork::UnsavedRecording, PendingWork::UnsavedRecording},
+        {SessionState::Exporting, PendingWork::Export, PendingWork::Export},
+        {SessionState::ScrollshotConfiguring, PendingWork::None, PendingWork::None},
+        {SessionState::ScrollshotCapturing, PendingWork::Image, PendingWork::Image},
+        {SessionState::ScrollshotReview, PendingWork::Image, PendingWork::Image},
+    };
+    CHECK(sizeof(rows) / sizeof(rows[0]) == easnap::app::kSessionStateCount);
+    for (const Row& row : rows) {
+        CHECK(PendingWorkFor(row.state, false) == row.plain);
+        CHECK(PendingWorkFor(row.state, true) == row.with_edits);
+    }
+}
+
+/// What H.264 can hold: 36,864 macroblocks and 8,688 pixels on a side.
+void TestRecordingRegionFitsH264() {
+    using easnap::app::RecordingRegionFitsH264;
+    CHECK(RecordingRegionFitsH264(RECT{0, 0, 1920, 1080}));
+    CHECK(RecordingRegionFitsH264(RECT{-1920, 0, 1920, 1080}));   // Two displays side by side.
+    CHECK(RecordingRegionFitsH264(RECT{0, 0, 3840, 2160}));
+    CHECK(RecordingRegionFitsH264(RECT{0, 0, 4096, 2304}));       // Exactly the limit.
+    CHECK(!RecordingRegionFitsH264(RECT{0, 0, 4096, 2320}));
+    CHECK(RecordingRegionFitsH264(RECT{0, 0, 7680, 1080}));       // Wide, but few enough macroblocks.
+    CHECK(!RecordingRegionFitsH264(RECT{0, 0, 7680, 2160}));      // Two 4K displays.
+    CHECK(RecordingRegionFitsH264(RECT{0, 0, 16, 8688}));
+    CHECK(!RecordingRegionFitsH264(RECT{0, 0, 16, 8690}));
+    CHECK(!RecordingRegionFitsH264(RECT{0, 0, 8704, 16}));
+    CHECK(!RecordingRegionFitsH264(RECT{0, 0, 0, 100}) && !RecordingRegionFitsH264(RECT{10, 10, 5, 5}));
+}
+
 int main() {
+    TestPendingWork();
+    TestRecordingRegionFitsH264();
     TestIdentityAlwaysLegal();
     TestSessionEntryAndCancellation();
     TestScreenshotBranch();
     TestRecordingBranch();
+    TestScrollshotBranch();
     TestRecordingControlPolicy();
     TestSupportedRecordingAudioChoices();
     TestRecordingFormatsAndCapabilities();
     TestRecordingFormatSettingsPersistence();
     TestAudioSourceSettingsPersistence();
     TestAppearanceSettingsPersistence();
+    TestSettingsLanguageAndFolders();
     TestBothRecordingTransitions();
     TestRecordingRegionAndElapsedFormatting();
 

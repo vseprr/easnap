@@ -1,41 +1,26 @@
 # Window implementation guide
 
-Status: Required development path for new or changed Easnap windows.
-Baseline: the user-accepted 2026-09-21 UI correction session.
-
-Current validation boundary: the authorized 2026-09-29 Trim repair is still
-open. The pre-restart SAMSUNG all-edge runs failed during motion. After restarting
-the computer, the user reported clean dragging in both old/current executables;
-an unchanged Release paused top-left repeat captured 453 frames with no detected
-defects. This subset does not replace the full matrix or prove a restart-related
-cause. The final-production Release native UI, endpoint, timeline stress and
-material rerun passes 4/4, while the strict fast all-edge gate still fails
-22 visual cases and five minimum-size assertions across 60 cases. Reviewed PNGs
-show temporary video/control overlap, truncated controls and duplicated caption
-pixels during maximize/restore. The cause is unproven; the latest seeking
-correction adds no new production window workaround. All four resize matrices
-are complete (220 cases) and fail the strict gate; subsequent Debug/backend
-results are recorded in the linked evidence. The native-frame rules below remain the accepted
-baseline, not a claim of final validation or user acceptance. See the
-[ongoing evidence and rejected comparisons](../trim-endpoint-artifact-validation.md).
-
-Keep observation phases explicit: the all-edge gate disables DWM transitions
-and captures four maximize/restore transitions (two cycles); endpoint validation maximizes/restores
-before its pixel-observation period. An endpoint pass does not establish a pass
-for maximize-transition presentation or the whole resize matrix.
-
-Read this before designing a window or adding controls to an existing one.
+The required path for new or changed Easnap windows. Read it before designing
+a window or adding controls to an existing one.
 [ADR-024](../decisions/ADR-024-native-trim-frame.md) records the reasons for the
-resize policy. Use the current production implementation, not an earlier
-experimental copy under a build/evidence directory.
+resize policy.
 
+One limitation of the resize path is open: the strict all-edge resize gate
+fails during motion and maximize/restore, and no cause is established; see
+[project status](../project-status.md#known-limitations-and-unresolved-risks).
+The rules below are the baseline to preserve, not a claim that the resize path
+is free of visible defects. The all-edge gate and the endpoint check observe
+different phases: the gate disables DWM transitions and captures four
+maximize/restore transitions, the endpoint check maximizes and restores before
+its observation period. An endpoint pass does not establish a pass for
+maximize-transition presentation or for the whole resize matrix.
 ## 1. Choose the existing window path
 
 | Surface | Reuse | Boundary to preserve |
 |---|---|---|
 | Resizable native content window | `StyleWindowChrome(hwnd, true)`, `WindowChrome`, and the `TrimWindow` layout/lifetime pattern | Native resize frame and OS move/maximize/restore behavior |
 | Fixed confirmation/dialog | Shared nonresizable chrome and existing native modal-dialog/control helpers | Real default/cancel buttons, keyboard behavior and owner lifetime |
-| Floating editor/recording island | Existing island placement, shared controls and theme materials | Owner/z-order, capture exclusion, grip dragging and work-area containment |
+| Floating editor/recording island | `ui/island_layout` for the place around the frame, shared controls and theme materials | Owner/z-order, capture exclusion, grip dragging, work-area containment, and never covering the mode island ([ADR-036](../decisions/ADR-036-island-placement-around-the-frame.md)) |
 | Capture image/overlay | Existing redirected layered-image and damage-limited overlay path | Immutable source, display affinity and controlled first exposure |
 
 These are different surface types. The trim's `WS_EX_COMPOSITED` choice is not
@@ -43,6 +28,12 @@ a blanket instruction to change layered overlays, native text hosts or dialogs.
 Reuse shared implementation rather than copying window procedures into a new
 feature. Extend shared code only when the new requirement needs it, and verify
 existing callers as well.
+
+Every window that shows text takes it from the string tables and must fit in
+both languages: add it to `text_fits_in_every_language`
+(`tests/test_text_fit.cpp`). Every dialog that runs its own message loop
+declares a `platform::ModalLoopScope`, so that Exit, the capture shortcut and
+deferred cleanup know it is open.
 
 Bind each custom window procedure to its real owner during creation
 (`CreateWindowExW` creation parameter and the existing `WM_NCCREATE` pattern).
@@ -57,7 +48,9 @@ Paths in this table are relative to `apps/easnap-desktop/src`.
 |---|---|
 | Trim and timeline/video children | `ui/trim_window.cpp`: `TrimWindow::Open`, `CreateControls`, `CreateControl`, `RebuildFonts`, `LayoutControls`, `UpdateLabels`, `UpdateStatusLayout`, `HandleMessage`, `HandleVideoMessage`, `Hide`, `ReleaseMedia`, `Destroy`; `ui/trim_layout.cpp`: `InitialTrimWindowSize`, `CalculateTrimWindowLayout`, `FitTrimVideo` |
 | Shared caption and controls | `ui/native_controls.cpp`: `StyleWindowChrome`, `WindowChrome::Layout`, `PaintResize`, `ChromeParentProc`, `NativeRedrawGuard`, styled control procedures; `ui/paint_buffer.h`: `PaintBuffer`; `ui/ui_theme.cpp`: `DrawMaterial` |
-| Fixed About/error/confirmation dialog | `ui/native_controls.cpp`: `ShowMessage`, `MessageDialogProc`; callers in `main.cpp` and the coordinator. Retain modal default/cancel and native PMv2 dialog behavior. |
+| Fixed About/error/confirmation dialog | `ui/native_controls.cpp`: `ShowMessage`, `ShowChoice`, `ConfirmDestructive`, `MessageDialogProc`; callers in `main.cpp` and the coordinator. Retain modal default/cancel and native PMv2 dialog behavior. A dialog with named answers sizes its button row to the text; the destructive answer is never the default. |
+| Settings dialog | `ui/settings_dialog.cpp`: `ShowSettingsDialog` on the same fixed-dialog path, with shared chrome and styled controls. It edits a copy of the values; the shell in `main.cpp` applies them. The shortcut button reads keys through a subclass while it waits. |
+| Scrollshot island and preview | `ui/scrollshot_controls.cpp`: the Start/help island, the four-action island with status, and the live preview; placement in `ui/scrollshot_layout.cpp`. Capture-excluded like every surface that is visible during a capture. |
 | Capture overlay, image, shade, palette and magnifier | `ui/overlay.cpp`: `OverlayController::Show`, `OverlayWindow::Create`/`Destroy` and their window procedures. Region clipping and layered-image submission here are intentional overlay behavior. |
 | Editor tools, context, brush and native text host | `editor/screenshot_editor.cpp`: `CreateToolbarControls`, `SyncContext`, `PlaceContext`, `SetFrameInteracting`, `WindowProc`, and the native EDIT/text-host creation path. Preserve temporary tool hiding during capture-frame interaction. |
 | Recording configuration/active/paused/finalizing island and boundary HWNDs | `ui/recording_controls.cpp`: `RecordingControls::ShowConfiguring`, `RetireWorkspace`, nested `Window::Create`, `UpdateForState`, `Layout`, `HandlePanelMessage`, `Destroy` |
@@ -160,10 +153,8 @@ The reference is `ProcessMediaPreview` in `src/media/preview_process.cpp`,
   do not recursively poll from layout, repeatedly self-post while waiting, or
   increase pipe credit. `UpdateVideo` / `OwnerProcedure` in `preview_process.cpp`
   and `ResizeWhileTimersAreDeferred` in `test_preview_backpressure.cpp` establish
-  the before/after repeated-progress case. The real-helper backpressure and
-  endpoint checks pass after this correction; the separate whole-window visual
-  resize gate failed before and after the restart. Do not describe the scheduling fix as a visual
-  resize fix.
+  the repeated-progress case. This is a scheduling rule; it does not address
+  the open visual resize limitation.
 - Never synchronously call foreign `SetWindowPos`, `UpdateWindow`, recursive
   `RedrawWindow` or native playback from the parent UI thread. Do not add sleeps,
   busy waits or encoder/decoder shutdown to resize/paint callbacks.
@@ -213,15 +204,12 @@ views first, then the overlay. Active recording explicitly detaches the owner
 before the workspace retires. Windows also destroys owned HWNDs when their owner
 is destroyed ([Microsoft ownership contract](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#owned-windows));
 the corresponding C++ view must clear panel/control handles in
-`WM_NCDESTROY` and recreate them before reuse. The 2026-09-29 real owner-destroy/
-reopen regression reproduced a stale handle and passed 12 cycles after this
-correction. It is included in the current Release and Debug native UI checks.
-Its assertions pass, but Release's separate composed-resize assertions failed
-before the restart; this does not by itself close the Trim validation.
-
-The dedicated Release lifetime run also kept GDI/USER counts at 13/8 through
-all 12 cycles. This establishes that bounded case, not a general claim that all
-window lifetimes or preview resources are leak-free.
+`WM_NCDESTROY` and recreate them before reuse.
+`test_ui_modernization --window-lifetime`, part of `ui_modernization_native`,
+destroys a real owner and reopens the island twelve times. On 2026-09-29 that
+run kept the GDI and USER object counts at 13 and 8 through all twelve cycles;
+that establishes this bounded case, not that every window lifetime is free of
+leaks.
 
 ## 6. Validate the new surface before handoff
 
@@ -249,8 +237,11 @@ bounded by the three-second protocol grace described above. Verify held Out,
 exclusive endpoint selection, replay from In and paused-first-frame opening
 alongside the visual checks, on the same production build.
 
-Run native input/capture tests serially in a controlled desktop with test-window
-foreground ownership. A test whose drag did not start or whose window was
+Tests that use the real pointer, focus or capture run one at a time on the
+visible desktop, with the test window in the foreground
+(`interactive_desktop_tests` in `tests/CMakeLists.txt`); message-driven window
+tests run in parallel on a private desktop. See [testing](../testing.md). A
+test whose drag did not start or whose window was
 obscured is not successful coverage. `PrintWindow`/GDI child snapshots cannot
 prove what a foreign Direct3D video presenter displayed; use actual desktop
 capture for that claim. Record the environment and actual result, and distinguish
@@ -266,9 +257,10 @@ input, align the physical pointer with the message coordinates and authenticate
 foreground ownership before capture. Confirm actual capture ownership within
 the existing bounded wait; injected input alone is not proof of a received click.
 
-For a requested physical display, set `EASNAP_TEST_MONITOR` to its active Windows
-device name (for example `\\.\DISPLAY2`) and record its identity, physical bounds
-and DPI. `tests/native_test_monitor.h` provides the shared opt-in placement;
+For a requested physical display, `scripts/test.ps1 -Monitor` sets
+`EASNAP_TEST_MONITOR` to its active Windows device name (for example
+`\\.\DISPLAY2`); set it by hand only when running a test executable directly.
+Record the display's identity, physical bounds and DPI. `tests/native_test_monitor.h` provides the shared opt-in placement;
 screen-coordinate fixtures and injected points must use the same translation.
 Do not translate bitmap/client coordinates or drag deltas. Enable PMv2 before
 the first HWND, as the application does; DPI-virtualized fixture coordinates do
@@ -279,8 +271,8 @@ without a taskbar button. It reasserts its own z-order, adapts to work-area/disp
 changes, and recreates capture after display reconfiguration. It still verifies
 actual visible ownership and pixels; an obscured surface fails explicitly. Tests
 that intentionally use the real pointer/focus/capture remain `RUN_SERIAL` and
-need a controlled desktop. Daily affected runs can defer these as pending;
-full runs and CI retain every assertion and scenario.
+need a controlled desktop. Daily runs defer these as pending and the Full tier
+runs them. Hosted CI runs none of them: it has no real display or input queue.
 
 Useful existing checks in `apps/easnap-desktop/tests`:
 
@@ -325,14 +317,12 @@ Useful existing checks in `apps/easnap-desktop/tests`:
   legitimate hover is not misclassified. This does not relax the pixel gate.
   PNG review remains necessary; sampled patches alone do not establish that
   every pixel/control or the foreign video presentation is correct.
-  Keep observer-free physical review separate. On 30 September the user saw
-  Trim's left/top/top-right defects even with both recorder and comparator
-  disabled. A recorder-only explanation is therefore insufficient. An isolated
+  Keep observer-free physical review separate: the left, top and top-right
+  defects of the open resize limitation were also seen with recorder and
+  comparator disabled, so the observer does not explain them. An isolated
   standard Win32/GDI reference also clips in captured fast top-left motion;
-  this is diagnostic evidence, not an accepted rendering workaround or a
-  demonstrated OS/driver cause.
-  Preserve those pre-restart failures alongside the later user observation and
-  clean diagnostic subset; do not replace historical failures with a full pass.
+  that is diagnostic evidence, not a rendering workaround or a demonstrated
+  OS or driver cause.
   Foreground activation uses an actual caption click only after confirming the
   point belongs to the test window. The drag must enter and remain in the native
   sizing loop for its full trajectory; a cancelled/unstarted drag is a failure.
@@ -343,24 +333,27 @@ Useful existing checks in `apps/easnap-desktop/tests`:
   optimizing the shared renderer.
 - `mfplay_preview_startup` / `mfplay_preview_backpressure`: real presented first
   frames and delayed owner polling. Keep startup separate from transport stress.
-- `trim_timeline_seek_stress`: registered serial desktop check, also available
-  as `test_ui_modernization --seek-stress <evidence-directory> [click-count]`.
+- `trim_timeline_seek_stress`: registered serial desktop check with 24 clicks
+  per case; `trim_timeline_seek_soak` repeats it with 72 in the Soak tier. Also
+  available as `test_ui_modernization --seek-stress <evidence-directory>
+  [click-count]`.
   CTest selects the existing DXGI desktop-duplication observer with
   `EASNAP_TEST_CAPTURE=duplication`. Set that environment variable when directly
   reproducing this stress command: the raw executable still defaults to WGC.
-  A long WGC stress run faulted during asynchronous shutdown at an address in
-  unloaded `GraphicsCapture.dll`; that failed run remains evidence. This
-  test-only observer selection does not pin a DLL, add a teardown sleep or
-  change picture thresholds. Standard endpoint and resize checks continue to
+  The DXGI observer is selected because a long run with the WGC observer
+  faulted during WGC's asynchronous shutdown, at an address in the unloaded
+  `GraphicsCapture.dll`. The selection is test-only; it does not pin a DLL, add
+  a teardown sleep or change picture thresholds. Standard endpoint and resize checks continue to
   cover WGC; do not silently switch every visual test.
   It exercises 6 s/10 s media in both themes, held clicks, identical move/release
   coordinates, new clicks at the same point and changed drag targets. Continuous
   random native clicks keep Play requested without a test-inserted pause or
   restart. Require enabled controls, the same helper, visible moving video and
   bounded input processing; missing or obscured capture is unavailable evidence.
-- `mfplay_preview_continuous_seek_0`, `_1`, `_2`: three deterministic real H.264/AAC
-  backend seeds, also available as `test_media_preview --continuous-seek
-  [seed-index] [seconds]`. Confirm that frequent backward seeks do not cause
+- `mfplay_preview_continuous_seek`: one deterministic real H.264/AAC backend
+  seed for 15 seconds; `mfplay_preview_continuous_seek_soak_0` to `_2` run
+  three seeds for 30 seconds each in the Soak tier. Also available as
+  `test_media_preview --continuous-seek [seed-index] [seconds]`. Confirm that frequent backward seeks do not cause
   false recovery. Unit `TestPreviewLivenessCompletedSeeksBetweenPolls` models
   complete native command cycles between watchdog samples and retains genuine
   stall/missing-callback deadlines. A backend pass alone does not validate
@@ -377,18 +370,16 @@ run the applicable checks. Shared rendering/lifetime changes require the full
 Release suite and affected Debug tests. Pair `Easnap.exe` with the matching
 `EasnapPreviewHost.exe` when packaging. Write actual validation and the resulting
 status to project status; record a changed architectural contract in an ADR.
-When restoring an experimental source copy, verify that MSBuild actually
-recompiled it: an older restored timestamp can otherwise leave the experimental
-object in the binary. Record binary hashes with the final evidence. A passing
-CTest suite does not include the opt-in resize gate and cannot close its failure.
-Changes to timeline input, preview health or retained presentation also require
-the timeline seek stress, all three continuous backend seeds, startup,
-backpressure and endpoint checks on the same production build. Keep the
+A passing CTest suite does not include the opt-in resize gate and cannot close
+its failure. Changes to timeline input, preview health or retained
+presentation also require the timeline seek stress, the continuous backend
+seek test (all three seeds with `-Tier Soak`), startup, backpressure and
+endpoint checks on the same production build. Keep the
 applicable resize matrix alongside them; passing seeking alone is insufficient.
 
 ## Sources and precedence
 
-The accepted production code and ADR-024 supersede the earlier resize experiments.
+The production code and ADR-024 supersede the earlier resize experiments.
 Microsoft documents [custom frames](https://learn.microsoft.com/en-us/windows/win32/dwm/customframe),
 [client preservation](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-nccalcsize),
 [positioning flags](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos),

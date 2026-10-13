@@ -1,0 +1,14 @@
+// Easnap - localized string tables. Compiled into the application and into
+// every test executable that creates production windows.
+//
+// The tables are UTF-8. The code page is declared here as well as in each
+// table: rc.exe does not honour the pragma of the first file it includes
+// unless the including file has already declared one.
+#pragma code_page(65001)
+
+#include <windows.h>
+
+#include "string_ids.h"
+
+#include "strings_en.rc"
+#include "strings_tr.rc"

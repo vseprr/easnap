@@ -38,4 +38,6 @@ behavior. Tests exercise real window hit targets after activation, outline-only
 nesting, modal cancellation, source clipping and native drag/paint timings.
 
 The magnifier keeps exact source-pixel/color sampling at 4 DIP per source pixel.
+In the 2026-09-17 validation of this slice, the dirty area of a screenshot-frame
+move fell by 98.2% and the p95 update time fell from 3.045 ms to 1.142 ms.
 UI render timings are observations, not hardware-independent guarantees.

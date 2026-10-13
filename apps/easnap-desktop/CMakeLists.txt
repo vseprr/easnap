@@ -7,6 +7,17 @@ configure_file(resources/portable-readme.txt.in generated/README.txt @ONLY)
 target_include_directories(easnap_project_options INTERFACE
     "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
+# Localized text: the string tables and their accessor. An interface library,
+# so the application and every test that creates production windows compile
+# the same resource script and read the same tables.
+add_library(easnap_strings INTERFACE)
+target_sources(easnap_strings INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/strings.rc"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/strings/strings.cpp")
+target_include_directories(easnap_strings INTERFACE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources")
+
 set(EASNAP_SOURCES
     src/main.cpp
     src/app/session_transitions.h
@@ -37,6 +48,13 @@ set(EASNAP_SOURCES
     src/ui/capture_workspace.cpp
     src/ui/recording_controls.h
     src/ui/recording_controls.cpp
+    src/ui/scrollshot_controls.h
+    src/ui/scrollshot_controls.cpp
+    src/ui/island_layout.h
+    src/ui/island_layout.cpp
+    src/ui/scrollshot_layout.h
+    src/ui/scrollshot_layout.cpp
+    src/strings/strings.h
     src/ui/trim_window.h
     src/ui/trim_window.cpp
     src/ui/timeline_accessibility.cpp
@@ -47,12 +65,18 @@ set(EASNAP_SOURCES
     src/ui/region_selector.cpp
     src/editor/screenshot_editor.h
     src/editor/screenshot_editor.cpp
+    src/editor/image_viewport.h
+    src/editor/image_viewport.cpp
     src/editor/redaction_renderer.h
     src/editor/redaction_renderer.cpp
     src/capture/capture_provider.h
     src/capture/capture_provider.cpp
     src/capture/recording_capture_worker.h
     src/capture/recording_capture_worker.cpp
+    src/scrollshot/stitch_engine.h
+    src/scrollshot/stitch_engine.cpp
+    src/scrollshot/scrollshot_session.h
+    src/scrollshot/scrollshot_session.cpp
     src/media/audio_format.h
     src/media/audio_delivery_barrier.h
     src/media/audio_resampler.h
@@ -85,6 +109,12 @@ set(EASNAP_SOURCES
     src/recording/recording_session.cpp
     src/recording/audio_timeline.h
     src/recording/audio_timeline.cpp
+    src/platform/diagnostics.h
+    src/platform/diagnostics.cpp
+    src/platform/startup_entry.h
+    src/platform/startup_entry.cpp
+    src/ui/settings_dialog.h
+    src/ui/settings_dialog.cpp
     src/platform/platform_utils.h
     src/platform/platform_utils.cpp)
 
@@ -105,6 +135,7 @@ add_executable(EasnapPreviewHost WIN32
     src/ui/paint_buffer.h
     src/media/preview_video_endpoint.cpp
     src/media/preview_transport.cpp
+    src/platform/diagnostics.cpp
     src/platform/platform_utils.cpp)
 target_include_directories(EasnapPreviewHost PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
@@ -120,12 +151,14 @@ target_sources(EasnapPreviewHost PRIVATE resources/preview_host.manifest)
 add_dependencies(easnap-desktop EasnapPreviewHost)
 
 set_target_properties(easnap-desktop PROPERTIES OUTPUT_NAME "Easnap")
+easnap_keep_release_symbols(easnap-desktop Easnap)
+easnap_keep_release_symbols(EasnapPreviewHost EasnapPreviewHost)
 
 target_include_directories(easnap-desktop PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
-target_link_libraries(easnap-desktop PRIVATE easnap_project_options)
+target_link_libraries(easnap-desktop PRIVATE easnap_project_options easnap_strings)
 
 # Native graphics, media, shell, theme and accessibility dependencies.
 # The supervised preview helper has its own narrower link set above.
@@ -152,6 +185,14 @@ target_link_libraries(easnap-desktop PRIVATE
     gdi32
     advapi32
     propsys dwmapi uiautomationcore)
+
+# Windows N and KN editions have no Media Foundation until the Media Feature
+# Pack is installed. Loading it on first use lets Easnap start there; the
+# Record mode then explains what is missing (platform::MediaFoundationAvailable).
+if(MSVC)
+    target_link_options(easnap-desktop PRIVATE /DELAYLOAD:mfplat.dll /DELAYLOAD:mfreadwrite.dll)
+    target_link_libraries(easnap-desktop PRIVATE delayimp)
+endif()
 
 # Per-monitor v2 DPI awareness is declared in resources/easnap.manifest. Do not
 # set VS_DPI_AWARE: it embeds per-monitor v1, which a process cannot raise

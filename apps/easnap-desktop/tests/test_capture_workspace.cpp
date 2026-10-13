@@ -2,6 +2,8 @@
 // Production workspace policy + real editor/configuration integration.
 // A private window station/desktop gives these tests their own OS clipboard.
 #include "ui/capture_workspace.h"
+#include "strings/strings.h"
+#include "ui/island_layout.h"
 #include "ui/overlay.h"
 #include "ui/recording_controls.h"
 #include "editor/screenshot_editor.h"
@@ -407,7 +409,7 @@ void LockedToolCompletion() {
         if (::OpenClipboard(nullptr)) {
             HGLOBAL dib = ::GetClipboardData(CF_DIB);
             const auto* header = static_cast<const BITMAPINFOHEADER*>(::GlobalLock(dib));
-            CHECK(header && header->biWidth == 160 && std::abs(header->biHeight) == 120 && header->biBitCount == 32);
+            CHECK(header && header->biWidth == 160 && header->biHeight == 120 && header->biBitCount == 32);  // Bottom-up.
             if (header && header->biWidth == 160 && std::abs(header->biHeight) == 120 && header->biBitCount == 32) {
                 const auto* pixels = reinterpret_cast<const uint32_t*>(reinterpret_cast<const BYTE*>(header) + header->biSize);
                 for (int y = 0; y < 120; ++y) {
@@ -642,15 +644,30 @@ void RecordingRoundTrip() {
         ::ValidateRect(child, nullptr); return TRUE;
     }, 0);
     const RECT moved_region{60, 120, 530, 470};
-    for (int i = 0; i < 40; ++i) { controls.SetRegion(i % 2 ? moved_region : region); }
+    // While the frame is dragged the panel neither moves nor repaints.
+    for (int i = 0; i < 40; ++i) { controls.SetRegion(i % 2 ? moved_region : region, true); }
     ::GetWindowRect(panel, &panel_after);
     CHECK(::EqualRect(&panel_before, &panel_after) && !::GetUpdateRect(panel, nullptr, FALSE));
-    bool child_damage{};
-    ::EnumChildWindows(panel, [](HWND child, LPARAM context) -> BOOL {
-        if (::GetUpdateRect(child, nullptr, FALSE)) { *reinterpret_cast<bool*>(context) = true; }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&child_damage));
-    CHECK(!child_damage);
+    const auto child_damaged = [&] {
+        bool damage{};
+        ::EnumChildWindows(panel, [](HWND child, LPARAM context) -> BOOL {
+            if (::GetUpdateRect(child, nullptr, FALSE)) { *reinterpret_cast<bool*>(context) = true; }
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&damage));
+        return damage;
+    };
+    CHECK(!child_damaged());
+    // When the gesture ends the panel follows the frame: it is moved, not
+    // laid out or painted again, and the same frame gives the same place.
+    controls.SetRegion(moved_region, false);
+    ::GetWindowRect(panel, &panel_after);
+    CHECK(!::EqualRect(&panel_before, &panel_after));
+    CHECK(panel_after.right - panel_after.left == panel_before.right - panel_before.left &&
+          panel_after.bottom - panel_after.top == panel_before.bottom - panel_before.top);
+    CHECK(!::GetUpdateRect(panel, nullptr, FALSE) && !child_damaged());
+    controls.SetRegion(region, false);
+    ::GetWindowRect(panel, &panel_after);
+    CHECK(::EqualRect(&panel_before, &panel_after) && !::GetUpdateRect(panel, nullptr, FALSE) && !child_damaged());
     MSG outside{nullptr, WM_KEYDOWN, VK_RETURN, 0, 0, {0, 0}};
     CHECK(!controls.ProcessDialogMessage(outside) && starts == 0);
     auto visible_boundaries = [] {
@@ -711,8 +728,9 @@ void FramePerformance() {
     };
     callbacks.on_region_changed = [&](const RECT& region) {
         ++region_changes;
-        editor.SetRegion(region, active_overlay && active_overlay->selector().interacting());
-        controls.SetRegion(region);
+        const bool interacting = active_overlay && active_overlay->selector().interacting();
+        editor.SetRegion(region, interacting);
+        controls.SetRegion(region, interacting);
     };
     ui::OverlayController overlay(callbacks);
     active_overlay = &overlay;
@@ -850,10 +868,237 @@ void FramePerformance() {
         ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS));
     controls.Destroy(); editor.Destroy(); overlay.Destroy();
 }
+// --- Islands around the frame ----------------------------------------------------------
+//
+// The mode island, the tools island and the recording panel as production
+// windows, wired the way the coordinator wires them: none ever covers
+// another, an island is over the frame only when nothing outside has room,
+// and the mode island steps aside while the frame is dragged.
+void IslandPlacement() {
+    const auto monitors = platform::EnumerateMonitors();
+    CHECK(!monitors.empty());
+    if (monitors.empty()) { return; }
+    capture::DesktopSnapshot snapshot;
+    snapshot.virtual_bounds = platform::VirtualScreenBounds();
+    for (const auto& each : monitors) {
+        capture::MonitorFrame frame;
+        frame.desktop_rect = each.bounds;
+        frame.image.Reset(platform::RectWidth(each.bounds), platform::RectHeight(each.bounds));
+        snapshot.monitors.push_back(std::move(frame));
+    }
+    const platform::MonitorInfo monitor = test::SelectedTestMonitor() ? *test::SelectedTestMonitor() : monitors.front();
+    const RECT bounds = monitor.bounds, work = monitor.work_area;
+    const LONG width = platform::RectWidth(bounds), height = platform::RectHeight(bounds);
+    const LONG gap = ui::theme::Scaled(8, monitor.scale());
+    const auto rect_of = [](HWND window) { RECT rect{}; ::GetWindowRect(window, &rect); return rect; };
+    const auto overlaps = [](const RECT& a, const RECT& b) { RECT both{}; return ::IntersectRect(&both, &a, &b) != FALSE; };
+    const auto same = [](const RECT& a, const RECT& b) { return ::EqualRect(&a, &b) != FALSE; };
+    const auto within = [](const RECT& inner, const RECT& outer) {
+        return inner.left >= outer.left && inner.top >= outer.top && inner.right <= outer.right && inner.bottom <= outer.bottom;
+    };
+
+    app::AppSettings settings;
+    ui::OverlayController* active{};
+    editor::ScreenshotEditor::Callbacks editor_callbacks;
+    editor_callbacks.keep_clear = [&] { return active ? active->mode_island_rect() : RECT{}; };
+    editor::ScreenshotEditor editor(editor_callbacks);
+    ui::RecordingControls controls({});
+    ui::OverlayController::Callbacks callbacks;
+    bool opened = false;
+    int mode_moves = 0;
+    callbacks.on_editing_changed = [&](CaptureMode mode, const RECT& region) {
+        if (mode == CaptureMode::Screenshot && !opened) {
+            CHECK(editor.Open(region, &settings, active->owner_window()));
+            opened = true;
+        }
+    };
+    callbacks.on_region_changed = [&](const RECT& region) {
+        const bool interacting = active->selector().interacting();
+        editor.SetRegion(region, interacting);
+        controls.SetRegion(region, interacting);
+    };
+    callbacks.on_frame_interacting = [&](bool value) { editor.SetFrameInteracting(value); };
+    callbacks.on_mode_island_moved = [&] { ++mode_moves; editor.SetRegion(active->selector().selection()); };
+    ui::OverlayController overlay(callbacks);
+    active = &overlay;
+    CHECK(overlay.Show(snapshot, POINT{bounds.left + width / 2, bounds.top + height / 2}));
+
+    const HWND modes = ::FindWindowW(L"EasnapCaptureModes", nullptr);
+    CHECK(modes != nullptr && ::IsWindowVisible(modes));
+    const RECT home = rect_of(modes);
+    // Its home is the top centre of the monitor.
+    CHECK(home.top == bounds.top && std::abs((home.left + home.right) - (bounds.left + bounds.right)) <= 2);
+    CHECK(same(overlay.mode_island_rect(), home));
+
+    const HWND input = overlay.owner_window();
+    const auto send = [&](UINT message, POINT point, WPARAM flags = 0) {
+        ::ScreenToClient(input, &point);
+        ::SendMessageW(input, message, flags, MAKELPARAM(point.x, point.y));
+    };
+    /// The tools island with its property island, as one rectangle.
+    const auto tools = [&] {
+        RECT group = rect_of(editor.hwnd());
+        if (::IsWindowVisible(editor.context_hwnd())) { const RECT context = rect_of(editor.context_hwnd()); ::UnionRect(&group, &group, &context); }
+        return group;
+    };
+    /// Where production geometry puts an island of this size for this frame.
+    const auto expected = [&](const RECT& frame, const RECT& island, const RECT& area, LONG margin, const RECT& keep_clear) {
+        return ui::PlaceIslandForFrame(frame, bounds, area,
+            SIZE{platform::RectWidth(island), platform::RectHeight(island)}, margin, keep_clear);
+    };
+    const auto set_frame = [&](const RECT& frame) { overlay.selector().SetSelection(frame); overlay.RegionChanged(); };
+
+    // --- A first frame in the middle: the mode island hides while it is drawn.
+    const RECT middle{bounds.left + width / 4, bounds.top + height / 3, bounds.left + width * 3 / 4, bounds.top + height * 2 / 3};
+    send(WM_LBUTTONDOWN, {middle.left, middle.top});
+    send(WM_MOUSEMOVE, {middle.right, middle.bottom}, MK_LBUTTON);
+    CHECK(overlay.selector().interacting() && !::IsWindowVisible(modes));
+    send(WM_LBUTTONUP, {middle.right, middle.bottom});
+    CHECK(opened && editor.visible() && ::IsWindowVisible(modes) && same(rect_of(modes), home));
+    RECT island = tools();
+    CHECK(island.top == middle.bottom + gap && !overlaps(island, middle) && !overlaps(island, home) && within(island, work));
+    CHECK(std::abs((island.left + island.right) - (middle.left + middle.right)) <= 2);
+
+    // --- Pressing a handle without moving hides both islands; releasing restores them.
+    send(WM_LBUTTONDOWN, {middle.right, middle.bottom});
+    CHECK(!::IsWindowVisible(modes) && !::IsWindowVisible(editor.hwnd()));
+    send(WM_LBUTTONUP, {middle.right, middle.bottom});
+    CHECK(::IsWindowVisible(modes) && ::IsWindowVisible(editor.hwnd()) && same(rect_of(modes), home));
+    CHECK(same(overlay.selector().selection(), middle) && same(tools(), island));
+
+    // --- Stretched to the full height by its handles: the reported case.
+    const POINT bottom_edge{(middle.left + middle.right) / 2, middle.bottom};
+    send(WM_LBUTTONDOWN, bottom_edge);
+    send(WM_MOUSEMOVE, {bottom_edge.x, bounds.bottom - 1}, MK_LBUTTON);
+    CHECK(!::IsWindowVisible(modes) && !::IsWindowVisible(editor.hwnd()));
+    send(WM_LBUTTONUP, {bottom_edge.x, bounds.bottom});
+    const POINT top_edge{(middle.left + middle.right) / 2, middle.top};
+    send(WM_LBUTTONDOWN, top_edge);
+    send(WM_MOUSEMOVE, {top_edge.x, bounds.top + 1}, MK_LBUTTON);
+    CHECK(!::IsWindowVisible(modes));
+    send(WM_LBUTTONUP, {top_edge.x, bounds.top});
+    const RECT tall = overlay.selector().selection();
+    CHECK(tall.top == bounds.top && tall.bottom == bounds.bottom && tall.left == middle.left && tall.right == middle.right);
+    CHECK(::IsWindowVisible(modes) && ::IsWindowVisible(editor.hwnd()) && !editor.has_image());
+    CHECK(overlay.workspace().can_switch_mode());  // Nothing was fixed on the way.
+    RECT mode = rect_of(modes);
+    island = tools();
+    CHECK(!overlaps(island, mode) && within(island, work));
+    const ui::IslandPlacement tall_place = expected(tall, island, work, gap, mode);
+    CHECK(island.left == tall_place.rect.left && island.top == tall_place.rect.top);
+    if (tall_place.side == ui::IslandSide::InsideBottom) {
+        // No room beside it on this display: over the bottom of the frame, far from the mode island.
+        CHECK(overlaps(island, tall) && island.bottom == std::min(tall.bottom, work.bottom) - gap);
+    } else {
+        CHECK(!overlaps(island, tall));
+    }
+    // The mode island keeps the top edge whether or not the frame leaves it room.
+    CHECK(mode.top == home.top && mode.bottom == home.bottom && (same(mode, home) || !overlaps(mode, tall)));
+
+    // --- A narrow frame of full height at the left edge: the island goes beside it.
+    const RECT narrow{bounds.left, bounds.top, bounds.left + width / 10, bounds.bottom};
+    set_frame(narrow);
+    island = tools();
+    mode = rect_of(modes);
+    const ui::IslandPlacement narrow_place = expected(narrow, island, work, gap, mode);
+    CHECK(island.left == narrow_place.rect.left && island.top == narrow_place.rect.top);
+    CHECK(!overlaps(island, mode) && within(island, work));
+    if (narrow_place.side == ui::IslandSide::Right) {
+        CHECK(island.left == narrow.right + gap && island.bottom == work.bottom && !overlaps(island, narrow));
+    }
+
+    // --- The frame takes the mode island's place and leaves room on its left.
+    const LONG mode_width = home.right - home.left;
+    const RECT covering{bounds.left + mode_width + 3 * gap, bounds.top, bounds.right, bounds.top + height / 2};
+    if (covering.left < home.right && covering.left - gap - mode_width >= work.left) {
+        set_frame(covering);
+        mode = rect_of(modes);
+        CHECK(::IsWindowVisible(modes) && mode.top == home.top && mode.right == covering.left - gap && !overlaps(mode, covering));
+        CHECK(same(overlay.mode_island_rect(), mode));
+        island = tools();
+        CHECK(!overlaps(island, mode) && !overlaps(island, covering) && island.top == covering.bottom + gap);
+        // The frame leaves: the mode island returns to its home.
+        set_frame(middle);
+        CHECK(same(rect_of(modes), home));
+    } else {
+        std::printf("The display is too narrow to move the mode island beside a frame; that case was not exercised.\n");
+    }
+
+    // --- The user moves the mode island: that is its home from then on, and the tools island yields.
+    set_frame(middle);
+    const RECT dropped{home.left - 6 * gap, home.top, home.right - 6 * gap, home.bottom};
+    ::SetWindowPos(modes, nullptr, dropped.left, dropped.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    ::SendMessageW(modes, WM_EXITSIZEMOVE, 0, 0);
+    CHECK(mode_moves == 1 && same(overlay.mode_island_rect(), dropped) && !overlaps(tools(), dropped));
+    RECT nudged = middle;
+    ::OffsetRect(&nudged, gap, gap);
+    set_frame(nudged);
+    CHECK(same(rect_of(modes), dropped));
+    ::SetWindowPos(modes, nullptr, home.left, home.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    ::SendMessageW(modes, WM_EXITSIZEMOVE, 0, 0);
+    CHECK(mode_moves == 2 && same(rect_of(modes), home));
+
+    // --- Once the screenshot is fixed the mode island takes no room any more.
+    set_frame(tall);
+    CHECK(!platform::IsEmptyRect(overlay.mode_island_rect()));
+
+    // --- Recording: the panel follows the same rule and follows the frame.
+    editor.Hide();
+    overlay.SetMode(CaptureMode::Record);
+    CHECK(overlay.mode() == CaptureMode::Record);
+    RECT available = work;
+    available.top = std::max(available.top, home.bottom);  // The strip of the mode island.
+    const LONG margin = ui::theme::Scaled(12, monitor.scale());
+    set_frame(middle);
+    CHECK(controls.ShowConfiguring(middle, {}, true, overlay.panel_owner_window()));
+    RECT panel = rect_of(controls.hwnd());
+    ui::IslandPlacement panel_place = expected(middle, panel, available, margin, RECT{});
+    CHECK(panel.left == panel_place.rect.left && panel.top == panel_place.rect.top);
+    CHECK(!overlaps(panel, rect_of(modes)) && within(panel, available));
+    // While the frame is dragged the panel stays; at the end of the gesture it follows.
+    send(WM_LBUTTONDOWN, {middle.right, middle.bottom});
+    send(WM_MOUSEMOVE, {middle.right + 4 * gap, middle.bottom + 4 * gap}, MK_LBUTTON);
+    CHECK(same(rect_of(controls.hwnd()), panel) && !::IsWindowVisible(modes));
+    send(WM_LBUTTONUP, {middle.right + 4 * gap, middle.bottom + 4 * gap});
+    const RECT grown = overlay.selector().selection();
+    CHECK(grown.right == middle.right + 4 * gap && grown.bottom == middle.bottom + 4 * gap && ::IsWindowVisible(modes));
+    panel = rect_of(controls.hwnd());
+    panel_place = expected(grown, panel, available, margin, RECT{});
+    CHECK(panel.left == panel_place.rect.left && panel.top == panel_place.rect.top);
+    // Full height: beside the frame where the display has room, else over its bottom; never in the strip.
+    set_frame(tall);
+    panel = rect_of(controls.hwnd());
+    panel_place = expected(tall, panel, available, margin, RECT{});
+    CHECK(panel.left == panel_place.rect.left && panel.top == panel_place.rect.top);
+    CHECK(!overlaps(panel, rect_of(modes)) && within(panel, available) && panel.top >= home.bottom);
+    CHECK(panel_place.side == ui::IslandSide::InsideBottom ? overlaps(panel, tall) : !overlaps(panel, tall));
+    // A panel the user has moved stays where it was put.
+    ::SendMessageW(controls.hwnd(), WM_ENTERSIZEMOVE, 0, 0);
+    const RECT placed_by_user{available.left + gap, available.top + gap, available.left + gap + platform::RectWidth(panel),
+                              available.top + gap + platform::RectHeight(panel)};
+    ::SetWindowPos(controls.hwnd(), nullptr, placed_by_user.left, placed_by_user.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    ::SendMessageW(controls.hwnd(), WM_EXITSIZEMOVE, 0, 0);
+    set_frame(middle);
+    CHECK(same(rect_of(controls.hwnd()), placed_by_user));
+
+    controls.Destroy();
+    editor.Destroy();
+    overlay.Destroy();
+}
 } // namespace
 
 int main(int argc, char** argv) {
+    // Assertions name controls by their English text, whatever Windows speaks.
+    easnap::strings::SetPreference(easnap::strings::LanguagePreference::English);
     CHECK(::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
+    if (argc > 1 && std::string_view(argv[1]) == "--islands") {
+        ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        IslandPlacement();
+        platform::GraphicsEnvironment::Get().Shutdown();
+        ::CoUninitialize();
+        std::printf("Island placement: %d passed, %d failed\n", passed, failed);
+        return failed ? 1 : 0;
+    }
     if (argc > 1 && std::string_view(argv[1]) == "--frame-performance") {
         ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         FramePerformance();

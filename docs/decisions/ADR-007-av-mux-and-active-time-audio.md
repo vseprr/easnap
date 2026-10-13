@@ -42,19 +42,27 @@ must finalize only after every accepted sample has drained.
    overlaps, or variable packet cadence.
 7. Media Foundation throttling remains enabled to keep its internal transform
    pipeline bounded. To avoid one stream blocking the serialized writer while
-   the other catches up, silent audio is advanced with sparse stream ticks 750 ms
-   behind video, and real audio submission is held to at most 100 ms ahead of
+   the other catches up, the video consumer writes PCM silence in 1024-frame
+   packets before each video frame, up to 750 ms behind that frame and never
+   past a captured packet that is waiting for submission (`WriteSilenceUpTo`),
+   and real audio submission is held to at most 100 ms ahead of
    written video. Waiting remains backed by the existing bounded 500 ms WASAPI
-   queue; no duration-growing mux queue is introduced. Separate diagnostics
-   measure video writes, audio writes, stream ticks, and inter-stream waits.
+   queue; no duration-growing mux queue is introduced. If written video does
+   not advance for 10 s while a packet waits, the session fails instead of
+   blocking Pause, Stop or Abort (v1.0.1). Separate diagnostics
+   measure video writes, audio writes, silence writes, and inter-stream waits.
 8. Capture stop first closes audio acceptance, waits for any in-flight callback,
    stops both producers, drains the video queue, and joins all worker threads.
-   When necessary, at most 4096 native silence frames, submitted in 1024-frame
-   packets near the active Stop endpoint, absorb AAC priming and ensure even an
-   entirely silent loopback session finalizes with valid-duration AAC. This tail
-   is fixed-size and never grows with recording duration.
-9. WASAPI discontinuities and timestamp gaps are forwarded to Media Foundation
-   with stream ticks. Writer validation rejects overlapping or non-monotonic
+   `FinalizeAudioTimeline` then fills the interval from the last committed
+   audio sample to the active Stop endpoint with PCM silence in 1024-frame
+   packets, so even an entirely silent loopback session finalizes with
+   valid-duration AAC. That interval is normally no longer than the 750 ms
+   lag of item 7. The fill reuses one 1024-frame buffer and its memory
+   does not grow with recording duration.
+9. A gap between the committed audio end and the next captured packet,
+   including one caused by a WASAPI discontinuity, is filled with PCM silence
+   before that packet is submitted (`FillSilenceGap`). The encoded audio
+   timeline is therefore continuous. Writer validation rejects overlapping or non-monotonic
    samples and finalization requires at least one video sample and, when enabled,
    at least one audio sample.
 
@@ -64,9 +72,9 @@ must finalize only after every accepted sample has drained.
   absent from both streams.
 - Audio buffering remains bounded by the existing 500 ms WASAPI queue, one
   callback packet, one writer command, and Media Foundation's throttled pipeline.
-- Initial source silence is represented as an audio-stream gap, and continuous
+- Initial source silence is written as PCM silence, and continuous
   PCM presentation timing is sample-accurate rather than callback-timed.
-- Sparse stream ticks and the 100 ms audio lead gate prevent Media Foundation's
+- Silence written behind video and the 100 ms audio lead gate prevent Media Foundation's
   default cross-stream throttling from starving the other bounded producer.
 - Stop, failure rollback, abort, drain, and finalization have a deterministic
   ownership order across both streams.

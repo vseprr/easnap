@@ -97,6 +97,9 @@ try {
     $actual=@(Get-EasnapJUnitPasses $xml @('preview','visual','pure'))
     Assert-Selection ($actual.Count -eq 1 -and $actual[0] -eq 'preview') 'only selected, actually passed JUnit cases may be cached'
     Assert-Selection (@(Get-EasnapJUnitPasses (Join-Path $fixture 'missing.xml') @('preview')).Count -eq 0) 'missing result never implies success'
+    $skips=@(Get-EasnapJUnitSkips $xml @('preview','visual','pure'))
+    Assert-Selection ($skips.Count -eq 1 -and $skips[0] -eq 'visual') 'a skipped case is neither a pass nor a failure'
+    Assert-Selection (@(Get-EasnapJUnitSkips (Join-Path $fixture 'missing.xml') @('visual')).Count -eq 0) 'missing result never implies a skip'
     $missing=$false
     try { Get-EasnapFileDigest (Join-Path $fixture 'missing.bin') @{} | Out-Null } catch { $missing=$true }
     Assert-Selection $missing 'missing build artifact fails closed'

@@ -1270,7 +1270,20 @@ int main() {
     Trace("Results: %d passed, %d failed, %d skipped (of %d)\n",
           g_tests_passed, g_tests_failed, g_tests_skipped, g_tests_run);
 
+    // Without any audio endpoint every capture test above skipped itself.
+    // What remains is queue and timestamp logic; reporting that as a pass
+    // would claim a capture that never happened. 77 is SKIP_RETURN_CODE.
+    bool endpoint_available = false;
+    if (const auto probe = easnap::media::CreateWasapiAudioCaptureProvider()) {
+        endpoint_available = probe->IsSourceAvailable(easnap::media::AudioSource::SystemAudio) ||
+                             probe->IsSourceAvailable(easnap::media::AudioSource::Microphone);
+    }
     ::CoUninitialize();
 
-    return g_tests_failed > 0 ? 1 : 0;
+    if (g_tests_failed > 0) { return 1; }
+    if (!endpoint_available) {
+        Trace("No audio endpoint: the capture tests did not run.\n");
+        return 77;
+    }
+    return 0;
 }

@@ -1,7 +1,8 @@
 # ADR-018: Direct annotation manipulation and quiet capture chrome
 
 Date: 2026-09-17  
-Status: Implemented; physical interaction review remains.
+Status: Implemented; physical interaction review remains.  
+**Amended by:** [ADR-020](ADR-020-workspace-layering-and-outline-interaction.md) (outline hit targets, brush popup placement); [ADR-022](ADR-022-text-input-and-content-sized-trim.md) (native text painting and click sequence); [ADR-023](ADR-023-trim-resize-and-text-click-continuations.md) (blank double-click is a continuation)
 
 ## Context
 
@@ -55,6 +56,5 @@ Native tests cover document operations, actual caret ownership, source-backed
 text painting, frame dragging, popup hover/click/leave, pt validation, hidden
 slider state, capture exclusion with changing real desktop-window pixels,
 500 ms fade, Light/Dark rendering, UI Automation, DPI messages and undo/export.
-See [correction validation](../ui/interaction-corrections-validation.md) for exact
-runs. Native render captures and message tests do not certify perceived motion
+Native render captures and message tests do not certify perceived motion
 smoothness, physical mixed-DPI behavior, every IME path or screen-reader UX.

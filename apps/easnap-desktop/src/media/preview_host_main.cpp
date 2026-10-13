@@ -1,5 +1,7 @@
 #include "media/preview_host_protocol.h"
 
+#include "platform/diagnostics.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -361,6 +363,8 @@ private:
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     easnap::platform::RestrictDllSearchPath();
+    // A fault inside the native player leaves a report beside the application's.
+    easnap::platform::diagnostics::InstallCrashHandler(easnap::platform::diagnostics::CrashDirectory(), L"preview");
     const HANDLE input = ::GetStdHandle(STD_INPUT_HANDLE);
     const HANDLE output = ::GetStdHandle(STD_OUTPUT_HANDLE);
     if (input == nullptr || input == INVALID_HANDLE_VALUE ||

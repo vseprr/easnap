@@ -75,6 +75,9 @@ public:
 };
 
 std::unique_ptr<IMediaPreview> CreateMfPlayPreview();
+/// False when EasnapPreviewHost.exe is not beside this executable, as in an
+/// incompletely extracted portable copy. No preview can start then.
+[[nodiscard]] bool PreviewHostInstalled();
 // Native implementation used only by EasnapPreviewHost. Desktop callers use
 // the process-isolated public factory above.
 std::unique_ptr<IMediaPreview> CreateInProcessMfPlayPreview();

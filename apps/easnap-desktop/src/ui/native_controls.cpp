@@ -15,6 +15,8 @@
 #include <oleacc.h>
 #include <gdiplus.h>
 
+#include "strings/strings.h"
+
 namespace easnap::ui {
 namespace {
 constexpr UINT_PTR kButtonSubclass = 0xEA51;
@@ -310,6 +312,14 @@ void DrawIcon(HDC dc, const RECT& r, Icon icon, COLORREF color, float scale) {
         case Icon::ChevronDown: line(6,9,12,15); line(12,15,18,9); break;
         case Icon::Minimize: line(5,16,19,16); break;
         case Icon::Maximize: box(5,5,19,19); break;
+        case Icon::Scissors: circle(3,15,9,21); circle(15,15,21,21); line(8,16,19,3); line(16,16,5,3); break;
+        case Icon::Help: {
+            circle(3,3,21,21);
+            graphics.DrawBezier(&pen,9,10,9,5,15,5,15,10); graphics.DrawBezier(&pen,15,10,15,12,12,12,12,15);
+            Gdiplus::SolidBrush dot(Gdiplus::Color(255,GetRValue(color),GetGValue(color),GetBValue(color)));
+            graphics.FillEllipse(&dot,11,17,2,2);
+            break;
+        }
         case Icon::None: break;
     }
 
@@ -328,6 +338,32 @@ void UpdateButtonStyle(HWND button, ButtonStyle style) {
         reinterpret_cast<ButtonData*>(data)->style = style;
         ::InvalidateRect(button, nullptr, FALSE);
     }
+}
+int ButtonContentWidth(HWND button) {
+    DWORD_PTR reference{};
+    if (!button || !::GetWindowSubclass(button, ButtonProc, kButtonSubclass, &reference)) { return 0; }
+    const ButtonStyle& style = reinterpret_cast<ButtonData*>(reference)->style;
+    if (style.icon_only || style.swatch) { return 0; }
+    wchar_t text[256]{};
+    const int length = ::GetWindowTextW(button, text, ARRAYSIZE(text));
+    if (length == 0) { return 0; }
+    const float scale = static_cast<float>(::GetDpiForWindow(button)) / 96.0f;
+    SIZE extent{};
+    if (HDC dc = ::CreateCompatibleDC(nullptr)) {
+        const HGDIOBJ previous = ::SelectObject(dc, reinterpret_cast<HFONT>(::SendMessageW(button, WM_GETFONT, 0, 0)));
+        ::GetTextExtentPoint32W(dc, text, length, &extent);
+        ::SelectObject(dc, previous);
+        ::DeleteDC(dc);
+    }
+    // The same insets PaintButton applies: 6 around the face, 6 beside the
+    // caption, and what an icon or a check mark takes on the left.
+    int lead = theme::Scaled(6, scale);
+    const auto type = ::GetWindowLongPtrW(button, GWL_STYLE) & BS_TYPEMASK;
+    if (style.icon != Icon::None) { lead = theme::Scaled(10 + 18 + 6, scale); }
+    else if ((type == BS_AUTOCHECKBOX || type == BS_AUTORADIOBUTTON || type == BS_RADIOBUTTON) && !style.segmented) {
+        lead = theme::Scaled(10 + 10 + 8, scale);
+    }
+    return 2 * theme::Scaled(6, scale) + lead + static_cast<int>(extent.cx) + theme::Scaled(6, scale);
 }
 namespace {
 LRESULT CALLBACK BufferedTextProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM lparam,UINT_PTR id,DWORD_PTR) {
@@ -468,13 +504,21 @@ LRESULT CALLBACK AccessibleNameProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM 
     return ::DefSubclassProc(hwnd,message,wparam,lparam);
 }
 }
-bool CanCaptureVisibleWindows() {
+bool CaptureExclusionSupported() {
     // EXCLUDEFROMCAPTURE was introduced in Windows 10 build 19041. Older
-    // systems interpret it as a black rectangle, so retain the hide fallback.
-    using VersionFn=LONG(WINAPI*)(OSVERSIONINFOW*);
-    const auto version=reinterpret_cast<VersionFn>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"),"RtlGetVersion"));
-    OSVERSIONINFOW info{}; info.dwOSVersionInfoSize=sizeof(info);
-    if(!version || version(&info)!=0 || info.dwMajorVersion<10 || (info.dwMajorVersion==10 && info.dwBuildNumber<19041)) { return false; }
+    // systems interpret it as a black rectangle.
+    static const bool supported=[] {
+        using VersionFn=LONG(WINAPI*)(OSVERSIONINFOW*);
+        const auto version=reinterpret_cast<VersionFn>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"),"RtlGetVersion"));
+        OSVERSIONINFOW info{}; info.dwOSVersionInfoSize=sizeof(info);
+        return version && version(&info)==0 && (info.dwMajorVersion>10 || (info.dwMajorVersion==10 && info.dwBuildNumber>=19041));
+    }();
+    return supported;
+}
+bool CanCaptureVisibleWindows() {
+    // Where exclusion is missing, or one visible window lacks it, the caller
+    // retains its hide fallback.
+    if(!CaptureExclusionSupported()) { return false; }
     bool excluded=true;
     const bool enumerated=::EnumWindows([](HWND hwnd,LPARAM param)->BOOL {
         DWORD process{}; ::GetWindowThreadProcessId(hwnd,&process);
@@ -587,13 +631,15 @@ bool ActivateFocusedButton(MSG& message, HWND parent) {
     ::SendMessageW(message.hwnd, BM_CLICK, 0, 0);
     return true;
 }
-HMENU CreateAppearanceMenu() {
+HMENU CreateAppearanceMenu(bool follows_system) {
     HMENU menu = ::CreatePopupMenu();
     if (menu) {
-        ::AppendMenuW(menu, MF_STRING, kAppearanceLight, L"Light");
-        ::AppendMenuW(menu, MF_STRING, kAppearanceDark, L"Dark");
-        ::CheckMenuRadioItem(menu, kAppearanceLight, kAppearanceDark,
-            theme::Preference() == app::AppearanceTheme::Dark ? kAppearanceDark : kAppearanceLight, MF_BYCOMMAND);
+        ::AppendMenuW(menu, MF_STRING, kAppearanceSystem, strings::Get(IDS_SETTINGS_SAME_AS_WINDOWS));
+        ::AppendMenuW(menu, MF_STRING, kAppearanceLight, strings::Get(IDS_SHELL_APPEARANCE_LIGHT));
+        ::AppendMenuW(menu, MF_STRING, kAppearanceDark, strings::Get(IDS_SHELL_APPEARANCE_DARK));
+        ::CheckMenuRadioItem(menu, kAppearanceLight, kAppearanceSystem,
+            follows_system ? kAppearanceSystem
+                : theme::Preference() == app::AppearanceTheme::Dark ? kAppearanceDark : kAppearanceLight, MF_BYCOMMAND);
     }
     return menu;
 }
@@ -797,15 +843,15 @@ bool StyleWindowChrome(HWND window,bool resizable) {
     }();
     if(!registered) { return false; }
     auto data=std::make_unique<WindowChrome>(); data->owner=window; data->resizable=resizable;
-    data->header=::CreateWindowExW(WS_EX_CONTROLPARENT,L"EasnapWindowChrome",L"Window controls",WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN,0,0,1,1,window,nullptr,::GetModuleHandleW(nullptr),data.get());
+    data->header=::CreateWindowExW(WS_EX_CONTROLPARENT,L"EasnapWindowChrome",strings::Get(IDS_SHELL_CHROME_CONTROLS),WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN,0,0,1,1,window,nullptr,::GetModuleHandleW(nullptr),data.get());
     if(!data->header) { return false; }
     const auto button=[&](const wchar_t* title,Icon icon) {
         HWND control=::CreateWindowExW(0,L"BUTTON",title,WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_PUSHBUTTON,0,0,1,1,data->header,nullptr,::GetModuleHandleW(nullptr),nullptr);
         if(control && !StyleButton(control,{icon,ButtonRole::Standard,true})) { ::DestroyWindow(control); return static_cast<HWND>(nullptr); }
         return control;
     };
-    data->close=button(L"Close",Icon::Discard);
-    if(resizable) { data->minimize=button(L"Minimize",Icon::Minimize); data->maximize=button(L"Maximize or restore",Icon::Maximize); }
+    data->close=button(strings::Get(IDS_SHELL_CHROME_CLOSE),Icon::Discard);
+    if(resizable) { data->minimize=button(strings::Get(IDS_SHELL_CHROME_MINIMIZE),Icon::Minimize); data->maximize=button(strings::Get(IDS_SHELL_CHROME_MAXIMIZE),Icon::Maximize); }
     if(!data->close || (resizable && (!data->minimize || !data->maximize)) ||
         !::SetWindowSubclass(window,ChromeParentProc,kChromeSubclass,reinterpret_cast<DWORD_PTR>(data.get()))) {
         ::DestroyWindow(data->header); return false;
@@ -826,6 +872,9 @@ struct MessageDialog {
     const wchar_t* text;
     const wchar_t* title;
     UINT flags;
+    /// Named buttons; empty for the standard ones selected by `flags`.
+    std::vector<DialogChoice> choices;
+    int default_value{0};
     HFONT font{};
     int cancel{IDOK};
     ~MessageDialog() { if(font) { ::DeleteObject(font); } }
@@ -839,9 +888,41 @@ INT_PTR CALLBACK MessageDialogProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM l
         const float scale=::GetDpiForWindow(hwnd)/96.0f;
         const auto dip=[&](int n) { return theme::Scaled(static_cast<float>(n),scale); };
         const auto monitor=platform::MonitorForRect([&] { RECT r{}; if(HWND owner=::GetWindow(hwnd,GW_OWNER)) { ::GetWindowRect(owner,&r); } else { ::GetCursorPos(reinterpret_cast<POINT*>(&r)); r.right=r.left+1; r.bottom=r.top+1; } return r; }());
-        const int width=std::min(dip(480),static_cast<int>(platform::RectWidth(monitor.work_area)));
         data->font=theme::CreateUiFont(14,scale,false);
+        std::vector<DialogChoice> buttons=data->choices;
+        size_t default_index=0;
+        if(buttons.empty()) {
+            switch(data->flags&MB_TYPEMASK) {
+                case MB_YESNO:
+                    buttons={{IDYES,strings::Get(IDS_DIALOG_YES),true},{IDNO,strings::Get(IDS_DIALOG_NO)}};
+                    data->cancel=IDNO; break;
+                case MB_OKCANCEL:
+                    buttons={{IDOK,strings::Get(IDS_DIALOG_OK)},{IDCANCEL,strings::Get(IDS_DIALOG_CANCEL)}};
+                    data->cancel=IDCANCEL; break;
+                default: buttons={{IDOK,strings::Get(IDS_DIALOG_OK)}}; break;
+            }
+            default_index=std::min(static_cast<size_t>((data->flags&MB_DEFMASK)>>8),buttons.size()-1);
+        } else {
+            for(size_t i=0;i<buttons.size();++i) { if(buttons[i].value==data->default_value) { default_index=i; } }
+        }
         HDC dc=::GetDC(hwnd); const auto old=::SelectObject(dc,data->font);
+        // A button is as wide as its label needs and at least the standard
+        // width. The dialog grows for a long row; only a work area too narrow
+        // for the labels themselves makes buttons give up width.
+        const int gap=dip(8),work_width=static_cast<int>(platform::RectWidth(monitor.work_area));
+        std::vector<int> natural,widths;
+        for(const DialogChoice& choice:buttons) {
+            SIZE size{}; ::GetTextExtentPoint32W(dc,choice.label,::lstrlenW(choice.label),&size);
+            natural.push_back(static_cast<int>(size.cx)+dip(36)); widths.push_back(std::max(dip(120),natural.back()));
+        }
+        const auto row_of=[&](const std::vector<int>& values) { int sum=gap*static_cast<int>(values.size()-1); for(int v:values) { sum+=v; } return sum; };
+        if(row_of(widths)+dip(40)>work_width) { widths=natural; }
+        if(row_of(widths)+dip(40)>work_width) {
+            const int room=std::max(1,work_width-dip(40)-gap*static_cast<int>(widths.size()-1)),sum=std::max(1,row_of(widths)-gap*static_cast<int>(widths.size()-1));
+            for(int& w:widths) { w=std::max(1,w*room/sum); }
+        }
+        const int row=row_of(widths);
+        const int width=std::min(std::max(dip(480),row+dip(40)),work_width);
         RECT body{0,0,std::max(1,width-dip(48)),0}; ::DrawTextW(dc,data->text,-1,&body,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);
         ::SelectObject(dc,old); ::ReleaseDC(hwnd,dc);
         const int body_height=std::max(dip(60),static_cast<int>(body.bottom));
@@ -855,27 +936,16 @@ INT_PTR CALLBACK MessageDialogProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM l
             dip(24),dip(kWindowChromeHeight+16),width-dip(48),text_height,hwnd,nullptr,::GetModuleHandleW(nullptr),nullptr);
         if(!text || !StyleLabel(text)) { ::EndDialog(hwnd,-1); return TRUE; }
         ::SendMessageW(text,WM_SETFONT,reinterpret_cast<WPARAM>(data->font),FALSE);
-        std::vector<std::pair<int,const wchar_t*>> buttons;
-        switch(data->flags&MB_TYPEMASK) {
-            case MB_YESNO:
-                buttons=::lstrcmpW(data->title,L"Discard recording")==0 ?
-                    std::vector<std::pair<int,const wchar_t*>>{{IDYES,L"Discard"},{IDNO,L"Keep recording"}}:
-                    std::vector<std::pair<int,const wchar_t*>>{{IDYES,L"Yes"},{IDNO,L"No"}};
-                data->cancel=IDNO; break;
-            case MB_OKCANCEL: buttons={{IDOK,L"OK"},{IDCANCEL,L"Cancel"}}; data->cancel=IDCANCEL; break;
-            default: buttons={{IDOK,L"OK"}}; break;
-        }
-        const size_t default_index=std::min(static_cast<size_t>((data->flags&MB_DEFMASK)>>8),buttons.size()-1);
-        HWND focus{}; const int bw=dip(150),gap=dip(8);
-        int x=width-dip(20)-static_cast<int>(buttons.size())*(bw+gap)+gap;
+        HWND focus{};
+        int x=width-dip(20)-row;
         for(size_t i=0;i<buttons.size();++i) {
-            HWND button=::CreateWindowExW(0,L"BUTTON",buttons[i].second,WS_CHILD|WS_VISIBLE|WS_TABSTOP|(i==default_index ? BS_DEFPUSHBUTTON:BS_PUSHBUTTON),
-                x,height-dip(60),bw,dip(40),hwnd,reinterpret_cast<HMENU>(static_cast<INT_PTR>(buttons[i].first)),::GetModuleHandleW(nullptr),nullptr);
-            if(!button || !StyleButton(button,{Icon::None,buttons[i].first==IDYES ? ButtonRole::Destructive:ButtonRole::Standard})) { ::EndDialog(hwnd,-1); return TRUE; }
+            HWND button=::CreateWindowExW(0,L"BUTTON",buttons[i].label,WS_CHILD|WS_VISIBLE|WS_TABSTOP|(i==default_index ? BS_DEFPUSHBUTTON:BS_PUSHBUTTON),
+                x,height-dip(60),widths[i],dip(40),hwnd,reinterpret_cast<HMENU>(static_cast<INT_PTR>(buttons[i].value)),::GetModuleHandleW(nullptr),nullptr);
+            if(!button || !StyleButton(button,{Icon::None,buttons[i].destructive ? ButtonRole::Destructive:ButtonRole::Standard})) { ::EndDialog(hwnd,-1); return TRUE; }
             ::SendMessageW(button,WM_SETFONT,reinterpret_cast<WPARAM>(data->font),FALSE);
-            if(i==default_index) { focus=button; } x+=bw+gap;
+            if(i==default_index) { focus=button; } x+=widths[i]+gap;
         }
-        ::SendMessageW(hwnd,DM_SETDEFID,buttons[default_index].first,0); ::SetFocus(focus); return FALSE;
+        ::SendMessageW(hwnd,DM_SETDEFID,buttons[default_index].value,0); ::SetFocus(focus); return FALSE;
     }
     if(!data) { return FALSE; }
     switch(message) {
@@ -892,13 +962,33 @@ INT_PTR CALLBACK MessageDialogProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM l
     return FALSE;
 }
 }
-int ShowMessage(HWND owner,const wchar_t* text,const wchar_t* title,UINT flags) {
+namespace {
+int RunMessageDialog(HWND owner,MessageDialog& dialog) {
     struct Template { DLGTEMPLATE dialog; WORD menu{},window_class{},title{}; } definition{};
     definition.dialog.style=WS_POPUP|WS_CAPTION|WS_SYSMENU|WS_CLIPCHILDREN;
     definition.dialog.dwExtendedStyle=WS_EX_CONTROLPARENT;
     definition.dialog.cx=300; definition.dialog.cy=140;
-    MessageDialog dialog{text,title,flags};
+    const platform::ModalLoopScope modal;
     return static_cast<int>(::DialogBoxIndirectParamW(::GetModuleHandleW(nullptr),&definition.dialog,owner,MessageDialogProc,reinterpret_cast<LPARAM>(&dialog)));
+}
+}
+int ShowMessage(HWND owner,const wchar_t* text,const wchar_t* title,UINT flags) {
+    MessageDialog dialog{text,title,flags};
+    return RunMessageDialog(owner,dialog);
+}
+int ShowChoice(HWND owner,const wchar_t* text,const wchar_t* title,const std::vector<DialogChoice>& choices,
+               int default_value,int cancel_value) {
+    if(choices.empty()) { return cancel_value; }
+    MessageDialog dialog{text,title,MB_ICONWARNING};
+    dialog.choices=choices; dialog.default_value=default_value; dialog.cancel=cancel_value;
+    const int answer=RunMessageDialog(owner,dialog);
+    return answer<=0 ? cancel_value:answer;  // -1 and 0 report that no dialog ran.
+}
+platform::SaveImageDialogText SaveImageDialogLabels() {
+    return {strings::Get(IDS_SHELL_SAVE_IMAGE_TITLE),strings::Get(IDS_SHELL_FILE_TYPE_PNG),strings::Get(IDS_SHELL_FILE_TYPE_JPEG)};
+}
+bool ConfirmDestructive(HWND owner,const wchar_t* text,const wchar_t* title,const wchar_t* confirm,const wchar_t* keep) {
+    return ShowChoice(owner,text,title,{{IDYES,confirm,true},{IDNO,keep}},IDNO,IDNO)==IDYES;
 }
 
 PopupScope::PopupScope(HWND invoker) : invoker_(invoker) {

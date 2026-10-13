@@ -33,7 +33,9 @@ public:
     [[nodiscard]] bool ShowConfiguring(
         const RECT& region, app::RecordingConfiguration configuration, bool workspace_hosted = false,
         HWND workspace_owner = nullptr);
-    void SetRegion(const RECT& region);
+    /// `interacting`: the frame is still being dragged or resized. The
+    /// configuration panel follows the frame when the gesture has ended.
+    void SetRegion(const RECT& region, bool interacting = false);
     void RetireWorkspace();
     [[nodiscard]] app::RecordingConfiguration configuration() const;
     void SetSessionState(app::SessionState state);
@@ -60,6 +62,7 @@ private:
     app::RecordingConfiguration configuration_{};
     bool visible_{false};
     bool workspace_hosted_{false};
+    bool frame_interacting_{false};
 };
 
 }  // namespace easnap::ui

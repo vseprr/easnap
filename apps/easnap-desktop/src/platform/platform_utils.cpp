@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -20,7 +21,7 @@ namespace {
 constexpr UINT kDefaultDpi = 96;
 
 /// Dynamically resolved APIs. Easnap probes for capabilities instead of
-/// branching on Windows version numbers (see docs/architecture.md).
+/// branching on Windows version numbers.
 struct DynamicApis {
     using SetProcessDpiAwarenessContextFn = BOOL(WINAPI*)(DPI_AWARENESS_CONTEXT);
     using GetDpiForMonitorFn = HRESULT(WINAPI*)(HMONITOR, MONITOR_DPI_TYPE, UINT*, UINT*);
@@ -180,12 +181,18 @@ bool PutClipboardDib(const BgraImage& image) {
     *header = BITMAPINFOHEADER{};
     header->biSize = sizeof(BITMAPINFOHEADER);
     header->biWidth = image.width;
-    header->biHeight = -image.height;  // top-down
+    // Bottom-up. A top-down DIB is a valid bitmap, but not every reader of the
+    // clipboard accepts one: .NET's Clipboard.GetImage returns nothing for it.
+    header->biHeight = image.height;
     header->biPlanes = 1;
     header->biBitCount = 32;
     header->biCompression = BI_RGB;
     header->biSizeImage = static_cast<DWORD>(pixel_bytes);
-    std::memcpy(header + 1, image.pixels.data(), pixel_bytes);
+    auto* const rows = reinterpret_cast<uint32_t*>(header + 1);
+    const size_t row_bytes = static_cast<size_t>(image.width) * sizeof(uint32_t);
+    for (int y = 0; y < image.height; ++y) {
+        std::memcpy(rows + static_cast<size_t>(image.height - 1 - y) * image.width, image.row(y), row_bytes);
+    }
     ::GlobalUnlock(memory);
 
     if (::SetClipboardData(CF_DIB, memory) == nullptr) {
@@ -343,6 +350,13 @@ MonitorInfo MonitorForPoint(POINT pt) {
 
 MonitorInfo MonitorForRect(const RECT& rect) {
     return MonitorForHandle(::MonitorFromRect(&rect, MONITOR_DEFAULTTONEAREST));
+}
+
+bool WheelFollowsFocus() noexcept {
+    // SPI_GETMOUSEWHEELROUTING: 0 focus, 1 hybrid, 2 the window under the pointer.
+    constexpr UINT kGetMouseWheelRouting = 0x201C;
+    DWORD routing = 2;
+    return ::SystemParametersInfoW(kGetMouseWheelRouting, 0, &routing, 0) != FALSE && routing == 0;
 }
 
 RECT VirtualScreenBounds() {
@@ -615,8 +629,15 @@ ComPtr<IDWriteTextFormat> GraphicsEnvironment::CreateTextFormat(float size_dip, 
     if (dwrite_factory_ == nullptr) {
         return format;
     }
+    // The text drawn with this format is what the user typed. Its language is
+    // the user's, not the interface's, so locale-dependent glyph forms and
+    // font fallback follow the Windows regional format.
+    wchar_t locale[LOCALE_NAME_MAX_LENGTH]{};
+    if (::GetUserDefaultLocaleName(locale, ARRAYSIZE(locale)) == 0) {
+        ::wcscpy_s(locale, L"en-us");
+    }
     const HRESULT hr = dwrite_factory_->CreateTextFormat(family, nullptr, weight, DWRITE_FONT_STYLE_NORMAL,
-                                                         DWRITE_FONT_STRETCH_NORMAL, size_dip, L"en-us", &format);
+                                                         DWRITE_FONT_STRETCH_NORMAL, size_dip, locale, &format);
     if (FAILED(hr)) {
         LogHresult(L"CreateTextFormat", hr);
     }
@@ -871,7 +892,8 @@ bool CopyImageToClipboard(HWND owner, const BgraImage& image) {
 }
 
 std::optional<std::wstring> ShowSaveImageDialog(HWND owner, const std::wstring& suggested_file_name,
-                                                const std::wstring& initial_directory) {
+                                                const std::wstring& initial_directory,
+                                                const SaveImageDialogText& text) {
     ComPtr<IFileSaveDialog> dialog;
     HRESULT hr = ::CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog));
     if (FAILED(hr)) {
@@ -879,14 +901,16 @@ std::optional<std::wstring> ShowSaveImageDialog(HWND owner, const std::wstring& 
         return std::nullopt;
     }
 
-    static const COMDLG_FILTERSPEC kFilters[] = {
-        {L"PNG image", L"*.png"},
-        {L"JPEG image", L"*.jpg;*.jpeg"},
+    // Built for each dialog: the type names follow the active language. The
+    // dialog copies the filters.
+    const COMDLG_FILTERSPEC filters[] = {
+        {text.png_type, L"*.png"},
+        {text.jpeg_type, L"*.jpg;*.jpeg"},
     };
-    dialog->SetFileTypes(ARRAYSIZE(kFilters), kFilters);
+    dialog->SetFileTypes(ARRAYSIZE(filters), filters);
     dialog->SetFileTypeIndex(1);
     dialog->SetDefaultExtension(L"png");
-    dialog->SetTitle(L"Save screenshot");
+    dialog->SetTitle(text.title);
     dialog->SetFileName(suggested_file_name.c_str());
 
     DWORD options = 0;
@@ -898,7 +922,9 @@ std::optional<std::wstring> ShowSaveImageDialog(HWND owner, const std::wstring& 
     if (!initial_directory.empty()) {
         ComPtr<IShellItem> folder;
         if (SUCCEEDED(::SHCreateItemFromParsingName(initial_directory.c_str(), nullptr, IID_PPV_ARGS(&folder)))) {
-            dialog->SetDefaultFolder(folder.Get());
+            // SetFolder, not SetDefaultFolder: the dialog would otherwise prefer
+            // the folder it was last closed in over the one asked for.
+            dialog->SetFolder(folder.Get());
         }
     } else if (auto pictures = KnownFolder(FOLDERID_Pictures)) {
         ComPtr<IShellItem> folder;
@@ -907,7 +933,10 @@ std::optional<std::wstring> ShowSaveImageDialog(HWND owner, const std::wstring& 
         }
     }
 
-    hr = dialog->Show(owner);
+    {
+        const ModalLoopScope modal;
+        hr = dialog->Show(owner);
+    }
     if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) {
         return std::nullopt;
     }
@@ -949,6 +978,26 @@ std::wstring AppDataDirectory() {
     std::wstring directory = *local + L"\\Easnap";
     EnsureDirectory(directory);
     return directory;
+}
+
+std::wstring UniqueFilePath(const std::wstring& directory, const std::wstring& file_name) {
+    if (directory.empty() || file_name.empty() ||
+        ::GetFileAttributesW(directory.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        return {};
+    }
+    const size_t dot = file_name.find_last_of(L'.');
+    const std::wstring stem = dot == std::wstring::npos ? file_name : file_name.substr(0, dot);
+    const std::wstring extension = dot == std::wstring::npos ? std::wstring() : file_name.substr(dot);
+    std::wstring base = directory;
+    if (base.back() != L'\\' && base.back() != L'/') { base += L'\\'; }
+    for (int attempt = 1; attempt < 1000; ++attempt) {
+        const std::wstring candidate =
+            base + stem + (attempt == 1 ? std::wstring() : L" (" + std::to_wstring(attempt) + L")") + extension;
+        if (::GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES) {
+            return candidate;
+        }
+    }
+    return {};
 }
 
 std::wstring DirectoryOf(const std::wstring& path) {
@@ -1116,23 +1165,68 @@ bool RemoveDirectoryTree(const std::wstring& path) {
 // Diagnostics
 // ---------------------------------------------------------------------------
 
+namespace {
+std::atomic<LogSink> g_log_sink{nullptr};
+}  // namespace
+
+bool SystemUsesDarkApps() noexcept {
+    DWORD light = 1;
+    DWORD size = sizeof(light);
+    const LSTATUS status = ::RegGetValueW(
+        HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"AppsUseLightTheme",
+        RRF_RT_REG_DWORD, nullptr, &light, &size);
+    return status == ERROR_SUCCESS && light == 0;
+}
+
+bool MediaFoundationAvailable() noexcept {
+    // The libraries stay loaded once found; the delay-loaded imports of the
+    // recorder then resolve against them.
+    static const bool available = [] {
+        for (const wchar_t* library : {L"mfplat.dll", L"mfreadwrite.dll"}) {
+            if (::LoadLibraryExW(library, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32) == nullptr) { return false; }
+        }
+        return true;
+    }();
+    return available;
+}
+
+WindowsVersion CurrentWindowsVersion() noexcept {
+    using VersionFunction = LONG(WINAPI*)(OSVERSIONINFOW*);
+    const auto query = reinterpret_cast<VersionFunction>(
+        reinterpret_cast<void*>(::GetProcAddress(::GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion")));
+    OSVERSIONINFOW info{};
+    info.dwOSVersionInfoSize = sizeof(info);
+    if (query == nullptr || query(&info) != 0) {
+        return {};
+    }
+    return {info.dwMajorVersion, info.dwMinorVersion, info.dwBuildNumber};
+}
+
+void SetLogSink(LogSink sink) noexcept { g_log_sink.store(sink, std::memory_order_release); }
+
 void LogMessage(const wchar_t* format, ...) {
-    wchar_t buffer[512]{};
+    wchar_t buffer[1024]{};
     va_list args;
     va_start(args, format);
     ::vswprintf(buffer, ARRAYSIZE(buffer), format, args);
     va_end(args);
+    buffer[ARRAYSIZE(buffer) - 1] = L'\0';  // A line that did not fit is cut, not dropped.
 
-    wchar_t line[600]{};
+    if (const LogSink sink = g_log_sink.load(std::memory_order_acquire)) { sink(buffer); }
+    wchar_t line[1100]{};
     ::swprintf(line, ARRAYSIZE(line), L"[easnap] %s\n", buffer);
     ::OutputDebugStringW(line);
 }
 
 void LogHresult(const wchar_t* what, HRESULT hr) { LogMessage(L"%s failed (hr=0x%08X)", what, static_cast<unsigned>(hr)); }
 
-void ShowErrorMessage(HWND owner, const wchar_t* text) {
-    ::MessageBoxW(owner, text, L"Easnap", MB_OK | MB_ICONWARNING);
-}
+namespace {
+int g_modal_loops = 0;  // UI thread only.
+}  // namespace
+
+ModalLoopScope::ModalLoopScope() noexcept { ++g_modal_loops; }
+ModalLoopScope::~ModalLoopScope() { --g_modal_loops; }
+bool ModalLoopActive() noexcept { return g_modal_loops != 0; }
 
 HICON LoadAppIcon(int desired_size) {
     HMODULE module = ::GetModuleHandleW(nullptr);

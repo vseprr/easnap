@@ -49,7 +49,8 @@ finalized working recording, including for a full-range selection.
    the shipped behavior: original dimensions, a 15 fps maximum, adaptive global
    palette, infinite looping, `Balanced` ordered dithering, opaque deltas and the
    existing timing. Low size maps to original dimensions, cumulative distributed
-   12 fps cadence, fixed RGB332 ordered quantization, transparent sparse deltas
+   12 fps cadence, the fixed 226-color palette with `Balanced` dithering and
+   the 8/255 temporal deadband defined in ADR-013, transparent sparse deltas
    with safe opaque fallback, and infinite looping. Encoder policies remain
    internal rather than overloading the product preset meaning.
 9. Terminal export failure is a durable structured contract, not a boolean-only
@@ -65,7 +66,8 @@ finalized working recording, including for a full-range selection.
 - The current conservative Win32 panel can later be replaced while preserving
   the configuration, capability, capture, export and completion contracts.
 - GIF inherits the tested recording timeline and preview behavior and pays one
-  required two-pass conversion at terminal completion.
+  required conversion at terminal completion: two decoding passes for High
+  quality, one for Low size (ADR-013).
 - GIF remains subject to the inherent 256-color and centisecond-timing limits
   documented by ADR-013.
 - A failed GIF terminal action can identify source open/validation, media-type

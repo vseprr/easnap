@@ -1,6 +1,7 @@
 # ADR-001 — Overlay rendering: layered GDI, not Direct3D
 
 **Status:** Accepted  
+**Amended by:** [ADR-015](ADR-015-frame-interaction-rendering.md) (shared back buffer, damage-limited painting); [ADR-018](ADR-018-editor-interaction-corrections.md) (input plane, clipped shade, 500 ms fade); [ADR-020](ADR-020-workspace-layering-and-outline-interaction.md) (static shade, chrome-owned islands); [ADR-028](ADR-028-scrollshot-capture-workspace.md) (Scrollshot shading strips and input opening)  
 **Date:** 2026-08-27  
 **Amended:** 2026-09-13
 
@@ -21,28 +22,30 @@ at 125 % DPI.
 
 ## Decision
 
-The overlay uses **two full-monitor layered GDI windows** and small companion
+The overlay uses **three full-monitor layered GDI windows** per monitor and small companion
 surfaces, with no dimming/chrome swap chain:
 
 | Window | Purpose |
 |---|---|
-| `dim_` | `LWA_ALPHA` dimming plane; frozen selection in Standby, uniform live dimming during provisional Editing |
+| `dim_` | `LWA_ALPHA` input plane at alpha 1; takes pointer and keyboard input and contributes no visible dimming |
+| `shade_` | `LWA_ALPHA` click-through dimming plane of static black pixels; a window region cuts out the selection |
 | `chrome_` | `LWA_COLORKEY` click-through plane; handles, readout, hints and notices |
-| `mode_toolbar_` | Small click-through `LWA_COLORKEY`/`LWA_ALPHA` mode-options surface on the palette-owning monitor |
+| `mode_toolbar_` | Small `LWA_COLORKEY`/`LWA_ALPHA` mode-options surface on the palette-owning monitor; hosts the native mode buttons |
 | `magnifier_` | Small `LWA_ALPHA=255` click-through window, visible only on the pointer's monitor |
 | `image_` | Opaque selection/monitor intersection after screenshot fixation, painted by the existing editor's DC renderer |
 
 Provisional Editing paints no captured image; the first screenshot toolbar
-interaction or screenshot action hides workspace surfaces and takes the final
-image (ADR-003).
+interaction or screenshot action takes the final image (ADR-003). The workspace
+surfaces stay visible during that capture when every visible window of the
+process is excluded from capture, and are hidden for it otherwise (ADR-018).
 For fixed-image Editing (amended ADR-003), a selection-sized opaque `image_` plane
-is owned by `dim_`, and `chrome_` is owned by `image_`. Native ownership keeps
-chrome above the inline image. The editor paints this companion through its
-Direct2D DC renderer; dimming/chrome retain their GDI implementation. The dim plane is never transparent
-to mouse input; the click-through plane never intercepts clicks.
+is owned by `shade_`, which is owned by `dim_`, and `chrome_` is owned by `image_`. Native ownership keeps
+chrome above the inline image and the image above the dimming. The editor paints this companion through its
+Direct2D DC renderer; dimming/chrome retain their GDI implementation. The input plane is never transparent
+to mouse input, except inside the frame while a Scrollshot is capturing (ADR-028); the click-through planes never intercept clicks.
 
 Screenshot fixation disables mode switching immediately. The mode-options
-companion, owned by chrome, fades with a 220 ms smoothstep alpha curve and is
+companion, owned by chrome, fades with a 500 ms smoothstep alpha curve and is
 then hidden. Its timer changes only this small window's opacity, stops when
 hidden/destroyed, and does not repaint full-monitor surfaces. It shares the
 monitor's existing GDI buffer and never allocates another full-monitor bitmap.
@@ -62,7 +65,7 @@ the mode toolbar; it does not allocate another full-screen buffer.
 `FrozenBitmap` retains a read-only pointer to its existing top-down snapshot DIB.
 The sampler subtracts each monitor's signed virtual origin and indexes physical
 BGRA pixels directly; DPI scales the magnifier UI only. The center value and all
-11 × 11 grid samples use that same path, across adjacent monitor boundaries when
+25 × 25 grid samples use that same path, across adjacent monitor boundaries when
 pixels exist. No screen DC is read while the overlay is open. Missing data or
 virtual-desktop gaps return unavailable rather than a fabricated color. The
 snapshot copy lives with its overlay window, independent of the source container

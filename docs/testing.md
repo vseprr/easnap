@@ -105,6 +105,11 @@ the origin of the virtual screen.
 Audio is not isolated by any of this. `wasapi_audio_capture` plays a short
 test tone through the default output device and records it back.
 
+Neither is the clipboard: there is one per logon session.
+`capture_workspace_production` (Standard tier) copies a test image and
+`annotation_editing_native` (visible desktop) copies the word "Paste". Whatever
+was on the clipboard before is gone after either of them.
+
 ### A separate machine
 
 The application is Win32, uses Desktop Duplication, Media Foundation and
@@ -122,10 +127,19 @@ geometry functions, which need no monitor:
 
 - trim window sizing and control layout across work areas from 1280x680 to
   3840x2120, ultrawide and portrait, at scale factors from 100 % to 350 %;
-- selection-handle hit areas across scale factors and negative-origin layouts.
+- selection-handle hit areas across scale factors and negative-origin layouts;
+- placement of the Scrollshot island and preview on one, two and stacked
+  monitors, a frame across two monitors and a small work area;
+- placement of the tools island, the recording panel and the mode island
+  around frames of every position and size on five display and island sizes.
 
-These prove that layout stays inside the work area and that controls do not
-overlap at those sizes. They do not prove rendering, DPI transitions between
+Manual checks cover what no test here observes: real pointer speed, mixed DPI
+and monitor origins, tool gestures versus double-click completion, clipboard
+contention, and audio and preview behaviour on the devices that matter.
+Passing deterministic tests is not a substitute for those observations.
+
+The table-driven tests prove that layout stays inside the work area and that
+controls do not overlap at those sizes. They do not prove rendering, DPI transitions between
 monitors or behaviour on a particular GPU; that still needs a physical check.
 Refresh rate does not appear in the matrix because nothing in the application
 assumes 60 Hz: recording follows the selected frame rate on a steady clock and
@@ -141,15 +155,40 @@ UI animation is time-based.
 - Use the visible desktop only for what cannot be observed otherwise, add the
   test to `interactive_desktop_tests`, and place windows with `OnTestMonitor`
   so they follow the chosen display.
+- A simulated gesture has to end the way the real one does. A double-click
+  that is sent without the button release leaves a native control holding the
+  mouse, and every movement of the real pointer then changes its state.
+- Send real input only after verifying which window will receive it
+  (`WindowFromPoint`, `GetForegroundWindow`), so it can never land in a window
+  of the person using the PC. `test_scrollshot_desktop.cpp` shows the pattern,
+  including a second process as the application being captured.
+- A test that cannot run in the environment exits with 77 and declares
+  `SKIP_RETURN_CODE 77`. CTest then reports it as skipped, not as passed.
 - Do not synchronise with a fixed sleep. Wait for the condition with a
   deadline; a fixed sleep is a timing assumption that fails under load.
 - Label long repeats `soak` and keep a short variant in the normal tiers.
+- Code that writes to the registry takes the key as a parameter and is tested
+  against a key the test creates and removes (`test_startup_entry.cpp`).
+- Text that a window shows is checked in every language by
+  `text_fits_in_every_language`; a new window or island belongs in it.
+- `executable_imports` reads the built `Easnap.exe`. A new import that Windows
+  N editions lack has to be delay-loaded, or that test fails.
 
 ## Diagnostics that are not registered tests
 
-`test_ui_modernization` has opt-in modes (`--resize-edges`, `--resize-controls`,
-`--trim-checks`, `--text-checks`, `--window-lifetime`) for the resize
-investigation described in
-[project status](project-status.md). The strict resize gate currently fails
-and is not part of any tier; a green run of the registered suite does not
-close it.
+`test_ui_modernization` has opt-in modes that are not registered tests:
+`--resize-edges` and `--resize-controls` observe the trim window while it is
+resized and maximized, `--trim-checks`, `--text-checks` and
+`--window-lifetime` exercise one area each. The strict resize gate
+(`--resize-edges`) currently fails, see
+[project status](project-status.md); a green run of the registered suite does
+not close it.
+
+The resize gates print three counts per case. `mixed_geometry` counts captured
+frames in which the observed control patches do not all match their reference
+pixels at one recent window geometry; a one-pixel offset is allowed. `holes`
+counts frames in which at least 16 sampled pixels inside the client area show
+the test's green backdrop. A settled sample is invalid when either condition
+appears in a frame captured after the gesture has ended.
+`EASNAP_TEST_RESIZE_SLOW=1` makes each resize case use one 3,200 ms
+shrink/grow cycle instead of four 400 ms cycles.
