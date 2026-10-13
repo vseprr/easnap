@@ -98,12 +98,14 @@ void WriteLine(const wchar_t* text) noexcept {
     if (length <= 0) { return; }
     LogState& state = Log();
     ::AcquireSRWLockExclusive(&state.lock);
+    // A full file is set aside before the next line is written, not after the
+    // line that filled it: the newest line is always in the current file.
+    if (state.file != INVALID_HANDLE_VALUE && state.size >= state.options.max_bytes) { Rotate(state); }
     if (state.file != INVALID_HANDLE_VALUE) {
         DWORD written = 0;
         if (::WriteFile(state.file, line, static_cast<DWORD>(length), &written, nullptr) != FALSE) {
             state.size += written;
         }
-        if (state.size >= state.options.max_bytes) { Rotate(state); }
     }
     ::ReleaseSRWLockExclusive(&state.lock);
 }

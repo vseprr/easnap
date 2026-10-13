@@ -22,10 +22,12 @@ connection.
 ### Log file
 
 `%LOCALAPPDATA%\Easnap\logs\easnap.log` receives every `LogMessage` line with
-a UTC time and the thread id. At one megabyte the file is set aside as
-`easnap.1.log`, the previous one becomes `easnap.2.log`, and the oldest is
-dropped: three files, three megabytes at most. The file is opened for
-appending and shared, so it can be read while Easnap runs.
+a UTC time and the thread id. A file that has reached one megabyte is set
+aside as `easnap.1.log` before the next line is written, the previous one
+becomes `easnap.2.log`, and the oldest is dropped: three files, three
+megabytes plus a line each at most, and the newest line always in
+`easnap.log`. The file is opened for appending and shared, so it can be read
+while Easnap runs.
 
 `LogMessage` keeps its signature. `platform::SetLogSink` connects it to the
 file, so the tests and the helper that compile `platform_utils.cpp` without

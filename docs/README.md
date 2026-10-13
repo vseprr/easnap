@@ -29,7 +29,8 @@ not unfinished roadmap instructions.
 - Workspace: [GDI overlay](decisions/ADR-001-overlay-rendering-gdi-not-d3d.md),
   [state and completion](decisions/ADR-002-explicit-region-confirmation.md),
   [editor/export](decisions/ADR-003-editor-window-and-export-model.md),
-  [frame performance](decisions/ADR-015-frame-interaction-rendering.md).
+  [frame performance](decisions/ADR-015-frame-interaction-rendering.md),
+  [island placement around the frame](decisions/ADR-036-island-placement-around-the-frame.md).
 - Appearance/accessibility: [shared theme and native controls](decisions/ADR-016-shared-appearance-and-native-controls.md),
   [neumorphic controls and editable annotations](decisions/ADR-017-neumorphic-editor-and-editable-annotations.md),
   [editor interaction corrections](decisions/ADR-018-editor-interaction-corrections.md),

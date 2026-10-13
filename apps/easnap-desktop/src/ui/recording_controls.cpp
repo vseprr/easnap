@@ -7,6 +7,7 @@
 
 #include "platform/platform_utils.h"
 #include "strings/strings.h"
+#include "ui/island_layout.h"
 #include "ui/ui_theme.h"
 #include "ui/native_controls.h"
 #include <windowsx.h>
@@ -256,9 +257,12 @@ public:
     }
 
     void SetError(const std::wstring& message) {
+        const bool changed = message != error_;
         error_ = message;
         ::SetWindowTextW(status_, error_.c_str());
         UpdateForState();
+        // The message changes the height of the panel; it keeps its side of the frame.
+        if (changed) { FollowFrame(); }
     }
 
     void SetElapsed(uint64_t active_duration_100ns) {
@@ -309,33 +313,14 @@ public:
         LONG x = have_current_rect ? current_rect.left : owner_.region_.left;
         LONG y = have_current_rect ? current_rect.top : owner_.region_.top;
         if (initial_placement) {
-            x = owner_.region_.left +
-                (platform::RectWidth(owner_.region_) - outer_width) / 2;
-            x = ClampCoordinate(x, monitor.work_area.left,
-                                monitor.work_area.right - outer_width);
-            y = owner_.region_.bottom + margin;
-            if (y + outer_height > monitor.work_area.bottom) {
-                y = owner_.region_.top - margin - outer_height;
-            }
-            if (y < monitor.work_area.top) {
-                const LONG right_x = owner_.region_.right + margin;
-                const LONG left_x = owner_.region_.left - margin - outer_width;
-                if (right_x + outer_width <= monitor.work_area.right) {
-                    x = right_x;
-                } else if (left_x >= monitor.work_area.left) {
-                    x = left_x;
-                }
-                y = ClampCoordinate(owner_.region_.bottom - outer_height,
-                                    monitor.work_area.top,
-                                    monitor.work_area.bottom - outer_height);
-            }
-            // Encoder-compatible MP4 dimensions can trim one right/bottom pixel.
-            if(owner_.region_.left==monitor.bounds.left && owner_.region_.top==monitor.bounds.top &&
-                monitor.bounds.right-owner_.region_.right>=0 && monitor.bounds.right-owner_.region_.right<=1 &&
-                monitor.bounds.bottom-owner_.region_.bottom>=0 && monitor.bounds.bottom-owner_.region_.bottom<=1) {
-                x=monitor.work_area.left+(platform::RectWidth(monitor.work_area)-outer_width)/2;
-                y=monitor.work_area.top+(platform::RectHeight(monitor.work_area)-outer_height)/2;
-            }
+            // The rule every island follows: outside the frame while anything
+            // outside has room, else over its bottom (ui/island_layout.h). The
+            // strip of the mode island is not part of `available`.
+            const RECT placed = PlaceIslandForFrame(owner_.region_, monitor.bounds, available,
+                                                    SIZE{outer_width, outer_height}, margin, RECT{}).rect;
+            x = placed.left;
+            y = placed.top;
+            user_positioned_ = false;
         } else if (clamp_to_work_area) {
             x = ClampCoordinate(x, monitor.work_area.left,
                                 monitor.work_area.right - outer_width);
@@ -359,6 +344,28 @@ public:
         }
         if (initial_placement || clamp_to_work_area) {
             RebuildFonts(scale);
+        }
+    }
+
+    /// The frame was moved or resized while recording is being configured.
+    /// The panel follows it by the same rule, unless the user has put the
+    /// panel somewhere: then it stays there.
+    void FollowFrame() {
+        if (panel_ == nullptr || user_positioned_ || !owner_.workspace_hosted_ || owner_.frame_interacting_ ||
+            owner_.state_ != app::SessionState::RecordingConfiguring) {
+            return;
+        }
+        RECT current{};
+        if (::GetWindowRect(panel_, &current) == FALSE) { return; }
+        const platform::MonitorInfo monitor = platform::MonitorForRect(owner_.region_);
+        RECT available = monitor.work_area;
+        available.top = (std::max)(available.top, monitor.bounds.top +
+            theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
+        const RECT placed = PlaceIslandForFrame(
+            owner_.region_, monitor.bounds, available,
+            SIZE{platform::RectWidth(current), platform::RectHeight(current)}, ScaleDip(12, monitor.scale()), RECT{}).rect;
+        if (placed.left != current.left || placed.top != current.top) {
+            ::SetWindowPos(panel_, nullptr, placed.left, placed.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         }
     }
 
@@ -518,6 +525,10 @@ private:
                     owner_.callbacks_.on_status_tick();
                 }
                 return 0;
+            case WM_ENTERSIZEMOVE:
+                // Where the user puts the panel is where it stays.
+                user_positioned_ = true;
+                break;
             case WM_MOVING: {
                 if (owner_.workspace_hosted_) {
                     auto* proposed = reinterpret_cast<RECT*>(lparam);
@@ -850,6 +861,7 @@ private:
 
     RecordingControls& owner_;
     HWND panel_{nullptr};
+    bool user_positioned_{false};
     std::array<HWND, 4> boundaries_{};
     HWND title_{nullptr};
     HWND elapsed_{nullptr};
@@ -894,6 +906,8 @@ bool RecordingControls::ShowConfiguring(
         ::SetWindowLongPtrW(window_->hwnd(), GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(workspace_owner));
         visible_ = true;
         window_->UpdateForState();
+        // The frame may have changed while another mode was shown.
+        window_->FollowFrame();
         window_->Activate();
         return true;
     }
@@ -911,13 +925,20 @@ bool RecordingControls::ShowConfiguring(
     return true;
 }
 
-void RecordingControls::SetRegion(const RECT& region) {
-    if (::EqualRect(&region_, &region)) { return; }
+void RecordingControls::SetRegion(const RECT& region, bool interacting) {
+    const bool changed = ::EqualRect(&region_, &region) == FALSE;
     region_ = region;
-    // In a workspace, the overlay owns the frame and the panel stays where the
-    // user placed it. Its controls/fonts have no dependency on frame geometry.
-    // RetireWorkspace lays out the live recording boundary using the latest region.
-    if (window_ && visible_ && !workspace_hosted_) { window_->Layout(false, true, true); }
+    frame_interacting_ = interacting;
+    if (!window_ || !visible_) { return; }
+    if (workspace_hosted_) {
+        // In a workspace the overlay owns the frame. The panel waits for the
+        // end of the gesture and then follows the frame; one the user placed
+        // stays. Its controls and fonts do not depend on the frame.
+        if (!interacting) { window_->FollowFrame(); }
+    } else if (changed) {
+        // RetireWorkspace lays out the live recording boundary using the latest region.
+        window_->Layout(false, true, true);
+    }
 }
 
 void RecordingControls::RetireWorkspace() {

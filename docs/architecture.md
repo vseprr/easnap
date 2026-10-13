@@ -138,7 +138,12 @@ retain the acquired image's scale when UI DPI changes.
 
 The main, contextual and brush-size islands are separate owned HWNDs. Frame-aware placement,
 blank/grip dragging, resize hiding and capture-loss restoration are presentation
-operations. They do not reacquire the image. Shared controls use cached soft
+operations. They do not reacquire the image. Where an island goes around the
+frame is pure geometry in `ui/island_layout`, shared by the screenshot tools,
+the recording panel and the mode island: outside the frame while anything
+outside has room, never over the mode island, which the overlay places first
+and hides while the frame is dragged
+([ADR-036](decisions/ADR-036-island-placement-around-the-frame.md)). Shared controls use cached soft
 material masks and antialiased vector geometry; local animation timers do not
 invalidate the full capture overlay. See ADR-017 and ADR-018 for input and transform rules.
 

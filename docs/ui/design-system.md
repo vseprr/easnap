@@ -103,11 +103,15 @@ label damage includes the one-pixel antialias fringe.
 | Trim | Shared custom caption with native side/bottom resize frame and move/minimize/maximize/close behavior, preview, recessed timeline, raised gray oval In/Out handles without caps, slender playhead with restrained coral glow, transport and neutral Save with coral ink |
 | Menus / dialogs | Native menu ownership with scoped material item drawing; application confirmations use custom rounded chrome and a native modal dialog with real default/cancel actions |
 
-The two editor islands prefer below the frame, then above, and clamp as a group
-to the monitor work area. Full-monitor selections center the group; recording
-configuration follows the same full-monitor rule. Their grip/blank-space drag never starts from an
+The two editor islands are placed as a group by `ui/island_layout`: below the
+frame, above it, beside it on the right or left, and over the bottom of the
+frame only when nothing outside has room; never over the mode island
+([ADR-036](../decisions/ADR-036-island-placement-around-the-frame.md)).
+Full-monitor selections center the group; recording configuration follows the
+same rule. Their grip/blank-space drag never starts from an
 interactive child. Frame-resize press hides both, including the contextual
-island, and release/capture loss restores them without acquisition. Trim opens
+island, and the mode island; release/capture loss restores them without
+acquisition. Trim opens
 from the recording aspect ratio and available work area with readable DPI-scaled
 controls. Manual resizing keeps a 480 x 400 client-DIP minimum, adding the
 native frame when computing outer tracking dimensions and capping to the work

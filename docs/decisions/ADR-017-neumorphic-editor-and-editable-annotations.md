@@ -2,7 +2,7 @@
 
 Date: 2026-09-16  
 Status: Implemented.  
-**Amended by:** [ADR-018](ADR-018-editor-interaction-corrections.md) (selection, text editing, compact controls); [ADR-019](ADR-019-stable-native-paint-and-custom-window-chrome.md) (custom message dialog and window chrome); [ADR-020](ADR-020-workspace-layering-and-outline-interaction.md) (hit targets follow outlines)
+**Amended by:** [ADR-018](ADR-018-editor-interaction-corrections.md) (selection, text editing, compact controls); [ADR-019](ADR-019-stable-native-paint-and-custom-window-chrome.md) (custom message dialog and window chrome); [ADR-020](ADR-020-workspace-layering-and-outline-interaction.md) (hit targets follow outlines); [ADR-036](ADR-036-island-placement-around-the-frame.md) (island placement around the frame)
 
 ## Context
 

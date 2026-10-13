@@ -50,6 +50,8 @@ set(EASNAP_SOURCES
     src/ui/recording_controls.cpp
     src/ui/scrollshot_controls.h
     src/ui/scrollshot_controls.cpp
+    src/ui/island_layout.h
+    src/ui/island_layout.cpp
     src/ui/scrollshot_layout.h
     src/ui/scrollshot_layout.cpp
     src/strings/strings.h

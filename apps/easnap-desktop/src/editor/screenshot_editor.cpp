@@ -1,5 +1,7 @@
 // Easnap - screenshot annotation editor implementation.
 #include "editor/screenshot_editor.h"
+
+#include "ui/island_layout.h"
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
 #include "ui/native_controls.h"
@@ -765,24 +767,27 @@ void ScreenshotEditor::PlaceContext(bool follow_frame) {
     if(!hwnd_ || !context_ || repositioning_ || modal_active_) { return; }
     repositioning_=true;
     RECT main{}; ::GetWindowRect(hwnd_,&main);
-    const auto work=platform::MonitorForRect(follow_frame ? region_:main).work_area;
+    const auto monitor=platform::MonitorForRect(follow_frame ? region_:main);
+    const auto work=monitor.work_area;
     const LONG gap=ui::theme::Scaled(8,scale_);
     const LONG width=main.right-main.left,height=main.bottom-main.top;
     const LONG popup_space=brush_popup_open_ ? gap+ui::theme::Scaled(kToolbarRowHeight+6,scale_):0;
     const LONG total=height+(context_visible_ ? gap+context_height_:0)+popup_space;
-    LONG left=main.left,top=main.top;
-    if(follow_frame) {
-        left=region_.left+(platform::RectWidth(region_)-width)/2;
-        top=region_.bottom+gap;
-        if(top+total>work.bottom) { top=region_.top-gap-total; }
-        const auto monitor=platform::MonitorForRect(region_);
-        if(::EqualRect(&region_,&monitor.bounds)) { top=work.top+(platform::RectHeight(work)-total)/2; }
+    // Outside the frame while anything outside has room, and never over the
+    // mode island (ui/island_layout.h). An island the user moved, or one that
+    // only changed its height, stays where it is unless that covers the mode
+    // island.
+    const RECT keep_clear=callbacks_.keep_clear ? callbacks_.keep_clear():RECT{};
+    RECT group=platform::ClampRectToBounds({main.left,main.top,main.left+width,main.top+total},work);
+    RECT covered{};
+    if(follow_frame || ::IntersectRect(&covered,&group,&keep_clear)) {
+        const auto frame_monitor=platform::MonitorForRect(region_);
+        group=ui::PlaceIslandForFrame(region_,frame_monitor.bounds,frame_monitor.work_area,SIZE{width,total},gap,keep_clear).rect;
     }
-    const RECT group=platform::ClampRectToBounds({left,top,left+width,top+total},work);
     ::SetWindowPos(hwnd_,nullptr,group.left,group.top,width,height,SWP_NOZORDER|SWP_NOACTIVATE);
     RECT context{group.left+(width-context_width_)/2,group.top+height+gap,0,0};
     context.right=context.left+context_width_; context.bottom=context.top+context_height_;
-    context=platform::ClampRectToBounds(context,work);
+    context=platform::ClampRectToBounds(context,platform::MonitorForRect(group).work_area);
     ::SetWindowPos(context_,HWND_TOPMOST,context.left,context.top,context_width_,std::max(1,context_height_),SWP_NOACTIVATE);
     ui::RoundWindow(context_); ui::RoundWindow(hwnd_);
     const bool show=visible_ && !frame_interacting_ && context_visible_;

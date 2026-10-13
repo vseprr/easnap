@@ -129,7 +129,9 @@ geometry functions, which need no monitor:
   3840x2120, ultrawide and portrait, at scale factors from 100 % to 350 %;
 - selection-handle hit areas across scale factors and negative-origin layouts;
 - placement of the Scrollshot island and preview on one, two and stacked
-  monitors, a frame across two monitors and a small work area.
+  monitors, a frame across two monitors and a small work area;
+- placement of the tools island, the recording panel and the mode island
+  around frames of every position and size on five display and island sizes.
 
 Manual checks cover what no test here observes: real pointer speed, mixed DPI
 and monitor origins, tool gestures versus double-click completion, clipboard

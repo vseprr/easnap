@@ -67,6 +67,13 @@ Nothing from this branch has been released.
   desktop to change (`CaptureRegionImage`).
 - An image copied to the clipboard is written bottom-up; .NET applications
   could not read the top-down bitmap Easnap wrote before.
+- **Islands around the frame.** The tools island, the recording panel and the
+  mode island follow one placement rule: outside the frame while anything
+  outside has room, over its bottom otherwise, and never over the mode island,
+  which moves along the top edge when the frame takes its place and hides
+  while the frame is dragged
+  ([ADR-036](decisions/ADR-036-island-placement-around-the-frame.md)). With
+  a frame of full height the tools island used to land on the mode island.
 - **Text box caret.** While typing into a text annotation, the native caret
   could leave a one-pixel inverted column at the position the native control
   computes, until the next paint. The caret is now hidden for the whole
@@ -78,10 +85,14 @@ One development PC, Windows 10 build 19045, NVIDIA GPU, two 1920x1080 displays
 at 125%; visible-desktop tests and manual checks ran on the secondary display.
 
 - Release x64 with warnings as errors builds. On 2026-10-13 the Standard tier
-  passed 37 of 37 on the final binaries in one run.
-- **Full tier: 45 of 45 in one run, none retried, none skipped** (2026-10-13,
-  visible-desktop tests on the secondary display). After that run only two
-  source comments changed; the Standard tier passed again on that build. Two
+  passed 39 of 39 on the final binaries in one run.
+- **Full tier on the final binaries: 46 passed and one passed on its retry**
+  (2026-10-13, visible-desktop tests on the secondary display).
+  `ui_modernization_native` failed its composed trim-window resize observation
+  in four cases (`holes==0 && title_changes==0`), which is the open resize
+  limitation listed below, passed on the retry and passed twice more alone.
+  The run before the island placement work, on otherwise the same sources,
+  passed 45 of 45 with none retried. Two
   earlier Full runs of the same day: 45 of 45 before the symbol files and the
   change to the trim window; then 44, where `trim_timeline_seek_stress`
   stopped at its pointer check (the real pointer was not where the test had
@@ -110,6 +121,9 @@ at 125%; visible-desktop tests and manual checks ran on the secondary display.
   session's 66, the layout and viewport's 351, the workspace's 337, the
   data-safety and Settings dialog's 93 and the text-fit test's 392 (every
   production window and island in both languages).
+- `island_layout_logic` (25,214 checks over five display and island sizes) and
+  `capture_island_placement` (45 checks on production windows) cover the
+  placement of the tools island, the recording panel and the mode island.
 - `startup_entry_registry` writes, reads and removes the sign-in entry in a
   key of its own and finds the real `Run` key unchanged. `executable_imports`
   finds no Media Foundation library among the imports `Easnap.exe` needs to
@@ -143,6 +157,12 @@ at 125%; visible-desktop tests and manual checks ran on the secondary display.
   - Library loading: with unrelated DLL files named `mfplat.dll` and
     `mfreadwrite.dll` beside `Easnap.exe`, a recording loaded both libraries
     from the Windows system directory and worked.
+  - Islands: a frame of full height with gaps at the sides put the tools
+    island over the bottom of the frame and left the mode island at its home;
+    both were hidden during a resize and shown after it; a narrow frame put
+    the tools island beside it; a frame over the top centre moved the mode
+    island beside the frame; the recording panel went beside the frame.
+    Nothing was fixed on the way.
   - A recording without a preview: with the helper executable taken away, the
     message named it, closing offered Save, Delete and Keep, Keep left the
     window, and Save wrote a 1.5 MB MP4 through the system dialog and removed
@@ -218,6 +238,7 @@ Not validated on the branch:
   `annotation_editing_native` replace its content.
 - The log receives one line per audio packet for the first packets of every
   recording; these lines are diagnostic and carry no content.
+- A top-docked taskbar still overlaps the mode island.
 
 ## Earlier releases
 

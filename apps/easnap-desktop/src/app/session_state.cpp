@@ -572,6 +572,13 @@ void CaptureCoordinator::EnsureOverlay() {
         callbacks.on_editor_wheel = [this](int delta, bool control, bool shift, POINT point) {
             if (editor_) { editor_->Wheel(delta, control, shift, point); }
         };
+        callbacks.on_mode_island_moved = [this] {
+            // The tools island yields to the mode island wherever the user
+            // leaves it. The recording and Scrollshot islands never enter its strip.
+            if (overlay_ && editor_ && state_ == SessionState::ScreenshotEditing) {
+                editor_->SetRegion(overlay_->selector().selection());
+            }
+        };
         callbacks.on_recording_unavailable = [this] {
             platform::LogMessage(L"Record was chosen, but Media Foundation is not installed");
             ui::ShowMessage(DialogOwner(), strings::Get(IDS_MODE_RECORD_UNSUPPORTED), L"Easnap",
@@ -616,7 +623,7 @@ void CaptureCoordinator::OnWorkspaceRegionChanged(const RECT& region) {
     if (editor_) { editor_->SetRegion(region, overlay_ && overlay_->selector().interacting()); }
     recording_region_ = MakeRecordingRegionEncoderCompatible(region);
     if (recording_controls_) {
-        recording_controls_->SetRegion(region);
+        recording_controls_->SetRegion(region, overlay_ && overlay_->selector().interacting());
         if (state_ == SessionState::RecordingConfiguring) { recording_controls_->SetError(RecordingRegionError()); }
     }
     if (state_ == SessionState::ScrollshotConfiguring && scrollshot_controls_) {
@@ -2061,6 +2068,7 @@ std::unique_ptr<editor::ScreenshotEditor> CaptureCoordinator::CreateEditor() {
     };
     callbacks.on_scrollshot = [this] { OnScrollshotAction(ScrollshotAction::Start); };
     callbacks.on_view_changed = [this](const editor::ImageView& view) { PublishDocumentView(view); };
+    callbacks.keep_clear = [this] { return overlay_ ? overlay_->mode_island_rect() : RECT{}; };
     return std::make_unique<editor::ScreenshotEditor>(std::move(callbacks));
 }
 

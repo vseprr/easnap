@@ -408,6 +408,21 @@ target_link_libraries(test_scrollshot_layout PRIVATE easnap_project_options
 add_test(NAME scrollshot_layout_logic COMMAND test_scrollshot_layout)
 set_tests_properties(scrollshot_layout_logic PROPERTIES LABELS "unit;scrollshot;editor" TIMEOUT 30)
 
+# Where the tools island, the recording panel and the mode island go around
+# the frame: pure geometry over the production functions.
+add_executable(test_island_layout
+    test_island_layout.cpp
+    ../src/ui/island_layout.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_island_layout PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_island_layout PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+add_test(NAME island_layout_logic COMMAND test_island_layout)
+set_tests_properties(island_layout_logic PROPERTIES LABELS "unit;ui;layout" TIMEOUT 30)
+
 # The log file through the production sink, and crash reports from a second
 # process that installs the production handler and fails on purpose.
 add_executable(test_diagnostics
@@ -455,6 +470,7 @@ set_tests_properties(strings_catalog PROPERTIES LABELS "unit;localization" TIMEO
 add_executable(test_capture_overlay
     test_capture_overlay.cpp
     ../src/ui/overlay.cpp
+    ../src/ui/island_layout.cpp
     ../src/ui/capture_magnifier.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/region_selector.cpp
@@ -480,6 +496,7 @@ add_executable(test_capture_workspace
     test_capture_workspace.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/overlay.cpp
+    ../src/ui/island_layout.cpp
     ../src/ui/capture_magnifier.cpp
     ../src/ui/region_selector.cpp
     ../src/ui/recording_controls.cpp
@@ -507,6 +524,14 @@ add_test(NAME capture_frame_interaction
 set_tests_properties(capture_frame_interaction PROPERTIES
     LABELS "integration;workspace;overlay;performance;isolated-desktop" TIMEOUT 30)
 
+# The mode island, the tools island and the recording panel as production
+# windows: never over each other, and the mode island hidden while the frame
+# is dragged.
+add_test(NAME capture_island_placement
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_workspace> --islands)
+set_tests_properties(capture_island_placement PROPERTIES
+    LABELS "integration;workspace;overlay;layout;isolated-desktop" TIMEOUT 30)
+
 # Scrollshot in the production workspace: mode bar, locked frame and its open
 # input plane, both islands, the preview, and the editor on a stitched image
 # that scrolls and zooms. Message-driven; nothing is captured from a screen.
@@ -514,6 +539,7 @@ add_executable(test_scrollshot_workspace
     test_scrollshot_workspace.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/overlay.cpp
+    ../src/ui/island_layout.cpp
     ../src/ui/capture_magnifier.cpp
     ../src/ui/region_selector.cpp
     ../src/ui/scrollshot_controls.cpp
@@ -539,6 +565,7 @@ add_executable(test_text_fit
     test_text_fit.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/overlay.cpp
+    ../src/ui/island_layout.cpp
     ../src/ui/capture_magnifier.cpp
     ../src/ui/region_selector.cpp
     ../src/ui/recording_controls.cpp
@@ -569,6 +596,7 @@ add_executable(test_data_safety
     test_data_safety.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/overlay.cpp
+    ../src/ui/island_layout.cpp
     ../src/ui/capture_magnifier.cpp
     ../src/ui/region_selector.cpp
     ../src/ui/ui_theme.cpp
@@ -600,6 +628,7 @@ add_executable(test_scrollshot_desktop
     ../src/scrollshot/stitch_engine.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/overlay.cpp
+    ../src/ui/island_layout.cpp
     ../src/ui/capture_magnifier.cpp
     ../src/ui/region_selector.cpp
     ../src/ui/scrollshot_controls.cpp
@@ -621,6 +650,7 @@ add_executable(test_ui_modernization
     ../src/capture/capture_provider.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/overlay.cpp
+    ../src/ui/island_layout.cpp
     ../src/ui/capture_magnifier.cpp
     ../src/ui/region_selector.cpp
     ../src/app/app_settings.cpp

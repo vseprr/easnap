@@ -54,6 +54,9 @@ public:
         std::function<void(int, bool, bool, POINT)> on_editor_wheel;
         /// Record was chosen where recording cannot work. The mode did not change.
         std::function<void()> on_recording_unavailable;
+        /// The user moved the mode island along its edge. Islands that stay
+        /// clear of it place themselves again.
+        std::function<void()> on_mode_island_moved;
     };
 
     explicit OverlayController(Callbacks callbacks);
@@ -113,6 +116,11 @@ public:
     [[nodiscard]] bool AllowMode(app::CaptureMode mode);
     [[nodiscard]] CaptureWorkspace& workspace() noexcept { return workspace_; }
     [[nodiscard]] const CaptureWorkspace& workspace() const noexcept { return workspace_; }
+    /// The mode island in desktop pixels, for the islands that never cover
+    /// it. Empty once modes can no longer be switched: it fades away then.
+    [[nodiscard]] RECT mode_island_rect() const;
+    /// Called by the window that owns the mode island after the user dragged it.
+    void ModeIslandMoved();
     [[nodiscard]] HWND owner_window() const noexcept;
     /// Editor/configuration popups belong above the complete presentation stack,
     /// not to the input plane beneath the shading and image windows.
@@ -149,6 +157,10 @@ public:
     void SetNotice(std::wstring text);
 
 private:
+    /// Hides the mode island while the frame is dragged or resized, and puts
+    /// it back, placed for the new frame, when the gesture ends.
+    void UpdateModeIsland();
+
     Callbacks callbacks_;
     RegionSelector selector_;
     std::vector<std::unique_ptr<OverlayWindow>> windows_;
@@ -162,6 +174,7 @@ private:
     WorkspacePointerSequence pointer_sequence_;
     bool pointer_active_{false};
     bool selection_started_{false};
+    bool frame_pressed_{false};
     bool visible_{false};
     bool document_view_{false};
     bool frame_exposed_{false};

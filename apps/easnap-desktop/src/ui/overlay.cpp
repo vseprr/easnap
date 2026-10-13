@@ -3,6 +3,8 @@
 // Easnap - dimmed capture overlay implementation.
 #include "ui/overlay.h"
 
+#include "ui/island_layout.h"
+
 #include <windowsx.h>
 #include <dwmapi.h>
 
@@ -296,6 +298,7 @@ public:
                 Destroy();
                 return false;
             }
+            ::GetWindowRect(mode_toolbar_, &mode_home_);
         }
 
         magnifier_ = ::CreateWindowExW(
@@ -413,8 +416,49 @@ public:
             FinishModeFade();
             return false;
         }
-        if (!::IsWindowVisible(mode_toolbar_)) { ::ShowWindow(mode_toolbar_, SW_SHOWNOACTIVATE); }
+        // While the frame is dragged the island stays away; the fade goes on.
+        if (!mode_suppressed_ && !::IsWindowVisible(mode_toolbar_)) { ::ShowWindow(mode_toolbar_, SW_SHOWNOACTIVATE); }
         return mode_fade_start_.has_value();
+    }
+
+    /// The mode island in desktop pixels; empty on a monitor that has none.
+    [[nodiscard]] RECT ModeToolbarRect() const {
+        RECT rect{};
+        if (mode_toolbar_ != nullptr) { ::GetWindowRect(mode_toolbar_, &rect); }
+        return rect;
+    }
+
+    /// Puts the mode island where the frame leaves room for it on the top
+    /// edge: at its home, or beside the frame when the frame takes that place.
+    void PlaceModeToolbar() const {
+        if (mode_toolbar_ == nullptr) { return; }
+        const RegionSelector& selector = controller_.selector();
+        const RECT frame = selector.has_selection() ? selector.selection() : RECT{};
+        const RECT target = PlaceModeIsland(mode_home_, frame, monitor_.work_area.left, monitor_.work_area.right,
+                                            theme::Scaled(8, monitor_.scale()));
+        RECT current{};
+        ::GetWindowRect(mode_toolbar_, &current);
+        if (::EqualRect(&current, &target) == FALSE) {
+            ::SetWindowPos(mode_toolbar_, nullptr, target.left, target.top, 0, 0,
+                           SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+
+    /// The frame is being dragged or resized: the mode island steps aside,
+    /// like the tools island, and returns in its place for the new frame.
+    void SetModeToolbarSuppressed(bool suppressed) {
+        if (mode_toolbar_ == nullptr) { return; }
+        if (!suppressed) { PlaceModeToolbar(); }
+        if (mode_suppressed_ == suppressed) { return; }
+        mode_suppressed_ = suppressed;
+        if (suppressed) {
+            // A hidden window must not keep the keyboard.
+            const HWND focus = ::GetFocus();
+            if (focus != nullptr && (focus == mode_toolbar_ || ::IsChild(mode_toolbar_, focus) != FALSE)) { ::SetFocus(dim_); }
+            ::ShowWindow(mode_toolbar_, SW_HIDE);
+        } else if (controller_.visible()) {
+            ArmModeFade();
+        }
     }
 
     void ArmModeFade() const {
@@ -920,6 +964,10 @@ private:
         if (ConsumePopupInput(message, wparam)) { return 0; }
         switch (message) {
             case WM_NCLBUTTONDBLCLK: if(hwnd==mode_toolbar_) { return 0; } break;
+            case WM_EXITSIZEMOVE:
+                // Where the user left it is its place from now on.
+                if(hwnd==mode_toolbar_) { ::GetWindowRect(hwnd,&mode_home_); controller_.ModeIslandMoved(); return 0; }
+                break;
             case WM_MOVING:
                 if(hwnd==mode_toolbar_ && lparam) {
                     auto* r=reinterpret_cast<RECT*>(lparam); RECT current{}; ::GetWindowRect(hwnd,&current);
@@ -1315,6 +1363,8 @@ private:
     std::array<HWND, 3> mode_buttons_{};
     LONG mode_button_width_{0};
     std::optional<ULONGLONG> mode_fade_start_;
+    RECT mode_home_{};
+    bool mode_suppressed_{false};
     HWND magnifier_{nullptr};
     HWND image_{nullptr};
     FrozenBitmap frozen_;
@@ -1483,6 +1533,7 @@ void OverlayController::EditorWheel(int delta, bool control, bool shift, POINT p
 void OverlayController::Destroy() {
     windows_.clear();
     visible_ = false;
+    frame_pressed_ = false;
     document_view_ = false;
     frame_exposed_ = false;
     document_label_.clear();
@@ -1504,6 +1555,21 @@ void OverlayController::SetMode(app::CaptureMode mode) {
     Invalidate();
 }
 
+RECT OverlayController::mode_island_rect() const {
+    if (!visible_ || !workspace_.can_switch_mode()) { return {}; }
+    for (const auto& window : windows_) { if (window->owns_palette()) { return window->ModeToolbarRect(); } }
+    return {};
+}
+
+void OverlayController::ModeIslandMoved() {
+    if (callbacks_.on_mode_island_moved) { callbacks_.on_mode_island_moved(); }
+}
+
+void OverlayController::UpdateModeIsland() {
+    const bool suppressed = frame_pressed_ || selector_.interacting();
+    for (const auto& window : windows_) { window->SetModeToolbarSuppressed(suppressed); }
+}
+
 HWND OverlayController::owner_window() const noexcept {
     for (const auto& window : windows_) { if (window->owns_palette()) { return window->hwnd(); } }
     return nullptr;
@@ -1522,6 +1588,8 @@ void OverlayController::EnterEditing() {
     last_region_interacting_ = selector_.interacting();
     last_has_selection_ = selector_.has_selection();
     UpdatePointer(pointer_);
+    // The mode island takes its place first: the island that opens now stays clear of it.
+    UpdateModeIsland();
     if (callbacks_.on_editing_changed) { callbacks_.on_editing_changed(mode(), selector_.selection()); }
     Invalidate();
 }
@@ -1536,6 +1604,9 @@ void OverlayController::RegionChanged() {
     last_region_ = region;
     last_has_selection_ = selector_.has_selection();
     last_region_interacting_ = selector_.interacting();
+    // Before the islands hear of the new frame: they place themselves around
+    // the mode island.
+    UpdateModeIsland();
     if (workspace_.editing() && callbacks_.on_region_changed) {
         callbacks_.on_region_changed(region);
     }
@@ -1576,7 +1647,11 @@ void OverlayController::PointerDown(POINT point, bool native_double, bool exclud
         else if (handle == SelectionHandle::None) { target = WorkspacePointerTarget::Creation; }
         else if (annotation) { target = WorkspacePointerTarget::Annotation; }
     }
-    if(target==WorkspacePointerTarget::Handle && callbacks_.on_frame_interacting) { callbacks_.on_frame_interacting(true); }
+    if (target == WorkspacePointerTarget::Handle) {
+        frame_pressed_ = true;
+        UpdateModeIsland();
+        if (callbacks_.on_frame_interacting) { callbacks_.on_frame_interacting(true); }
+    }
     pointer_sequence_.Down(point, time, native_double, target, WorkspacePointerMetrics::Native());
     pointer_active_ = true;
     selection_started_ = false;
@@ -1610,6 +1685,7 @@ void OverlayController::PointerUp(POINT point) {
     const auto target = pointer_sequence_.target();
     const bool quick_copy = pointer_sequence_.Up(point);
     pointer_active_ = false;
+    frame_pressed_ = false;
     if (target == WorkspacePointerTarget::Excluded) { return; }
     if (target == WorkspacePointerTarget::Annotation) {
         if (quick_copy && !callbacks_.wants_annotation_pointer) {
@@ -1624,6 +1700,7 @@ void OverlayController::PointerUp(POINT point) {
         return;
     }
     if (selection_started_) { selector_.OnMouseUp(point); RegionChanged(); }
+    UpdateModeIsland();
     if(callbacks_.on_frame_interacting) { callbacks_.on_frame_interacting(false); }
     selection_started_ = false;
     if (!workspace_.editing()) { EnterEditing(); }
@@ -1640,10 +1717,12 @@ void OverlayController::CancelPointer() {
     if (pointer_sequence_.target() == WorkspacePointerTarget::Annotation && callbacks_.on_image_pointer) {
         callbacks_.on_image_pointer(WM_CAPTURECHANGED, pointer_);
     }
+    frame_pressed_ = false;
     if (selection_started_) {
         selector_.OnMouseUp(selector_.cursor());
         RegionChanged();
     }
+    UpdateModeIsland();
     if(callbacks_.on_frame_interacting) { callbacks_.on_frame_interacting(false); }
     pointer_active_ = selection_started_ = false;
     pointer_sequence_.Cancel();

@@ -45,13 +45,24 @@ provisional and the action can be retried.
 Use Pointer, Rectangle, Ellipse, Line, Arrow, Pen, Text, Tag, Blur/Pixelate,
 Spotlight or Watermark. The main island contains icons; its separate contextual
 island shows properties for the selected annotation, or defaults for the next
-object. Pointer without a selection has no contextual island. The group prefers
-below the frame, then above it, and stays within the monitor work area.
-Full-screen screenshot editing and full-screen recording configuration default
-to the center instead; a dragged region follows the rule above. Both
-islands hide immediately during frame-handle resizing and restore on release or
-capture loss. The top mode strip can be dragged horizontally from its grip or
-blank space; the main island can be dragged from its own grip or blank space.
+object. Pointer without a selection has no contextual island.
+
+The group stays outside the frame while anything outside has room: below the
+frame, else above it, else beside it on the right or the left, level with its
+bottom edge. Only when none of these has room, as with a frame from the top
+edge to the bottom edge and narrow gaps at the sides, it sits over the bottom
+of the frame. A frame that is the whole monitor keeps the group, and the
+recording configuration, in the middle of the screen. The group never covers
+the mode strip.
+
+The mode strip sits at the top centre of the monitor. When the frame takes
+that place it moves along the top edge to the nearer side of the frame that
+has room; when neither side has room it stays, over the frame. It can be
+dragged along the edge from its grip or blank space, and stays where it is
+left. While the frame is drawn, moved or resized, the mode strip and both
+islands are hidden; they return when the gesture ends or the capture is lost,
+in their places for the new frame. The main island can be dragged from its own
+grip or blank space; that first press fixes the image.
 
 New drawings stay unselected. Hover the outline of an existing shape/effect with
 any tool to see the move cursor; a single click selects it and a drag moves it.
@@ -233,8 +244,12 @@ replacing that preference.
 
 Drag the configuration or active recording panel from its grip, informational
 labels or any other noninteractive space. Buttons and settings retain their own
-actions. Moving the provisional frame or mode strip keeps configuration above
-the dimming layer and available for Start.
+actions. The configuration panel is placed around the frame by the same rule
+as the screenshot tools and never enters the strip of the mode options. It
+stays visible while the frame is moved or resized and follows the frame when
+the gesture ends; a panel you have dragged stays where you put it. Moving the
+provisional frame or mode strip keeps configuration above the dimming layer
+and available for Start.
 
 Only **Start** begins recording. **Esc** before Start cancels without creating a
 recording. Start retires the capture workspace and displays the actual recording

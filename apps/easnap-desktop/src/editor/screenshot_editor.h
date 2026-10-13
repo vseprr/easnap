@@ -145,6 +145,9 @@ public:
         std::function<void()> on_scrollshot;
         /// The viewport of a document moved, scrolled or zoomed.
         std::function<void(const ImageView&)> on_view_changed;
+        /// An area in desktop pixels that the islands never cover: the mode
+        /// island while modes can still be switched. Empty when there is none.
+        std::function<RECT()> keep_clear;
     };
 
     explicit ScreenshotEditor(Callbacks callbacks);
