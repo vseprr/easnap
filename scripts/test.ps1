@@ -142,7 +142,9 @@ function Save-Passes {
 foreach ($name in $work.Run) { $passed.Remove($name) }
 Save-Passes
 
-# Runs one CTest invocation and returns the names that actually passed.
+# Runs one CTest invocation and returns the names that actually passed. Tests
+# that reported they cannot run here are collected in $skipped.
+$skipped=@()
 function Invoke-EasnapTests([string[]]$Names, [int]$Parallel, [string]$Phase) {
     $report=Join-Path $testing ("iteration-$Configuration-$Phase-"+[guid]::NewGuid().ToString('N')+'.xml')
     $pattern='^('+(($Names | ForEach-Object { [regex]::Escape($_) }) -join '|')+')$'
@@ -155,6 +157,7 @@ function Invoke-EasnapTests([string[]]$Names, [int]$Parallel, [string]$Phase) {
     try { & ctest @arguments 2>&1 | ForEach-Object { "$_" } | Out-Host; $exit=$LASTEXITCODE }
     finally { $ErrorActionPreference=$preference }
     $succeeded=if ($junitAvailable) { @(Get-EasnapJUnitPasses $report $Names) } elseif ($exit -eq 0) { $Names } else { @() }
+    if ($junitAvailable) { $script:skipped+=@(Get-EasnapJUnitSkips $report $Names | Where-Object { $_ -notin $script:skipped }) }
     if (Test-Path -LiteralPath $report) {
         Move-Item -LiteralPath $report -Destination (Join-Path $testing "iteration-$Configuration-$Phase.xml") -Force
     }
@@ -170,7 +173,7 @@ if ($background.Count) {
     Write-Host "`nBackground tests ($(Get-Estimate $background) of test time, $Jobs in parallel). These do not use your pointer, keyboard or screen." -ForegroundColor Cyan
     $ok=Invoke-EasnapTests $background $Jobs 'background'
     Add-Passes $ok; $newPasses+=$ok
-    $failed+=@($background | Where-Object { $_ -notin $ok })
+    $failed+=@($background | Where-Object { $_ -notin $ok -and $_ -notin $skipped })
 }
 
 if ($desktop.Count) {
@@ -212,14 +215,14 @@ public static uint IdleMilliseconds() {
     $haveCursor=[Easnap.TestInput]::GetCursorPos([ref]$cursor)
     try {
         $ok=Invoke-EasnapTests $desktop 1 'desktop'
-        $retry=@($desktop | Where-Object { $_ -notin $ok })
+        $retry=@($desktop | Where-Object { $_ -notin $ok -and $_ -notin $skipped })
         if ($retry.Count) {
             Write-Warning ("Retrying once (a disturbed desktop is the usual cause): " + ($retry -join ', '))
             $second=Invoke-EasnapTests $retry 1 'desktop-retry'
             # A pass on the second attempt is real but not stable: report it
             # and leave it out of the cache so it runs again next time.
             $unstable+=$second
-            $failed+=@($retry | Where-Object { $_ -notin $second })
+            $failed+=@($retry | Where-Object { $_ -notin $second -and $_ -notin $skipped })
         }
         Add-Passes $ok; $newPasses+=$ok
     }
@@ -229,7 +232,8 @@ public static uint IdleMilliseconds() {
 }
 
 Write-Host ''
-Write-Host ("Result: {0} passed, {1} passed only on retry, {2} failed, {3} unchanged, {4} pending, {5} outside tier. Wall time {6:n0} s." -f
-    $newPasses.Count, $unstable.Count, $failed.Count, $work.Cached.Count, $work.Deferred.Count, $work.Excluded.Count, $started.Elapsed.TotalSeconds)
+Write-Host ("Result: {0} passed, {1} passed only on retry, {2} failed, {3} skipped, {4} unchanged, {5} pending, {6} outside tier. Wall time {7:n0} s." -f
+    $newPasses.Count, $unstable.Count, $failed.Count, $skipped.Count, $work.Cached.Count, $work.Deferred.Count, $work.Excluded.Count, $started.Elapsed.TotalSeconds)
 if ($unstable.Count) { Write-Warning ("UNSTABLE (failed, then passed on retry; not cached): " + ($unstable -join ', ')) }
+if ($skipped.Count) { Write-Warning ("SKIPPED (could not run in this environment; not passed, not cached): " + ($skipped -join ', ')) }
 if ($failed.Count) { throw ("Tests failed: " + ($failed -join ', ') + '. Failed tests are never cached.') }

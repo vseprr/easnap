@@ -38,6 +38,9 @@ set(EASNAP_WINDOWS_BASELINE 0x0A00 CACHE STRING "Minimum supported Windows versi
 
 option(EASNAP_WARNINGS_AS_ERRORS "Treat compiler warnings as errors for project code" ON)
 option(EASNAP_BUILD_TESTS "Build unit and native integration test targets" OFF)
+# For test builds only. The binaries need the sanitizer runtime of the compiler
+# beside them or on PATH and are never packaged.
+option(EASNAP_SANITIZE_ADDRESS "Build with AddressSanitizer (MSVC; for running tests)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -71,11 +74,20 @@ if(MSVC)
     if(EASNAP_WARNINGS_AS_ERRORS)
         target_compile_options(easnap_project_options INTERFACE /WX)
     endif()
-    # /DEPENDENTLOADFLAG:0x800 resolves every static import from System32 only
-    # (LOAD_LIBRARY_SEARCH_SYSTEM32), so a DLL placed beside a portable copy is
-    # never loaded. /CETCOMPAT opts in to hardware shadow stacks where available.
-    target_link_options(easnap_project_options INTERFACE
-        /DYNAMICBASE /HIGHENTROPYVA /NXCOMPAT /GUARD:CF /CETCOMPAT /DEPENDENTLOADFLAG:0x800)
+    if(EASNAP_SANITIZE_ADDRESS)
+        # The sanitizer runtime is a DLL outside System32 and rejects /RTC1,
+        # incremental linking and shadow stacks.
+        target_compile_options(easnap_project_options INTERFACE /fsanitize=address /Zi /bigobj)
+        string(REGEX REPLACE "/RTC[1csu]+" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+        target_link_options(easnap_project_options INTERFACE
+            /DYNAMICBASE /HIGHENTROPYVA /NXCOMPAT /INCREMENTAL:NO /DEBUG)
+    else()
+        # /DEPENDENTLOADFLAG:0x800 resolves every static import from System32 only
+        # (LOAD_LIBRARY_SEARCH_SYSTEM32), so a DLL placed beside a portable copy is
+        # never loaded. /CETCOMPAT opts in to hardware shadow stacks where available.
+        target_link_options(easnap_project_options INTERFACE
+            /DYNAMICBASE /HIGHENTROPYVA /NXCOMPAT /GUARD:CF /CETCOMPAT /DEPENDENTLOADFLAG:0x800)
+    endif()
 else()
     # MinGW / clang-cl cross builds are supported for syntax verification.
     target_compile_options(easnap_project_options INTERFACE -Wall -Wextra)

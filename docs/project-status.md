@@ -57,6 +57,12 @@ Nothing from this branch has been released.
 - **A recording whose preview fails can be saved** as it is, and a missing
   preview helper is named
   ([ADR-031](decisions/ADR-031-unsaved-work-survives.md)).
+- **CI and community files.** A CodeQL workflow for the application sources,
+  an AddressSanitizer job beside the build (`EASNAP_SANITIZE_ADDRESS`; not a
+  required check yet), issue forms and a pull-request template. A test that
+  cannot run where it is counts as skipped, in CTest and in `test.ps1`,
+  instead of as passed: `wasapi_audio_capture` says so when the machine has no
+  audio endpoint.
 - The capture provider can return a plain image of a region and wait for the
   desktop to change (`CaptureRegionImage`).
 - An image copied to the clipboard is written bottom-up; .NET applications
@@ -136,6 +142,11 @@ at 125%; visible-desktop tests and manual checks ran on the secondary display.
     message named it, closing offered Save, Delete and Keep, Keep left the
     window, and Save wrote a 1.5 MB MP4 through the system dialog and removed
     the temporary recording.
+- **AddressSanitizer, locally.** 20 of the 21 unit tests and the 10
+  integration and private-desktop tests that hosted CI runs passed without a
+  report. The crash-report test is excluded: the sanitizer takes its
+  deliberate failures first. Preview and visible-desktop tests were not run
+  under it.
 - **Packaging.** `package-release.ps1` produced the ZIP, the installer, the
   symbols ZIP and their checksum files from this build, after checking that
   both executables report 1.1.0-beta.1 with the prerelease flag and name their
@@ -166,6 +177,9 @@ Not validated on the branch:
   unseen.
 - The Release workflow with a prerelease tag, and the manifests against
   `winget validate` or Scoop. Nothing was pushed, tagged or dispatched.
+- The CodeQL workflow and the AddressSanitizer job on a hosted runner: neither
+  has run. The skipped result of `wasapi_audio_capture` was not seen either;
+  this PC has audio endpoints.
 - The look of the Settings dialog on screen. Its windows are excluded from
   capture, so no picture was taken; its text is measured by the text-fit test.
 - A real crash of the application: the handler is exercised by a test process
@@ -441,8 +455,8 @@ post-v1 without a promised date.
 
 ## Next slice
 
-For v1.1.0-beta.1, in the order of the [roadmap](../EASNAP_ROADMAP.md): CI
-and community files, then the documentation pass and the final validation.
+For v1.1.0-beta.1, in the order of the [roadmap](../EASNAP_ROADMAP.md): the
+documentation pass and the final validation.
 Preserve the native frame, shared rendering/control path and asynchronous
 preview boundaries. See [ADR-024](decisions/ADR-024-native-trim-frame.md),
 [architecture](architecture.md) and the

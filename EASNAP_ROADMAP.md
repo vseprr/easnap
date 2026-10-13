@@ -47,7 +47,9 @@ For v1.1.0-beta.1, in this order:
    prerelease version, package manifests, uninstall behaviour, symbol files,
    release notes. Not published: the tag, the workflow run and the package
    manager submissions are the owner's steps.
-7. CI and community files.
+7. Done: CI and community files. CodeQL, an AddressSanitizer job, issue forms
+   and a pull-request template; skipped tests are reported as skipped. The
+   two new jobs have not run on a hosted runner.
 8. Documentation pass and validation.
 
 Carried over from v1.0.2 and not part of the beta:

@@ -54,8 +54,9 @@ rendering and clipboard behavior, capture fallback, recording workers, audio
 mixing/resampling, MP4/GIF encoding and trim, preview recovery, publication
 lifetime, cleanup containment and layout across display sizes and scale
 factors. Capability skips and environment failures are not passed hardware
-tests. CMake 3.20 runs uncached; CTest 3.21+ supplies the result format used
-by the pass cache.
+tests: a test that cannot run where it is exits with 77, and `test.ps1` lists
+it as skipped, apart from passes and failures. CMake 3.20 runs uncached;
+CTest 3.21+ supplies the result format used by the pass cache.
 
 `trim_endpoint_presentation` observes the complete production trim window during
 playback end and replay in both themes, after maximize/restore preparation. The
@@ -73,8 +74,24 @@ Current results and remaining visual failures are recorded in
 
 The Windows CI workflow builds Debug and Release on the `windows-2022` image,
 runs the tests a hosted runner can execute (see [testing](testing.md)) uncached
-and packages the Release build. Automated tests complement
-manual multi-monitor, DPI, audio-device and visual interaction checks.
+and packages the Release build. A second job builds the same tests with
+AddressSanitizer; a third workflow runs CodeQL on the application sources.
+Automated tests complement manual multi-monitor, DPI, audio-device and visual
+interaction checks.
+
+To run the tests under AddressSanitizer locally:
+
+```powershell
+cmake -S . -B build-asan -G "Visual Studio 17 2022" -A x64 -DEASNAP_BUILD_TESTS=ON -DEASNAP_SANITIZE_ADDRESS=ON
+cmake --build build-asan --config Release --parallel
+# The sanitizer runtime is a DLL beside the compiler; put its folder on PATH:
+$env:PATH = "<Visual Studio>\VC\Tools\MSVC\<version>\bin\Hostx64\x64;" + $env:PATH
+ctest --test-dir build-asan -C Release --label-exclude "interactive-desktop|desktop-visual|soak|preview" --exclude-regex "^diagnostics_log_and_crash_reports$"
+```
+
+The crash-report test is excluded: the sanitizer takes its deliberate access
+violations before the application's own handler. Sanitized binaries are never
+packaged.
 
 ## Packaging
 
@@ -82,12 +99,15 @@ manual multi-monitor, DPI, audio-device and visual interaction checks.
 .\scripts\package-release.ps1 -BuildDir build -OutputDir dist/releases
 ```
 
-This produces the portable ZIP and, when Inno Setup 6 is available, the
-per-user installer (`packaging/easnap.iss`), each with a SHA-256 file. The
-installer needs no administrator rights and installs to
-`%LOCALAPPDATA%\Programs\Easnap`. The supervised preview helper is part of the
-application: `Easnap.exe` and `EasnapPreviewHost.exe` must always come from the
-same build. Release steps are in [CONTRIBUTING](../CONTRIBUTING.md).
+This produces the portable ZIP, a ZIP with the symbol files of both
+executables and, when Inno Setup 6 is available, the per-user installer
+(`packaging/easnap.iss`), each with a SHA-256 file. The installer needs no
+administrator rights and installs to `%LOCALAPPDATA%\Programs\Easnap`. The
+supervised preview helper is part of the application: `Easnap.exe` and
+`EasnapPreviewHost.exe` must always come from the same build.
+[Distribution](distribution.md) describes the version text, the release steps,
+reading a crash report with the symbol files, and the winget and Scoop
+manifests that `scripts/package-manifests.ps1` writes.
 
 ## Source layout
 

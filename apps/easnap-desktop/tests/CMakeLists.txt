@@ -732,8 +732,11 @@ target_link_libraries(test_wasapi_audio PRIVATE easnap_project_options
 
 add_test(NAME wasapi_audio_capture
          COMMAND test_wasapi_audio)
+# Exits with 77 where the machine has no audio endpoint at all: every capture
+# test skipped itself, and that is not a pass.
 set_tests_properties(wasapi_audio_capture PROPERTIES
     LABELS "integration;audio;wasapi"
+    SKIP_RETURN_CODE 77
     TIMEOUT 60)
 
 add_test(NAME annotation_editing_native COMMAND test_ui_modernization --editor-checks)

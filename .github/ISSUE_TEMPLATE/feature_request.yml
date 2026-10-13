@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest something Easnap could do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The [roadmap](https://github.com/vseprr/easnap/blob/main/EASNAP_ROADMAP.md) lists what is planned and what
+        has been left out on purpose. Easnap makes no network connection and collects nothing; requests that would
+        change that are unlikely to be accepted.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or situation, not the solution yet.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would help?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do today instead?

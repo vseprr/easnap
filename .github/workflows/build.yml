@@ -128,6 +128,50 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # The same tests under AddressSanitizer. A separate build: the sanitizer
+  # rejects /RTC1, incremental linking and shadow stacks, and its binaries are
+  # never packaged. Excluded in addition to the list above: the crash-report
+  # test, whose deliberate access violations the sanitizer takes before the
+  # application's own handler sees them.
+  # Not required yet: this job passed on a development PC and has not run on
+  # the hosted image. Make it required after its first green runs.
+  sanitize:
+    name: Address sanitizer (windows-2022)
+    runs-on: windows-2022
+    continue-on-error: true
+    steps:
+      - name: Check out
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Configure
+        shell: pwsh
+        run: >
+          cmake -S . -B build-asan
+          -G "Visual Studio 17 2022" -A x64
+          -DEASNAP_WARNINGS_AS_ERRORS=ON
+          -DEASNAP_BUILD_TESTS=ON
+          -DEASNAP_SANITIZE_ADDRESS=ON
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build-asan --config Release --parallel
+
+      - name: Test under the sanitizer
+        shell: pwsh
+        run: |
+          # The sanitizer runtime is a DLL beside the compiler.
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $runtime = & $vswhere -latest -products * -find 'VC\Tools\MSVC\*\bin\Hostx64\x64\clang_rt.asan_dynamic-x86_64.dll' | Select-Object -Last 1
+          if (-not $runtime) { throw 'The AddressSanitizer runtime was not found.' }
+          $env:PATH = (Split-Path -Parent $runtime) + ';' + $env:PATH
+          ctest --test-dir build-asan --build-config Release --output-on-failure --parallel 4 --no-tests=error `
+            --label-exclude "interactive-desktop|desktop-visual|soak|preview" `
+            --exclude-regex "^(capture_overlay_interaction|diagnostics_log_and_crash_reports)$"
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed under AddressSanitizer (exit code $LASTEXITCODE)." }
+
   hygiene:
     name: Repository hygiene
     runs-on: ubuntu-latest

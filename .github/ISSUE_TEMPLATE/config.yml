@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/vseprr/easnap/security/advisories/new
+    about: Report it privately. Please do not open a public issue for it.
+  - name: Troubleshooting
+    url: https://github.com/vseprr/easnap/blob/main/docs/troubleshooting.md
+    about: Shortcut, Scrollshot, recording and installation questions that come up often.
