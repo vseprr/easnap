@@ -469,18 +469,22 @@ void Controls() {
     CHECK(!Overlaps(island_rect, frame) && !controls.island_over_frame());
     CHECK(controls.preview_hwnd() != nullptr && ::IsWindowVisible(controls.preview_hwnd()) == FALSE);
 
-    // The island follows the frame while it is being adjusted. Moving the
-    // frame up keeps an island that is below it below it; on a monitor too
-    // short for that place the island is on another side, and moving up would
-    // make room below and change the side, so the frame only moves sideways.
-    const LONG up = island_rect.top >= frame.bottom ? -120 : 0;
+    // The island follows the frame while it is being adjusted: it stays
+    // outside the frame and comes back with it. With room to spare below the
+    // frame it moves exactly as the frame does; a short monitor presses the
+    // island against the edge of the work area or puts it on another side.
     RECT moved = frame;
-    ::OffsetRect(&moved, -200, up);
+    ::OffsetRect(&moved, -200, -120);
     controls.SetFrame(moved);
     RECT followed{};
     ::GetWindowRect(island, &followed);
-    CHECK(followed.left == island_rect.left - 200 && followed.top == island_rect.top + up);
+    CHECK(!Overlaps(followed, moved) && !::EqualRect(&followed, &island_rect));
+    if (monitor.work_area.bottom - frame.bottom >= 3 * platform::RectHeight(island_rect)) {
+        CHECK(followed.left == island_rect.left - 200 && followed.top == island_rect.top - 120);
+    }
     controls.SetFrame(frame);
+    ::GetWindowRect(island, &followed);
+    CHECK(::EqualRect(&followed, &island_rect));
 
     // --- Capture view: exactly Edit, Save, Discard and Copy ------------------
     CHECK(controls.Show(ScrollshotControls::View::Capture, frame, nullptr));
