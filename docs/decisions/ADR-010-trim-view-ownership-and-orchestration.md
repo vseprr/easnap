@@ -4,46 +4,10 @@
 **Date:** 2026-08-31  
 **Updated:** 2026-09-30
 
-Current verification note: the additional 2026-09-29 resize repair is not yet
-accepted. The retained-endpoint outcomes and bounded helper protocol below must
-be preserved. Before the restart, full-window resize captures failed, including an
-isolation case that never opens a preview helper; this does not establish that
-the endpoint implementation causes that resize defect. The final candidate
-must pass endpoint and all-edge checks together. Historical endpoint results
-and the current investigation are separated in the
-[validation record](../trim-endpoint-artifact-validation.md).
-
-The 30 September observer-free physical test showed left/top/top-right Trim
-defects; recording/capture was not a necessary trigger. After restarting the
-computer, the user reported clean dragging in both old and current executables.
-An unchanged Release paused top-left repeat then captured 453 frames without
-detected defects. That subset does not replace the full matrix or establish why
-restarting helped. The current repair also covers reproduced duplicate timeline
-seeks and false playback-stall recovery. On the final production build, the
-Release native UI, endpoint, timeline-seek stress and material rerun passes
-4/4, but the strict fast all-edge gate still fails: 22 visual cases and five
-minimum-size assertions across 60 cases. Reviewed desktop PNGs show transient
-video/control overlap, truncated controls and duplicated caption pixels during
-maximize/restore. The cause remains unproven; no new production window workaround
-was added to the seeking correction. All four resize matrices are complete
-(220 cases) and fail the strict gate; subsequent Debug/backend results belong
-to the linked record. Overall user acceptance remains pending.
-
-The gates observe different transitions. The all-edge gate disables DWM
-transitions and observes four maximize/restore transitions (two cycles) during capture; the
-endpoint test performs maximize/restore as preparation before its observation
-period. An endpoint pass therefore does not validate maximize-transition
-presentation. See the linked record for exact frame counts and evidence.
-
-Evidence for the 30 September seeking correction: the deterministic workflow
-regression had 510 failing assertions before the health change and 210,363/210,363
-passing assertions after it. The real 8 s H.264/AAC seed-0 run previously requested
-stall recovery at input 108 despite native playback progress; the corresponding
-30 s corrected run completed 131 seeks (67 backwards), retained its helper and
-observed at most 188 ms command age. The timeline baseline independently failed
-24 same-coordinate move/release assertions across 12 gestures, plus one readiness
-assertion. The successful Release desktop-stress rerun and the failing
-whole-window gate remain separate results; none establishes user acceptance.
+Known limitation: transient redraw artifacts while the trim window is resized or
+maximized are recorded in [project status](../project-status.md) and
+[ADR-024](ADR-024-native-trim-frame.md). They also occur when no preview helper
+is created, so the preview described below is not a necessary cause.
 
 ## Context
 
@@ -52,6 +16,15 @@ one exact trim interval, and call the synchronous `ITrimExporter` without
 blocking the Win32 UI thread. Preview callbacks, export completion, cancellation,
 window closure and process shutdown can overlap. Durable Save/Copy/Discard is
 defined by ADR-011, with shared MP4/GIF configuration and completion in ADR-014.
+
+Two MFPlay failures observed on 2026-09-10 shape the preview decision. On an
+H.264/AAC file whose container duration (12.0106458 s) exceeds its last video
+timestamp (11.9666666 s) because of an AAC tail, `SetPosition(duration)`
+returned `S_OK` and never delivered `POSITION_SET`; the seek stayed owned for
+7,218 ms and blocked Play. A paused interior seek also lost its callback and
+was still pending after 2,125 ms; in-process recovery then deadlocked inside
+synchronous MFPlay `Shutdown`, in MFCORE/decoder locks. An in-process timeout
+could therefore detect a missing callback but not retire the player.
 
 ## Decision
 
@@ -83,12 +56,12 @@ defined by ADR-011, with shared MP4/GIF configuration and completion in ADR-014.
    window. This prevents continuous input from starving acknowledgement reads
    behind the 100 ms WM_TIMER fallback. Polling stays outside layout calls; it
    does not wait for the helper or repost itself while awaiting a reply. Close
-   retires the message window and clears the pending marker. The real-helper
-   timer-deferred resize regression fails before and passes after this change;
-   the latest Release/Debug endpoint and backpressure checks also pass. The
-   pre-restart all-edge visual gate failed, and that full Release run had
-   a native UI resize failure. This scheduling correction is not an accepted
-   resolution of the current visual repair.
+   retires the message window and clears the pending marker. With timers
+   deferred, 40 resize requests produced one helper size change before this
+   change and 16 after it, through 80 posted messages and no timer dispatch
+   (`ResizeWhileTimersAreDeferred`, measured during the 2026-09-29/30 repair);
+   the 3.6 s no-poll recovery check still passed. This scheduling does not
+   address the trim window's resize artifact (ADR-024).
    Only the helper positions its native video child. Caller lifetime and
    mutating operations remain on the creator
    UI thread with its message loop running. No detached playback worker exists.
@@ -141,7 +114,9 @@ defined by ADR-011, with shared MP4/GIF configuration and completion in ADR-014.
    boundary, reads the surrounding GOP, then copies the selected sample into a
    validated still. The decoded buffer's display aperture is checked against
    native dimensions through the same helper used by GIF decoding; codec
-   alignment rows/columns are never presented as picture content. It shares the 4,096-event/two-second between-call bounds;
+   alignment rows/columns are never presented as picture content. The case
+   observed on 2026-09-23 was a 1920 × 1088 buffer from the software decoder
+   for a 1920 × 1080 picture, whose eight extra rows were green. It shares the 4,096-event/two-second between-call bounds;
    blocked synchronous calls remain contained by the supervised helper. Open
    predecodes the measured final frame. A helper-owned high-resolution waitable
    timer (high resolution on Windows 10 1803+, regular waitable timer on older
@@ -163,7 +138,10 @@ defined by ADR-011, with shared MP4/GIF configuration and completion in ADR-014.
    complete bitmap with UpdateLayeredWindow before native video is hidden.
    This isolates the still from stale pixels in the composited parent's backing.
    Suppressing redraw or prepainting that shared backing alone did not reliably
-   prevent duplicated trim controls after maximize/restore.
+   prevent duplicated trim controls after maximize/restore. Two other designs
+   were rejected on 2026-09-29: continuous parent-backed painting showed a
+   future endpoint during paused resize, and converting every settled pause to
+   a still made resizing worse.
    The helper explicitly presents on handoff and WM_SIZE: an uninitialized
    layered child does not bootstrap this through WM_PAINT. Its Windows 10
    compatibility manifest enables layered child support; omitting it caused
@@ -263,11 +241,9 @@ defined by ADR-011, with shared MP4/GIF configuration and completion in ADR-014.
 | Snapshot authority | Current owned process/pipe generation and acknowledged intent |
 | Stall recovery | Parent alone confirms old process exit before replacing it |
 
-The [preview investigation](../preview-playback-investigation.md) retains the
-native endpoint/interior-seek traces, blocked Shutdown stacks and repeated
-H.264/AAC stress results that motivated these ownership rules. In-process timers
+In-process timers
 could detect a missing callback but could not interrupt a blocked native
-Shutdown; confirmed process retirement is therefore part of the contract.
+Shutdown (see Context); confirmed process retirement is therefore part of the contract.
 
 ### General
 
@@ -286,3 +262,19 @@ Shutdown; confirmed process retirement is therefore part of the contract.
   `IMFMediaEngine` can remain behind
   `IMediaPreview` without changing coordinator or trim-window contracts.
 - ADR-011 defines terminal Save, Copy, confirmed Discard and clipboard-file lifetime.
+
+### Measured
+
+- 2026-09-10, after MFPlay moved into the helper: 90 of 90 H.264/AAC audio
+  stress cycles completed without a helper replacement; 32 resize updates
+  against a stalled helper returned in 0 to 16 ms; closing a stalled helper
+  took 141 ms.
+- 2026-09-30, continuous seeking after the duplicate-seek and liveness
+  corrections: a 120 s run completed 539 seeks (267 backwards, 227 requested
+  while a command was owned) with a maximum native command age of 203 ms
+  against the two-second deadline and no helper replacement. The timeline
+  click stress completed 288 clicks per configuration with a maximum picture
+  freeze of 63 ms (Release) and 78 ms (Debug). Before the corrections the
+  deterministic transport/health regression failed 510 assertions and 12 held
+  timeline gestures failed 24 same-coordinate move/release assertions; after
+  them the regression passed 210,363 of 210,363 assertions.

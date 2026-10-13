@@ -276,7 +276,7 @@ bool CopyImageToClipboard(HWND owner, const BgraImage& image);
 
 /// System save dialog (IFileSaveDialog). Returns std::nullopt when cancelled.
 /// Only the picker may decide the destination: no user-provided path fragment
-/// ever reaches the file system directly (see docs/threat model notes).
+/// ever reaches the file system directly (see SECURITY.md).
 /// The dialog's text comes from the caller: this layer is also built into the
 /// preview helper and into tests that carry no string tables.
 struct SaveImageDialogText {

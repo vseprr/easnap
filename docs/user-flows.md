@@ -48,7 +48,7 @@ island shows properties for the selected annotation, or defaults for the next
 object. Pointer without a selection has no contextual island. The group prefers
 below the frame, then above it, and stays within the monitor work area.
 Full-screen screenshot editing and full-screen recording configuration default
-to the center instead. The existing placement rule remains for dragged regions. Both
+to the center instead; a dragged region follows the rule above. Both
 islands hide immediately during frame-handle resizing and restore on release or
 capture loss. The top mode strip can be dragged horizontally from its grip or
 blank space; the main island can be dragged from its own grip or blank space.
@@ -124,11 +124,11 @@ Before screenshot fixation, switching Screenshot → Record hides and retains
 the screenshot tools; returning restores their placement and settings.
 Recording configuration likewise survives eligible mode switches.
 
-Leaving an untouched Screenshot workspace arms the existing one-shot
-quick-return behavior. On return, the next successful editing mutation or
-eligible blank Pointer content click can complete through the normal Copy path.
-Editor pointer sequences do not independently consume the latch; a successful
-document commit retains the existing one-shot completion behavior.
+Leaving an untouched Screenshot workspace arms a one-shot quick return. On
+return, the next successful editing mutation or eligible blank Pointer content
+click can complete through the normal Copy path. Editor pointer sequences do
+not independently consume the latch; a successful document commit completes
+once.
 Selecting a tool or fixing the frame alone does not consume that latch.
 Completion failure leaves a normal retryable session, without a repeating
 automatic-copy loop. See [ADR-002](decisions/ADR-002-explicit-region-confirmation.md).
@@ -242,12 +242,12 @@ bounds and movable controls. Encoding may reduce an odd width/height by one
 pixel at the right/bottom edge. If Start fails, the configuration and frame stay
 available with a retry message; partial-media recovery remains coordinator-owned.
 
-The recording island uses a Pause icon while recording and a Play icon to
-resume while paused. It preserves the existing raised/recessed material and
-state colors. The elapsed duration sits midway between Pause/Resume and Stop,
-with no vertical separators. Pause freezes the active-time timer and excludes
-the paused interval from output. Resume continues the same recording. Stop—or Esc while recording/paused—drains
-and finalizes the media asynchronously. Finalization cannot be discarded by Esc.
+The recording island shows a Pause icon while recording and a Play icon to
+resume while paused, with the elapsed duration between Pause/Resume and Stop.
+Pause freezes the active-time timer and excludes the paused interval from
+output. Resume continues the same recording. Stop, or Esc while the island has
+the keyboard, drains and finalizes the media asynchronously. Finalization
+cannot be discarded by Esc.
 An error is shown as an error, with recoverable media retained when available.
 
 ## Preview, trim and finish a recording
@@ -264,8 +264,8 @@ to suit the recording aspect ratio while keeping the controls readable. Manual
 resizing retains a 480 x 400 DIP usable client minimum, capped to the work area. The
 video starts below the custom caption; time is below the timeline. Extreme
 source ratios fit inside the readable UI. The preview keeps its aspect ratio and
-consumes surplus side space before shrinking. The redundant recording heading
-is absent. Empty message/progress space collapses between the two button rows;
+consumes surplus side space before shrinking. Empty message/progress space
+collapses between the two button rows;
 notices expand to their wrapped text height. Export shows a themed progress bar
 driven by actual export progress, with Cancel remaining available. In/Out
 handles are raised gray ovals without horizontal caps; the slender playhead
@@ -315,7 +315,11 @@ normal cleanup so pasting remains possible after closing Easnap.
 | Provisional Editing | Ctrl+A | Select receiving monitor |
 | Provisional Editing | Arrows / Shift+Arrows | Move frame by 1 / 10 pixels |
 | Provisional Editing | Ctrl+Arrows | Resize frame |
-| Screenshot Editing | Ctrl+Z / Ctrl+Y | Undo / redo |
+| Provisional Editing | Tab | Move the keyboard to the mode strip or the tool island |
+| Screenshot Editing | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z | Undo / redo |
+| Screenshot Editing | Delete | Remove the selected annotation |
+| Screenshot Editing | Arrows / Shift+Arrows | Move the selected annotation by 1 / 10 pixels |
+| Text box | Enter / Ctrl+Enter / Ctrl+A | New line / commit / select all text |
 | Screenshot Editing | Ctrl+C / Ctrl+S | Copy / Save |
 | Screenshot Editing | Esc | Cancel pending text, then clear the selection, then cancel the session; asks first when something has been drawn |
 | Scrollshot, before Start | Enter | Start |
@@ -325,12 +329,12 @@ normal cleanup so pasting remains possible after closing Easnap.
 | Stitched image | Page Up / Page Down / Home / End | Scroll by a page / to the start or end |
 | Stitched image | Ctrl+Plus / Ctrl+Minus / Ctrl+0 / Ctrl+1 | Zoom in / out / fit width / 100% |
 | Recording configuration | Enter / Esc | Activate focused control / cancel |
-| Active or paused recording | Esc | Stop and finalize |
+| Active or paused recording | Esc, while the recording island has the keyboard | Stop and finalize |
 | Trim timeline | Tab / Shift+Tab | Focus In, playhead, Out, then leave timeline |
-| Trim timeline | Arrows | Adjust focused handle by 1 second |
+| Trim timeline | Left / Right | Adjust focused handle by 1 second |
 | Trim timeline | Shift+Arrows / Ctrl+Arrows | Adjust In / Out |
 | Trim timeline | Home / End | Move focused handle toward source start / end within valid bounds |
-| Completion window | Enter / Esc | Activate focused control / confirm Discard |
+| Completion window | Enter / Esc | Activate the focused control / ask whether to delete the recording |
 
 Native controls retain their normal Tab and keyboard behavior. Input is routed
 by context and focus; for example Standby's color copy differs from Editing's
@@ -410,7 +414,3 @@ crash report. Nothing is sent anywhere. The log is
 `%LOCALAPPDATA%\Easnap\crashes`. **Open data folder** in the tray menu leads
 to both.
 
-Manual checks should cover real pointer speed, mixed DPI and monitor origins,
-tool gestures versus double-click completion, clipboard contention, and native
-audio/preview behavior on the intended devices. Passing deterministic tests is
-not a substitute for those observations.

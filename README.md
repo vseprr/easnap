@@ -133,7 +133,7 @@ not saved.
 | Ctrl+Shift+A | Open or return to the capture workspace |
 | Ctrl+C / Ctrl+S | Copy / save the screenshot |
 | Ctrl+Z / Ctrl+Y | Undo / redo an annotation edit |
-| Esc | Cancel capture; stop and finalize an active recording |
+| Esc | Cancel a capture; stop and finalize a recording while its island has the keyboard |
 
 Text editing and active gestures handle these keys in their own context. See
 the [full input reference](docs/user-flows.md#keyboard-reference) for details.

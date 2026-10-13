@@ -1,7 +1,7 @@
 # ADR-019: Stable native painting and custom window chrome
 
-**Status:** Implemented, 2026-09-17; amended by the user-accepted 2026-09-21 correction baseline.
-Resizable chrome follows [ADR-024](ADR-024-native-trim-frame.md); annotation EDIT follows [ADR-022](ADR-022-text-input-and-content-sized-trim.md).
+**Status:** Implemented, 2026-09-17.  
+**Amended by:** [ADR-022](ADR-022-text-input-and-content-sized-trim.md) (annotation EDIT painting); [ADR-023](ADR-023-trim-resize-and-text-click-continuations.md) (DWM rounding replaces per-resize window regions); [ADR-024](ADR-024-native-trim-frame.md) (resizable windows keep the native frame)  
 New windows must follow the [implementation guide](../ui/window-implementation-guide.md).
 
 ## Context
@@ -44,7 +44,7 @@ The existing Light/Dark neumorphic material remains the visual authority.
 
 ## Evidence and limits
 
-See [validation](../ui/stability-corrections-validation.md). Tests read already
+Tests read already
 presented button pixels before pumping WM_PAINT, compare native typing with the
 production renderer, inspect the first composed full-screen pixel, preserve
 capture exclusion, and exercise actual dialog/trim HWNDs and UI Automation.

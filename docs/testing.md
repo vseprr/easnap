@@ -131,8 +131,13 @@ geometry functions, which need no monitor:
 - placement of the Scrollshot island and preview on one, two and stacked
   monitors, a frame across two monitors and a small work area.
 
-These prove that layout stays inside the work area and that controls do not
-overlap at those sizes. They do not prove rendering, DPI transitions between
+Manual checks cover what no test here observes: real pointer speed, mixed DPI
+and monitor origins, tool gestures versus double-click completion, clipboard
+contention, and audio and preview behaviour on the devices that matter.
+Passing deterministic tests is not a substitute for those observations.
+
+The table-driven tests prove that layout stays inside the work area and that
+controls do not overlap at those sizes. They do not prove rendering, DPI transitions between
 monitors or behaviour on a particular GPU; that still needs a physical check.
 Refresh rate does not appear in the matrix because nothing in the application
 assumes 60 Hz: recording follows the selected frame rate on a steady clock and
@@ -169,9 +174,19 @@ UI animation is time-based.
 
 ## Diagnostics that are not registered tests
 
-`test_ui_modernization` has opt-in modes (`--resize-edges`, `--resize-controls`,
-`--trim-checks`, `--text-checks`, `--window-lifetime`) for the resize
-investigation described in
-[project status](project-status.md). The strict resize gate currently fails
-and is not part of any tier; a green run of the registered suite does not
-close it.
+`test_ui_modernization` has opt-in modes that are not registered tests:
+`--resize-edges` and `--resize-controls` observe the trim window while it is
+resized and maximized, `--trim-checks`, `--text-checks` and
+`--window-lifetime` exercise one area each. The strict resize gate
+(`--resize-edges`) currently fails, see
+[project status](project-status.md); a green run of the registered suite does
+not close it.
+
+The resize gates print three counts per case. `mixed_geometry` counts captured
+frames in which the observed control patches do not all match their reference
+pixels at one recent window geometry; a one-pixel offset is allowed. `holes`
+counts frames in which at least 16 sampled pixels inside the client area show
+the test's green backdrop. A settled sample is invalid when either condition
+appears in a frame captured after the gesture has ended.
+`EASNAP_TEST_RESIZE_SLOW=1` makes each resize case use one 3,200 ms
+shrink/grow cycle instead of four 400 ms cycles.

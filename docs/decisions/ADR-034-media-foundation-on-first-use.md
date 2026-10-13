@@ -27,6 +27,11 @@ nothing from Media Foundation.
   file and needs no Media Foundation.
 - `EasnapPreviewHost.exe` keeps its ordinary imports. It is started only for
   the trim window.
+- A library that is bound on first use is found through the process search
+  path, not through the link option that covers ordinary imports.
+  `platform::RestrictDllSearchPath`, the first call in `wWinMain`, limits that
+  path to the Windows system directory, and `MediaFoundationAvailable` loads
+  both libraries from there explicitly before anything calls into them.
 
 ## Consequences
 
@@ -39,6 +44,9 @@ nothing from Media Foundation.
 - A call into Media Foundation that bypassed this check on such a system would
   raise the delay-load exception and end in a crash report. There is no such
   path today.
+- With two unrelated DLL files named `mfplat.dll` and `mfreadwrite.dll` placed
+  beside `Easnap.exe`, a recording in the running application loaded both
+  libraries from the Windows system directory and worked (2026-10-13).
 - **Not verified on an N edition.** No such system was available; the
   behaviour there rests on the two tests above and on a real recording made
   with the delay-loaded build on a standard edition, where both libraries were

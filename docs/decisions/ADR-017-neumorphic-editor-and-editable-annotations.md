@@ -1,7 +1,8 @@
 # ADR-017: Neumorphic controls and editable screenshot annotations
 
 Date: 2026-09-16  
-Status: Implemented; interaction and selection details amended by [ADR-018](ADR-018-editor-interaction-corrections.md). Manual validation remains itemized separately.
+Status: Implemented.  
+**Amended by:** [ADR-018](ADR-018-editor-interaction-corrections.md) (selection, text editing, compact controls); [ADR-019](ADR-019-stable-native-paint-and-custom-window-chrome.md) (custom message dialog and window chrome); [ADR-020](ADR-020-workspace-layering-and-outline-interaction.md) (hit targets follow outlines)
 
 ## Context
 
@@ -26,8 +27,9 @@ preview isolation, publication and recovery contracts remain in force.
    upper-left lighting direction with deliberately chosen graphite values.
 2. Native BUTTON, EDIT, COMBOBOX, TRACKBAR and progress controls retain their
    input and accessibility behavior. Shared rendering handles material and
-   vector icons; a scoped owner-draw adapter styles native menus and a scoped
-   CBT hook styles application MessageBoxes. Windows file pickers remain
+   vector icons; a scoped owner-draw adapter styles native menus, and
+   application messages use the shared custom modal dialog (`ShowMessage`,
+   ADR-019). Windows file pickers remain
    system-owned. Focus is independent of checked and pointer states.
 3. Hover/press/release retarget local timers immediately. Reduced client-area
    animation or high contrast disables transitions. Sliders and trim handles
@@ -85,5 +87,4 @@ CPU blur uses three linear-time sliding box passes as a Gaussian approximation
 over an expanded effect area. Very large images and long effect histories still
 need hardware-specific profiling. Native HWND fixtures establish rendering,
 document behavior and message routing, not perceived animation smoothness or
-physical mixed-DPI operation. See the [validation report](../ui/neumorphic-validation.md)
-for actual results and remaining manual checks.
+physical mixed-DPI operation.

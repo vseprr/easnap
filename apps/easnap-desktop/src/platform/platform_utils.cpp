@@ -21,7 +21,7 @@ namespace {
 constexpr UINT kDefaultDpi = 96;
 
 /// Dynamically resolved APIs. Easnap probes for capabilities instead of
-/// branching on Windows version numbers (see docs/architecture.md).
+/// branching on Windows version numbers.
 struct DynamicApis {
     using SetProcessDpiAwarenessContextFn = BOOL(WINAPI*)(DPI_AWARENESS_CONTEXT);
     using GetDpiForMonitorFn = HRESULT(WINAPI*)(HMONITOR, MONITOR_DPI_TYPE, UINT*, UINT*);

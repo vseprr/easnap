@@ -1660,7 +1660,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             ::SetFocus(hwnd);
             const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
             if (const ToolbarItem* item = HitTestToolbar(pt)) { OnToolbarActivated(*item); }
-            else { FeatureUsed(); } // Padding, empty toolbar space and the info strip also fix the image.
+            else { FeatureUsed(); } // Padding and empty toolbar space also fix the image.
             return 0;
         }
         case WM_LBUTTONDBLCLK:

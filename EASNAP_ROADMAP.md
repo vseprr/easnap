@@ -3,31 +3,27 @@
 **Updated:** 2026-10-13
 
 Read this with [project status](docs/project-status.md). This file records the
-phase boundaries; validation details belong in project status and the linked
-technical reports.
+phase boundaries; what is implemented and validated belongs in project status,
+and what each release contained in its
+[release notes](docs/releases/v1.1.0-beta.1.md).
 
 ## Current: v1.1.0-beta.1 preparation
 
 The branch `feature/v1.1-beta` prepares the first beta of v1.1: Scrollshot in
 the application, then the work a public beta needs. Nothing from it has been
-released; the published version is v1.0.2.
-
-[`vseprr/easnap`](https://github.com/vseprr/easnap) v1.0.2 is the second
-maintenance release on top of v1.0.0. v1.0.1 brought defect fixes, security
-hardening, display-change robustness, a per-user installer beside the portable
-ZIP, and a restructured test suite. v1.0.2 adds incremental redaction rendering
-in the editor and a fix for MP4 trims of pictures the decoder pads. Neither
-adds features or starts a new phase.
+released; the published version of
+[`vseprr/easnap`](https://github.com/vseprr/easnap) is v1.0.2, the second
+maintenance release on top of v1.0.0.
 
 | Phase | State |
 |---|---|
 | Foundation | Implemented |
 | Screenshots and annotations | Implemented; prior accepted UX corrections retained |
 | MP4 recording | Implemented |
-| GIF export and recording/trim integration | Implemented; Phase 3.3 accepted |
+| GIF export and recording/trim integration | Implemented |
 | Release hardening | v1.0.0 published; v1.0.1 and v1.0.2 maintenance releases; broader physical validation remains |
 | Scrollshot | Implemented on `feature/v1.1-beta`, including editing of the stitched image; not released |
-| Beta readiness | In progress on `feature/v1.1-beta` |
+| Beta readiness | Implemented on `feature/v1.1-beta`; prepared as v1.1.0-beta.1, not published |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
@@ -50,7 +46,13 @@ For v1.1.0-beta.1, in this order:
 7. Done: CI and community files. CodeQL, an AddressSanitizer job, issue forms
    and a pull-request template; skipped tests are reported as skipped. The
    two new jobs have not run on a hosted runner.
-8. Documentation pass and validation.
+8. Done: documentation pass and validation. Thirteen closed reports were
+   removed after their conclusions moved into the ADRs they support; the
+   Full tier passed 45 of 45 on 2026-10-13.
+
+Next: publishing v1.1.0-beta.1 (the owner's step), then the checks the beta
+could not make on one PC: Windows 11, an N edition, Scrollshot on real
+applications, other scale factors, the installer.
 
 Carried over from v1.0.2 and not part of the beta:
 

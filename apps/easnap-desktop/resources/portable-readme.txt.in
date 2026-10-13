@@ -7,11 +7,13 @@ export. Needs Windows 10 version 2004 (build 19041) or later, 64-bit.
 START
 Extract the entire ZIP to a folder you can write to. Open bin\Easnap.exe.
 Easnap appears in the notification area; use its menu or press Ctrl+Shift+A
-to start a capture (unless you have changed the shortcut).
+to start a capture. The shortcut, the language and the folders are under
+Settings in that menu.
 
 Keep Easnap.exe and EasnapPreviewHost.exe together in the bin folder. The
 preview helper is launched by Easnap; do not start it separately. No separate
-Visual C++ runtime is needed. Windows media components are required. The same
+Visual C++ runtime is needed. Recording needs the Windows media components;
+on an N edition of Windows, install the Media Feature Pack for it. The same
 release also offers a per-user installer if you prefer a Start menu entry.
 
 USE
@@ -21,9 +23,10 @@ in the trim window. Use Save or Copy to publish the result. GIF export does
 not contain audio.
 
 UPDATE OR REMOVE
-Exit Easnap from the notification-area menu before replacing its folder.
-Extract a new release into a new folder and replace both executables together.
-To remove the application, exit it and delete its extracted folder.
+Exit Easnap from the notification-area menu first. To update, extract the new
+release into a new folder and start Easnap from there; never mix the two
+executables of different releases. To remove the application, delete its
+extracted folder.
 
 Settings, the log, crash reports and temporary recordings are stored under
 %LOCALAPPDATA%\Easnap, separate from this portable folder. Nothing in it is

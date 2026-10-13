@@ -19,19 +19,24 @@ The hidden host window in `src/main.cpp` receives application messages.
 forward commands and reflect that state; they do not independently start a
 second capture session.
 
-The normal flows are:
+The normal flows, in the states of `SessionState`
+(`app/session_transitions.h`):
 
 ```text
-Idle → Standby → Editing → screenshot completion → Idle
-                        → Recording ↔ RecordingPaused
-                                    → RecordingFinalizing → Trimming → Idle
-                        → ScrollshotConfiguring → ScrollshotCapturing
-                                    → ScrollshotReview ↔ Editing → Idle
+Idle → RegionSelecting → ScreenshotEditing → ScreenshotExporting → Idle
+                       → RecordingConfiguring → RecordingActive ↔ RecordingPaused
+                             → RecordingFinalizing → RecordingTrimming ↔ Exporting → Idle
+                       → ScrollshotConfiguring → ScrollshotCapturing
+                             → ScrollshotReview ↔ ScreenshotEditing → Idle
 ```
 
-Screenshot publication runs while Editing remains active. Successful completion
-transitions through `ScreenshotExporting` to Idle; publication failure leaves
-the existing Editing session available. Recording finalization failures have
+The user-facing documents call `RegionSelecting` Standby and the adjustable
+frame of the three configuring states Editing; those are interaction names of
+the workspace (`ui/capture_workspace.h`), not session states.
+
+Screenshot publication runs while `ScreenshotEditing` remains active. Successful
+completion transitions through `ScreenshotExporting` to Idle; publication
+failure leaves the existing editing session available. Recording finalization failures have
 explicit recovery handling; a failed or partial file is never presented as
 successful export.
 The production transition table remains the authority for permitted edges.
@@ -49,8 +54,8 @@ All paths below are under `apps/easnap-desktop/src`.
 | `scrollshot/` | Stitching engine and the capture session that feeds it |
 | `strings/` | Localized text from the English and Turkish resource tables ([ADR-032](decisions/ADR-032-interface-text-in-string-tables.md)) |
 | `recording/` | Active-time recording session, cadence and audio timeline |
-| `media/` | Bounded queues, WASAPI, dual-source mixing/resampling, MP4/GIF writers/exporters and preview |
-| `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers, private storage, log file and crash reports, the sign-in start entry |
+| `media/` | Bounded queues, WASAPI, dual-source mixing/resampling, MP4/GIF writers/exporters, preview and the private session store |
+| `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers, the data-folder path and contained deletion, log file and crash reports, the sign-in start entry |
 | `main.cpp` | The shell: single instance, notification icon and menu, the capture shortcut, Settings and About, session end |
 
 Native Windows APIs also appear in UI, capture and media code. `ui_theme.h`
@@ -137,8 +142,9 @@ operations. They do not reacquire the image. Shared controls use cached soft
 material masks and antialiased vector geometry; local animation timers do not
 invalidate the full capture overlay. See ADR-017 and ADR-018 for input and transform rules.
 
-ADR-019 adds native synchronous-paint suppression, complete buffered control and
-panel paints, and shared custom trim/dialog chrome. The redirected capture image
+Native controls suppress their synchronous paint, controls and panels paint
+complete buffered frames, and the trim window and dialogs share one custom
+chrome (ADR-019). The redirected capture image
 is shown transparently and populated before exposure, preserving display affinity.
 Document movement is unrestricted; source clips apply to content, selection and
 the native editing host. Fully off-canvas effect regions do not alter source pixels.
@@ -201,10 +207,9 @@ even when Windows destroys the owned HWND before its C++ view is released.
 
 The regression path covers all eight resize directions, rapid shrink/grow,
 maximize/restore, both themes and 125% scaling using real HWNDs and desktop
-frames. Native UI/input/capture tests run serially. The guide identifies the
-production symbols and existing tests to reuse for a new surface. This describes
-required coverage; actual pre/post-restart results and the current repair's
-acceptance boundary are recorded in [project status](project-status.md).
+frames. The guide identifies the production symbols and existing tests to
+reuse for a new surface; how the tests are run is in [testing](testing.md),
+and the open resize limitation is in [project status](project-status.md).
 
 ## Scrollshot
 
@@ -319,8 +324,8 @@ remain native, and the still hides after replay's actual first-sample interval.
 The private protocol distinguishes ordinary paused
 seeks from exclusive-Out PauseAt intent and requires a matching version-4 pair.
 Logical media duration and the final playable video position remain distinct,
-including AAC tails. See ADR-010 and the
-[preview investigation](preview-playback-investigation.md).
+including AAC tails. See
+[ADR-010](decisions/ADR-010-trim-view-ownership-and-orchestration.md).
 
 Exact full-range MP4 Save/Copy reuses the finalized source without re-encoding.
 A new GIF result requires conversion even for the full interval; a previously

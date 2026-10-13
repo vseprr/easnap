@@ -1,6 +1,7 @@
 # ADR-016 — Shared appearance and accessible native controls
 
 **Status:** Accepted implementation decision  
+**Amended by:** [ADR-017](ADR-017-neumorphic-editor-and-editable-annotations.md) (neumorphic material, owner-drawn menus); [ADR-018](ADR-018-editor-interaction-corrections.md) (500 ms mode fade); [ADR-019](ADR-019-stable-native-paint-and-custom-window-chrome.md) (custom message dialog and caption); [ADR-024](ADR-024-native-trim-frame.md) (native frame for resizable windows); [ADR-033](ADR-033-settings-shortcut-and-launch-behaviour.md) (appearance can follow Windows)  
 **Date:** 2026-09-14
 
 ## Context
@@ -28,7 +29,10 @@ Appearance is a synchronous presentation-only message on the owning UI thread,
 including retained hidden windows. It does not invoke layout, capture, state
 transitions, document mutation, media transport or export cancellation. Child
 windows in the separate preview process are excluded from the broadcast.
-`WM_SETTINGCHANGE` cancels a workspace only for `SPI_SETWORKAREA`; color/theme
+`WM_SETTINGCHANGE` with `SPI_SETWORKAREA` is handled like a display change:
+it cancels a workspace only when the monitor bounds or DPI differ from those
+recorded at session start, so a work-area change alone does not cancel
+(v1.0.1). Color/theme
 notifications refresh presentation. Display/DPI changes retain their existing
 geometry/invalidation behavior.
 
@@ -68,16 +72,15 @@ COM apartment marshaling and detach callbacks before HWND destruction.
 
 - UI assets are vector geometry in code; no web framework, bitmap theme atlas,
   capture engine, encoder or second editing model is introduced.
-- Native dialogs, menus, non-client chrome and the preview renderer retain
+- Windows file pickers and the preview renderer retain
   Windows ownership. A dark app preference does not promise custom dark styling
   of every operating-system dialog.
 - The theme has no full-screen blur, additional dim layer or per-frame theme
-  animation. Existing 220 ms mode retirement remains the only mode fade.
-- Unsupported Camera, Mouse Effects, OCR, Scrollshot and device pickers remain
-  absent. Phase 4 and post-v1 Scrollshot remain separately scoped.
-- See the [design system](../ui/design-system.md) and
-  [validation report](../ui/modernization-validation.md) for concrete coverage
-  and environment limitations; implementation is not manual release acceptance.
+  animation. The 500 ms mode retirement remains the only mode fade.
+- Unsupported Camera, Mouse Effects, OCR and device pickers remain
+  absent.
+- See the [design system](../ui/design-system.md) for the implemented values
+  and validation limits; implementation is not manual release acceptance.
 
 ## Platform references
 

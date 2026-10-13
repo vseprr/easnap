@@ -57,6 +57,9 @@ python scripts/check_repository_hygiene.py
 python scripts/test_repository_hygiene.py
 ```
 
+The first also reports relative links between documents that lead nowhere: to
+a file that is not tracked, or to a heading that does not exist.
+
 For sensitive reports, follow [SECURITY.md](SECURITY.md).
 
 ## Packages and releases

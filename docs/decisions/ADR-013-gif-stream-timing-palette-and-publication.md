@@ -114,6 +114,14 @@ format writer.
 - On the accepted deterministic desktop fixture, clearing LZW at 2,048 codes
   increased Low output from 11,172 to 11,333 bytes. The bounded 4,096-code
   full-dictionary reset therefore remains the selected policy.
+- The fixed 226-color palette and the temporal deadband replaced RGB332 for
+  Low size on 2026-09-23, with a target of about 42,000 bytes for the reported
+  static desktop workload. On the same 364 × 490 inputs, RGB332 and the current
+  policy produced 76,773 and 40,835 bytes (3.33 s decoded sequence) and 65,407
+  and 39,404 bytes (3.00 s native-writer MP4); the production MP4-to-GIF
+  pipeline produced 40,044 bytes. On that MP4 the first-frame mean absolute RGB error
+  fell from 19.10 to 6.85 and PSNR rose from 20.35 to 29.20 dB. Savings depend
+  on content.
 - GIF has no audio. The configuration derives capability visibility from the
   selected recording format; its effective GIF audio source is None (ADR-014).
 - The configuration maps the durable backend policies to High quality and Low size

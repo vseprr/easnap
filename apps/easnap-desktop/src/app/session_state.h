@@ -1,6 +1,6 @@
 // Easnap - session state machine and capture coordinator.
 //
-// Modal ownership rule (see docs/user-flows.md): only the CaptureCoordinator may
+// Ownership rule (see docs/architecture.md, "Processes and ownership"): only the CaptureCoordinator may
 // move Easnap between states. UI controls issue commands; they never mutate
 // capture state on their own. Every method below must be called on the UI thread
 // that owns the message loop.

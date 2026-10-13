@@ -22,8 +22,10 @@ From the repository root:
 `build.ps1` configures, builds and then runs the tests affected by the change.
 The development build runs directly from `build\bin`; no packaging or
 installation step is involved in the edit-build-run loop. `-TestMode None`
-builds without tests, `-TestMode Full` ignores the pass cache, and `-Tier` and
-`-Monitor` are passed through to the test runner. Plain CMake works too:
+builds without tests. `-TestMode Full` ignores the pass cache and, unless
+`-Tier` says otherwise, raises the tier to Full, which runs the
+visible-desktop tests; `test.ps1 -Mode Full` only ignores the cache. `-Tier`
+and `-Monitor` are passed through to the test runner. Plain CMake works too:
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DEASNAP_BUILD_TESTS=ON
@@ -58,18 +60,9 @@ tests: a test that cannot run where it is exits with 77, and `test.ps1` lists
 it as skipped, apart from passes and failures. CMake 3.20 runs uncached;
 CTest 3.21+ supplies the result format used by the pass cache.
 
-`trim_endpoint_presentation` observes the complete production trim window during
-playback end and replay in both themes, after maximize/restore preparation. The
-opt-in `--resize-edges` gate observes resize/maximize motion; an endpoint pass
-does not substitute for it. To collect endpoint frames with generated media:
-
-```powershell
-.\build\bin\Release\test_ui_modernization.exe --trim-endpoint .local\trim-endpoint
-```
-
-Its pixel assertions target the generated fixture and the original regression
-clip, not arbitrary video content. The original clip is no longer in the checkout.
-Current results and remaining visual failures are recorded in
+The tests of the trim window and their opt-in diagnostic modes are described
+in the [window implementation guide](ui/window-implementation-guide.md);
+current results and remaining visual failures are in
 [project status](project-status.md).
 
 The Windows CI workflow builds Debug and Release on the `windows-2022` image,

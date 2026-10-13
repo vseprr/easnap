@@ -1,8 +1,8 @@
 # ADR-025 — Incremental test execution and desktop ownership
 
 **Status:** Accepted  
-**Date:** 2026-09-23  
-**Amended by:** [ADR-026](ADR-026-test-tiers-and-desktop-isolation.md)
+**Amended by:** [ADR-026](ADR-026-test-tiers-and-desktop-isolation.md) (run modes, soak tier, environment hashing, private desktop)  
+**Date:** 2026-09-23
 
 ADR-026 replaces the run modes described below with tiers, moves the repeated
 stress seeds to a soak tier, hashes only `EASNAP_*` environment variables and

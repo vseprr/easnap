@@ -1,6 +1,7 @@
 # ADR-005 — Active-time recording cadence and static-frame reuse
 
 **Status:** Accepted  
+**Amended by:** [ADR-021](ADR-021-recording-startup-timeline-and-session-leases.md) (item 4: Resume keeps the frame grid)  
 **Date:** 2026-08-28
 
 ## Context

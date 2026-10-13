@@ -5,49 +5,8 @@ Status: Implemented and accepted by the user on 2026-09-21; session closed.
 
 Required implementation sequence for future windows: [window implementation guide](../ui/window-implementation-guide.md).
 
-2026-09-29 continuation: a new Trim resize repair was authorized. Before the
-30 September reboot, SAMSUNG desktop captures reproduced clipped/stale geometry
-during real resizing, including with the preview released or never opened.
-The all-edge gate failed; clean settled frames were insufficient. Controlled
-comparisons have not justified replacing this frame decision. The historical
-2026-09-21 acceptance below remains valid as historical evidence, not proof for
-the current build. See [current evidence](../trim-endpoint-artifact-validation.md)
-for the exact runs, rejected trials and remaining validation.
-
-2026-09-30, before reboot: the user also confirmed visible left/top/top-right Trim defects
-without any recorder or pixel comparator. A separately built standard Win32/GDI
-window, without Easnap code, children, composited style or custom frame, clips
-right anchors in captured fast top-left resizing. These observations constrain
-causality; they neither justify an OS/driver diagnosis nor identify a verified
-replacement for this decision.
-
-After the user restarted Windows, they reported clean resizing in both the old
-backup application and the unchanged current Release application. The unchanged
-Release paused/top-left diagnostic then passed both themes, with 453 desktop
-frames, no mixed geometry/background holes and 26 clean settled samples. The
-earlier graphics-reset shortcut had not cleared that same Trim subset. A reboot
-changes more desktop/session state than that shortcut; no trace identifies which
-state caused the difference. Do not document a driver diagnosis or reboot as an
-application repair. The native-frame policy is retained.
-
-The subsequent final-production Release native UI, endpoint, timeline stress
-and material rerun passes 4/4, but the strict fast all-edge gate still fails
-22 visual cases and five minimum-size assertions across its full 60 cases:
-14,726 frames, 68 mixed observations, 18 exposed-background observations and
-1,193 clean settled samples. Maximum dispatch is 32 ms, with no post-gesture
-queued-resize assertion failure. Reviewed PNGs confirm temporary video/control
-overlap, truncated controls and duplicated caption pixels during maximize/restore.
-The reboot report and clean top-left subset therefore do not establish a full
-resize pass. The exact cause is unproven; the seeking repair adds no further
-production frame/painting workaround.
-
-The all-edge maximize gate sets DWM transitions disabled and samples four
-maximize/restore transitions (two cycles). The endpoint test's maximize/restore occurs before
-pixel observation, as preparation, so its pass does not cover that transition.
-All four resize matrices are complete (220 cases) and fail the strict gate;
-subsequent Debug/backend results are recorded with the same-build evidence.
-Detailed results remain in the existing validation document; the authorized
-repair and overall user acceptance remain open, with no Phase 4 advance.
+Transient artifacts while the trim window is resized or maximized are a known,
+unresolved limitation; see [Known limitation](#known-limitation-transient-artifacts-while-resizing).
 
 ## Context
 
@@ -93,11 +52,84 @@ The connection to Easnap's directional regression is based on local before/after
 desktop captures, not a guarantee made by those sources.
 
 The material test compares 768 cases against the pre-optimization production
-raster hash. A separate opt-in `test_ui_modernization --resize-edges` diagnostic
+raster hash; on 2026-09-21 the three-slice raster ran that comparison in 141 ms,
+against 891 ms before. A separate opt-in `test_ui_modernization --resize-edges` diagnostic
 uses real pointer drags and independent Windows Graphics Capture monitor frames
 in both themes. It checks all eight edges/corners and maximize/restore, including
-settled frames. Final Release CTest passed 26/26 and affected Debug checks
+settled frames. On 2026-09-21 that observation recorded 4,065 drag frames and
+363 clean settled samples (Windows 10 build 19045, 120 DPI, two monitors).
+Final Release CTest passed 26/26 and affected Debug checks
 passed 7/7. The user accepted the final desktop behavior and closed the session.
-Actual automated outcomes remain in the original logs; manual acceptance is
-recorded separately. See project status for the accepted binary and evidence.
 Future features must reuse this frame policy and follow the linked guide.
+
+### Known limitation: transient artifacts while resizing
+
+The strict resize gates (`--resize-edges` and `--resize-controls`) fail in
+their latest recorded runs, and the cause is not established. Measured on
+2026-09-29/30 on the secondary display (1920 × 1080, 125%):
+
+- Four complete runs, made after the restart described below, covered all four
+  edges, all four corners, caption movement and maximize/restore in both
+  themes, with paused, playing and retained-endpoint preview and with visible
+  status, progress and Cancel: 220 cases and 61,095 desktop frames. 59 cases
+  failed visually during motion and 12 minimum-width assertions failed; all
+  4,185 settled samples were clean. The longest measured dispatch was 47 ms.
+- Failing frames showed native video overlapping the timeline, clipped
+  right-side controls and readout, and displaced video with duplicated caption
+  pixels during maximize.
+- The gate disables DWM transitions and observes four maximize/restore
+  transitions. `trim_endpoint_presentation` maximizes and restores before its
+  pixel observation, so its pass does not cover that transition.
+- The artifact reproduced with the preview released and with the preview
+  helper never created. The user saw it at the left edge, the top edge and the
+  top-right corner with neither a screen recorder nor a pixel comparator
+  running. A separately built window that uses only public Win32/GDI (standard
+  native frame, no child windows, no custom caption, no `WS_EX_COMPOSITED`, no
+  Easnap code) clipped its right anchors in captured fast top-left resizing.
+- A backup checkout whose status records the 2026-09-21 acceptance, run
+  unmodified with its own observer, failed 15 of 18 visual cases (4,060 frames,
+  679 mixed-geometry and 310 exposed-background observations), and its
+  unmodified `Easnap.exe` showed the same clipping in an external recording.
+  The 2026-09-21 manual acceptance was made on the primary display; there the
+  old and the current sources both failed the paused top-left subset. No run
+  showed an old build passing where the current build failed.
+- After the user restarted Windows on 2026-09-30 they reported clean resizing
+  in the old and the current application, and the unchanged Release paused
+  top-left diagnostic passed both themes (453 frames, 26 clean settled
+  samples). An injected graphics-reset shortcut had not cleared that subset
+  before the restart. No trace identifies what the restart changed, and a
+  restart is not an application repair.
+
+These observations do not justify replacing the frame decision above, and they
+identify neither a driver nor an operating-system defect. The current state is
+tracked in [project status](../project-status.md).
+
+### Alternatives tried and rejected (2026-09-29/30)
+
+Each of the following was applied as a controlled comparison to the top-left
+resize, did not remove the artifact and was reverted:
+
+- removing the trim window's `WS_EX_COMPOSITED` style;
+- holding a DC only across layout and owned painting;
+- releasing the preview entirely;
+- using the complete default native caption and frame;
+- a 32-bit DIB paint buffer;
+- flushing GDI after the complete resize paint traversal;
+- flushing the final `BitBlt` before `EndPaint`;
+- reversing the owned-control paint order;
+- letting Windows paint the whole subtree, with no foreign children present;
+- automatic redraw in child placement;
+- empty valid rectangles, and preserving the screen intersection;
+- waiting for DWM presentation;
+- normal DWM transition settings;
+- letting normal `WM_PAINT` dispatch follow positioning;
+- invalidating the old geometry before positioning;
+- disabling DWM nonclient rendering (diagnostic only);
+- holding a DC from `WM_WINDOWPOSCHANGING` through completed painting;
+- suppressing automatic top-level redraw and repainting explicitly after layout;
+- `CS_HREDRAW | CS_VREDRAW` class styles.
+
+The paint-order and flush runs recorded foreground interference and do not
+give complete directional coverage. The desktop used an NVIDIA GeForce
+RTX 4060 Ti with driver 32.0.16.1088; switching the primary display from
+144 Hz to 60 Hz and back did not change the result.

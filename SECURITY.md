@@ -41,8 +41,9 @@ separate security branches.
 - Cleanup deletes only inside `%LOCALAPPDATA%\Easnap`, through checked handles.
   It refuses reparse points and verifies that every entry it opens still
   resolves to a direct child of the directory it was listed in.
-- Both executables load libraries from the Windows system directory only. A DLL
-  placed beside a portable copy is not loaded.
+- Both executables resolve library names in the Windows system directory only,
+  also for the libraries they load on first use. A DLL placed beside a
+  portable copy is not loaded.
 - Saving a screenshot writes a temporary file beside the destination and
   replaces the destination only after encoding succeeded.
 
@@ -64,15 +65,17 @@ provenance attestation that ties it to the workflow run that built it:
 `gh attestation verify <file> --repo vseprr/easnap`.
 
 CI builds Debug and Release with third-party actions pinned to commits and a
-read-only token, runs the tests suitable for hosted Windows runners, and checks
-the tracked-file inventory. Tests that need a real display, pointer or audio
+read-only token, runs the tests suitable for hosted Windows runners, also
+under AddressSanitizer, analyses the application sources with CodeQL and
+checks the tracked-file inventory. Tests that need a real display, pointer or audio
 device are validated separately; see [testing](docs/testing.md) and
 [project status](docs/project-status.md).
 
 `.gitignore` excludes local tooling configuration, credentials, private keys,
 recordings, diagnostic dumps, build output and historical capture evidence.
-`scripts/check_repository_hygiene.py` also rejects these paths if they are
-force-added. Only exact reviewed image paths are allowed by
+`scripts/check_repository_hygiene.py` rejects local tooling configuration,
+credentials, keys, media, dumps and logs if they are force-added; it does not
+look for build output. Only exact reviewed image paths are allowed by
 `scripts/repository-media-allowlist.txt`. This path check is not a substitute
 for inspecting content for secrets before publication.
 

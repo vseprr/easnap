@@ -32,8 +32,9 @@ if(NOT WIN32)
         "Configure this project with a Windows toolchain (MSVC 2019/2022 recommended).")
 endif()
 
-# Windows 10 baseline (0x0A00). Feature availability is probed at runtime instead
-# of branching on OS versions, see docs/architecture.md.
+# Windows 10 baseline (0x0A00). Features are probed at runtime where possible
+# (capture exclusion, Media Foundation, DPI entry points). The application
+# refuses to start below build 19041; see ADR-033 and ADR-034.
 set(EASNAP_WINDOWS_BASELINE 0x0A00 CACHE STRING "Minimum supported Windows version (_WIN32_WINNT)")
 
 option(EASNAP_WARNINGS_AS_ERRORS "Treat compiler warnings as errors for project code" ON)

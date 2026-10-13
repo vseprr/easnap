@@ -1,15 +1,13 @@
 # ADR-022: Native text input and content-sized trim presentation
 
 Date: 2026-09-19  
-Status: Implemented; validation is recorded in project status.
+Status: Implemented.  
+**Amended by:** [ADR-023](ADR-023-trim-resize-and-text-click-continuations.md) (resize minimum, blank double-click continuation); [ADR-024](ADR-024-native-trim-frame.md) (native frame and painting policy)
 
 Accepted and closed, 2026-09-21: the user accepted all session corrections,
 including native text painting, selection/blank clicks, trim resize, playhead,
 export progress, paused preview opening and the compact recording island.
 
-Resize constraints and blank double-click continuations are amended by
-[ADR-023](ADR-023-trim-resize-and-text-click-continuations.md); the final native
-frame/painting policy is [ADR-024](ADR-024-native-trim-frame.md).
 Future window work follows the [implementation guide](../ui/window-implementation-guide.md).
 
 ## Context
@@ -28,7 +26,11 @@ Phase 3 follow-up work; it does not start Phase 4.
   handler. The separate custom source-backed paint pass alone draws annotation
   pixels; it obtains an unrestricted DC and preserves the native caret.
   Resize the annotation host after native input dispatch finishes, and position
-  a collapsed caret against the rendered DirectWrite layout. Reapply the font
+  a collapsed caret against the rendered DirectWrite layout. The caret is
+  hidden for the duration of each message that can change pixels and shown
+  again after it has been positioned (v1.1): EDIT would otherwise show it at
+  its own GDI position first, and Windows does not erase a caret inside an
+  update region, so that column stayed inverted until the next paint. Reapply the font
   to each newly created EDIT. Enter inserts a line; Ctrl+A selects all;
   double-click selects a word and triple-click selects its paragraph.
 - Clicking another text/tag during editing commits the old box and immediately
@@ -65,8 +67,8 @@ Existing source-backed paint and annotation/export tests remain applicable.
 Native message/pixel tests do not establish perceived motion on every GPU,
 physical mixed-DPI behavior, every IME path or screen-reader acceptance.
 The accepted 2026-09-21 correction additionally checks native text dispatch before
-WM_PAINT across themes, modes and new/reopened editors. Its dated build/test
-results and final manual acceptance are in [text/trim validation](../ui/text-trim-validation.md).
+WM_PAINT across themes, modes and new/reopened editors. The measurements of
+that session are in [ADR-024](ADR-024-native-trim-frame.md).
 
 The visibility behavior is documented in Microsoft's
 [WM_SETREDRAW reference](https://learn.microsoft.com/en-us/windows/win32/gdi/wm-setredraw).
