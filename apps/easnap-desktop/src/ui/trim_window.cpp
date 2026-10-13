@@ -112,8 +112,16 @@ std::wstring PreviewFailureText(
     wchar_t code[16]{};
     _snwprintf_s(code, _TRUNCATE, L"0x%08lX",
                  static_cast<unsigned long>(snapshot.error));
-    return strings::Format(PreviewFailurePattern(snapshot.failed_operation),
-                           {code});
+    // A portable copy extracted without the helper is the one failure with a
+    // cause the user can remove.
+    std::wstring text =
+        snapshot.failed_operation == media::MediaPreviewOperation::Open && !media::PreviewHostInstalled()
+            ? std::wstring(strings::Get(IDS_TRIM_PREVIEW_HELPER_MISSING))
+            : strings::Format(PreviewFailurePattern(snapshot.failed_operation), {code});
+    // What to do next is the same after every failure.
+    text += L" ";
+    text += strings::Get(IDS_TRIM_PREVIEW_FAILED_NEXT);
+    return text;
 }
 
 }  // namespace
@@ -121,6 +129,10 @@ std::wstring PreviewFailureText(
 TrimWindow::TrimWindow(Callbacks callbacks) : callbacks_(std::move(callbacks)) {}
 
 TrimWindow::~TrimWindow() { Destroy(); }
+
+bool TrimWindow::preview_failed() const noexcept {
+    return preview_ == nullptr || preview_->snapshot().state == media::MediaPreviewState::Failed;
+}
 
 bool TrimWindow::Open(const std::wstring& source_path,
                       const RECT& source_region) {

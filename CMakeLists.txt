@@ -90,6 +90,19 @@ else()
     endif()
 endif()
 
+# A crash report is a minidump; reading it needs the symbol file of exactly
+# that build. The shipped executables therefore get one in Release as well.
+# Optimization is unchanged, and only the file name of the symbol file is
+# recorded in the executable, not the build directory. `output_name` is the
+# name of the executable without its extension.
+function(easnap_keep_release_symbols target output_name)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE "$<$<CONFIG:Release>:/Zi>")
+        target_link_options(${target} PRIVATE
+            "$<$<CONFIG:Release>:/DEBUG;/OPT:REF;/OPT:ICF;/INCREMENTAL:NO;/PDBALTPATH:${output_name}.pdb>")
+    endif()
+endfunction()
+
 # enable_testing() must run in the top-level scope for CTest to pick the tests up.
 if(EASNAP_BUILD_TESTS)
     enable_testing()

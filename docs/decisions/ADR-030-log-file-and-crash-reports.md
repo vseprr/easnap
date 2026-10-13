@@ -62,8 +62,14 @@ is then marked as seen.
 
 ## Consequences
 
-- Reading a report needs the symbol files of the build that wrote it. The
-  release workflow has to keep them.
+- Reading a report needs the symbol files of the build that wrote it. Release
+  builds of both executables therefore produce them
+  (`easnap_keep_release_symbols`), `package-release.ps1` puts them into a ZIP
+  of their own and the Release workflow attaches that ZIP to the release. The
+  executables record only the file name of their symbol file. See
+  [distribution](../distribution.md).
+- The test of this handler cannot run under AddressSanitizer: the sanitizer
+  takes an access violation before the application's handler sees it.
 - A debug build shows the debug runtime's own dialog before the handler runs.
 - A recording that was being written when the process died cannot be played:
   the MPEG-4 writer stores its index when it finalizes. A finished recording

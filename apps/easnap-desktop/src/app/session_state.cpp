@@ -1236,6 +1236,12 @@ void CaptureCoordinator::OnTrimWindowClosed() {
         state_ != SessionState::Exporting) {
         return;
     }
+    // Without a preview nothing can be trimmed and Save is off, but the
+    // recording itself is complete. Closing then offers to save it as it is.
+    if (state_ == SessionState::RecordingTrimming && trim_window_ != nullptr && trim_window_->preview_failed()) {
+        SaveUntrimmedRecording();
+        return;
+    }
     const bool discard = ui::ConfirmDestructive(
         trim_window_ != nullptr ? trim_window_->hwnd() : host_window_,
         strings::Get(IDS_DISCARD_RECORDING_TEXT), strings::Get(IDS_DISCARD_RECORDING_TITLE),
@@ -1251,6 +1257,46 @@ void CaptureCoordinator::OnTrimWindowClosed() {
     } else if (action == TrimCloseAction::DiscardNow) {
         FinishTrimWorkflow(true);
     }
+}
+
+void CaptureCoordinator::SaveUntrimmedRecording() {
+    enum : int { kSave = 100, kDelete = 101, kKeep = 102 };
+    const HWND owner = trim_window_ != nullptr ? trim_window_->hwnd() : host_window_;
+    const int choice = ui::ShowChoice(
+        owner, strings::Get(IDS_TRIM_NO_PREVIEW_TEXT), strings::Get(IDS_RECOVERY_TITLE),
+        {{kSave, strings::Get(IDS_RECOVERY_SAVE)},
+         {kDelete, strings::Get(IDS_RECOVERY_DELETE), true},
+         {kKeep, strings::Get(IDS_DISCARD_RECORDING_KEEP)}},
+        kSave, kKeep);
+    if (state_ != SessionState::RecordingTrimming) {
+        return;
+    }
+    if (choice == kDelete) {
+        FinishTrimWorkflow(true);
+        return;
+    }
+    if (choice != kSave) {
+        return;  // The window and the recording stay.
+    }
+    // The working recording is an MP4 whatever format was chosen: a GIF is
+    // made from it by the export that cannot run here.
+    const auto destination = ShowSaveRecordingDialog(
+        trim_window_ != nullptr ? trim_window_->hwnd() : host_window_, media::RecordingFormat::Mp4,
+        platform::TimestampedFileName(L"Easnap", RecordingFileExtension(media::RecordingFormat::Mp4)),
+        settings_.VideoStartDirectory(), RecordingSaveDialogText());
+    if (state_ != SessionState::RecordingTrimming || !destination.has_value()) {
+        return;
+    }
+    if (::CopyFileW(trim_source_path_.c_str(), destination->c_str(), FALSE) == FALSE) {
+        platform::LogMessage(L"Saving a recording without a preview failed (error %lu)", ::GetLastError());
+        ui::ShowErrorMessage(trim_window_ != nullptr ? trim_window_->hwnd() : host_window_,
+                             strings::Get(IDS_RECOVERY_SAVE_FAILED));
+        return;
+    }
+    settings_.last_video_directory = platform::DirectoryOf(*destination);
+    PersistSettings();
+    platform::LogMessage(L"A recording without a preview was saved untrimmed");
+    FinishTrimWorkflow(true);
 }
 
 void CaptureCoordinator::OnTrimStatusTick() {

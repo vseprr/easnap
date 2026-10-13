@@ -49,6 +49,9 @@ public:
     [[nodiscard]] bool ProcessDialogMessage(MSG& message) const;
     [[nodiscard]] bool visible() const noexcept { return visible_; }
     [[nodiscard]] bool exporting() const noexcept { return exporting_; }
+    /// True when there is no working preview. Nothing can be trimmed then and
+    /// Save is off; the coordinator offers to save the recording as it is.
+    [[nodiscard]] bool preview_failed() const noexcept;
     [[nodiscard]] HWND hwnd() const noexcept { return hwnd_; }
     [[nodiscard]] const app::TrimRangeModel& range() const noexcept {
         return range_;

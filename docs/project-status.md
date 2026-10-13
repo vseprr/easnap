@@ -44,6 +44,19 @@ Nothing from this branch has been released.
 - **Version text.** The build is 1.1.0-beta.1: `EASNAP_VERSION_PRERELEASE` in
   the root `CMakeLists.txt` adds the label to the numeric version, and the
   version resource carries it together with the prerelease flag.
+- **Release and distribution.** Package names, checks and the Release
+  workflow follow the version text; a tag with a label becomes a prerelease.
+  Release builds keep symbol files, which are packaged and published beside
+  the packages. The installer is in English and Turkish, requires build
+  19041, removes the sign-in entry and asks about settings, log and crash
+  reports when uninstalling. `scripts/package-manifests.ps1` writes winget
+  and Scoop manifests. See
+  [ADR-035](decisions/ADR-035-prerelease-versions-and-distribution.md),
+  [distribution](distribution.md) and the
+  [release notes](releases/v1.1.0-beta.1.md).
+- **A recording whose preview fails can be saved** as it is, and a missing
+  preview helper is named
+  ([ADR-031](decisions/ADR-031-unsaved-work-survives.md)).
 - The capture provider can return a plain image of a region and wait for the
   desktop to change (`CaptureRegionImage`).
 - An image copied to the clipboard is written bottom-up; .NET applications
@@ -60,10 +73,11 @@ at 125%; visible-desktop tests and manual checks ran on the secondary display.
 
 - Release x64 with warnings as errors builds. On 2026-10-13 the Standard tier
   passed 37 of 37 on the final binaries in one run.
-- **The Full tier passed 45 of 45 in one run, without a retry**, on the build
-  before the last changes to the shell (the shortcut while a dialog is open,
-  the Settings shortcut handling, Turkish wording). Those files are not part
-  of any visible-desktop test.
+- **Full tier, two runs on 2026-10-13.** The first passed 45 of 45 without a
+  retry. The second, on the binaries with symbol files and the change to the
+  trim window, passed 44; `trim_timeline_seek_stress` stopped at its pointer
+  check (the real pointer was not where the test had put it; the PC was in
+  use) and passed when it was run again alone.
 - **`annotation_editing_native` is no longer intermittent, for two reasons
   that were found.** A build that failed it deterministically (24 checks, four
   runs in a row) showed a one-pixel column at the native caret position: the
@@ -118,6 +132,15 @@ at 125%; visible-desktop tests and manual checks ran on the secondary display.
     the process at start, both there once the recording ran, 3 s recorded,
     trim window, Delete; a recording left by a killed process offered at the
     next start and deleted.
+  - A recording without a preview: with the helper executable taken away, the
+    message named it, closing offered Save, Delete and Keep, Keep left the
+    window, and Save wrote a 1.5 MB MP4 through the system dialog and removed
+    the temporary recording.
+- **Packaging.** `package-release.ps1` produced the ZIP, the installer, the
+  symbols ZIP and their checksum files from this build, after checking that
+  both executables report 1.1.0-beta.1 with the prerelease flag and name their
+  symbol files without a directory. `package-manifests.ps1` wrote the winget
+  and Scoop manifests from those packages.
 
 Not validated on the branch:
 
@@ -137,6 +160,12 @@ Not validated on the branch:
   high contrast: both need a change to Windows settings.
 - The folder picker of Settings, "Check for updates" and "Website": they open
   a system dialog or the browser and were not driven.
+- **The installer.** It was compiled, not run: installing would replace the
+  copy of the person who owns the development PC. Its Turkish pages, the
+  uninstall question and the removal of the sign-in entry are therefore
+  unseen.
+- The Release workflow with a prerelease tag, and the manifests against
+  `winget validate` or Scoop. Nothing was pushed, tagged or dispatched.
 - The look of the Settings dialog on screen. Its windows are excluded from
   capture, so no picture was taken; its text is measured by the text-fit test.
 - A real crash of the application: the handler is exercised by a test process
@@ -163,8 +192,6 @@ Not validated on the branch:
 - A recording that starts on a still desktop is read through GDI for its whole
   length. Scrollshot no longer is; the same remedy has not been applied to
   recording.
-- Reading a crash report needs the symbol files of the build that wrote it;
-  the release workflow does not keep them yet.
 - A window that is open when the language changes keeps its text; only the
   Settings dialog can be open then, and it closes.
 - HDR displays are unverified: no HDR output was available.
@@ -414,10 +441,8 @@ post-v1 without a promised date.
 
 ## Next slice
 
-For v1.1.0-beta.1, in the order of the [roadmap](../EASNAP_ROADMAP.md):
-release and distribution (package names and checks for the prerelease
-version, package manifests, uninstall behaviour, symbol files, release notes),
-CI and community files, then the documentation pass and the final validation.
+For v1.1.0-beta.1, in the order of the [roadmap](../EASNAP_ROADMAP.md): CI
+and community files, then the documentation pass and the final validation.
 Preserve the native frame, shared rendering/control path and asynchronous
 preview boundaries. See [ADR-024](decisions/ADR-024-native-trim-frame.md),
 [architecture](architecture.md) and the

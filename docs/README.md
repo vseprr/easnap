@@ -12,6 +12,8 @@ alongside it. Contributor instructions are in [CONTRIBUTING.md](../CONTRIBUTING.
 | [Development](development.md) | Building, running, packaging and source layout |
 | [Testing](testing.md) | Test tiers, running only what changed, display selection and isolation from the user |
 | [User flows](user-flows.md) | Current interaction, completion and retry behavior |
+| [Troubleshooting](troubleshooting.md) | What goes wrong most often and what to do, and how to report a problem |
+| [Distribution](distribution.md) | Version text, packages, symbol files, the release steps and package-manager manifests |
 | [UI direction](ui-modernization-direction.md) | Scope of the separately authorized presentation effort |
 | [Design system](ui/design-system.md) | Implemented colors, controls, accessibility and layout |
 | [Window implementation guide](ui/window-implementation-guide.md) | Required shared-code, layout, painting and regression-validation path for new or changed windows |
@@ -62,7 +64,8 @@ not unfinished roadmap instructions.
   [unsaved work survives exit, sign-out and crashes](decisions/ADR-031-unsaved-work-survives.md).
 - Shell and compatibility: [interface text in string tables](decisions/ADR-032-interface-text-in-string-tables.md),
   [Settings, the capture shortcut and how Easnap starts](decisions/ADR-033-settings-shortcut-and-launch-behaviour.md),
-  [Media Foundation on first use](decisions/ADR-034-media-foundation-on-first-use.md).
+  [Media Foundation on first use](decisions/ADR-034-media-foundation-on-first-use.md),
+  [prerelease versions, one channel and symbol files](decisions/ADR-035-prerelease-versions-and-distribution.md).
 - Development/testing: [incremental execution and desktop ownership](decisions/ADR-025-incremental-test-execution.md),
   [test tiers and desktop isolation](decisions/ADR-026-test-tiers-and-desktop-isolation.md).
 

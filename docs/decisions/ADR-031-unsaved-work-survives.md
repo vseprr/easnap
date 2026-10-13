@@ -94,6 +94,17 @@ for a screenshot nobody has drawn on.
 - A screenshot of a display that could not be read is a failed capture with a
   retry notice, not an image with a black part.
 
+### A recording that cannot be previewed
+
+With a failed preview the trim window turns Save and Copy off: nothing can be
+trimmed. The recording itself is complete. Closing the window in that state
+asks a different question (`CaptureCoordinator::SaveUntrimmedRecording`):
+**Save...** copies the untrimmed MP4 to a place the user chooses, **Delete**
+removes it, **Keep recording** returns to the window. Until v1.1 the only ways
+out of that window were deleting the recording or ending the process. The
+preview is a separate, unsigned executable; a security product that removes
+it would otherwise make every recording unsavable.
+
 ## Consequences
 
 - There is one more question in a few flows, always with the keeping answer

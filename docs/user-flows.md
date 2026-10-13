@@ -293,6 +293,12 @@ A new GIF result requires conversion for both full-range and trimmed selections.
 A completed result can be reused for an identical range while its file remains
 available. Successful Save/Copy closes the recording session.
 
+When the preview cannot open or fails, nothing can be trimmed and Save and
+Copy are off, but the recording itself is complete. The message says what
+failed; closing the window then offers **Save...** (the untrimmed MP4, also
+when GIF was chosen), **Delete** and **Keep recording**. A missing
+`EasnapPreviewHost.exe` is named as such.
+
 A cancelled or failed export keeps the source available. Controls reflect the
 busy state while work is pending. Clipboard-referenced recording files survive
 normal cleanup so pasting remains possible after closing Easnap.

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag (for example v1.0.0)
+        description: Existing version tag (for example v1.1.0 or v1.1.0-beta.1)
         required: true
         type: string
 
@@ -25,8 +25,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
-            throw 'Use an existing vMAJOR.MINOR.PATCH tag.'
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$') {
+            throw 'Use an existing vMAJOR.MINOR.PATCH tag, optionally with a prerelease label such as -beta.1.'
           }
 
       - name: Check out the tag
@@ -44,8 +44,13 @@ jobs:
           if ($source -notmatch 'project\(Easnap\s+VERSION\s+(\d+\.\d+\.\d+)') {
             throw 'Cannot read the CMake project version.'
           }
-          if ($env:RELEASE_TAG -ne "v$($matches[1])") {
-            throw 'The tag does not match the CMake project version.'
+          $version = $matches[1]
+          if ($source -notmatch '(?m)^set\(EASNAP_VERSION_PRERELEASE\s+"([0-9A-Za-z.]*)"\)') {
+            throw 'Cannot read the prerelease label.'
+          }
+          if ($matches[1]) { $version = "$version-$($matches[1])" }
+          if ($env:RELEASE_TAG -ne "v$version") {
+            throw "The tag does not match the project version v$version."
           }
           $notes = "docs/releases/$env:RELEASE_TAG.md"
           if (-not (Test-Path -LiteralPath $notes -PathType Leaf)) {
@@ -99,7 +104,10 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           $assets = @()
-          foreach ($package in @("Easnap-$env:RELEASE_TAG-windows-x64.zip", "Easnap-$env:RELEASE_TAG-windows-x64-setup.exe")) {
+          # The symbol files are published with the release: a crash report can
+          # only be read with the symbols of the build that wrote it.
+          foreach ($package in @("Easnap-$env:RELEASE_TAG-windows-x64.zip", "Easnap-$env:RELEASE_TAG-windows-x64-setup.exe",
+                                 "Easnap-$env:RELEASE_TAG-windows-x64-symbols.zip")) {
             $file = "dist/releases/$package"
             $checksum = "$file.sha256"
             $line = (Get-Content -LiteralPath $checksum -Raw).Trim()
@@ -111,7 +119,11 @@ jobs:
             }
             $assets += @($file, $checksum)
           }
-          gh release create $env:RELEASE_TAG @assets --verify-tag --draft --title "Easnap $env:RELEASE_TAG" --notes-file "docs/releases/$env:RELEASE_TAG.md"
+          # A tag with a label is a prerelease: GitHub does not offer it as
+          # the latest release.
+          $kind = @()
+          if ($env:RELEASE_TAG -match '-') { $kind = @('--prerelease') }
+          gh release create $env:RELEASE_TAG @assets @kind --verify-tag --draft --title "Easnap $env:RELEASE_TAG" --notes-file "docs/releases/$env:RELEASE_TAG.md"
           if ($LASTEXITCODE -ne 0) { throw 'Draft release creation failed.' }
 
       - name: Report the remaining publication review
@@ -119,7 +131,7 @@ jobs:
         run: |
           @'
           ### Draft release created
-          The ZIP and installer passed the hosted build, test and packaging checks.
+          The ZIP, installer and symbol files passed the hosted build, test and packaging checks.
           Physical desktop tests are pending outside this hosted workflow.
           Review local desktop evidence, compatibility limits and release notes
           before publishing the draft. The binaries are unsigned.

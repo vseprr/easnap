@@ -291,4 +291,7 @@ BEGIN
     IDS_WINDOWS_TOO_OLD "Easnap needs Windows 10 version 2004 (build 19041) or later.\n\nThis computer runs build %1."
     IDS_MODE_RECORD_UNSUPPORTED "Recording needs Media Foundation, which this edition of Windows does not include.\n\nInstall the Media Feature Pack from the optional features in Windows Settings, then start Easnap again. Screenshots and Scrollshot work without it."
     IDS_SETTINGS_STARTUP_FAILED "Windows did not accept the change to starting Easnap with Windows.\n\nThe other settings were saved."
+    IDS_TRIM_NO_PREVIEW_TEXT "This recording cannot be previewed, so it cannot be trimmed here.\n\nThe recording itself is complete. You can save it as it is, as an MP4 file."
+    IDS_TRIM_PREVIEW_FAILED_NEXT "Close this window to save the recording as it is."
+    IDS_TRIM_PREVIEW_HELPER_MISSING "EasnapPreviewHost.exe is missing from the Easnap folder, so recordings cannot be previewed or trimmed. Extract the complete ZIP again, or reinstall Easnap."
 END

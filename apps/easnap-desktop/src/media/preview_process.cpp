@@ -16,6 +16,21 @@ namespace {
 
 // Native playback can block inside MFPlay, including Shutdown. Owning it in a
 // job-contained process makes retirement independent of COM/audio-driver locks.
+/// EasnapPreviewHost.exe beside this executable; empty when the path of this
+/// executable cannot be read.
+std::wstring PreviewHostPath() {
+    std::array<wchar_t, 32'768> executable{};
+    const DWORD length = ::GetModuleFileNameW(nullptr, executable.data(),
+                                            static_cast<DWORD>(executable.size()));
+    if (length == 0 || length >= executable.size()) { return {}; }
+    std::wstring path(executable.data(), length);
+    const auto separator = path.find_last_of(L"\\/");
+    if (separator == std::wstring::npos) { return {}; }
+    path.resize(separator + 1);
+    path.append(L"EasnapPreviewHost.exe");
+    return path;
+}
+
 class OwnedHandle final {
 public:
     OwnedHandle() = default;
@@ -328,21 +343,11 @@ private:
     }
 
     bool Launch() {
-        std::array<wchar_t, 32'768> executable{};
-        const DWORD length = ::GetModuleFileNameW(nullptr, executable.data(),
-                                                static_cast<DWORD>(executable.size()));
-        if (length == 0 || length >= executable.size()) {
+        std::wstring path = PreviewHostPath();
+        if (path.empty()) {
             Fail(HRESULT_FROM_WIN32(ERROR_BAD_PATHNAME), MediaPreviewOperation::Open);
             return false;
         }
-        std::wstring path(executable.data(), length);
-        const auto separator = path.find_last_of(L"\\/");
-        if (separator == std::wstring::npos) {
-            Fail(HRESULT_FROM_WIN32(ERROR_BAD_PATHNAME), MediaPreviewOperation::Open);
-            return false;
-        }
-        path.resize(separator + 1);
-        path.append(L"EasnapPreviewHost.exe");
         std::wstring command_line = L"\"" + path + L"\"";
 
         SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
@@ -822,6 +827,12 @@ private:
 };
 
 }  // namespace
+
+bool PreviewHostInstalled() {
+    const std::wstring path = PreviewHostPath();
+    const DWORD attributes = path.empty() ? INVALID_FILE_ATTRIBUTES : ::GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
 
 std::unique_ptr<IMediaPreview> CreateMfPlayPreview() {
     return std::make_unique<ProcessMediaPreview>();

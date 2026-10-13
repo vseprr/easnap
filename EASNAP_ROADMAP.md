@@ -43,8 +43,10 @@ For v1.1.0-beta.1, in this order:
 4. Done: Settings window, About, update check, launch behaviour.
 5. Done: compatibility. Easnap starts on Windows N editions and refuses to
    start below Windows 10 build 19041. Neither was seen on such a system.
-6. Release and distribution: package names and checks for the prerelease
-   version, package manifests, uninstall behaviour, symbol files.
+6. Done: release and distribution. Package names and checks for the
+   prerelease version, package manifests, uninstall behaviour, symbol files,
+   release notes. Not published: the tag, the workflow run and the package
+   manager submissions are the owner's steps.
 7. CI and community files.
 8. Documentation pass and validation.
 

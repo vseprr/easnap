@@ -36,6 +36,13 @@ Keep fixes focused. Explain the triggering behavior, the resulting change and
 the checks actually run. Include Windows version, scaling, monitor layout and
 audio configuration when they affect a bug. Mark unavailable checks as pending.
 
+Text the user reads goes into both string tables,
+`apps/easnap-desktop/resources/strings_en.rc` and `strings_tr.rc`, never into
+the C++ sources; see
+[ADR-032](docs/decisions/ADR-032-interface-text-in-string-tables.md). If you
+do not write Turkish, say so in the pull request and leave the English text in
+the Turkish table: it will be translated before a release.
+
 Before changing a window's layout, painting or lifetime, read
 [the window implementation guide](docs/ui/window-implementation-guide.md) and
 [the native-frame decision](docs/decisions/ADR-024-native-trim-frame.md). Preserve
@@ -62,15 +69,19 @@ After a Release build and its applicable validation:
 
 This installs the matched application and preview helper, license and usage
 instructions, verifies the executables' version and x64 architecture, and
-creates a portable ZIP and, when Inno Setup 6 is installed, a per-user installer
-from the same verified files, each with a SHA-256 file. `-Installer Require`
-fails instead of skipping the installer. The script does not run tests or sign
-binaries. Existing outputs are not overwritten; use another directory under
-`dist/` when preparing a replacement candidate.
+creates a portable ZIP, a ZIP with the symbol files and, when Inno Setup 6 is
+installed, a per-user installer from the same verified files, each with a
+SHA-256 file. `-Installer Require` fails instead of skipping the installer. The
+script does not run tests or sign binaries. Existing outputs are not
+overwritten; use another directory under `dist/` when preparing a replacement
+candidate.
 
-The Release workflow takes an existing `vMAJOR.MINOR.PATCH` tag, runs the hosted
-Build workflow for that tag, attests the packages and creates a draft release
-from the tested ZIP and installer. The tag must match the CMake project version and have notes
-at `docs/releases/<tag>.md`. Review local desktop results, known limitations,
+The Release workflow takes an existing tag, `vMAJOR.MINOR.PATCH` or with a
+prerelease label such as `v1.1.0-beta.1`, runs the hosted Build workflow for
+that tag, attests the packages and creates a draft release from the tested
+ZIP, installer and symbol files. A tag with a label becomes a prerelease. The
+tag must match the version in the root `CMakeLists.txt` and have notes at
+`docs/releases/<tag>.md`. Review local desktop results, known limitations,
 release notes and package contents before publishing the draft.
+[Distribution](docs/distribution.md) has the complete steps.
 

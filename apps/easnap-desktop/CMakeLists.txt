@@ -149,6 +149,8 @@ target_sources(EasnapPreviewHost PRIVATE resources/preview_host.manifest)
 add_dependencies(easnap-desktop EasnapPreviewHost)
 
 set_target_properties(easnap-desktop PROPERTIES OUTPUT_NAME "Easnap")
+easnap_keep_release_symbols(easnap-desktop Easnap)
+easnap_keep_release_symbols(EasnapPreviewHost EasnapPreviewHost)
 
 target_include_directories(easnap-desktop PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"

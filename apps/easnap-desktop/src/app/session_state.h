@@ -189,6 +189,7 @@ private:
     void CompletePendingTrimAction();
     void OnTrimExportCancel();
     void OnTrimWindowClosed();
+    void SaveUntrimmedRecording();
     void OnTrimStatusTick();
     void FinishTrimWorkflow(bool delete_active_session);
     void StopTrimForShutdown();

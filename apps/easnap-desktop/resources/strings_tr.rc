@@ -290,4 +290,7 @@ BEGIN
     IDS_WINDOWS_TOO_OLD "Easnap için Windows 10 sürüm 2004 (derleme 19041) veya sonrası gerekir.\n\nBu bilgisayarda derleme %1 çalışıyor."
     IDS_MODE_RECORD_UNSUPPORTED "Kayıt için Media Foundation gerekir; bu Windows sürümünde bulunmuyor.\n\nWindows Ayarları'ndaki isteğe bağlı özelliklerden Media Feature Pack'i kurun, sonra Easnap'i yeniden başlatın. Ekran görüntüsü ve kaydırmalı çekim bu paket olmadan çalışır."
     IDS_SETTINGS_STARTUP_FAILED "Windows, Easnap'in Windows ile başlatılması ayarındaki değişikliği kabul etmedi.\n\nDiğer ayarlar kaydedildi."
+    IDS_TRIM_NO_PREVIEW_TEXT "Bu kayıt önizlenemiyor; bu yüzden burada kırpılamıyor.\n\nKaydın kendisi eksiksiz. Olduğu gibi, MP4 dosyası olarak kaydedebilirsiniz."
+    IDS_TRIM_PREVIEW_FAILED_NEXT "Kaydı olduğu gibi kaydetmek için bu pencereyi kapatın."
+    IDS_TRIM_PREVIEW_HELPER_MISSING "EasnapPreviewHost.exe Easnap klasöründe yok; bu yüzden kayıtlar önizlenemiyor ve kırpılamıyor. ZIP dosyasının tamamını yeniden çıkarın ya da Easnap'i yeniden kurun."
 END
