@@ -47,7 +47,8 @@
     },
     "virtualAudioCable": { "enabled": true, "package": "vb-cable" },
     "scripts": [],
-    "rebootAfter": true
+    "rebootAfter": true,
+    "windowsUpdate": { "enabled": true, "maxRounds": 4, "timeoutMinutes": 90 }
   },
   "sync": {
     "source": ".",
@@ -82,6 +83,7 @@
     "junit": ["build/Testing/*.xml"],
     "output": ["build/Testing/Temporary/LastTest.log"],
     "hostOnly": [],
+    "gpuRequired": [],
     "captureTests": [
       "real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop",
       "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation",

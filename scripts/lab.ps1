@@ -9,7 +9,7 @@
     ("Lab") and C:\Projects\winlab\README.md.
 
     Commands: status, create, provision, snapshot, restore, run, probe,
-    parity, verify, connect, stop, destroy.
+    parity, verify, connect, screenshot, stop, destroy.
 
 .PARAMETER Command
     The winlab command.
@@ -33,7 +33,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0, Mandatory = $true)]
-    [ValidateSet('status', 'create', 'provision', 'snapshot', 'restore', 'run', 'probe', 'parity', 'verify', 'connect', 'stop', 'destroy')]
+    [ValidateSet('status', 'create', 'provision', 'snapshot', 'restore', 'run', 'probe', 'parity', 'verify', 'connect', 'screenshot', 'stop', 'destroy')]
     [string]$Command,
     [ValidateSet('Standard', 'Full', 'Soak')][string]$Tier,
     [string[]]$Tests,
