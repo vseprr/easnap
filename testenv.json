@@ -48,7 +48,8 @@
     "virtualAudioCable": { "enabled": true, "package": "vb-cable" },
     "scripts": [],
     "rebootAfter": true,
-    "windowsUpdate": { "enabled": true, "maxRounds": 4, "timeoutMinutes": 90 }
+    "windowsUpdate": { "enabled": true, "maxRounds": 4, "timeoutMinutes": 90 },
+    "debloat": { "enabled": true }
   },
   "sync": {
     "source": ".",
