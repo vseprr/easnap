@@ -464,8 +464,25 @@ private:
         if (SUCCEEDED(result)) {
             result = SetCommonVideoAttributes(input_type.Get());
         }
+        // Frames must leave the encoder in display order. The Microsoft software
+        // H.264 encoder (every PC without a hardware encoder, the test lab among
+        // them) otherwise reorders with B-frames in Main profile, and the MP4 sink
+        // then stamps the first frame one frame late; the trim preview refuses
+        // such a file at its open check. Hardware encoders ignore what they do
+        // not support.
+        ComPtr<IMFAttributes> encoder_parameters;
         if (SUCCEEDED(result)) {
-            result = writer->SetInputMediaType(stream_index, input_type.Get(), nullptr);
+            result = ::MFCreateAttributes(&encoder_parameters, 2);
+        }
+        if (SUCCEEDED(result)) {
+            result = encoder_parameters->SetUINT32(CODECAPI_AVEncMPVDefaultBPictureCount, 0);
+        }
+        if (SUCCEEDED(result)) {
+            result = encoder_parameters->SetUINT32(CODECAPI_AVLowLatencyMode, TRUE);
+        }
+        if (SUCCEEDED(result)) {
+            result = writer->SetInputMediaType(stream_index, input_type.Get(),
+                                               encoder_parameters.Get());
         }
         if (FAILED(result)) {
             SetError(L"Configuring NV12 input or locating an H.264 encoder", result);
