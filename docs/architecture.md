@@ -435,7 +435,9 @@ depend on available Windows capabilities; a capability skip is not hardware
 acceptance. The current results and remaining visual/device checks belong in
 [project status](project-status.md), not in a second architectural progress log.
 Tests are organised in tiers; message-driven window tests run on a private
-desktop and the few that need the real desktop run on a chosen display. See
-[testing](testing.md), [ADR-025](decisions/ADR-025-incremental-test-execution.md)
-and [ADR-026](decisions/ADR-026-test-tiers-and-desktop-isolation.md). Full
+desktop and the few that need the real desktop run on the desktop of the lab
+VM. See [testing](testing.md) and
+[ADR-025](decisions/ADR-025-incremental-test-execution.md),
+[ADR-026](decisions/ADR-026-test-tiers-and-desktop-isolation.md) and
+[ADR-037](decisions/ADR-037-isolated-test-lab.md). Full
 validation bypasses the local successful-result cache.

@@ -10,7 +10,7 @@ alongside it. Contributor instructions are in [CONTRIBUTING.md](../CONTRIBUTING.
 | [Roadmap](../EASNAP_ROADMAP.md) | Accepted phases and current bounded work |
 | [Architecture](architecture.md) | Implemented modules, ownership and data flow |
 | [Development](development.md) | Building, running, packaging and source layout |
-| [Testing](testing.md) | Test tiers, running only what changed, display selection and isolation from the user |
+| [Testing](testing.md) | Where tests run (the lab VM), test tiers, running only what changed and isolation from the user |
 | [User flows](user-flows.md) | Current interaction, completion and retry behavior |
 | [Troubleshooting](troubleshooting.md) | What goes wrong most often and what to do, and how to report a problem |
 | [Distribution](distribution.md) | Version text, packages, symbol files, the release steps and package-manager manifests |
@@ -61,13 +61,13 @@ not unfinished roadmap instructions.
   [Media Foundation on first use](decisions/ADR-034-media-foundation-on-first-use.md),
   [prerelease versions, one channel and symbol files](decisions/ADR-035-prerelease-versions-and-distribution.md).
 - Development/testing: [incremental execution and desktop ownership](decisions/ADR-025-incremental-test-execution.md),
-  [test tiers and desktop isolation](decisions/ADR-026-test-tiers-and-desktop-isolation.md).
+  [test tiers and desktop isolation](decisions/ADR-026-test-tiers-and-desktop-isolation.md),
+  [isolated test lab in a Hyper-V VM](decisions/ADR-037-isolated-test-lab.md).
 
 Keep progress in project status, durable decisions in ADRs, and measured
 evidence in the ADR it supports or in the validation record of its release.
 A finished investigation leaves its conclusion in an ADR; the report itself is
 not kept. Avoid duplicating phase histories across these files.
-
 
 Raw diagnostic media and machine-specific tool settings are not part of the
 public repository.

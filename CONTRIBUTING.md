@@ -25,7 +25,9 @@ windows, capture or recording, run them too and say which display you used:
 
 The [testing guide](docs/testing.md) explains the tiers, the pass cache, how
 tests are kept away from your pointer and keyboard, and how to write a test
-that does not need the visible desktop. Hosted CI runs the fast tier and the
+that does not need the visible desktop. Where a Hyper-V test lab is set up,
+the Standard and Full tiers run there instead of on your desktop; see
+[the lab](docs/testing.md#lab). Hosted CI runs the fast tier and the
 integration tests a hosted runner can execute; it excludes the desktop and soak
 tiers and all preview tests. A green hosted check does not validate preview
 playback, a physical display, pointer or audio device.

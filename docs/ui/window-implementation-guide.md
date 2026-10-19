@@ -272,7 +272,7 @@ changes, and recreates capture after display reconfiguration. It still verifies
 actual visible ownership and pixels; an obscured surface fails explicitly. Tests
 that intentionally use the real pointer/focus/capture remain `RUN_SERIAL` and
 need a controlled desktop. Daily runs defer these as pending and the Full tier
-runs them. Hosted CI runs none of them: it has no real display or input queue.
+runs them, in the [lab](../testing.md#lab). Hosted CI runs none of them: it has no real display or input queue.
 
 Useful existing checks in `apps/easnap-desktop/tests`:
 

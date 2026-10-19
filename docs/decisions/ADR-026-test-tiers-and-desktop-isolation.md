@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-10-10
 **Amends:** [ADR-025](ADR-025-incremental-test-execution.md)
+**Amended by:** [ADR-037](ADR-037-isolated-test-lab.md) (the tiers run in a Hyper-V VM; the host run below is the exception)
 
 ## Context
 

@@ -80,7 +80,12 @@ fallback as "passed (GDI fallback - Duplication path not exercised)".
 **Host-only tests.** `tests.hostOnly` in `testenv.json` lists tests that must run
 on the host. `test.ps1 -HostOnly Exclude` leaves them out and lists them; the lab
 run uses it. `-HostOnly Only` runs exactly them on the host. The list is empty:
-the probe of 2026-10-19 passed every capture and audio test in the VM.
+the probe of 2026-10-19 passed every capture and audio test in the VM. A test
+that needs a real GPU is listed under `tests.gpuRequired`; winlab warns early,
+because the VM has none. That list is empty too.
+
+**Where tests run** (2026-10-20). The Standard and Full tiers run in the lab.
+A run on the host desktop is made only when the owner asks for one.
 
 **Audio.** `recording_pause_stop_stress` exits 77 (skipped) when no audio source
 could be covered. winlab reports a pass of an audio test in a VM without an audio
@@ -93,8 +98,9 @@ after these steps is classified as host-only and runs on the host.
 
 ## Consequences
 
-- Daily work changes little. A build after an unchanged tree can use `-Trust Lab`
-  and skip the tests, provided the latest lab run was green for that tree.
+- Tests are run with `lab.ps1 run`. A build after an unchanged tree can use
+  `-Trust Lab` and skip the tests, provided the latest lab run was green for
+  that tree.
 - The verdict proves that the listed tests passed for the recorded commit and
   tree, in the recorded VM environment, and which capture path each one used. It
   does not prove the host-only tests, real GPU behaviour, more than one display,

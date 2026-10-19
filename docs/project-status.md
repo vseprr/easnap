@@ -1,67 +1,39 @@
 # Project status
 
-**Updated:** 2026-10-19
+**Updated:** 2026-10-20
 Read with the [roadmap](../EASNAP_ROADMAP.md) before implementation work.
 
 ## Isolated test lab (2026-10-19)
 
-The visible-desktop tier now runs in a Hyper-V virtual machine on the
-development PC, driven by the project-independent tool winlab
-(`C:\Projects\winlab`), configured by `testenv.json` and called through
-`scripts/lab.ps1`. Design, measured figures and the caveats are in
-[ADR-037](decisions/ADR-037-isolated-test-lab.md); the commands are in
-[testing.md](testing.md#lab).
+Tests now run in the Hyper-V VM `easnap-lab`, driven by winlab, configured by
+`testenv.json` and called through `scripts/lab.ps1`; how to use it is in
+[testing](testing.md#lab), the design and every measured figure in
+[ADR-037](decisions/ADR-037-isolated-test-lab.md).
 
-Implemented in this slice:
+Implemented: `lab.ps1 run`, `probe`, `parity` and `verify`; the verdict and
+its Turkish summary; `build.ps1 -TestMode Build` and the direct build
+`build.ps1 -Trust Lab`; `test.ps1 -HostOnly`; capture-path reporting;
+`recording_pause_stop_stress` skips without an audio source; a "LABORATUVAR"
+section in the Desktop menu.
 
-- `scripts/lab.ps1 run -Tier Standard|Full|Soak`: restore the golden
-  checkpoint, sync the sources, build with the new `build.ps1 -TestMode Build`
-  (compiles the tests, runs none), run `test.ps1` in the VM's own desktop
-  session, collect the JUnit files and write `build/Testing/lab/verdict.json`
-  with the commit, the tree hash and file manifest, every test's status and
-  capture path, and the VM environment digest; a Turkish summary in
-  `build/Testing/lab-latest.md` and a Windows toast.
-- `scripts/build.ps1 -Trust Lab` (direct build): builds without tests when the
-  latest verdict is green for exactly the working tree, otherwise lists the
-  changed files and runs the tests as usual.
-- `scripts/test.ps1 -HostOnly Include|Exclude|Only` with the list in
-  `testenv.json` (`tests.hostOnly`, empty after the probe), and capture-path
-  reporting: tests print `EASNAP_CAPTURE_PATH=<Duplication|GDI|WGC>`, the
-  result line says "passed (GDI fallback - Duplication path not exercised)"
-  when the fallback ran, and the JUnit file carries an `easnap_capture_path`
-  property.
-- `recording_pause_stop_stress` exits 77 when no audio source could be covered.
-- `scripts/lab.ps1 probe` (capture-path probe of Groups 5 and 6 plus the
-  WASAPI test in two observer variants) and `parity` (host against VM).
-- The Desktop menu has a "LABORATUVAR" section; four subagent definitions
-  under `.claude/agents/` and an allowlist in `.claude/settings.json`.
-
-Validated on 2026-10-19 (figures in the ADR):
+Validated on 2026-10-19:
 
 - The lab's first runs found a product defect: without a hardware H.264
   encoder the MP4 writer stamped the first video frame one frame late, which
-  the trim preview refused (`MF_E_INVALIDREQUEST`). The writer now asks the
-  encoder for no B-frames and low latency; the four Media Foundation
-  background tests still pass on the development PC with the NVIDIA encoder.
-- On the corrected tree the probe passed all ten capture and audio tests in
-  both observer variants; Desktop Duplication works on the Hyper-V video
-  adapter, no test fell back to GDI, no test is host-only.
-- On the corrected tree the Standard tier passed 39 of 39 in the VM and the
-  Full tier 46 of 47; `trim_timeline_seek_stress` failed its pointer check
-  twice in that run after passing in both probe variants (unstable in the VM
-  as on the host, not host-only). The final Full run passed 47 of 47 in
-  9 min 20 s; `real_desktop_recording_session` reported the GDI fallback on
-  the still desktop, as the provider documents, and the verdict said so.
+  the trim preview refused. The writer now asks the encoder for no B-frames
+  and low latency; the four Media Foundation background tests still pass on
+  the development PC with the NVIDIA encoder.
+- On the corrected tree: probe 10 of 10 in both observer variants (Desktop
+  Duplication works in the VM, no test is host-only), Standard 39 of 39 in
+  about 5 min, Full 47 of 47 in about 9.5 min. `trim_timeline_seek_stress` is
+  unstable in the VM as on the host. `real_desktop_recording_session`
+  reported the GDI fallback on the still desktop, as the provider documents,
+  and the verdict marked it `VM-ok-but-fallback`.
 
-Known limitations:
-
-- The VM is one Windows 10 22H2 image (update revision 2965, one display, a
-  virtual audio cable, no GPU); parity lists the differences. A green lab
-  verdict does not replace a host run for what those differences touch.
-- The lab verdict is a local aid like the pass cache, not a release gate.
-
-Next: a Full run on the host for the writer change, then the beta checks
-listed under the next slice.
+Known limitations: one Windows 10 22H2 image with one display, a virtual
+audio cable and no GPU; `lab.ps1 parity` lists the differences from the host.
+A green verdict does not cover what those differences touch, and it is a
+local aid, not a release gate.
 
 ## Current slice: v1.1.0-beta.1, published
 
@@ -396,6 +368,11 @@ v1.1.0; the checks listed above as not validated (Windows 11, an N edition,
 Scrollshot on real applications, other scale factors, the installer) come
 first. The package manager submissions remain the owner's step
 ([distribution](distribution.md)).
+
+Tests run in the lab: `scripts/lab.ps1 run -Tier Standard|Full`, see
+[testing](testing.md#lab). The host desktop is used only when the owner asks;
+the host Full run for the MP4 writer change is still open on that basis.
+
 Preserve the native frame, shared rendering/control path and asynchronous
 preview boundaries. See [ADR-024](decisions/ADR-024-native-trim-frame.md),
 [architecture](architecture.md) and the

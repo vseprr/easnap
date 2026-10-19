@@ -1,6 +1,6 @@
 # Easnap delivery roadmap
 
-**Updated:** 2026-10-19
+**Updated:** 2026-10-20
 
 Read this with [project status](docs/project-status.md). This file records the
 phase boundaries; what is implemented and validated belongs in project status,
@@ -50,13 +50,15 @@ For v1.1.0-beta.1, in this order:
    removed after their conclusions moved into the ADRs they support; the
    Full tier passed 45 of 45 on 2026-10-13.
 
-9. Done (2026-10-19): the isolated test lab. The Full tier runs in a Hyper-V
-   VM while the PC stays in use; its first runs exposed a one-frame timestamp
-   shift of the MP4 writer on software H.264 encoders, now fixed. The host
-   Full run after that fix is still to be made.
+9. Done (2026-10-19): the isolated test lab. The Standard and Full tiers run
+   in a Hyper-V VM while the PC stays in use; its first runs exposed a
+   one-frame timestamp shift of the MP4 writer on software H.264 encoders,
+   now fixed.
 
-Next: the host Full run for the writer fix, then the checks the beta could
-not make on one PC: Windows 11, an N edition, Scrollshot on real
+Next: tests run in the lab (`scripts/lab.ps1 run`,
+[testing](docs/testing.md#lab)); the host desktop only when the owner asks,
+including the open host Full run for the writer fix. Then the checks the beta
+could not make on one PC: Windows 11, an N edition, Scrollshot on real
 applications, other scale factors, the installer. The lab can take the
 Windows 11 and N-edition images once a second `testenv.json` names them.
 

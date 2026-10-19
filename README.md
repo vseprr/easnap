@@ -184,7 +184,9 @@ workload, a Windows SDK and CMake 3.20 or later:
 ```
 
 Tests are split into tiers so a normal run does not use your pointer, keyboard
-or screen; the few that need the real desktop run on a display you choose. See
+or screen; the few that need the real desktop run on a display you choose. The
+project runs the Standard and Full tiers in a Hyper-V test lab with a desktop
+of its own, described in the [testing guide](docs/testing.md#lab). See
 the [testing guide](docs/testing.md), the
 [development guide](docs/development.md) for building and packaging,
 [architecture](docs/architecture.md) for the code structure, and

@@ -42,14 +42,9 @@ Local backups and investigation working files belong under ignored `.local/`.
 
 ## Tests
 
-The [testing guide](testing.md) is the reference for tiers, the pass cache,
-display selection and isolation from the person using the computer. In short:
-
-```powershell
-.\scripts\test.ps1                              # Standard tier, changed tests only
-.\scripts\test.ps1 -Tier Full -Monitor SAMSUNG  # adds the visible-desktop tests
-.\scripts\test.ps1 -Tier Soak                   # everything, before a release
-```
+The [testing guide](testing.md) is the reference for where tests run (the
+Standard and Full tiers in the [lab](testing.md#lab) VM), tiers, the pass
+cache and isolation from the person using the computer.
 
 CTest covers production selection and pointer policy, native overlay/editor
 rendering and clipboard behavior, capture fallback, recording workers, audio
