@@ -1,6 +1,6 @@
 # Easnap delivery roadmap
 
-**Updated:** 2026-10-13
+**Updated:** 2026-10-19
 
 Read this with [project status](docs/project-status.md). This file records the
 phase boundaries; what is implemented and validated belongs in project status,
@@ -23,6 +23,7 @@ v1.0.2, the second maintenance release on top of v1.0.0.
 | Release hardening | v1.0.0 published; v1.0.1 and v1.0.2 maintenance releases; broader physical validation remains |
 | Scrollshot | Implemented, including editing of the stitched image; released in v1.1.0-beta.1 |
 | Beta readiness | Implemented; v1.1.0-beta.1 published as a prerelease |
+| Isolated test lab | Implemented 2026-10-19: Hyper-V VM driven by winlab, direct build, capture-path reporting ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md)) |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
@@ -49,8 +50,15 @@ For v1.1.0-beta.1, in this order:
    removed after their conclusions moved into the ADRs they support; the
    Full tier passed 45 of 45 on 2026-10-13.
 
-Next: the checks the beta could not make on one PC: Windows 11, an N edition, Scrollshot on real
-applications, other scale factors, the installer.
+9. Done (2026-10-19): the isolated test lab. The Full tier runs in a Hyper-V
+   VM while the PC stays in use; its first runs exposed a one-frame timestamp
+   shift of the MP4 writer on software H.264 encoders, now fixed. The host
+   Full run after that fix is still to be made.
+
+Next: the host Full run for the writer fix, then the checks the beta could
+not make on one PC: Windows 11, an N edition, Scrollshot on real
+applications, other scale factors, the installer. The lab can take the
+Windows 11 and N-edition images once a second `testenv.json` names them.
 
 Carried over from v1.0.2 and not part of the beta:
 

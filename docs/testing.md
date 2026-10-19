@@ -192,3 +192,103 @@ the test's green backdrop. A settled sample is invalid when either condition
 appears in a frame captured after the gesture has ended.
 `EASNAP_TEST_RESIZE_SLOW=1` makes each resize case use one 3,200 ms
 shrink/grow cycle instead of four 400 ms cycles.
+
+## Lab
+
+The lab is a Hyper-V virtual machine on the development PC: a second Windows
+session that the suite can use without sharing the pointer, the focus or the
+input queue with you. It is driven by `winlab`, a project-independent tool in
+`C:\Projects\winlab` (`winlab.ps1`). This repository configures it with
+`testenv.json` and calls it through `scripts/lab.ps1`. The decision is in
+[ADR-037](decisions/ADR-037-isolated-test-lab.md).
+
+The guest runs Windows 10 Pro 22H2 (Turkish) with one 1920x1080 display at
+125 %, 4 virtual processors at a low CPU weight and 8 GB of fixed memory. The
+lab user `lab` logs on automatically. The VM has no GPU and no audio device of
+its own; a virtual audio cable (VB-CABLE) is installed so that the WASAPI tests
+have an endpoint.
+
+Windows has one pointer, one focus and one input queue per logon session, so the
+visible-desktop tests cannot be isolated on the machine someone is using. In the
+VM they run in the VM's own console session, through a one-shot scheduled task
+with an interactive logon type. PowerShell Direct sessions live in session 0 and
+cannot see the desktop, which is why the task is needed.
+
+| Command | What it does |
+|---|---|
+| `.\scripts\lab.ps1 create`, `provision`, `snapshot` | One time: create the VM, configure the guest, take the golden checkpoint |
+| `.\scripts\lab.ps1 status` | Show the VM state and the latest verdict |
+| `.\scripts\lab.ps1 run -Tier Standard` (or `Full`, `Soak`) | Run the tests in the VM and write a verdict |
+| `.\scripts\lab.ps1 probe` | Run the capture-path probe |
+| `.\scripts\lab.ps1 parity` | Compare the guest with the host |
+| `.\scripts\lab.ps1 verify` | Tell whether the latest verdict covers the current tree |
+| `.\scripts\lab.ps1 connect`, `stop` | Open the VM console, stop the VM |
+
+The Desktop menu (`Easnap-menu.ps1`) has a "LABORATUVAR" section with presets
+for these commands.
+
+Every `run` restores the golden checkpoint, copies the sources (the ignore list
+is in `testenv.json`; `build/` is excluded), builds with
+`scripts/build.ps1 -TestMode Build` over PowerShell Direct (compiles the tests, runs none), and runs
+`scripts/test.ps1 -Tier <tier> -Mode Full -Monitor Primary -NoCountdown` in the
+interactive session. It then copies back `build/Testing/*.xml` and the logs, and
+writes `build/Testing/lab/verdict.json` with the commit, a tree hash and file
+manifest, the status and capture path of each test, and a digest of the VM
+environment. A Turkish summary goes to `build/Testing/lab-latest.md`, and a
+Windows toast reports the result.
+
+### Direct build
+
+`.\scripts\build.ps1 -Trust Lab` asks winlab (`lab.ps1 verify`) whether the latest
+verdict is green for exactly the current working tree: SHA-256 per file, over the
+same ignore list. If so, it builds without running the tests and prints why. If
+not, it lists the changed, added and removed files and runs the tests as usual.
+
+Exit codes of `lab.ps1 verify`: 0 trusted, 2 the tree differs, 3 not green or
+too old, 4 no verdict.
+
+### Capture paths
+
+The production capture provider tries Desktop Duplication and silently falls
+back to GDI. A pass on GDI does not prove the Duplication path, which the
+development PC uses. The tests now print `EASNAP_CAPTURE_PATH=<Duplication|GDI|WGC>`:
+the recording tests through a provider probe at the end, the UI tests through the
+presented-desktop observer in `tests/presented_desktop_capture.h`.
+`scrollshot_real_desktop` and `mfplay_preview_startup` already named it.
+
+`test.ps1` reads these lines by the rules in `testenv.json`
+(`tests.capturePathRules`), writes them as an `easnap_capture_path` property into
+the JUnit file and into `build/Testing/easnap-capture-paths-<Configuration>.json`,
+and words the result as "passed (GDI fallback - Duplication path not exercised)"
+when the fallback was used.
+
+### Host-only tests, audio and parity
+
+- `tests.hostOnly` in `testenv.json` lists the tests that must run on the host.
+  `test.ps1 -HostOnly Exclude` (used by the lab run) leaves them out and lists
+  them; `-HostOnly Only` runs exactly them on the host. The list is empty:
+  the probe of 2026-10-19 passed every capture and audio test in the VM.
+- `recording_pause_stop_stress` exits 77 (skipped) when no audio source could be
+  covered. winlab reports a pass of an audio test in a VM without an audio
+  endpoint as skipped, never as passed.
+- `lab.ps1 parity` compares the OS build and UBR, displays, scale, GPU, audio
+  endpoints, MSVC, CMake and SDK versions, locale and time zone, and lists the
+  tests that `tests.parity` maps to each difference.
+
+### Probe
+
+`lab.ps1 probe` runs the Group 5 and Group 6 tests and `wasapi_audio_capture`
+twice: with the default WGC observer and with `EASNAP_TEST_CAPTURE=duplication`.
+It prints the test, variant, result, capture path and a verdict: `VM-ok`,
+`VM-ok-but-fallback` or `host-only`. On 2026-10-19 all ten tests passed in
+both variants and Desktop Duplication worked on the Hyper-V video adapter;
+see the [validation table in ADR-037](decisions/ADR-037-isolated-test-lab.md#validation).
+
+### Limitations
+
+- No GPU in the VM, so Desktop Duplication and WGC may fall back. The probe
+  measures this; the printed capture path is the evidence.
+- One display only.
+- The VM's audio endpoint is a virtual cable, not a speaker or a microphone.
+- The lab verdict is a local aid, like the pass cache. It is not a release gate
+  for the host-only tests, which still have to be run on the host.
