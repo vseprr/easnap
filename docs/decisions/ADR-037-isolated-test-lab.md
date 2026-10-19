@@ -165,7 +165,11 @@ GDI, so GPU partitioning was not needed and no test is host-only.
 - Provisioning: 8 min for Build Tools, packages and the audio cable; a repeat
   run verifies in under a minute.
 - Build in the VM (`build.ps1 -TestMode Build`, 4 vCPU at weight 50): 2 min
-  58 s to 3 min 3 s.
+  58 s to 3 min 3 s from a clean tree. The golden checkpoint of 2026-10-20
+  (after Windows updates to 19045.6456, 12 updates in 3 rounds, 19 min 34 s)
+  carries a built tree, so a run now rebuilds only what changed: 10 s for the
+  Full run that followed, 47 of 47 in 7 min 12 s with `trim_timeline_seek_stress`
+  passing on its retry.
 - Standard tier in the VM: 36 s of tests; the whole run, including the
   checkpoint restore and the sync, 3 min 51 s.
 - Full tier in the VM (unchanged tree, with the failures above): 12 min 49 s of
@@ -200,8 +204,8 @@ not a VM limitation.
 
 - The lab verdict has not yet been compared with a Full run on the host for
   the same tree; the host-side Full run after the writer change is pending.
-- The VM has not received Windows updates (update revision 2965); whether the
-  later revision changes any result is not measured.
+- The VM runs update revision 6456 after the update step; the development PC
+  runs 7807 (one later monthly update).
 - `mfplay_preview_startup`, `ui_modernization_native` and
   `annotation_editing_native` report no capture path: those modes use no
   capture observer, so "capture path unknown" is the honest reading.
