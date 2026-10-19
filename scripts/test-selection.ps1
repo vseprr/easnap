@@ -146,3 +146,110 @@ function Get-EasnapJUnitSkips([string]$Report, [string[]]$Selected) {
         ($_.SelectSingleNode('skipped') -or $_.GetAttribute('status') -eq 'notrun')
     } | ForEach-Object { $_.GetAttribute('name') })
 }
+
+# --- Lab integration: testenv.json, host-only tests, capture paths ----------
+
+# The lab spec (testenv.json at the repository root) is optional for the host
+# scripts: without it there are no host-only tests and no capture-path rules.
+function Get-EasnapTestEnvSpec([string]$Root) {
+    $path = Join-Path $Root 'testenv.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    try { return ([IO.File]::ReadAllText($path) | ConvertFrom-Json) }
+    catch { Write-Warning "testenv.json could not be read ($($_.Exception.Message)); host-only and capture-path features are off."; return $null }
+}
+
+function Get-EasnapSpecValue($Object, [string]$Path, $Default = $null) {
+    $current = $Object
+    foreach ($segment in $Path.Split('.')) {
+        if ($null -eq $current) { return $Default }
+        $property = $current.PSObject.Properties[$segment]
+        if (-not $property) { return $Default }
+        $current = $property.Value
+    }
+    if ($null -eq $current) { return $Default }
+    return $current
+}
+
+# Names of the tests the spec keeps on the host (tests.hostOnly), as strings.
+function Get-EasnapHostOnlyTests($Spec) {
+    return @(Get-EasnapSpecValue $Spec 'tests.hostOnly' @() | ForEach-Object { "$_" } | Where-Object { $_ })
+}
+
+# Capture-sensitive tests (tests.captureTests, wildcards allowed) and the
+# ordered rules that read the capture path from their output.
+function Get-EasnapCaptureRules($Spec) {
+    return [PSCustomObject]@{
+        Tests = @(Get-EasnapSpecValue $Spec 'tests.captureTests' @() | ForEach-Object { "$_" } | Where-Object { $_ })
+        Rules = @(Get-EasnapSpecValue $Spec 'tests.capturePathRules' @())
+    }
+}
+
+function Test-EasnapCaptureTest([string]$Name, $CaptureRules) {
+    foreach ($pattern in $CaptureRules.Tests) { if ($Name -like $pattern) { return $true } }
+    return $false
+}
+
+# The first rule whose pattern matches the output names the path (Duplication,
+# GDI, WGC, ...); '$1' in the path inserts a regex group. '' when nothing matched.
+function Get-EasnapCapturePath($Rules, [string]$Text, [string]$TestName = '') {
+    foreach ($rule in @($Rules)) {
+        $only = "$(Get-EasnapSpecValue $rule 'test' '')"
+        if ($only -and $TestName -and $TestName -notlike $only) { continue }
+        $pattern = "$(Get-EasnapSpecValue $rule 'pattern' '')"
+        if (-not $pattern) { continue }
+        $match = [regex]::Match($Text, $pattern, [Text.RegularExpressions.RegexOptions]::Multiline)
+        if ($match.Success) {
+            $path = "$(Get-EasnapSpecValue $rule 'path' '')"
+            for ($index = $match.Groups.Count - 1; $index -ge 1; $index--) { $path = $path.Replace("`$$index", $match.Groups[$index].Value) }
+            return $path
+        }
+    }
+    return ''
+}
+
+# How a pass is worded: a pass on a fallback path did not exercise the path
+# the development PC uses, and the line says so.
+function Format-EasnapCaptureResult([string]$Status, [string]$CapturePath) {
+    if ($Status -ne 'passed') { return $Status }
+    if (-not $CapturePath) { return 'passed (capture path unknown)' }
+    if ($CapturePath -eq 'GDI') { return 'passed (GDI fallback - Duplication path not exercised)' }
+    return "passed ($CapturePath)"
+}
+
+# system-out text of the selected test cases in a JUnit file, by name.
+function Get-EasnapJUnitOutputs([string]$Report, [string[]]$Selected) {
+    $outputs = @{}
+    foreach ($case in Read-EasnapJUnitCases $Report) {
+        $name = $case.GetAttribute('name')
+        if ($name -notin $Selected) { continue }
+        $node = $case.SelectSingleNode('system-out')
+        $outputs[$name] = $(if ($node) { "$($node.InnerText)" } else { '' })
+    }
+    return $outputs
+}
+
+# Records the capture path in the JUnit file itself, as a testcase property
+# beside CTest's cmake_labels, so the lab and CI readers see it.
+function Add-EasnapJUnitCaptureProperties([string]$Report, [hashtable]$CapturePaths) {
+    if (-not $CapturePaths.Count -or -not (Test-Path -LiteralPath $Report)) { return }
+    $settings = New-Object System.Xml.XmlReaderSettings
+    $settings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+    $settings.XmlResolver = $null
+    $reader = [Xml.XmlReader]::Create($Report, $settings)
+    try { $xml = New-Object Xml.XmlDocument; $xml.XmlResolver = $null; $xml.Load($reader) }
+    finally { $reader.Dispose() }
+    $changed = $false
+    foreach ($case in @($xml.SelectNodes('//testcase'))) {
+        $name = $case.GetAttribute('name')
+        if (-not $CapturePaths.ContainsKey($name)) { continue }
+        $properties = $case.SelectSingleNode('properties')
+        if (-not $properties) { $properties = $case.PrependChild($xml.CreateElement('properties')) }
+        foreach ($old in @($properties.SelectNodes("property[@name='easnap_capture_path']"))) { [void]$properties.RemoveChild($old) }
+        $property = $xml.CreateElement('property')
+        $property.SetAttribute('name', 'easnap_capture_path')
+        $property.SetAttribute('value', "$($CapturePaths[$name])")
+        [void]$properties.AppendChild($property)
+        $changed = $true
+    }
+    if ($changed) { $xml.Save($Report) }
+}

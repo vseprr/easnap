@@ -1,0 +1,146 @@
+{
+  "$schema": "C:/Projects/winlab/testenv.schema.json",
+  "specVersion": 1,
+  "name": "easnap",
+  "provider": { "type": "hyperv" },
+  "image": {
+    "isoPath": "C:\\VMs\\iso\\Win10_22H2_Turkish_x64v1.iso",
+    "edition": "Windows 10 Pro",
+    "targetBuild": 19045,
+    "uiLanguage": "tr-TR",
+    "locale": "tr-TR",
+    "inputLocale": "041f:0000041f",
+    "timeZone": "Turkey Standard Time",
+    "labUser": "lab",
+    "computerName": "EASNAP-LAB",
+    "productKey": ""
+  },
+  "vm": {
+    "name": "easnap-lab",
+    "generation": 2,
+    "cpu": 4,
+    "cpuWeight": 50,
+    "ramGB": 8,
+    "diskGB": 80,
+    "resolution": "1920x1080",
+    "dpi": 125,
+    "storagePath": "C:\\VMs\\easnap-lab",
+    "switch": "Default Switch",
+    "checkpointName": "golden",
+    "secureBoot": true
+  },
+  "provision": {
+    "packageManager": "choco",
+    "packages": [
+      "git",
+      { "name": "cmake", "args": ["--installargs", "ADD_CMAKE_TO_PATH=System"] }
+    ],
+    "vsBuildTools": {
+      "enabled": true,
+      "channel": "https://aka.ms/vs/17/release/vs_BuildTools.exe",
+      "workloads": ["Microsoft.VisualStudio.Workload.VCTools"],
+      "components": [
+        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+        "Microsoft.VisualStudio.Component.Windows11SDK.26100",
+        "Microsoft.VisualStudio.Component.VC.CMake.Project"
+      ]
+    },
+    "virtualAudioCable": { "enabled": true, "package": "vb-cable" },
+    "scripts": [],
+    "rebootAfter": true
+  },
+  "sync": {
+    "source": ".",
+    "destination": "C:\\lab\\easnap",
+    "ignore": [
+      ".git/", "/build/", "/build-*/", "/out/", "/dist/", "/.local/", "/.vs/", "/.vscode/", "/.serena/", "/.agents/", "/.claude/",
+      "/CMakeUserPresets.json", "/AGENTS.md", "/Easnap-UI-Modernization-Agent-Prompt.en.md", "/.abacus.donotdelete",
+      "/docs/", "/.github/", "*.md", "__pycache__/", "*.user", "*.pyc"
+    ]
+  },
+  "run": {
+    "defaultTier": "Standard",
+    "timeoutMinutes": 120,
+    "commands": [
+      {
+        "name": "build",
+        "command": "scripts\\build.ps1 -Configuration Release -TestMode Build",
+        "interactive": false,
+        "tiers": ["Standard", "Full", "Soak"],
+        "timeoutMinutes": 60
+      },
+      {
+        "name": "test",
+        "command": "scripts\\test.ps1 -Configuration Release -Tier {tier} -Mode Full -Monitor Primary -NoCountdown -Jobs 4 -HostOnly Exclude",
+        "interactive": true,
+        "tiers": ["Standard", "Full", "Soak"],
+        "timeoutMinutes": 90
+      }
+    ]
+  },
+  "tests": {
+    "junit": ["build/Testing/*.xml"],
+    "output": ["build/Testing/Temporary/LastTest.log"],
+    "hostOnly": [],
+    "captureTests": [
+      "real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop",
+      "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation",
+      "trim_timeline_seek_stress", "trim_timeline_seek_soak", "mfplay_preview_startup"
+    ],
+    "capturePathRules": [
+      { "pattern": "EASNAP_CAPTURE_PATH=(\\w+)", "path": "$1" },
+      { "pattern": "Desktop Duplication available", "path": "Duplication" },
+      { "pattern": "Desktop Duplication not available here", "path": "GDI" },
+      { "pattern": "fallback_stage=Duplication\\w*", "path": "GDI" },
+      { "pattern": "GDI screen blit \\(fallback\\)", "path": "GDI" },
+      { "pattern": "DXGI Desktop Duplication", "path": "Duplication" }
+    ],
+    "audioTests": ["wasapi_audio_capture", "mfplay_preview_audio_transport", "recording_pause_stop_stress"],
+    "parity": {
+      "os": ["*"],
+      "toolchain": ["*"],
+      "locale": ["strings_catalog", "text_fits_in_every_language", "data_safety_questions"],
+      "display": ["real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop", "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation", "trim_timeline_seek_stress", "trim_timeline_seek_soak", "mfplay_preview_startup", "capture_overlay_interaction", "capture_island_placement"],
+      "scale": ["ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation", "capture_workspace_production", "capture_frame_interaction", "capture_island_placement", "text_fits_in_every_language", "scrollshot_workspace_production"],
+      "gpu": ["real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop", "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation", "trim_timeline_seek_stress", "trim_timeline_seek_soak", "mfplay_preview_startup", "media_foundation_h264_aac_mp4", "mp4_trim_export_backend", "gif_backend"],
+      "audio": ["wasapi_audio_capture", "mfplay_preview_audio_transport", "recording_pause_stop_stress", "media_foundation_h264_aac_mp4"],
+      "cpu": ["trim_timeline_seek_stress", "recording_pause_stop_stress", "capture_frame_interaction"]
+    }
+  },
+  "probe": {
+    "command": "scripts\\test.ps1 -Configuration Release -Tier Soak -Mode Full -Monitor Primary -NoCountdown -Jobs 2 -Filter '{filter}'",
+    "interactive": true,
+    "setupCommands": ["build"],
+    "tests": [
+      "real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop",
+      "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation",
+      "trim_timeline_seek_stress", "trim_timeline_seek_soak", "mfplay_preview_startup",
+      "wasapi_audio_capture"
+    ],
+    "variants": [
+      { "name": "wgc", "env": {} },
+      { "name": "duplication", "env": { "EASNAP_TEST_CAPTURE": "duplication" } }
+    ]
+  },
+  "report": {
+    "outputDir": "build/Testing/lab",
+    "verdictFile": "verdict.json",
+    "summaryFile": "build/Testing/lab-latest.md",
+    "collect": [
+      "build/Testing/*.xml",
+      "build/Testing/Temporary/LastTest.log",
+      "build/Testing/Temporary/CTestCostData.txt",
+      "build/Testing/easnap-passed-Release.json"
+    ],
+    "toast": true
+  },
+  "features": {
+    "probe": true,
+    "parity": true,
+    "checkpointRestore": true,
+    "toast": true,
+    "captureProbe": true,
+    "audioCable": true,
+    "summary": true
+  }
+}

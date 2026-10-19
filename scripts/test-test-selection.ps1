@@ -103,6 +103,34 @@ try {
     $missing=$false
     try { Get-EasnapFileDigest (Join-Path $fixture 'missing.bin') @{} | Out-Null } catch { $missing=$true }
     Assert-Selection $missing 'missing build artifact fails closed'
+    # Lab integration: host-only list and capture-path reading.
+    $spec=[PSCustomObject]@{ tests=[PSCustomObject]@{
+        hostOnly=@('clicks');
+        captureTests=@('preview','real_*');
+        capturePathRules=@(
+            [PSCustomObject]@{ pattern='EASNAP_CAPTURE_PATH=(\w+)'; path='$1' },
+            [PSCustomObject]@{ pattern='Desktop Duplication not available here'; path='GDI' },
+            [PSCustomObject]@{ pattern='GDI screen blit \(fallback\)'; path='GDI'; test='real_*' }) } }
+    Assert-Selection (((Get-EasnapHostOnlyTests $spec) -join ',') -eq 'clicks') 'host-only tests come from tests.hostOnly'
+    Assert-Selection (@(Get-EasnapHostOnlyTests $null).Count -eq 0) 'no spec means no host-only tests'
+    $rules=Get-EasnapCaptureRules $spec
+    Assert-Selection ((Test-EasnapCaptureTest 'preview' $rules) -and (Test-EasnapCaptureTest 'real_desktop' $rules) -and -not (Test-EasnapCaptureTest 'pure' $rules)) 'capture tests match by name or wildcard'
+    Assert-Selection ((Get-EasnapCapturePath $rules.Rules "x`nEASNAP_CAPTURE_PATH=Duplication (probe)`n" 'preview') -eq 'Duplication') 'group reference names the path'
+    Assert-Selection ((Get-EasnapCapturePath $rules.Rules 'Desktop Duplication not available here; 3 pictures' 'preview') -eq 'GDI') 'literal rule names the fallback'
+    Assert-Selection ((Get-EasnapCapturePath $rules.Rules 'provider=GDI screen blit (fallback)' 'preview') -eq '') 'a rule limited to other tests does not apply'
+    Assert-Selection ((Get-EasnapCapturePath $rules.Rules 'provider=GDI screen blit (fallback)' 'real_desktop') -eq 'GDI') 'a rule limited to a test applies there'
+    Assert-Selection ((Format-EasnapCaptureResult 'passed' 'GDI') -eq 'passed (GDI fallback - Duplication path not exercised)') 'a pass on the fallback says so'
+    Assert-Selection ((Format-EasnapCaptureResult 'passed' 'Duplication') -eq 'passed (Duplication)' -and (Format-EasnapCaptureResult 'failed' 'GDI') -eq 'failed') 'other results keep their word'
+    $capture=Join-Path $fixture 'capture.xml'
+    Set-Content -LiteralPath $capture -Value '<testsuite><testcase name="preview" status="run"><properties><property name="cmake_labels" value="x"/></properties><system-out>EASNAP_CAPTURE_PATH=WGC (observer)</system-out></testcase><testcase name="pure" status="run"><system-out>nothing</system-out></testcase></testsuite>'
+    $outputs=Get-EasnapJUnitOutputs $capture @('preview','pure')
+    Assert-Selection ($outputs['preview'] -like '*WGC*' -and $outputs['pure'] -eq 'nothing') 'system-out is read per selected test'
+    Add-EasnapJUnitCaptureProperties $capture @{ preview='WGC' }
+    Add-EasnapJUnitCaptureProperties $capture @{ preview='WGC' }
+    $stored=[xml](Get-Content -LiteralPath $capture -Raw)
+    $properties=@($stored.SelectNodes("//testcase[@name='preview']/properties/property[@name='easnap_capture_path']"))
+    Assert-Selection ($properties.Count -eq 1 -and $properties[0].GetAttribute('value') -eq 'WGC') 'the JUnit file carries the capture path once'
+    Assert-Selection (@($stored.SelectNodes("//testcase[@name='preview']/properties/property[@name='cmake_labels']")).Count -eq 1) 'existing properties survive'
     Write-Host "Test selection: $checks checks passed."
 } finally {
     $resolved=[IO.Path]::GetFullPath($fixture)

@@ -26,6 +26,11 @@
 .PARAMETER Filter
     Regular expression; only tests whose name matches are considered.
 
+.PARAMETER HostOnly
+    How the tests listed under tests.hostOnly in testenv.json are treated:
+    Include (default) runs them like any other test, Exclude leaves them out
+    (the lab run), Only runs exactly them (the host run after a lab run).
+
 .EXAMPLE
     .\scripts\test.ps1
 .EXAMPLE
@@ -43,6 +48,7 @@ param(
     [ValidateSet('Run','Defer')][string]$DesktopTests,
     [string]$Monitor='Ask',
     [string]$Filter,
+    [ValidateSet('Include','Exclude','Only')][string]$HostOnly='Include',
     [ValidateRange(1,16)][int]$Jobs=4,
     [switch]$NoCountdown,
     [switch]$ListMonitors,
@@ -68,6 +74,22 @@ if (-not $tests.Count) { throw 'No registered tests. Configure with EASNAP_BUILD
 if ($Filter) {
     $tests=@($tests | Where-Object { $_.name -match $Filter })
     if (-not $tests.Count) { throw "No registered test matches '$Filter'." }
+}
+# The lab spec names the tests that stay on the host and how a test's output
+# tells which capture path it used. Both are optional on the host.
+$labSpec=Get-EasnapTestEnvSpec $repo
+$hostOnlyTests=@(Get-EasnapHostOnlyTests $labSpec)
+$captureRules=Get-EasnapCaptureRules $labSpec
+$capturePaths=@{}
+$hostOnlyExcluded=@()
+if ($HostOnly -eq 'Exclude' -and $hostOnlyTests.Count) {
+    $hostOnlyExcluded=@($tests | Where-Object { $_.name -in $hostOnlyTests } | ForEach-Object { $_.name })
+    $tests=@($tests | Where-Object { $_.name -notin $hostOnlyTests })
+    if (-not $tests.Count) { throw 'Every selected test is host-only (tests.hostOnly in testenv.json); nothing is left to run here.' }
+} elseif ($HostOnly -eq 'Only') {
+    if (-not $hostOnlyTests.Count) { throw 'testenv.json lists no host-only tests (tests.hostOnly), so -HostOnly Only selects nothing.' }
+    $tests=@($tests | Where-Object { $_.name -in $hostOnlyTests })
+    if (-not $tests.Count) { throw ("None of the host-only tests is registered in this build or matches the filter: " + ($hostOnlyTests -join ', ')) }
 }
 $byName=@{}; foreach ($test in $tests) { $byName[$test.name]=$test }
 $interactive=[Environment]::UserInteractive -and -not $env:CI -and -not [Console]::IsInputRedirected
@@ -120,14 +142,16 @@ function Get-Estimate([string[]]$Names) {
     return "about $seconds s" + $(if ($known.Count -lt $Names.Count) { ' (some tests have no history)' } else { '' })
 }
 
-Write-Host "Tier $Tier ($Configuration): $($background.Count) background, $($desktop.Count) visible-desktop, $($work.Cached.Count) unchanged (<24 h), $($work.Deferred.Count) pending, $($work.Excluded.Count) outside this tier."
+Write-Host ("Tier $Tier ($Configuration): $($background.Count) background, $($desktop.Count) visible-desktop, $($work.Cached.Count) unchanged (<24 h), $($work.Deferred.Count) pending, $($work.Excluded.Count) outside this tier" +
+    $(if ($hostOnlyExcluded.Count) { ", $($hostOnlyExcluded.Count) host-only excluded" } else { '' }) + '.')
+if ($hostOnlyExcluded.Count) { Write-Host ("HOST-ONLY (not run here; run them on the host with -HostOnly Only): " + ($hostOnlyExcluded -join ', ')) -ForegroundColor Yellow }
 if ($work.Deferred.Count) {
     Write-Warning ("PENDING (not run, not passed): " + ($work.Deferred -join ', ') +
         '. Run scripts/test.ps1 -Tier Full when the desktop can be used for tests.')
 }
 if ($ListOnly) {
     [PSCustomObject]@{ Background=$background; Desktop=$desktop; Cached=$work.Cached
-                       Deferred=$work.Deferred; Excluded=$work.Excluded } | ConvertTo-Json -Depth 4
+                       Deferred=$work.Deferred; Excluded=$work.Excluded; HostOnlyExcluded=$hostOnlyExcluded } | ConvertTo-Json -Depth 4
     return
 }
 if (-not $work.Run.Count) { Write-Host 'No new test execution. Previous passes and pending checks are listed above.'; return }
@@ -149,7 +173,9 @@ function Invoke-EasnapTests([string[]]$Names, [int]$Parallel, [string]$Phase) {
     $report=Join-Path $testing ("iteration-$Configuration-$Phase-"+[guid]::NewGuid().ToString('N')+'.xml')
     $pattern='^('+(($Names | ForEach-Object { [regex]::Escape($_) }) -join '|')+')$'
     $arguments=@('--test-dir',$build,'-C',$Configuration,'--output-on-failure','--parallel',"$Parallel",'-R',$pattern,'--no-tests=error')
-    if ($junitAvailable) { $arguments+=@('--output-junit',$report) }
+    # The JUnit file keeps a passed test's output only up to CTest's 1 KB default,
+    # which cuts the capture-path line; raise it (CTest 3.21+ has the options).
+    if ($junitAvailable) { $arguments+=@('--output-junit',$report,'--test-output-size-passed','65536','--test-output-size-failed','1048576') }
     # CTest reports failures on stderr. Under ErrorActionPreference Stop a
     # redirected native stderr line becomes a terminating error, which would
     # skip the result parsing and the retry below.
@@ -158,6 +184,20 @@ function Invoke-EasnapTests([string[]]$Names, [int]$Parallel, [string]$Phase) {
     finally { $ErrorActionPreference=$preference }
     $succeeded=if ($junitAvailable) { @(Get-EasnapJUnitPasses $report $Names) } elseif ($exit -eq 0) { $Names } else { @() }
     if ($junitAvailable) { $script:skipped+=@(Get-EasnapJUnitSkips $report $Names | Where-Object { $_ -notin $script:skipped }) }
+    # Capture-sensitive tests say which path they used; the JUnit file gets it
+    # as a property and the result lines below word the pass accordingly.
+    if ($junitAvailable -and $captureRules.Tests.Count) {
+        $captureNames=@($Names | Where-Object { Test-EasnapCaptureTest $_ $captureRules })
+        if ($captureNames.Count) {
+            $outputs=Get-EasnapJUnitOutputs $report $captureNames
+            $found=@{}
+            foreach ($name in $captureNames) {
+                if ($outputs.ContainsKey($name)) { $found[$name]=Get-EasnapCapturePath $captureRules.Rules $outputs[$name] $name }
+            }
+            Add-EasnapJUnitCaptureProperties $report $found
+            foreach ($name in $found.Keys) { $script:capturePaths[$name]=$found[$name] }
+        }
+    }
     if (Test-Path -LiteralPath $report) {
         Move-Item -LiteralPath $report -Destination (Join-Path $testing "iteration-$Configuration-$Phase.xml") -Force
     }
@@ -232,8 +272,20 @@ public static uint IdleMilliseconds() {
 }
 
 Write-Host ''
-Write-Host ("Result: {0} passed, {1} passed only on retry, {2} failed, {3} skipped, {4} unchanged, {5} pending, {6} outside tier. Wall time {7:n0} s." -f
-    $newPasses.Count, $unstable.Count, $failed.Count, $skipped.Count, $work.Cached.Count, $work.Deferred.Count, $work.Excluded.Count, $started.Elapsed.TotalSeconds)
+if ($capturePaths.Count) {
+    Write-Host 'Capture paths (which screen-reading path each capture-sensitive test used here):' -ForegroundColor Cyan
+    $captureSummary=@{}
+    foreach ($name in ($capturePaths.Keys | Sort-Object)) {
+        $status=if ($name -in $failed) { 'failed' } elseif ($name -in $skipped) { 'skipped' } elseif ($name -in $newPasses -or $name -in $unstable) { 'passed' } else { 'not run' }
+        $line=Format-EasnapCaptureResult $status $capturePaths[$name]
+        $captureSummary[$name]=@{ status=$status; capturePath=$capturePaths[$name]; result=$line }
+        Write-Host ('  {0,-36} {1}' -f $name, $line) -ForegroundColor $(if ($capturePaths[$name] -eq 'GDI' -and $status -eq 'passed') { 'Yellow' } elseif ($status -eq 'failed') { 'Red' } else { 'Gray' })
+    }
+    $captureSummary | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $testing "easnap-capture-paths-$Configuration.json") -Encoding UTF8
+}
+Write-Host ("Result: {0} passed, {1} passed only on retry, {2} failed, {3} skipped, {4} unchanged, {5} pending, {6} outside tier{8}. Wall time {7:n0} s." -f
+    $newPasses.Count, $unstable.Count, $failed.Count, $skipped.Count, $work.Cached.Count, $work.Deferred.Count, $work.Excluded.Count, $started.Elapsed.TotalSeconds,
+    $(if ($hostOnlyExcluded.Count) { ", $($hostOnlyExcluded.Count) host-only excluded" } else { '' }))
 if ($unstable.Count) { Write-Warning ("UNSTABLE (failed, then passed on retry; not cached): " + ($unstable -join ', ')) }
 if ($skipped.Count) { Write-Warning ("SKIPPED (could not run in this environment; not passed, not cached): " + ($skipped -join ', ')) }
 if ($failed.Count) { throw ("Tests failed: " + ($failed -join ', ') + '. Failed tests are never cached.') }

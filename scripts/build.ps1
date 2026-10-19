@@ -20,7 +20,9 @@
 
 .PARAMETER TestMode
     Affected (default) builds tests and runs changed/uncached checks. Full
-    ignores the pass cache. None explicitly builds without tests.
+    ignores the pass cache. Build compiles the tests but runs none (the lab
+    builds this way and runs the tests in its own desktop session). None
+    explicitly builds without tests.
 
 .PARAMETER Tier
     Which tests are eligible: Fast, Standard, Full or Soak (docs/testing.md).
@@ -39,6 +41,13 @@
     Requires an existing Easnap build inside this repository. Keeps the CMake
     cache and unrelated files, including validation evidence; never deletes a tree.
 
+.PARAMETER Trust
+    Lab: a direct build. If the latest lab verdict (build/Testing/lab/verdict.json,
+    written by scripts/lab.ps1 run) is green for exactly this working tree, the
+    build runs no tests and says why it trusts the verdict. If the tree differs,
+    it lists what changed and runs the tests as usual. None (default) ignores
+    the lab.
+
 .EXAMPLE
     .\scripts\build.ps1
 .EXAMPLE
@@ -56,7 +65,7 @@ param(
 
     [switch]$WithTests,
 
-    [ValidateSet('Affected', 'Full', 'None')]
+    [ValidateSet('Affected', 'Full', 'Build', 'None')]
     [string]$TestMode = 'Affected',
 
     [ValidateSet('Fast', 'Standard', 'Full', 'Soak')]
@@ -69,7 +78,10 @@ param(
 
     [ValidateRange(1,16)][int]$TestJobs = 4,
 
-    [switch]$Clean
+    [switch]$Clean,
+
+    [ValidateSet('None', 'Lab')]
+    [string]$Trust = 'None'
 )
 
 Set-StrictMode -Version Latest
@@ -82,6 +94,39 @@ if (-not $Tier) {
 }
 if (-not $DesktopTests) { $DesktopTests = if ($Tier -in @('Full', 'Soak')) { 'Run' } else { 'Defer' } }
 . (Join-Path $PSScriptRoot 'build-safety.ps1')
+
+# Direct build: ask the lab whether its latest green verdict covers exactly this
+# tree. Tests are still built (the configuration keeps them on) but not run.
+$runTests = $TestMode -notin @('None', 'Build')
+if ($Trust -eq 'Lab' -and $runTests) {
+    $labScript = Join-Path $PSScriptRoot 'lab.ps1'
+    $preference = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    try {
+        $verifyOutput = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $labScript verify -Json 2>&1 | ForEach-Object { "$_" })
+        $verifyCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $preference }
+    $verify = $null
+    try { $verify = (($verifyOutput | Where-Object { $_ -notmatch '^\[\d\d:\d\d:\d\d\]' }) -join "`n") | ConvertFrom-Json } catch { $verify = $null }
+    if ($verifyCode -eq 0 -and $verify -and $verify.trusted) {
+        Write-Host "Direct build: no tests will run. $($verify.reason)" -ForegroundColor Green
+        $runTests = $false
+    } else {
+        $reason = if ($verify -and $verify.PSObject.Properties['reason']) { $verify.reason } else { ($verifyOutput -join ' ') }
+        Write-Host "Direct build refused: $reason" -ForegroundColor Yellow
+        if ($verify) {
+            foreach ($kind in @('changed', 'added', 'removed')) {
+                $property = $verify.PSObject.Properties[$kind]
+                $list = if ($property) { @($property.Value) } else { @() }
+                if ($list.Count) {
+                    Write-Host "  ${kind}:" -ForegroundColor Yellow
+                    $list | Select-Object -First 40 | ForEach-Object { Write-Host "    $_" }
+                    if ($list.Count -gt 40) { Write-Host "    ... and $($list.Count - 40) more" }
+                }
+            }
+        }
+        Write-Host "Running the $Tier tier ($TestMode) as usual." -ForegroundColor Yellow
+    }
+}
 Push-Location $repoRoot
 
 try {
@@ -112,7 +157,7 @@ try {
     & cmake --build $BuildDir --config $Configuration --parallel
     if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE." }
 
-    if ($TestMode -ne 'None') {
+    if ($runTests) {
         Write-Host 'Running tests' -ForegroundColor Cyan
         & (Join-Path $PSScriptRoot 'test.ps1') -BuildDir $BuildDir -Configuration $Configuration `
             -Tier $Tier -Mode $TestMode -DesktopTests $DesktopTests -Monitor $Monitor -Jobs $TestJobs

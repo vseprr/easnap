@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\*.ps1*)",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\*.ps1*)",
+      "PowerShell(powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\\*.ps1*)",
+      "PowerShell(.\\scripts\\*.ps1*)",
+      "PowerShell(scripts\\*.ps1*)",
+      "PowerShell(C:\\Projects\\winlab\\winlab.ps1*)",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File C:\\Projects\\winlab\\winlab.ps1*)",
+      "PowerShell(powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\Projects\\winlab\\winlab.ps1*)",
+      "PowerShell(powershell -NoProfile -ExecutionPolicy Bypass -File C:\\Projects\\winlab\\tests\\run-tests.ps1*)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File scripts/*.ps1*)",
+      "Bash(powershell -NoProfile -ExecutionPolicy Bypass -File C:/Projects/winlab/winlab.ps1*)",
+      "Bash(python scripts/check_repository_hygiene.py*)",
+      "Bash(python scripts/test_repository_hygiene.py*)"
+    ]
+  }
+}
