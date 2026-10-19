@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "app/recording_completion.h"
+#include "capture/capture_provider.h"
 #include "media/audio_queue.h"
 #include "media/media_preview.h"
 #include "media/temp_session.h"
@@ -45,6 +46,38 @@ void Check(bool condition, const char* expression, const char* file, int line) {
 }
 
 #define CHECK(expr) Check((expr), #expr, __FILE__, __LINE__)
+
+// True when the pause/stop stress found no audio endpoint at all: its
+// video-only cycles ran, but the audio sources it exists to cover did not.
+bool g_stress_audio_skipped = false;
+
+// Reports which capture path the production provider takes for `region` on
+// this machine. The recording sessions use the same provider and the same
+// Duplication-first, GDI-second decision, so a lab run can tell a pass on
+// the fallback path from a pass on the path the development PC uses.
+void ReportCapturePathProbe(const RECT& region) {
+    auto provider = easnap::capture::CreateRegionCaptureProvider();
+    if (!provider) {
+        std::printf("EASNAP_CAPTURE_PATH=Unknown (no capture provider)\n");
+        return;
+    }
+    easnap::platform::BgraImage image;
+    const bool captured = provider->CaptureRegion(region, false, image);
+    const wchar_t* name = provider->name();
+    const bool duplication = std::wcscmp(name, L"DXGI Desktop Duplication") == 0;
+    // This test writes stdout with both printf and wprintf; whichever came
+    // first fixed the stream's orientation, and a write of the other kind is
+    // silently dropped. Follow the orientation the stream already has.
+    const wchar_t* path = captured ? (duplication ? L"Duplication" : L"GDI") : L"Unknown";
+    if (std::fwide(stdout, 0) > 0) {
+        std::wprintf(L"EASNAP_CAPTURE_PATH=%ls (provider probe: %ls, captured=%d)\n", path, name,
+                     captured ? 1 : 0);
+    } else {
+        std::printf("EASNAP_CAPTURE_PATH=%ls (provider probe: %ls, captured=%d)\n", path, name,
+                    captured ? 1 : 0);
+    }
+    provider->Release();
+}
 
 class MediaFoundationRuntime final {
 public:
@@ -797,6 +830,8 @@ void TestRealDesktopRecordingSession() {
     using namespace std::chrono_literals;
 
     const RECT region = ModestPrimaryMonitorRegion();
+    // Printed first: CTest keeps only the head of a long test output.
+    ReportCapturePathProbe(region);
     const UINT32 width = static_cast<UINT32>(region.right - region.left);
     const UINT32 height = static_cast<UINT32>(region.bottom - region.top);
     CHECK(width >= 2 && height >= 2);
@@ -1599,16 +1634,19 @@ void TestPauseStopStress() {
     auto store = media::CreateTemporarySessionStore();
     auto collector = media::CreateTemporarySessionStore();
     const auto screen = platform::VirtualScreenBounds();
+    ReportCapturePathProbe({screen.left, screen.top, screen.left + 160, screen.top + 120});
     auto probe = media::CreateWasapiAudioCaptureProvider();
     constexpr media::AudioSource sources[]{media::AudioSource::None,
         media::AudioSource::SystemAudio, media::AudioSource::Microphone,
         media::AudioSource::Both};
+    bool audio_source_ran = false;
     for (const auto source : sources) {
         if (source != media::AudioSource::None && !probe->IsSourceAvailable(source)) {
             std::printf("SKIPPED stress source=%d: endpoint unavailable\n",
                         static_cast<int>(source));
             continue;
         }
+        if (source != media::AudioSource::None) audio_source_ran = true;
         for (int cycle = 0; cycle < 8; ++cycle) {
             media::RecordingOptions options;
             options.region = {screen.left, screen.top, screen.left + 160,
@@ -1686,6 +1724,7 @@ void TestPauseStopStress() {
             CHECK(store->DeleteSession(*temporary));
         }
     }
+    g_stress_audio_skipped = !audio_source_ran;
     platform::GraphicsEnvironment::Get().Shutdown();
 }
 
@@ -1695,6 +1734,13 @@ int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "--stress") == 0) TestPauseStopStress();
     else TestRealDesktopRecordingSession();
     if (g_fail == 0) {
+        if (g_stress_audio_skipped) {
+            // Video-only cycles passed, but the audio sources this stress exists
+            // to cover had no endpoint. 77 is SKIP_RETURN_CODE: skipped, not passed.
+            std::printf("SKIPPED  %d/%d checks passed, but no audio endpoint: the audio sources were not covered\n",
+                        g_pass, g_pass + g_fail);
+            return 77;
+        }
         std::printf("PASSED  %d/%d checks\n", g_pass, g_pass + g_fail);
         return 0;
     }

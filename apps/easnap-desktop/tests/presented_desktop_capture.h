@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <d3d11.h>
@@ -45,6 +46,8 @@ public:
                     winrt::check_hresult(::D3D11CreateDevice(adapter.get(),D3D_DRIVER_TYPE_UNKNOWN,nullptr,
                         D3D11_CREATE_DEVICE_BGRA_SUPPORT,nullptr,0,D3D11_SDK_VERSION,device_.put(),nullptr,context_.put()));
                     winrt::check_hresult(output.as<IDXGIOutput1>()->DuplicateOutput(device_.get(),duplication_.put()));
+                    // The lab reads this line to know which observer path ran here.
+                    std::printf("EASNAP_CAPTURE_PATH=Duplication (presented desktop observer)\n");
                     return;
                 }
             }
@@ -63,6 +66,7 @@ public:
         session_=pool_.CreateCaptureSession(item);
         session_.IsCursorCaptureEnabled(false);
         session_.StartCapture();
+        std::printf("EASNAP_CAPTURE_PATH=WGC (presented desktop observer)\n");
     }
     std::shared_ptr<const platform::BgraImage> CaptureNext() {
         if(duplication_) {

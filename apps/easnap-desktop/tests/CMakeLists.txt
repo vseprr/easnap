@@ -316,7 +316,8 @@ add_test(NAME recording_pause_stop_stress
 set_tests_properties(recording_pause_stop_stress PROPERTIES
     LABELS "integration;real-desktop-capture;recording;audio;stress"
     RUN_SERIAL TRUE
-    TIMEOUT 120)
+    TIMEOUT 120
+    SKIP_RETURN_CODE 77)
 
 # ---------------------------------------------------------------------------
 # test_region_selector — RegionSelector interaction logic (ADR-002 coverage)

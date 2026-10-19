@@ -300,7 +300,10 @@ void ExerciseInitialFrame(const std::filesystem::path& directory, HWND window) {
                     }
                     gdi.MakeOpaque();
                     easnap::platform::SaveImage(gdi,(evidence/(prefix+L"-desktop-gdi.png")).wstring());
-                    std::wprintf(L"Startup actual-screen evidence: %ls, provider=%ls\n",evidence.c_str(),capture->name());
+                    // stdout mixes printf and wprintf here; a write in the other
+                    // orientation is dropped, so follow the orientation it has.
+                    if (std::fwide(stdout,0)>0) std::wprintf(L"Startup actual-screen evidence: %ls, provider=%ls\n",evidence.c_str(),capture->name());
+                    else std::printf("Startup actual-screen evidence: %ls, provider=%ls\n",evidence.c_str(),capture->name());
                 }
                 if (desktop) ::ReleaseDC(nullptr,desktop);
                 std::fwprintf(stderr,L"%ls\n",preview->diagnostics().c_str());
