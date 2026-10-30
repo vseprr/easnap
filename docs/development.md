@@ -22,10 +22,14 @@ From the repository root:
 `build.ps1` configures, builds and then runs the tests affected by the change.
 The development build runs directly from `build\bin`; no packaging or
 installation step is involved in the edit-build-run loop. `-TestMode None`
-builds without tests. `-TestMode Full` ignores the pass cache and, unless
-`-Tier` says otherwise, raises the tier to Full, which runs the
-visible-desktop tests; `test.ps1 -Mode Full` only ignores the cache. `-Tier`
-and `-Monitor` are passed through to the test runner. Plain CMake works too:
+builds without tests, and `-TestMode Build` compiles the tests without running
+any (the [lab](testing.md#lab) builds this way). `-TestMode Full` ignores the
+pass cache and, unless `-Tier` says otherwise, raises the tier to Full, which
+runs the visible-desktop tests; `test.ps1 -Mode Full` only ignores the cache.
+`-Tier`, `-Monitor` and `-TestJobs` are passed through to the test runner.
+`-Trust Lab` skips the tests when the latest lab verdict covers exactly the
+working tree. `-BuildDir` builds into another directory, for example while an
+Easnap from `build\bin` is running. Plain CMake works too:
 
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DEASNAP_BUILD_TESTS=ON
@@ -105,6 +109,9 @@ manifests that `scripts/package-manifests.ps1` writes.
 | `apps/easnap-desktop/src/ui` | Capture workspace, native controls and trim window |
 | `apps/easnap-desktop/src/editor` | Screenshot tools, annotation history, rendering and export |
 | `apps/easnap-desktop/src/capture` | Desktop capture providers and worker |
+| `apps/easnap-desktop/src/scrollshot` | Scrollshot stitching engine and capture session |
+| `apps/easnap-desktop/src/strings` | Access to the English and Turkish string tables |
+| `apps/easnap-desktop/resources` | String tables, icons, manifests and version resources |
 | `apps/easnap-desktop/src/recording` | Recording session and active-time audio mapping |
 | `apps/easnap-desktop/src/media` | Audio, codecs, trim/export and supervised preview |
 | `apps/easnap-desktop/src/platform` | Shared Windows utilities and resource ownership |

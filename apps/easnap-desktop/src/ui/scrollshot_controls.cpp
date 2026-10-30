@@ -32,10 +32,6 @@ constexpr DWORD kIslandExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTRO
 constexpr DWORD kPreviewExStyle =
     WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED;
 
-#ifndef WDA_EXCLUDEFROMCAPTURE
-constexpr DWORD WDA_EXCLUDEFROMCAPTURE = 0x00000011;
-#endif
-
 // Metrics in device-independent pixels.
 constexpr float kPreviewWidth = 160.0f;
 constexpr float kPreviewPadding = 4.0f;
@@ -81,8 +77,7 @@ public:
         }
         ::SetLayeredWindowAttributes(preview_, 0, 255, LWA_ALPHA);
         // Neither surface may ever appear in a captured picture.
-        const bool excluded = ::SetWindowDisplayAffinity(island_, WDA_EXCLUDEFROMCAPTURE) != FALSE &&
-                              ::SetWindowDisplayAffinity(preview_, WDA_EXCLUDEFROMCAPTURE) != FALSE;
+        const bool excluded = ExcludeFromCapture(island_) && ExcludeFromCapture(preview_);
         if (!excluded) {
             platform::LogMessage(L"A Scrollshot surface could not be excluded from desktop capture");
         }

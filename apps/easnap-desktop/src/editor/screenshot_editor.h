@@ -189,6 +189,9 @@ public:
     [[nodiscard]] bool WantsPointer(POINT desktop_point) const;
     [[nodiscard]] HCURSOR ImageCursor(POINT desktop_point) const;
     [[nodiscard]] HWND context_hwnd() const noexcept { return context_; }
+    /// The room the tools island takes around the frame: itself and, below
+    /// it, the tallest property island any tool shows (ui/island_layout.h).
+    [[nodiscard]] SIZE island_group_size() const noexcept;
     void SetFrameInteracting(bool interacting);
     void Keyboard(UINT message, WPARAM key, LPARAM flags);
     [[nodiscard]] bool ProcessDialogMessage(MSG& message) const;
@@ -305,6 +308,9 @@ private:
     bool syncing_context_{false}, frame_interacting_{false}, repositioning_{false};
     bool modal_active_{false}, brush_popup_open_{false};
     int context_height_{0}, context_width_{0};
+    /// Height of the tallest property island any tool shows; the islands keep
+    /// room for it around the frame.
+    int reserved_context_height_{0};
     bool context_visible_{false}, island_user_positioned_{false};
     ULONGLONG context_fade_started_{0};
     std::optional<size_t> selected_;

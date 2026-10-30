@@ -61,6 +61,15 @@ LRESULT CALLBACK TooltipProc(HWND window, UINT message, WPARAM wparam, LPARAM lp
                               UINT_PTR, DWORD_PTR) {
     if (message == WM_NCDESTROY) { ::RemoveWindowSubclass(window, TooltipProc, kTooltipSubclass); }
     if (message == theme::kChangedMessage) { RefreshTooltip(window); return 0; }
+    if (message == WM_WINDOWPOSCHANGING && (reinterpret_cast<const WINDOWPOS*>(lparam)->flags & SWP_SHOWWINDOW) != 0) {
+        // A tooltip is a layered window that has not been composed until it is
+        // first shown, and Windows refuses its exclusion before that (measured:
+        // the affinity reads 0 afterwards). Exclude it as each showing begins.
+        DWORD affinity = 0;
+        if (!::GetWindowDisplayAffinity(window, &affinity) || affinity != 0x11) {
+            static_cast<void>(::SetWindowDisplayAffinity(window, 0x11));
+        }
+    }
     return ::DefSubclassProc(window, message, wparam, lparam);
 }
 
@@ -530,6 +539,20 @@ bool CanCaptureVisibleWindows() {
     },reinterpret_cast<LPARAM>(&excluded));
     return enumerated && excluded;
 }
+bool ExcludeFromCapture(HWND window) {
+    if(!window) { return false; }
+    const LONG_PTR style=::GetWindowLongPtrW(window,GWL_EXSTYLE);
+    if((style&WS_EX_LAYERED)==0) {
+        // Opaque layered: the window looks and paints as before, but Windows
+        // composes it through the path that keeps exclusion intact.
+        ::SetWindowLongPtrW(window,GWL_EXSTYLE,style|WS_EX_LAYERED);
+        if(!::SetLayeredWindowAttributes(window,0,255,LWA_ALPHA)) {
+            ::SetWindowLongPtrW(window,GWL_EXSTYLE,style);
+            platform::LogMessage(L"A window could not be made layered before its capture exclusion (error %lu)",::GetLastError());
+        }
+    }
+    return ::SetWindowDisplayAffinity(window,0x11)!=FALSE;
+}
 void RoundWindow(HWND window,float radius) {
     if(!window) { return; }
     RECT r{}; ::GetWindowRect(window,&r); const int d=theme::Scaled(radius*2,::GetDpiForWindow(window)/96.0f);
@@ -602,7 +625,7 @@ void StyleTooltip(HWND tooltip) {
     ::SetWindowSubclass(tooltip, TooltipProc, kTooltipSubclass, 0);
     ::SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, 0,
         theme::Scaled(360, static_cast<float>(::GetDpiForWindow(tooltip)) / 96.0f));
-    ::SetWindowDisplayAffinity(tooltip, 0x11);
+    static_cast<void>(ExcludeFromCapture(tooltip));
     RefreshTooltip(tooltip);
 }
 void PaintNativePanel(HWND window, float scale, bool grip) {

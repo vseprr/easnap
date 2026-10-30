@@ -51,6 +51,27 @@ bool InsideThreshold(POINT point, POINT origin, LONG width, LONG height) noexcep
                    origin.x + (width + 1) / 2, origin.y + (height + 1) / 2};
     return ::PtInRect(&box, point) != FALSE;
 }
+constexpr UINT kNoticeTextFormat = DT_WORDBREAK | DT_CENTER | DT_NOPREFIX;
+std::wstring NoticeText(HWND hwnd) {
+    std::wstring text(static_cast<size_t>(std::max(0, ::GetWindowTextLengthW(hwnd))) + 1, L'\0');
+    text.resize(static_cast<size_t>(std::max(0, ::GetWindowTextW(hwnd, text.data(), static_cast<int>(text.size())))));
+    return text;
+}
+HFONT CreateNoticeFont(float scale) { return theme::CreateUiFont(15.0f, scale, true); }
+SIZE NoticePadding(float scale) noexcept { return SIZE{theme::Scaled(14.0f, scale), theme::Scaled(8.0f, scale)}; }
+/// Size of `text` in the notice font: in one line when `wrap_width` is 0,
+/// otherwise wrapped at that width.
+SIZE MeasureNoticeText(const std::wstring& text, float scale, LONG wrap_width) {
+    HDC dc = ::CreateCompatibleDC(nullptr);
+    HFONT font = CreateNoticeFont(scale);
+    const HGDIOBJ previous = ::SelectObject(dc, font);
+    RECT box{0, 0, wrap_width, 0};
+    ::DrawTextW(dc, text.c_str(), -1, &box, DT_CALCRECT | DT_NOPREFIX | (wrap_width > 0 ? DT_WORDBREAK : DT_SINGLELINE));
+    ::SelectObject(dc, previous);
+    ::DeleteObject(font);
+    ::DeleteDC(dc);
+    return SIZE{box.right, box.bottom};
+}
 LRESULT CALLBACK NoticeProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     if(message==WM_ERASEBKGND) { return 1; }
     if (message == theme::kChangedMessage) { ::InvalidateRect(hwnd, nullptr, FALSE); return 0; }
@@ -63,10 +84,17 @@ LRESULT CALLBACK NoticeProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         theme::FillSolid(dc, client, theme::Current().panel);
         RECT placement{};
         ::GetWindowRect(hwnd, &placement);
-        HFONT font = theme::CreateUiFont(15.0f, platform::MonitorForRect(placement).scale(), true);
-        wchar_t text[256]{}; ::GetWindowTextW(hwnd,text,256); ::InflateRect(&client,-12,-8);
-        theme::DrawLabel(dc, client, text, ::GetWindowLongPtrW(hwnd,GWLP_USERDATA) ? theme::Current().text:theme::Current().success, font,
-                         DT_WORDBREAK | DT_CENTER | DT_NOPREFIX);
+        const float scale = platform::MonitorForRect(placement).scale();
+        const std::wstring text = NoticeText(hwnd);
+        const SIZE padding = NoticePadding(scale);
+        RECT box = client;
+        ::InflateRect(&box, -padding.cx, -padding.cy);
+        // The window was sized for the text; centre it vertically in the room left.
+        const LONG text_height = MeasureNoticeText(text, scale, std::max<LONG>(1, box.right - box.left)).cy;
+        box.top = std::max(box.top, client.top + (client.bottom - client.top - text_height) / 2);
+        HFONT font = CreateNoticeFont(scale);
+        theme::DrawLabel(dc, box, text.c_str(), ::GetWindowLongPtrW(hwnd,GWLP_USERDATA) ? theme::Current().text:theme::Current().success, font,
+                         kNoticeTextFormat);
         ::DeleteObject(font);
         buffer.Present();
         ::EndPaint(hwnd, &paint);
@@ -125,15 +153,22 @@ void ShowCaptureNotice(const RECT& region,const std::wstring& text,bool status) 
     }();
     if (!registered) { return; }
     const auto monitor = platform::MonitorForRect(region);
-    const LONG width=std::min<LONG>(platform::RectWidth(monitor.work_area)-theme::Scaled(24,monitor.scale()),theme::Scaled(status ? 600.0f:250.0f,monitor.scale()));
-    const LONG height=theme::Scaled(status ? 64.0f:44.0f,monitor.scale());
+    const float scale = monitor.scale();
+    // The notice is at least its usual size and grows with a longer text,
+    // wrapping only when one line would not fit the work area.
+    const SIZE padding = NoticePadding(scale);
+    const LONG widest = std::max<LONG>(1, platform::RectWidth(monitor.work_area) - theme::Scaled(24.0f, scale));
+    const LONG one_line = MeasureNoticeText(text, scale, 0).cx + 2 * padding.cx;
+    const LONG width = std::min(widest, std::max<LONG>(one_line, theme::Scaled(status ? 600.0f : 250.0f, scale)));
+    const LONG wrapped = MeasureNoticeText(text, scale, std::max<LONG>(1, width - 2 * padding.cx)).cy + 2 * padding.cy;
+    const LONG height = std::max<LONG>(wrapped, theme::Scaled(status ? 64.0f : 44.0f, scale));
     HWND notice = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         L"EasnapCaptureCopiedNotice", text.c_str(), WS_POPUP,
         monitor.work_area.left + (platform::RectWidth(monitor.work_area) - width) / 2,
         monitor.work_area.bottom - height - theme::Scaled(24.0f, monitor.scale()),
         width, height, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
     if (notice) {
-        ::SetWindowDisplayAffinity(notice, WDA_EXCLUDEFROMCAPTURE); RoundWindow(notice);
+        static_cast<void>(ExcludeFromCapture(notice)); RoundWindow(notice);
         ::SetWindowLongPtrW(notice,GWLP_USERDATA,status);
         if (::SetTimer(notice, 1, status ? 4000:1400, nullptr)) { ::ShowWindow(notice, SW_SHOWNOACTIVATE); }
         else { ::DestroyWindow(notice); }

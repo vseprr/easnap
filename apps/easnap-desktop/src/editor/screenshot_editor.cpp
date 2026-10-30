@@ -763,6 +763,12 @@ void ScreenshotEditor::SyncContext(bool layout) {
     label(2613,strings::Format(IDS_EDITOR_SIZE_VALUE,{std::to_wstring(static_cast<int>(style.font_size))}).c_str());
     syncing_context_=false;
 }
+SIZE ScreenshotEditor::island_group_size() const noexcept {
+    RECT main{};
+    if(!hwnd_ || !::GetWindowRect(hwnd_,&main)) { return {}; }
+    const LONG context=std::max(context_visible_ ? context_height_:0,reserved_context_height_);
+    return SIZE{main.right-main.left,main.bottom-main.top+(context>0 ? ui::theme::Scaled(8,scale_)+context:0)};
+}
 void ScreenshotEditor::PlaceContext(bool follow_frame) {
     if(!hwnd_ || !context_ || repositioning_ || modal_active_) { return; }
     repositioning_=true;
@@ -770,19 +776,24 @@ void ScreenshotEditor::PlaceContext(bool follow_frame) {
     const auto monitor=platform::MonitorForRect(follow_frame ? region_:main);
     const auto work=monitor.work_area;
     const LONG gap=ui::theme::Scaled(8,scale_);
-    const LONG width=main.right-main.left,height=main.bottom-main.top;
+    const LONG width=main.right-main.left;
+    const LONG height=main.bottom-main.top;
     const LONG popup_space=brush_popup_open_ ? gap+ui::theme::Scaled(kToolbarRowHeight+6,scale_):0;
-    const LONG total=height+(context_visible_ ? gap+context_height_:0)+popup_space;
+    const LONG shown=height+(context_visible_ ? gap+context_height_:0)+popup_space;
     // Outside the frame while anything outside has room, and never over the
     // mode island (ui/island_layout.h). An island the user moved, or one that
     // only changed its height, stays where it is unless that covers the mode
     // island.
     const RECT keep_clear=callbacks_.keep_clear ? callbacks_.keep_clear():RECT{};
-    RECT group=platform::ClampRectToBounds({main.left,main.top,main.left+width,main.top+total},work);
+    RECT group=platform::ClampRectToBounds({main.left,main.top,main.left+width,main.top+shown},work);
     RECT covered{};
     if(follow_frame || ::IntersectRect(&covered,&group,&keep_clear)) {
+        // Placed around the frame with room for the tallest property island,
+        // shown or not: choosing a tool must not send the islands to the other
+        // side of the frame.
+        const LONG reserved=std::max(shown,island_group_size().cy+popup_space);
         const auto frame_monitor=platform::MonitorForRect(region_);
-        group=ui::PlaceIslandForFrame(region_,frame_monitor.bounds,frame_monitor.work_area,SIZE{width,total},gap,keep_clear).rect;
+        group=ui::PlaceIslandForFrame(region_,frame_monitor.bounds,frame_monitor.work_area,SIZE{width,reserved},gap,keep_clear).rect;
     }
     ::SetWindowPos(hwnd_,nullptr,group.left,group.top,width,height,SWP_NOZORDER|SWP_NOACTIVATE);
     RECT context{group.left+(width-context_width_)/2,group.top+height+gap,0,0};
@@ -994,54 +1005,71 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         item.label=item.tooltip=entry.name; item.rect=place(kCommandButton*s); toolbar_.push_back(item);
     }
     toolbar_rect_={0,0,static_cast<LONG>(available_width),static_cast<LONG>(std::ceil(y+row))};
-    x=pad; y=0; context_fields_.clear(); context_separators_.clear();
+    // The property island of `tool`, wrapped in the width of the tools island.
+    // Returns its height (0 for the pointer, which has none) and its widest row.
+    const auto layout_context=[&](ToolId tool,std::vector<ToolbarItem>& items,std::vector<std::pair<int,RECT>>& fields,
+                                  std::vector<RECT>& separators) {
+        x=pad; y=0;
+        const bool text=tool==ToolId::Text,tag=tool==ToolId::Tag,effect=tool==ToolId::Mosaic,spot=tool==ToolId::Spotlight,watermark=tool==ToolId::Watermark;
+        float widest=0;
+        const auto field=[&](int id,float width) {
+            auto r=place(width*s); widest=std::max(widest,r.right+pad);
+            fields.push_back({id,{static_cast<LONG>(r.left),static_cast<LONG>(r.top),static_cast<LONG>(r.right),static_cast<LONG>(r.bottom)}});
+        };
+        const auto separator=[&] {
+            const auto r=place(8*s);
+            separators.push_back({static_cast<LONG>((r.left+r.right)/2),static_cast<LONG>(r.top+8*s),static_cast<LONG>((r.left+r.right)/2+1),static_cast<LONG>(r.bottom-8*s)});
+        };
+        const auto option=[&](int id,UINT name,bool shown,float width=kToolButton) {
+            ToolbarItem item; item.kind=ToolbarItem::Kind::Option; item.identifier=id; item.label=item.tooltip=strings::Get(name); item.shown=shown;
+            if(shown) { item.rect=place(width*s); widest=std::max(widest,item.rect.right+pad); } items.push_back(item);
+        };
+        option(2500,IDS_EDITOR_OPTION_PLAIN_TEXT,text); option(2501,IDS_EDITOR_OPTION_FILLED_TEXT,text); option(2502,IDS_EDITOR_OPTION_OUTLINED_TEXT,text);
+        option(2511,IDS_EDITOR_OPTION_PIXELATE,effect); option(2510,IDS_EDITOR_OPTION_BLUR,effect);
+        if(effect) { separator(); }
+        option(2520,IDS_EDITOR_OPTION_BRUSH,effect,48); option(2521,IDS_EDITOR_OPTION_REGION,effect);
+        if(effect) { separator(); field(2611,125); field(2601,155); }
+        option(2530,IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE,spot); option(2531,IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE,spot); option(2532,IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED,spot);
+        if(spot) { separator(); field(2612,110); field(2602,155); }
+        if(text || tag) { field(2600,96); separator(); }
+        if(watermark) { field(2604,140); separator(); }
+        const bool stroke=tool!=ToolId::Pointer && !text && !tag && !effect && !spot && !watermark;
+        for(size_t i=0;i<kThicknessOptions.size();++i) {
+            ToolbarItem item; item.kind=ToolbarItem::Kind::Thickness; item.thickness=kThicknessOptions[i]; item.identifier=2200+static_cast<int>(i);
+            item.tooltip=L"Stroke width"; item.shown=stroke;
+            if(item.shown) { item.rect=place(kToolButton*s); widest=std::max(widest,item.rect.right+pad); } items.push_back(item);
+        }
+        if(stroke) { separator(); }
+        for(size_t i=0;i<kPaletteColors.size();++i) {
+            ToolbarItem item; item.kind=ToolbarItem::Kind::Color; item.color=kPaletteColors[i]; item.identifier=2100+static_cast<int>(i);
+            item.tooltip=L"Annotation color"; item.shown=tool!=ToolId::Pointer && !effect && !spot;
+            if(item.shown) { item.rect=place(kSwatch*s); widest=std::max(widest,item.rect.right+pad); } items.push_back(item);
+        }
+        if(watermark) { separator(); field(2612,85); field(2602,100); separator(); field(2613,65); field(2603,100); }
+        for(size_t i=0;i<kBrushSizeOptions.size();++i) {
+            ToolbarItem item; item.kind=ToolbarItem::Kind::BrushSize; item.brush_size=kBrushSizeOptions[i]; item.identifier=2300+static_cast<int>(i);
+            item.tooltip=L"Brush size"; item.shown=true;
+            const float left=pad+static_cast<float>(i)*(kToolButton+kItemGap)*s;
+            const float callout=6*s;
+            item.rect={left,callout+(row-kToolButton*s)/2,left+kToolButton*s,callout+(row+kToolButton*s)/2}; items.push_back(item);
+        }
+        return std::pair<float,float>{tool!=ToolId::Pointer ? y+row:0.0f,widest};
+    };
+    context_fields_.clear(); context_separators_.clear();
     const auto tool=ContextTool();
-    const bool text=tool==ToolId::Text,tag=tool==ToolId::Tag,effect=tool==ToolId::Mosaic,spot=tool==ToolId::Spotlight,watermark=tool==ToolId::Watermark;
-    float widest=0;
-    const auto field=[&](int id,float width) {
-        auto r=place(width*s); widest=std::max(widest,r.right+pad);
-        context_fields_.push_back({id,{static_cast<LONG>(r.left),static_cast<LONG>(r.top),static_cast<LONG>(r.right),static_cast<LONG>(r.bottom)}});
-    };
-    const auto separator=[&] {
-        const auto r=place(8*s);
-        context_separators_.push_back({static_cast<LONG>((r.left+r.right)/2),static_cast<LONG>(r.top+8*s),static_cast<LONG>((r.left+r.right)/2+1),static_cast<LONG>(r.bottom-8*s)});
-    };
-    const auto option=[&](int id,UINT name,bool shown,float width=kToolButton) {
-        ToolbarItem item; item.kind=ToolbarItem::Kind::Option; item.identifier=id; item.label=item.tooltip=strings::Get(name); item.shown=shown;
-        if(shown) { item.rect=place(width*s); widest=std::max(widest,item.rect.right+pad); } toolbar_.push_back(item);
-    };
-    option(2500,IDS_EDITOR_OPTION_PLAIN_TEXT,text); option(2501,IDS_EDITOR_OPTION_FILLED_TEXT,text); option(2502,IDS_EDITOR_OPTION_OUTLINED_TEXT,text);
-    option(2511,IDS_EDITOR_OPTION_PIXELATE,effect); option(2510,IDS_EDITOR_OPTION_BLUR,effect);
-    if(effect) { separator(); }
-    option(2520,IDS_EDITOR_OPTION_BRUSH,effect,48); option(2521,IDS_EDITOR_OPTION_REGION,effect);
-    if(effect) { separator(); field(2611,125); field(2601,155); }
-    option(2530,IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE,spot); option(2531,IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE,spot); option(2532,IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED,spot);
-    if(spot) { separator(); field(2612,110); field(2602,155); }
-    if(text || tag) { field(2600,96); separator(); }
-    if(watermark) { field(2604,140); separator(); }
-    const bool stroke=tool!=ToolId::Pointer && !text && !tag && !effect && !spot && !watermark;
-    for(size_t i=0;i<kThicknessOptions.size();++i) {
-        ToolbarItem item; item.kind=ToolbarItem::Kind::Thickness; item.thickness=kThicknessOptions[i]; item.identifier=2200+static_cast<int>(i);
-        item.tooltip=L"Stroke width"; item.shown=stroke;
-        if(item.shown) { item.rect=place(kToolButton*s); widest=std::max(widest,item.rect.right+pad); } toolbar_.push_back(item);
-    }
-    if(stroke) { separator(); }
-    for(size_t i=0;i<kPaletteColors.size();++i) {
-        ToolbarItem item; item.kind=ToolbarItem::Kind::Color; item.color=kPaletteColors[i]; item.identifier=2100+static_cast<int>(i);
-        item.tooltip=L"Annotation color"; item.shown=tool!=ToolId::Pointer && !effect && !spot;
-        if(item.shown) { item.rect=place(kSwatch*s); widest=std::max(widest,item.rect.right+pad); } toolbar_.push_back(item);
-    }
-    if(watermark) { separator(); field(2612,85); field(2602,100); separator(); field(2613,65); field(2603,100); }
-    for(size_t i=0;i<kBrushSizeOptions.size();++i) {
-        ToolbarItem item; item.kind=ToolbarItem::Kind::BrushSize; item.brush_size=kBrushSizeOptions[i]; item.identifier=2300+static_cast<int>(i);
-        item.tooltip=L"Brush size"; item.shown=true;
-        const float left=pad+static_cast<float>(i)*(kToolButton+kItemGap)*s;
-        const float callout=6*s;
-        item.rect={left,callout+(row-kToolButton*s)/2,left+kToolButton*s,callout+(row+kToolButton*s)/2}; toolbar_.push_back(item);
-    }
+    const auto [context_height,widest]=layout_context(tool,toolbar_,context_fields_,context_separators_);
     context_visible_=tool!=ToolId::Pointer;
     context_width_=static_cast<int>(std::ceil(std::min(available_width,std::max(widest,200*s))));
-    context_height_=context_visible_ ? static_cast<int>(std::ceil(y+row)):0;
+    context_height_=context_visible_ ? static_cast<int>(std::ceil(context_height)):0;
+    // The islands are placed around the frame with room for the tallest
+    // property island any tool shows, so choosing a tool never moves them.
+    float tallest=context_height;
+    std::vector<ToolbarItem> scratch_items; std::vector<std::pair<int,RECT>> scratch_fields; std::vector<RECT> scratch_separators;
+    for(const auto& entry:tools) {
+        scratch_items.clear(); scratch_fields.clear(); scratch_separators.clear();
+        tallest=std::max(tallest,layout_context(entry.tool,scratch_items,scratch_fields,scratch_separators).first);
+    }
+    reserved_context_height_=static_cast<int>(std::ceil(tallest));
 
 }
 
@@ -1183,13 +1211,14 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     // This title identifies the pop-up to tests (FindWindow); it is not localized.
     brush_popup_=::CreateWindowExW(kEditorExStyle,kEditorClassName,L"Brush sizes",kEditorStyle,window.left,window.bottom,
         static_cast<int>(132*scale_),static_cast<int>((kToolbarRowHeight+6)*scale_),hwnd_,nullptr,::GetModuleHandleW(nullptr),this);
-    if(brush_popup_) { ::SetWindowDisplayAffinity(brush_popup_,0x11); }
+    if(brush_popup_) { static_cast<void>(ui::ExcludeFromCapture(brush_popup_)); }
     if(!context_ || !brush_popup_ || !CreateToolbarControls()) { Destroy(); return false; }
     CreateContextControls();
     if(!Control(2600) || !Control(2601) || !Control(2604)) { Destroy(); return false; }
-    ::SetWindowDisplayAffinity(context_,0x11);
+    // The property island is layered already: it fades in.
     ::SetLayeredWindowAttributes(context_,0,255,LWA_ALPHA);
-    static_cast<void>(::SetWindowDisplayAffinity(hwnd_, 0x11));
+    static_cast<void>(ui::ExcludeFromCapture(context_));
+    static_cast<void>(ui::ExcludeFromCapture(hwnd_));
     CreateTextFormats();
     RebuildRedactedBase();
 

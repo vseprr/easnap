@@ -21,10 +21,13 @@ The test suite falls into six groups, by the kind of environment each needs:
 
 - Group 1: 22 unit tests.
 - Group 2: 7 isolated-desktop tests (a private desktop, ADR-026).
-- Group 3: 14 Media Foundation and preview tests (11 in the Standard tier and
-  the 3 soak seeds of the continuous-seek test).
-- Group 4: 3 audio tests.
-- Group 5: 3 real-desktop-capture tests.
+- Group 3: 14 Media Foundation and preview tests (9 in the Standard tier, the
+  2 extra stress seeds and the 3 seeds of the 30-second continuous-seek test,
+  all 5 in the Soak tier).
+- Group 4: 3 audio tests (`tests.audioTests`; two of them also belong to
+  Group 3 or Group 5).
+- Group 5: 3 real-desktop-capture tests; 4 since `island_capture_exclusion`
+  was added on 2026-10-30.
 - Group 6: 6 desktop-visual and interactive tests.
 
 Decisions taken with the owner:
@@ -54,8 +57,10 @@ cable, is installed so that WASAPI tests have an endpoint.
 `winlab` creates, provisions and snapshots the VM, restores the golden checkpoint,
 copies the sources (ignore list from `testenv.json`, `build/` excluded), builds with
 `scripts/build.ps1 -TestMode Build` over PowerShell Direct (compiles the tests, runs none), and runs
-`scripts/test.ps1 -Tier <tier> -Mode Full -Monitor Primary -NoCountdown` in the
-interactive session. The commands are described in
+`scripts/test.ps1 -Tier <tier> -Mode Full -Monitor Primary -NoCountdown -HostOnly Exclude`
+in the interactive session. Provisioning also installs Windows updates in
+rounds (`provision.windowsUpdate`) and applies winlab's conservative debloat
+(`provision.debloat`); `testenv.json` enables both. The commands are described in
 [testing.md](../testing.md#lab).
 
 **Verdict.** Each run writes `build/Testing/lab/verdict.json` with the commit, a
@@ -199,6 +204,34 @@ start of each test because CTest keeps only the head of a long output:
 desktop (no new Duplication frame, GDI for the picture), observed on a desktop
 nobody touches; it is exactly the caveat this ADR asks the runner to surface,
 not a VM limitation.
+
+### Why `trim_timeline_seek_stress` failed its pointer check (2026-10-30)
+
+Two causes, neither in the product, which never moves the pointer (no
+`SetCursorPos`, `ClipCursor` or `SendInput` in `src/`):
+
+- *A pointer move that is reported late.* `SetCursorPos` can return before
+  Windows reports the new position: in the VM `GetCursorPos` returned the
+  previous point for 16 to 55 ms after a successful call, while a low-level
+  mouse hook saw no mouse event at all, injected or not. Every earlier lab
+  failure had this signature: `y` matched and `x` was the previous target
+  (four cases between 2026-10-19 and 2026-10-20). The test checked at once.
+  It now waits for the move to land with a 1 s deadline, without dispatching
+  messages, and prints `Pointer moves: N, reported late: L, longest wait X ms`.
+  In three probes after the change (15 executions, 3,039 moves) 4 moves
+  arrived late (29 to 55 ms), each in a different execution, and none failed
+  the check; with the old code those 4 executions would have failed.
+- *The "new network" flyout.* After each restore of the 2026-10-20 checkpoint
+  Windows met the Default Switch as a new network and opened its discovery
+  flyout, which took the foreground from the first visible test
+  (`Shell_LightDismissOverlay`, `GetForegroundWindow()==window` failing) and
+  covered the right 432 px of the screen. Provisioning now creates
+  `HKLM\SYSTEM\CurrentControlSet\Control\Network\NewNetworkWindowOff`, and the
+  golden checkpoint was taken again.
+
+The earlier explanation for the host run of 2026-10-13, that the PC was in
+use, is not established either: the host log of that run does not show which
+of the two signatures it had.
 
 ## Not validated
 

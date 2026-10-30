@@ -66,6 +66,12 @@ void RoundWindow(HWND window, float radius = 8.0f);
 [[nodiscard]] bool CaptureExclusionSupported();
 /// True when, in addition, every visible window of this process is excluded.
 [[nodiscard]] bool CanCaptureVisibleWindows();
+/// Keeps a top-level window out of every screen capture. A window that is not
+/// layered becomes layered at full opacity first: on Windows 10 a plain
+/// excluded window that is shown again or moved over content that is not
+/// redrawn leaves a black hole of its shape in Desktop Duplication and in a
+/// GDI blit of the screen, and a layered one does not (ADR-008).
+[[nodiscard]] bool ExcludeFromCapture(HWND window);
 void DrawSeparator(HDC dc, const RECT& rect, float scale);
 [[nodiscard]] bool DrawComboItem(const DRAWITEMSTRUCT& item);
 void SetAccessibleName(HWND control, const wchar_t* name);

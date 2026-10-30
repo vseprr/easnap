@@ -901,7 +901,19 @@ void IslandPlacement() {
     ui::OverlayController* active{};
     editor::ScreenshotEditor::Callbacks editor_callbacks;
     editor_callbacks.keep_clear = [&] { return active ? active->mode_island_rect() : RECT{}; };
+    editor::ScreenshotEditor* editor_ptr{};
+    // As the coordinator does: the first mark acquires the image and fixes the screenshot.
+    editor_callbacks.on_prepare_image = [&] {
+        platform::BgraImage pixels;
+        const RECT region = active->selector().selection();
+        pixels.Reset(platform::RectWidth(region), platform::RectHeight(region));
+        if (!editor_ptr->SetImage(std::move(pixels))) { return false; }
+        active->FixScreenshot();
+        return true;
+    };
+    editor_callbacks.on_feature_used = [&] { if (active) { active->workspace().EditorFeatureUsed(); } };
     editor::ScreenshotEditor editor(editor_callbacks);
+    editor_ptr = &editor;
     ui::RecordingControls controls({});
     ui::OverlayController::Callbacks callbacks;
     bool opened = false;
@@ -935,10 +947,16 @@ void IslandPlacement() {
         ::ScreenToClient(input, &point);
         ::SendMessageW(input, message, flags, MAKELPARAM(point.x, point.y));
     };
-    /// The tools island with its property island, as one rectangle.
+    /// The tools island with the room it keeps below it for its property
+    /// island, as one rectangle; a property island that is shown lies inside it.
     const auto tools = [&] {
         RECT group = rect_of(editor.hwnd());
-        if (::IsWindowVisible(editor.context_hwnd())) { const RECT context = rect_of(editor.context_hwnd()); ::UnionRect(&group, &group, &context); }
+        group.bottom = group.top + editor.island_group_size().cy;
+        if (::IsWindowVisible(editor.context_hwnd())) {
+            const RECT context = rect_of(editor.context_hwnd());
+            RECT both{};
+            CHECK(::UnionRect(&both, &group, &context) && ::EqualRect(&both, &group));
+        }
         return group;
     };
     /// Where production geometry puts an island of this size for this frame.
@@ -1042,6 +1060,7 @@ void IslandPlacement() {
     set_frame(tall);
     CHECK(!platform::IsEmptyRect(overlay.mode_island_rect()));
 
+
     // --- Recording: the panel follows the same rule and follows the frame.
     editor.Hide();
     overlay.SetMode(CaptureMode::Record);
@@ -1081,7 +1100,32 @@ void IslandPlacement() {
     set_frame(middle);
     CHECK(same(rect_of(controls.hwnd()), placed_by_user));
 
+    // --- Choosing a tool fixes the screenshot and shows the property island.
+    // The islands already keep room for it: nothing moves, even when the tools
+    // island alone would have fitted below the frame and the group does not.
     controls.Destroy();
+    editor.Hide();
+    overlay.SetMode(CaptureMode::Screenshot);
+    editor.Show();
+    const LONG bare = platform::RectHeight(rect_of(editor.hwnd()));
+    const RECT low{middle.left, middle.top, middle.right, work.bottom - 2 * gap - bare};
+    set_frame(low);
+    CHECK(!overlay.workspace().screenshot_fixed() && !::IsWindowVisible(editor.context_hwnd()));
+    const RECT before = rect_of(editor.hwnd());
+    const ui::IslandPlacement low_place = expected(low, tools(), work, gap, rect_of(modes));
+    CHECK(before.left == low_place.rect.left && before.top == low_place.rect.top && !overlaps(tools(), low));
+    SelectTool(editor, editor::ToolId::Rectangle);
+    CHECK(overlay.workspace().screenshot_fixed() && editor.has_image() && ::IsWindowVisible(editor.context_hwnd()));
+    CHECK(same(rect_of(editor.hwnd()), before));
+    const POINT at{(low.left + low.right) / 2, (low.top + low.bottom) / 2};
+    send(WM_LBUTTONDOWN, at, MK_LBUTTON);
+    send(WM_MOUSEMOVE, {at.x + 40, at.y + 30}, MK_LBUTTON);
+    send(WM_LBUTTONUP, {at.x + 40, at.y + 30});
+    CHECK(same(rect_of(editor.hwnd()), before) && within(tools(), work) && !overlaps(tools(), low));
+    SelectTool(editor, editor::ToolId::Watermark);
+    SelectTool(editor, editor::ToolId::Pointer);
+    CHECK(same(rect_of(editor.hwnd()), before) && !::IsWindowVisible(editor.context_hwnd()));
+
     editor.Destroy();
     overlay.Destroy();
 }

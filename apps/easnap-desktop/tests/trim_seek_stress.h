@@ -1,8 +1,33 @@
 // Included by test_ui_modernization.cpp. Exercise production timeline messages
 // and real native clicks while the actual isolated preview remains playing.
 // No mock player, replacement HWND painter or alternate transport is used.
+
+// SetCursorPos can return before the system reports the new position. In the
+// lab VM GetCursorPos still returned the previous point for 16 to 55 ms after
+// a successful call, with no mouse input of any kind in between. Wait for the
+// move to land, without dispatching messages: a timeline holding capture must
+// not receive the real move before the test's own message. A pointer that
+// never arrives is still rejected by the caller's authentication.
+struct PointerMoves { unsigned moves=0,late=0; double longest_ms=0; };
+bool MovePointer(POINT screen,PointerMoves& record) {
+    if (!::SetCursorPos(screen.x,screen.y)) return false;
+    ++record.moves;
+    const auto start=std::chrono::steady_clock::now();
+    for (bool first=true;;first=false) {
+        POINT actual{};
+        const auto waited=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+        if (::GetCursorPos(&actual) && actual.x==screen.x && actual.y==screen.y) {
+            if (!first) { ++record.late; record.longest_ms=(std::max)(record.longest_ms,waited); }
+            return true;
+        }
+        if (waited>=1000) return false;
+        ::Sleep(1);
+    }
+}
+
 void TrimSeekStress(unsigned click_count = 72) {
     const auto original_theme = ui::theme::Preference();
+    PointerMoves pointer_moves;
     for (const uint32_t seconds : {6u, 10u}) {
         const auto source = std::filesystem::temp_directory_path() /
             (L"easnap_seek_" + std::to_wstring(::GetCurrentProcessId()) + L"_" +
@@ -54,7 +79,7 @@ void TrimSeekStress(unsigned click_count = 72) {
                 const POINT activation{bounds.left+ui::theme::Scaled(230,scale),
                                        bounds.top+ui::theme::Scaled(20,scale)};
                 if (::GetAncestor(::WindowFromPoint(activation),GA_ROOT)==window) {
-                    CHECK(::SetCursorPos(activation.x,activation.y));
+                    CHECK(MovePointer(activation,pointer_moves));
                     INPUT input[2]{};input[0].type=input[1].type=INPUT_MOUSE;
                     input[0].mi.dwFlags=MOUSEEVENTF_LEFTDOWN;input[1].mi.dwFlags=MOUSEEVENTF_LEFTUP;
                     CHECK(::SendInput(2,input,sizeof(INPUT))==2);Pump(100);
@@ -92,7 +117,9 @@ void TrimSeekStress(unsigned click_count = 72) {
             };
             const auto place_pointer = [&](int x) {
                 POINT point{x,y}; CHECK(::ClientToScreen(timeline,&point));
-                CHECK(::SetCursorPos(point.x,point.y));
+                // A pointer that does not arrive fails the authentication,
+                // which reports where it is instead.
+                MovePointer(point,pointer_moves);
                 return authenticate_pointer(x);
             };
             Click(window,100); CHECK(WaitFor(playing));
@@ -266,7 +293,7 @@ void TrimSeekStress(unsigned click_count = 72) {
                 // pauses/restarts playback between clicks to hide an outage.
                 const int x=coordinate(15+random()%46);
                 POINT point{x,y}; CHECK(::ClientToScreen(timeline,&point));
-                CHECK(::SetCursorPos(point.x,point.y)); Pump(1);
+                MovePointer(point,pointer_moves); Pump(1);
                 const auto pressed_at=::GetTickCount64();
                 const unsigned interval=100+random()%801;
                 const unsigned hold=(std::min)(80+random()%81,interval-20);
@@ -313,5 +340,7 @@ void TrimSeekStress(unsigned click_count = 72) {
         }
         std::error_code error; std::filesystem::remove(source,error); CHECK(!error);
     }
+    std::printf("Pointer moves: %u, reported late: %u, longest wait %.1f ms\n",
+        pointer_moves.moves,pointer_moves.late,pointer_moves.longest_ms);
     Appearance(original_theme);
 }

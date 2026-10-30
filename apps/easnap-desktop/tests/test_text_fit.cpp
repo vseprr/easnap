@@ -12,6 +12,7 @@
 #include "app/recording_workflow.h"
 #include "editor/screenshot_editor.h"
 #include "strings/strings.h"
+#include "ui/capture_workspace.h"
 #include "ui/native_controls.h"
 #include "ui/overlay.h"
 #include "ui/recording_controls.h"
@@ -241,6 +242,52 @@ void ModeBar(const platform::MonitorInfo& monitor) {
     overlay.Destroy();
 }
 
+/// The notices draw their own text. The copied and saved notices take one
+/// line; a status notice may wrap, but never beyond its window.
+void Notices(const RECT& region) {
+    enum class Kind { Copied, Saved, Status };
+    struct Notice { Kind kind; std::wstring text; bool one_line; };
+    const Notice notices[]{
+        {Kind::Copied, strings::Get(IDS_NOTICE_COPIED), true},
+        {Kind::Saved, strings::Get(IDS_NOTICE_SAVED), true},
+        {Kind::Status, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE), false},
+        {Kind::Status, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED), false},
+    };
+    for (const Notice& notice : notices) {
+        if (notice.kind == Kind::Copied) { ui::ShowCaptureCopiedNotice(region); }
+        else if (notice.kind == Kind::Saved) { ui::ShowCaptureSavedNotice(region); }
+        else { ui::ShowCaptureStatusNotice(region, notice.text); }
+        const std::vector<HWND> windows = ThreadWindows(L"EasnapCaptureCopiedNotice");
+        CHECK(windows.size() == 1);
+        for (HWND window : windows) {
+            CHECK(TextOf(window) == notice.text);
+            RECT client{}, placement{};
+            ::GetClientRect(window, &client);
+            ::GetWindowRect(window, &placement);
+            HDC dc = ::CreateCompatibleDC(nullptr);
+            HFONT font = ui::theme::CreateUiFont(15.0f, platform::MonitorForRect(placement).scale(), true);
+            const HGDIOBJ previous = ::SelectObject(dc, font);
+            RECT single{0, 0, 0, 0};
+            ::DrawTextW(dc, notice.text.c_str(), -1, &single, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+            RECT wrapped{0, 0, client.right, 0};
+            ::DrawTextW(dc, notice.text.c_str(), -1, &wrapped, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+            ::SelectObject(dc, previous);
+            ::DeleteObject(font);
+            ::DeleteDC(dc);
+            const bool fits = notice.one_line ? single.right < client.right && single.bottom < client.bottom
+                                              : wrapped.right <= client.right && wrapped.bottom < client.bottom;
+            if (!fits) {
+                ++failed;
+                std::fprintf(stderr, "FAIL [%s] notice \"%ls\" needs %ld x %ld (wrapped %ld x %ld), has %ld x %ld\n", g_language,
+                             notice.text.c_str(), single.right, single.bottom, wrapped.right, wrapped.bottom, client.right, client.bottom);
+            } else {
+                ++passed;
+            }
+            ::DestroyWindow(window);
+        }
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -261,6 +308,7 @@ int main() {
             EditorIslands(region);
             ModeBar(monitor);
             Settings();
+            Notices(region);
         }
     }
     platform::GraphicsEnvironment::Get().Shutdown();
