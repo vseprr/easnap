@@ -8,9 +8,9 @@ project(Easnap
 
 # A prerelease label such as "beta.1" or "rc.1"; empty for a stable release.
 # With the project version it forms the version users see, the package names
-# and the release tag: v1.1.0-beta.1. scripts/package-release.ps1 and the
+# and the release tag: v1.1.0-beta.2. scripts/package-release.ps1 and the
 # Release workflow read this line.
-set(EASNAP_VERSION_PRERELEASE "beta.1")
+set(EASNAP_VERSION_PRERELEASE "beta.2")
 if(EASNAP_VERSION_PRERELEASE)
     set(EASNAP_VERSION_TEXT "${PROJECT_VERSION}-${EASNAP_VERSION_PRERELEASE}")
     set(EASNAP_VERSION_IS_PRERELEASE 1)

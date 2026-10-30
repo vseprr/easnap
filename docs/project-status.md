@@ -1,11 +1,89 @@
 # Project status
 
-**Updated:** 2026-10-20
-Read with the [roadmap](../EASNAP_ROADMAP.md) before implementation work.
+**Updated:** 2026-10-30
+
+The current state of the implementation: what is built, what was actually
+validated, what is open and the next slice. Read it with the
+[roadmap](../EASNAP_ROADMAP.md) before implementation work. Where and how tests
+run is in [testing](testing.md), durable decisions are in the
+[ADRs](README.md#decisions), what each release contained is in its release
+notes under `docs/releases/`, and the individual validation runs of past
+releases are in the [validation records](releases/validation-history.md).
+
+## Baseline
+
+- Latest stable release: v1.0.2. Latest prerelease:
+  [v1.1.0-beta.1](https://github.com/vseprr/easnap/releases/tag/v1.1.0-beta.1),
+  published on 2026-10-13 from `main`.
+- v1.1.0-beta.2 is released from `main` with the MP4 writer change for
+  software H.264 encoders and the beta feedback corrections, both described
+  below ([release notes](releases/v1.1.0-beta.2.md)). The isolated test lab
+  is a development aid and ships nothing.
+
+## Beta feedback corrections: v1.1.0-beta.2 (2026-10-30)
+
+The owner's report on the first beta, worked through in one slice and
+released as v1.1.0-beta.2:
+
+- **"Saved" notice cut off.** The Copied/Saved notices had a fixed width of
+  250 DIP; the Turkish "Saved" text needs 385 px at 125 % and was cut. The
+  notices now size themselves to their text (one line while the work area
+  allows, otherwise wrapped, never smaller than before). The notices are in
+  `text_fits_in_every_language`; with the old width that check fails on the
+  Turkish text.
+- **Tools island jumped above the frame.** Choosing a tool fixes the
+  screenshot and shows the property island below the tools island; when the
+  two no longer fitted below the frame, the group was placed above it. The
+  islands are now placed around the frame with room for the tallest property
+  island any tool shows, so choosing a tool moves nothing. An island the user
+  moved keeps its own size at the work-area edge. `capture_island_placement`
+  checks that choosing a tool and drawing move no island.
+- **Right-click in a locked Scrollshot** now works like Esc: it requests
+  Discard, which asks first when there is a scrolled image
+  ([ADR-028](decisions/ADR-028-scrollshot-capture-workspace.md)).
+- **`trim_timeline_seek_stress` instability** came from the test, not the
+  product: a pointer move that Windows reports late. The test now waits for
+  it. A second cause was the lab's "new network" flyout, now turned off in
+  provisioning. See
+  [ADR-037](decisions/ADR-037-isolated-test-lab.md#why-trim_timeline_seek_stress-failed-its-pointer-check-2026-10-30).
+- **Black boxes in pictures where an island was.** A window excluded from
+  capture leaves a black hole of its shape when it is shown again or moved
+  over content that is not redrawn. This put the tools island into a
+  screenshot whose frame had been dragged under it and the recording panel
+  into a GIF. Every excluded island is now a layered window at full opacity
+  (`ui::ExcludeFromCapture`), which never leaves the hole, and tooltips, which
+  Windows did not exclude at all, are excluded each time they are shown.
+  `island_capture_exclusion` measures both; see
+  [ADR-008](decisions/ADR-008-recording-ui-and-safe-finalization.md#capture-exclusion-of-the-islands-2026-10-30).
+- **Installer language.** Choosing English in the installer and getting a
+  Turkish Easnap is the documented behaviour: the installer's language applies
+  to its own pages; Easnap follows Windows (here Turkish) until a language is
+  chosen in Settings. The installed copy and a development build share
+  `%LOCALAPPDATA%\Easnap\settings.ini`.
+
+Validated: the Full tier in the lab passed 48 of 48 with no retry on the final
+tree (2026-10-30, run `20261030-230104-full`; `trim_timeline_seek_stress`
+reported 133 pointer moves, none late). The Full run before it, on the same
+sources, failed only `mfplay_preview_audio_transport` at "Close retires a
+suspended native host within 1500 ms"; that test builds none of the changed
+sources and passed in both probe variants alone, so it is a timing check that
+can miss its limit under load. An earlier Full run failed
+`annotation_editing_native` twice: the room kept for the property island also
+held back an island the user had moved to the bottom edge; corrected. The
+private-desktop tests `capture_island_placement`,
+`scrollshot_workspace_production`, `text_fits_in_every_language`,
+`capture_overlay_interaction`, `capture_frame_interaction` and
+`data_safety_questions` passed on the development PC. `island_capture_exclusion`
+ran on the development PC's SAMSUNG display with the owner's permission
+(68 of 68) before its still-desktop part existed; with that part it ran in the
+lab only (108 of 108).
+Not validated: the corrections in the running application by hand, the
+still-desktop part of `island_capture_exclusion` on the development PC, and a
+Full run on the host.
 
 ## Isolated test lab (2026-10-19)
 
-Tests now run in the Hyper-V VM `easnap-lab`, driven by winlab, configured by
+Tests run in the Hyper-V VM `easnap-lab`, driven by winlab, configured by
 `testenv.json` and called through `scripts/lab.ps1`; how to use it is in
 [testing](testing.md#lab), the design and every measured figure in
 [ADR-037](decisions/ADR-037-isolated-test-lab.md).
@@ -13,10 +91,11 @@ Tests now run in the Hyper-V VM `easnap-lab`, driven by winlab, configured by
 Implemented: `lab.ps1 run`, `probe`, `parity` and `verify`; the verdict and
 its Turkish summary; `build.ps1 -TestMode Build` and the direct build
 `build.ps1 -Trust Lab`; `test.ps1 -HostOnly`; capture-path reporting;
-`recording_pause_stop_stress` skips without an audio source; a "LABORATUVAR"
-section in the Desktop menu.
+`recording_pause_stop_stress` skips without an audio source; Windows Update
+and a conservative debloat during provisioning (`testenv.json`); a
+"LABORATUVAR" section in the Desktop menu.
 
-Validated on 2026-10-19:
+Validated on 2026-10-19 and 2026-10-20:
 
 - The lab's first runs found a product defect: without a hardware H.264
   encoder the MP4 writer stamped the first video frame one frame late, which
@@ -25,10 +104,14 @@ Validated on 2026-10-19:
   the development PC with the NVIDIA encoder.
 - On the corrected tree: probe 10 of 10 in both observer variants (Desktop
   Duplication works in the VM, no test is host-only), Standard 39 of 39 in
-  about 5 min, Full 47 of 47 in about 9.5 min. `trim_timeline_seek_stress` is
-  unstable in the VM as on the host. `real_desktop_recording_session`
+  about 5 min, Full 47 of 47 in about 9.5 min. `trim_timeline_seek_stress`
+  was unstable in the VM as on the host (cause found and corrected on
+  2026-10-30, see above). `real_desktop_recording_session`
   reported the GDI fallback on the still desktop, as the provider documents,
   and the verdict marked it `VM-ok-but-fallback`.
+- After the guest's Windows update step (golden checkpoint of 2026-10-20,
+  build 19045.6456), a Full run passed 47 of 47 with
+  `trim_timeline_seek_stress` passing on its retry.
 
 Known limitations: one Windows 10 22H2 image with one display, a virtual
 audio cable and no GPU; `lab.ps1 parity` lists the differences from the host.
@@ -40,7 +123,6 @@ local aid, not a release gate.
 The branch `feature/v1.1-beta` was merged into `main` and published on
 2026-10-13 as the prerelease
 [v1.1.0-beta.1](https://github.com/vseprr/easnap/releases/tag/v1.1.0-beta.1).
-The latest stable release is still v1.0.2.
 
 ### Implemented in the beta
 
@@ -115,104 +197,18 @@ The latest stable release is still v1.0.2.
 
 ### Validated on the branch
 
-One development PC, Windows 10 build 19045, NVIDIA GPU, two 1920x1080 displays
-at 125%; visible-desktop tests and manual checks ran on the secondary display.
+On one development PC (Windows 10 build 19045, NVIDIA GPU, two 1920x1080
+displays at 125 %) on 2026-10-13: the Release x64 build with warnings as
+errors; Standard 39 of 39 and Full 46 of 47 on the final binaries, with
+`ui_modernization_native` passing on its retry (the open resize limitation
+below); the new tests' checks; the running application driven by hand through
+Scrollshot, data safety, Settings, saving without a dialog, a recording with
+Media Foundation loaded on first use, library loading, island placement and a
+recording without a preview; 30 tests under AddressSanitizer; packaging and
+manifests. The individual runs and what each covered are in the
+[validation records](releases/validation-history.md#validation-of-v110-beta1).
 
-- Release x64 with warnings as errors builds. On 2026-10-13 the Standard tier
-  passed 39 of 39 on the final binaries in one run.
-- **Full tier on the final binaries: 46 passed and one passed on its retry**
-  (2026-10-13, visible-desktop tests on the secondary display).
-  `ui_modernization_native` failed its composed trim-window resize observation
-  in four cases (`holes==0 && title_changes==0`), which is the open resize
-  limitation listed below, passed on the retry and passed twice more alone.
-  The run before the island placement work, on otherwise the same sources,
-  passed 45 of 45 with none retried. Two
-  earlier Full runs of the same day: 45 of 45 before the symbol files and the
-  change to the trim window; then 44, where `trim_timeline_seek_stress`
-  stopped at its pointer check (the real pointer was not where the test had
-  put it; the PC was in use) and passed when it was run again alone.
-- **`annotation_editing_native` is no longer intermittent, for two reasons
-  that were found.** A build that failed it deterministically (24 checks, four
-  runs in a row) showed a one-pixel column at the native caret position: the
-  product defect described above. The occasional failure on a reopened text
-  box came from the test: its simulated double-click never released the
-  button, the native control kept the mouse, and movement of the real pointer
-  changed the selection under the comparison. With the caret corrected the
-  test passed 4 of 4 standalone runs; with both corrections 3 of 3 and in the
-  Full run. With a script moving the pointer continuously the text-box checks
-  passed while later checks of the same test, which use the real pointer by
-  design, failed as expected. The experiment recorded under v1.0.1 (a 30 ms
-  wait after reopening, 4 of 5 runs failing) passes 5 of 5 now.
-- `scrollshot_real_desktop`: a second process showed a 3,160-row document; six
-  single wheel notches, three double notches, a click and two Page Down keys,
-  then wheel notches to the end scrolled it through the open frame. The
-  production session returned 720 x 2,880 pixels from 17 pictures, every pixel
-  equal to what that process drew; one picture came through GDI, the rest
-  through Desktop Duplication.
-- `diagnostics_log_and_crash_reports` passes in Release and Debug: eight kinds
-  of failure each leave one valid report.
-- The stitching engine's 232 checks pass in Release and Debug; in Release the
-  session's 66, the layout and viewport's 351, the workspace's 337, the
-  data-safety and Settings dialog's 93 and the text-fit test's 392 (every
-  production window and island in both languages).
-- `island_layout_logic` (25,214 checks over five display and island sizes) and
-  `capture_island_placement` (45 checks on production windows) cover the
-  placement of the tools island, the recording panel and the mode island.
-- `startup_entry_registry` writes, reads and removes the sign-in entry in a
-  key of its own and finds the real `Run` key unchanged. `executable_imports`
-  finds no Media Foundation library among the imports `Easnap.exe` needs to
-  start.
-- **The running application, by hand**, driven with real pointer and keyboard
-  input over a test window:
-  - Scrollshot and data safety: shortcut, region drag, the three mode buttons
-    in Turkish, Start by button and by Enter, the scissors button, wheel
-    scrolling to 720 x 1,440 and 720 x 1,680, Save through the system dialog,
-    Edit with scrolling, zooming, a rectangle drawn at the pointed place and a
-    full-size export, Copy by button and by Enter, the discard and exit
-    questions, the sign-out block, a recording of 11 s through trim, an abrupt
-    end of the process followed by the recovery offer ("Not now", then Save),
-    a session end during recording followed by the offer and Delete, and the
-    crash notice appearing once.
-  - Settings and the shell: the dialog in Turkish, English and Turkish again
-    with the language and appearance stored each time; the shortcut button
-    taking Ctrl+Alt+F9 and Ctrl+Alt+Q, taking Easnap's own shortcut again,
-    refusing Shift+K and keeping the dialog on Esc; no capture starting from
-    the shortcut while the dialog is open and the shortcut working again
-    afterwards; Cancel changing nothing; the `Run` key untouched; About and
-    Copy details; a second start opening the workspace with the keyboard; a
-    start with `--startup` beside a running Easnap doing nothing; an older
-    `settings.ini` read and rewritten with its theme kept.
-  - Saving without a dialog: two screenshots saved into a test folder under
-    two names, 720 x 480 each, no dialog.
-  - Recording with the delay-loaded build: neither Media Foundation library in
-    the process at start, both there once the recording ran, 3 s recorded,
-    trim window, Delete; a recording left by a killed process offered at the
-    next start and deleted.
-  - Library loading: with unrelated DLL files named `mfplat.dll` and
-    `mfreadwrite.dll` beside `Easnap.exe`, a recording loaded both libraries
-    from the Windows system directory and worked.
-  - Islands: a frame of full height with gaps at the sides put the tools
-    island over the bottom of the frame and left the mode island at its home;
-    both were hidden during a resize and shown after it; a narrow frame put
-    the tools island beside it; a frame over the top centre moved the mode
-    island beside the frame; the recording panel went beside the frame.
-    Nothing was fixed on the way.
-  - A recording without a preview: with the helper executable taken away, the
-    message named it, closing offered Save, Delete and Keep, Keep left the
-    window, and Save wrote a 1.5 MB MP4 through the system dialog and removed
-    the temporary recording.
-- **AddressSanitizer, locally.** 20 of the 21 unit tests and the 10
-  integration and private-desktop tests that hosted CI runs passed without a
-  report. The crash-report test is excluded: the sanitizer takes its
-  deliberate failures first. Preview and visible-desktop tests were not run
-  under it.
-- **Packaging.** `package-release.ps1` produced the ZIP, the installer, the
-  symbols ZIP and their checksum files from this build, after checking that
-  both executables report 1.1.0-beta.1 with the prerelease flag and name their
-  symbol files without a directory. `package-manifests.ps1` wrote the winget
-  and Scoop manifests from those packages.
-
-Not validated on the branch:
+### Not validated on the branch
 
 - Scrollshot on real applications (browsers, editors, lists that load as they
   scroll), at a scale other than 125%, on mixed-DPI or portrait monitors, on a
@@ -230,10 +226,11 @@ Not validated on the branch:
   high contrast: both need a change to Windows settings.
 - The folder picker of Settings, "Check for updates" and "Website": they open
   a system dialog or the browser and were not driven.
-- **The installer.** It was compiled, not run: installing would replace the
-  copy of the person who owns the development PC. Its Turkish pages, the
-  uninstall question and the removal of the sign-in entry are therefore
-  unseen.
+- **The installer, by an agent.** It was compiled, not run by an agent:
+  installing would replace the owner's copy. The owner has since installed the
+  beta on the development PC with the English pages and used it (reported
+  2026-10-30); its Turkish pages, the uninstall question and the removal of
+  the sign-in entry remain unseen.
 - The manifests against `winget validate` or Scoop; nothing was submitted to
   a package manager.
 - The published packages themselves. The Release workflow built them from the
@@ -274,8 +271,8 @@ Not validated on the branch:
 - A window that is open when the language changes keeps its text; only the
   Settings dialog can be open then, and it closes.
 - HDR displays are unverified: no HDR output was available.
-- Tests share the user's clipboard: `capture_workspace_production` and
-  `annotation_editing_native` replace its content.
+- On the host, tests share the user's clipboard: `capture_workspace_production`
+  and `annotation_editing_native` replace its content.
 - The log receives one line per audio packet for the first packets of every
   recording; these lines are diagnostic and carry no content.
 - A top-docked taskbar still overlaps the mode island.
@@ -298,28 +295,17 @@ The limitations of the v1.1 work are listed
 
 Open since v1.0.0:
 
-- Strict resize diagnostics remain failed: 220 cases, 61,095 desktop frames,
-  59 visual-failing cases and 12 minimum-width assertions; all 4,185 settled
-  samples were clean. Transient video/control overlap and duplicated caption
-  pixels occur during motion/maximize. No cause is established. These
-  diagnostics are opt-in modes, not registered tests; a green CTest run does
-  not close them. See [ADR-024](decisions/ADR-024-native-trim-frame.md).
-  Per run on 2026-09-30 (secondary display, 1920x1080 at 125%, both themes):
-
-  | Run | Cases | Desktop frames | Visual-failing cases | Minimum-width assertions | Settled samples, all clean |
-  |---|---:|---:|---:|---:|---:|
-  | Release, fast | 60 | 14,726 | 22 | 5 | 1,193 |
-  | Debug, fast | 60 | 12,854 | 16 | 1 | 1,060 |
-  | Release, slow | 60 | 23,870 | 10 | 4 | 1,149 |
-  | Status, progress and Cancel visible | 40 | 9,645 | 11 | 2 | 783 |
-
-  The longest measured resize dispatch was 47 ms.
-- During the slow resize run, private memory rose from about 65.1 to 86.6 MiB
-  in the process that owns the trim window (the test executable, which also
-  runs the capture observer) and from 68.4 to 90.6 MiB in the preview helper
-  (2026-09-30). The run does not show whether the growth is in the product or
-  in the observer; freedom from leaks during long resize sessions is not
-  established.
+- Strict resize diagnostics remain failed (2026-09-30): 220 cases, 61,095
+  desktop frames, 59 visual-failing cases and 12 minimum-width assertions; all
+  4,185 settled samples were clean. Transient video/control overlap and
+  duplicated caption pixels occur during motion/maximize. No cause is
+  established. These diagnostics are opt-in modes, not registered tests; a
+  green CTest run does not close them. The per-run figures are in
+  [ADR-024](decisions/ADR-024-native-trim-frame.md#known-limitation-transient-artifacts-while-resizing).
+- Private memory of the trim window's process and of the preview helper grew
+  by about 22 MiB each during the slow resize run; whether in the product or
+  in the observer is not known, so freedom from leaks during long resize
+  sessions is not established (figures in ADR-024).
 - Native startup/pause/drain can wait inside Windows; full-range publication
   is synchronous; undo history is uncapped; late MP4 trims decode from source
   start; codec endpoints and GIF timing/palette have granularity. Low size GIF
@@ -341,9 +327,9 @@ Open since the v1.0.1 review:
 - `CreateSession` follows a reparse-point storage root that deletion would
   refuse. A session lease that cannot be reacquired after a failed delete is
   only logged.
-- Mixed-DPI drags, HDR outputs, L-shaped monitor layouts, a top-docked taskbar
-  over the mode toolbar and the configuration island at 200 % on a 768-row
-  display are unverified or known to be imperfect.
+- Mixed-DPI drags, HDR outputs, L-shaped monitor layouts and the
+  configuration island at 200 % on a 768-row display are unverified or known
+  to be imperfect.
 - Not every visible-desktop test follows the chosen display.
 - `capture_overlay_interaction` fails three checks on the hosted runner's
   small desktop. Whether that is only a test assumption or also a layout
@@ -368,6 +354,10 @@ v1.1.0; the checks listed above as not validated (Windows 11, an N edition,
 Scrollshot on real applications, other scale factors, the installer) come
 first. The package manager submissions remain the owner's step
 ([distribution](distribution.md)).
+
+v1.1.0-beta.2 carries the beta feedback corrections. The owner checked the
+black-box fix by hand on the development PC; the installer of beta.2 and its
+uninstall questions are checked by hand after publication.
 
 Tests run in the lab: `scripts/lab.ps1 run -Tier Standard|Full`, see
 [testing](testing.md#lab). The host desktop is used only when the owner asks;

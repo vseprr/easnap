@@ -1,6 +1,6 @@
 # Easnap delivery roadmap
 
-**Updated:** 2026-10-20
+**Updated:** 2026-10-30
 
 Read this with [project status](docs/project-status.md). This file records the
 phase boundaries; what is implemented and validated belongs in project status,
@@ -28,7 +28,7 @@ v1.0.2, the second maintenance release on top of v1.0.0.
 
 ## Next bounded slices
 
-For v1.1.0-beta.1, in this order:
+For v1.1.0-beta.1 (1 to 8) and after its publication (9 and 10), in this order:
 
 1. Done: Scrollshot stitching engine, capture session, workspace integration
    and editing of the stitched image.
@@ -47,15 +47,22 @@ For v1.1.0-beta.1, in this order:
    and a pull-request template; skipped tests are reported as skipped. Both
    new jobs pass on the hosted runner.
 8. Done: documentation pass and validation. Thirteen closed reports were
-   removed after their conclusions moved into the ADRs they support; the
-   Full tier passed 45 of 45 on 2026-10-13.
-
+   removed after their conclusions moved into the ADRs they support; on
+   2026-10-13 the Full tier passed 46 of 47 on the final binaries, the 47th
+   on its retry.
 9. Done (2026-10-19): the isolated test lab. The Standard and Full tiers run
    in a Hyper-V VM while the PC stays in use; its first runs exposed a
    one-frame timestamp shift of the MP4 writer on software H.264 encoders,
    now fixed.
+10. Done (2026-10-30), released as v1.1.0-beta.2: the first beta
+    feedback. Self-sizing Copied/Saved notices, a tools island that no longer
+    jumps when a tool is chosen, right-click in a locked Scrollshot, the cause
+    of the `trim_timeline_seek_stress` instability, and the black boxes that
+    excluded islands left in screenshots and recordings (islands are now
+    layered; tooltips are excluded when shown).
 
-Next: tests run in the lab (`scripts/lab.ps1 run`,
+Next: the owner's check of the beta.2 installer and its uninstall. Tests run
+in the lab (`scripts/lab.ps1 run`,
 [testing](docs/testing.md#lab)); the host desktop only when the owner asks,
 including the open host Full run for the writer fix. Then the checks the beta
 could not make on one PC: Windows 11, an N edition, Scrollshot on real
