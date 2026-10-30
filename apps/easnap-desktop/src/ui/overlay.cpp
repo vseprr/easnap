@@ -874,8 +874,13 @@ private:
                 return 0;
 
             case WM_RBUTTONUP:
-                // A stray right-click must not throw a stitched image away.
-                if (!controller_.workspace().scrollshot_locked()) { controller_.HandleCancelled(); }
+                // A locked Scrollshot leaves the way Esc does: Discard asks
+                // first when the user has scrolled for the image.
+                if (controller_.workspace().scrollshot_locked()) {
+                    controller_.RequestScrollshotCommand(ScrollshotCommand::Discard);
+                } else {
+                    controller_.HandleCancelled();
+                }
                 return 0;
 
             case WM_MOUSEWHEEL:

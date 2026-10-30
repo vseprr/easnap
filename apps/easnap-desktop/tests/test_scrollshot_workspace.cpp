@@ -358,7 +358,9 @@ void OverlayPhases() {
     CHECK(in_plane(frame.left, frame.top - 1) && in_plane(frame.left, frame.bottom));
     CHECK(in_plane(monitor.bounds.left + 5, monitor.bounds.top + 5));
 
-    // Outside the frame nothing happens: no new selection, no cancellation.
+    // Outside the frame a drag does nothing: no new selection, no cancellation.
+    // A right-click leaves the way Esc does, through Discard, which asks the
+    // user first when there is a scrolled image to lose.
     ::SendMessageW(dim, WM_LBUTTONDOWN, MK_LBUTTON, client(monitor.bounds.left + 50, monitor.bounds.top + 80));
     ::SendMessageW(dim, WM_MOUSEMOVE, MK_LBUTTON, client(monitor.bounds.left + 250, monitor.bounds.top + 180));
     ::SendMessageW(dim, WM_LBUTTONUP, 0, client(monitor.bounds.left + 250, monitor.bounds.top + 180));
@@ -366,6 +368,8 @@ void OverlayPhases() {
     ::SendMessageW(dim, WM_DISPLAYCHANGE, 32, MAKELPARAM(1920, 1080));
     const RECT selection = overlay.selector().selection();
     CHECK(::EqualRect(&selection, &frame) && cancels == 0);
+    CHECK(commands == (std::vector<ScrollshotCommand>{ScrollshotCommand::Discard}));
+    commands.clear();
 
     // Shortcuts while the workspace has the focus.
     ::SendMessageW(dim, WM_KEYDOWN, VK_RETURN, 0);

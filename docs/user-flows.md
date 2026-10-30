@@ -159,7 +159,8 @@ Scrollshot directly from an untouched Screenshot frame. Once the screenshot is
 fixed the button is disabled and its tooltip says why.
 
 **Capture.** Start locks the frame: it cannot be moved, resized or switched to
-another mode, and a right-click no longer cancels. The border is drawn outside
+another mode. A right-click outside the frame works like **Esc**: it discards,
+and asks first when you have scrolled for the image. The border is drawn outside
 the selection. Inside the frame the workspace is open, so the pointer, the
 wheel and, after a click, the keyboard go to the application underneath.
 Outside the frame Easnap keeps the input.

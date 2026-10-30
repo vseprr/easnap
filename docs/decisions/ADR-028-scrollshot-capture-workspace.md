@@ -95,9 +95,13 @@ shading is put back.
 ### The locked frame
 
 While the state is `ScrollshotCapturing` or `ScrollshotReview` the selection
-cannot be moved or resized, the mode bar is disabled, a right-click does not
-cancel and a new drag does not start a selection. `CaptureWorkspace` owns
-this policy (`scrollshot_locked`, `can_adjust_selection`, `can_switch_mode`).
+cannot be moved or resized, the mode bar is disabled and a new drag does not
+start a selection. `CaptureWorkspace` owns this policy (`scrollshot_locked`,
+`can_adjust_selection`, `can_switch_mode`). A right-click outside the frame
+does not cancel the session directly: like Esc it requests Discard, which
+asks before a scrolled image is lost (changed on 2026-10-30 at the beta
+tester's request; before, a right-click did nothing while the frame was
+locked).
 
 The border is drawn around the selection instead of on its edge, without
 handles or a size label, so that it covers none of the content. A frame that
