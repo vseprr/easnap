@@ -74,6 +74,19 @@ their latest recorded runs, and the cause is not established. Measured on
   status, progress and Cancel: 220 cases and 61,095 desktop frames. 59 cases
   failed visually during motion and 12 minimum-width assertions failed; all
   4,185 settled samples were clean. The longest measured dispatch was 47 ms.
+  Per run (2026-09-30, both themes):
+
+  | Run | Cases | Desktop frames | Visual-failing cases | Minimum-width assertions | Settled samples, all clean |
+  |---|---:|---:|---:|---:|---:|
+  | Release, fast | 60 | 14,726 | 22 | 5 | 1,193 |
+  | Debug, fast | 60 | 12,854 | 16 | 1 | 1,060 |
+  | Release, slow | 60 | 23,870 | 10 | 4 | 1,149 |
+  | Status, progress and Cancel visible | 40 | 9,645 | 11 | 2 | 783 |
+
+- During the slow run, private memory rose from about 65.1 to 86.6 MiB in the
+  process that owns the trim window (the test executable, which also runs the
+  capture observer) and from 68.4 to 90.6 MiB in the preview helper. The run
+  does not show whether the growth is in the product or in the observer.
 - Failing frames showed native video overlapping the timeline, clipped
   right-side controls and readout, and displaced video with duplicated caption
   pixels during maximize.

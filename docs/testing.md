@@ -168,6 +168,18 @@ is time-based.
   `SKIP_RETURN_CODE 77`. CTest then reports it as skipped, not as passed.
 - Do not synchronise with a fixed sleep. Wait for the condition with a
   deadline; a fixed sleep is a timing assumption that fails under load.
+- `SetCursorPos` can return before Windows reports the new position (16 to
+  55 ms in the lab). A test that places the pointer waits until
+  `GetCursorPos` reports it before checking where it is; `MovePointer` in
+  `trim_seek_stress.h` does this.
+- A test that reads the screen to prove a window is excluded from capture
+  must not redraw what lies under the window before the read. Windows leaves
+  a black hole under a plain excluded window only over content that is not
+  redrawn, so a test that repaints its backdrop first passes on broken code
+  (ADR-008). `island_capture_exclusion` shows the still-desktop pattern.
+- A test executable that creates common-controls windows the way Easnap does
+  (tooltips, for example) needs the version 6 manifest dependency that
+  `src/main.cpp` declares; without it `TTM_ADDTOOL` fails.
 - Label long repeats `soak` and keep a short variant in the normal tiers.
 - A test that needs a real GPU goes into `tests.gpuRequired` in
   `testenv.json`; one that must run on the host goes into `tests.hostOnly`.
@@ -215,7 +227,21 @@ PowerShell 5.1. Design and measured results are in
 | `probe` | Run the real-desktop, visual and audio tests with the WGC and the Duplication observer, with their capture paths |
 | `parity` | Compare the guest with the host and list the tests each difference touches |
 | `connect`, `screenshot`, `stop` | Open the VM console, save a picture of its screen, stop the VM |
+| `restore` | Restore the golden checkpoint and start the VM, without running anything |
 | `create`, `provision`, `snapshot` | One time: create the VM, configure the guest, take the golden checkpoint |
+| `destroy` | Remove the VM, its checkpoints and its storage folder; asks for the VM name unless `-Yes` |
+
+`run` and `probe` take `-NoRestore` to keep the VM's current state, and
+`probe -Tests a,b` limits the probe to the named tests. The options are
+forwarded to winlab, whose README (`C:\Projects\winlab\README.md`) describes
+them.
+
+A change to the guest's provisioning (`guest/provision.ps1` in winlab) reaches
+the tests only through a new golden checkpoint: `lab.ps1 restore`, then
+`provision` (winlab's `-SkipWindowsUpdate` skips the update rounds), then
+`snapshot`. Provisioning turns off the "new network" flyout that Windows
+otherwise opens after every restore; it took the foreground from the first
+visible test.
 
 Every `run` restores the golden checkpoint, syncs the sources, builds with
 `scripts\build.ps1 -TestMode Build` and runs

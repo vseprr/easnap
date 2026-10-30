@@ -1,10 +1,13 @@
-# Implementation and validation records: v1.0.1 and v1.0.2
+# Implementation and validation records: v1.0.1, v1.0.2 and v1.1.0-beta.1
 
 The [release notes](v1.0.1.md) of each version say what changed and summarize
 how it was checked. This file keeps the detail behind those summaries: the
-individual runs, the ones that failed, and what was not validated. It was part
-of the project status until 2026-10-13 and is a record, not a task list. The
-current state is in [project status](../project-status.md).
+individual runs, the ones that failed, and what was not validated. The records
+of v1.0.1 and v1.0.2 were part of the project status until 2026-10-13, those of
+[v1.1.0-beta.1](#validation-of-v110-beta1) until 2026-10-30. This file is a
+record, not a task list. The current state is in
+[project status](../project-status.md).
+
 ## Scope
 
 v1.0.1 followed the published v1.0.0 with fixes, hardening and test tooling.
@@ -157,7 +160,7 @@ display while the PC was in use.
     in four suite runs and passed in every standalone repetition (11 of 11)
     and in the final rerun. Its failing assertions compare the presented text
     box with the source-backed renderer. The causes were found on the v1.1
-    branch; see [the current slice](../project-status.md#validated-on-the-branch).
+    branch; see [v1.1.0-beta.1](#validation-of-v110-beta1).
 - Timing on this machine: the Full tier ran 26 background tests in 91 s and 7
   visible-desktop tests in 274 s. The previous suite of 36 took 790 s. The
   Soak tier ran 31 background tests in 195 s and 8 visible-desktop tests in
@@ -196,3 +199,111 @@ presented text box stayed different from the source-backed renderer for more
 than 1.5 s in 4 of 5 runs. The test's double-click never released the button,
 so the native control kept the mouse and followed the real pointer. With the
 release added, the same wait passes 5 of 5.
+
+## Validation of v1.1.0-beta.1
+
+This section records the v1.1.0-beta.1 branch before its publication on
+2026-10-13; the [release notes](v1.1.0-beta.1.md) summarize it. What was not
+validated is still listed in
+[project status](../project-status.md#not-validated-on-the-branch).
+
+One development PC, Windows 10 build 19045, NVIDIA GPU, two 1920x1080 displays
+at 125%; visible-desktop tests and manual checks ran on the secondary display.
+
+- Release x64 with warnings as errors builds. On 2026-10-13 the Standard tier
+  passed 39 of 39 on the final binaries in one run.
+- **Full tier on the final binaries: 46 passed and one passed on its retry**
+  (2026-10-13, visible-desktop tests on the secondary display).
+  `ui_modernization_native` failed its composed trim-window resize observation
+  in four cases (`holes==0 && title_changes==0`), which is the open resize
+  limitation of [ADR-024](../decisions/ADR-024-native-trim-frame.md#known-limitation-transient-artifacts-while-resizing),
+  passed on the retry and passed twice more alone.
+  The run before the island placement work, on otherwise the same sources,
+  passed 45 of 45 with none retried. Two
+  earlier Full runs of the same day: 45 of 45 before the symbol files and the
+  change to the trim window; then 44, where `trim_timeline_seek_stress`
+  stopped at its pointer check and passed when it was run again alone. It was
+  put down to the PC being in use at the time; the later lab investigation found
+  a pointer move that Windows reports late instead (see
+  [ADR-037](../decisions/ADR-037-isolated-test-lab.md#why-trim_timeline_seek_stress-failed-its-pointer-check-2026-10-30)).
+- **`annotation_editing_native` is no longer intermittent, for two reasons
+  that were found.** A build that failed it deterministically (24 checks, four
+  runs in a row) showed a one-pixel column at the native caret position, a
+  product defect: the caret is now hidden for the whole message while text is
+  typed into an annotation. The occasional failure on a reopened text
+  box came from the test: its simulated double-click never released the
+  button, the native control kept the mouse, and movement of the real pointer
+  changed the selection under the comparison. With the caret corrected the
+  test passed 4 of 4 standalone runs; with both corrections 3 of 3 and in the
+  Full run. With a script moving the pointer continuously the text-box checks
+  passed while later checks of the same test, which use the real pointer by
+  design, failed as expected. The experiment recorded under v1.0.1 (a 30 ms
+  wait after reopening, 4 of 5 runs failing) passes 5 of 5 now.
+- `scrollshot_real_desktop`: a second process showed a 3,160-row document; six
+  single wheel notches, three double notches, a click and two Page Down keys,
+  then wheel notches to the end scrolled it through the open frame. The
+  production session returned 720 x 2,880 pixels from 17 pictures, every pixel
+  equal to what that process drew; one picture came through GDI, the rest
+  through Desktop Duplication.
+- `diagnostics_log_and_crash_reports` passes in Release and Debug: eight kinds
+  of failure each leave one valid report.
+- The stitching engine's 232 checks pass in Release and Debug; in Release the
+  session's 66, the layout and viewport's 351, the workspace's 337, the
+  data-safety and Settings dialog's 93 and the text-fit test's 392 (every
+  production window and island in both languages).
+- `island_layout_logic` (25,214 checks over five display and island sizes) and
+  `capture_island_placement` (45 checks on production windows) cover the
+  placement of the tools island, the recording panel and the mode island.
+- `startup_entry_registry` writes, reads and removes the sign-in entry in a
+  key of its own and finds the real `Run` key unchanged. `executable_imports`
+  finds no Media Foundation library among the imports `Easnap.exe` needs to
+  start.
+- **The running application, by hand**, driven with real pointer and keyboard
+  input over a test window:
+  - Scrollshot and data safety: shortcut, region drag, the three mode buttons
+    in Turkish, Start by button and by Enter, the scissors button, wheel
+    scrolling to 720 x 1,440 and 720 x 1,680, Save through the system dialog,
+    Edit with scrolling, zooming, a rectangle drawn at the pointed place and a
+    full-size export, Copy by button and by Enter, the discard and exit
+    questions, the sign-out block, a recording of 11 s through trim, an abrupt
+    end of the process followed by the recovery offer ("Not now", then Save),
+    a session end during recording followed by the offer and Delete, and the
+    crash notice appearing once.
+  - Settings and the shell: the dialog in Turkish, English and Turkish again
+    with the language and appearance stored each time; the shortcut button
+    taking Ctrl+Alt+F9 and Ctrl+Alt+Q, taking Easnap's own shortcut again,
+    refusing Shift+K and keeping the dialog on Esc; no capture starting from
+    the shortcut while the dialog is open and the shortcut working again
+    afterwards; Cancel changing nothing; the `Run` key untouched; About and
+    Copy details; a second start opening the workspace with the keyboard; a
+    start with `--startup` beside a running Easnap doing nothing; an older
+    `settings.ini` read and rewritten with its theme kept.
+  - Saving without a dialog: two screenshots saved into a test folder under
+    two names, 720 x 480 each, no dialog.
+  - Recording with the delay-loaded build: neither Media Foundation library in
+    the process at start, both there once the recording ran, 3 s recorded,
+    trim window, Delete; a recording left by a killed process offered at the
+    next start and deleted.
+  - Library loading: with unrelated DLL files named `mfplat.dll` and
+    `mfreadwrite.dll` beside `Easnap.exe`, a recording loaded both libraries
+    from the Windows system directory and worked.
+  - Islands: a frame of full height with gaps at the sides put the tools
+    island over the bottom of the frame and left the mode island at its home;
+    both were hidden during a resize and shown after it; a narrow frame put
+    the tools island beside it; a frame over the top centre moved the mode
+    island beside the frame; the recording panel went beside the frame.
+    Nothing was fixed on the way.
+  - A recording without a preview: with the helper executable taken away, the
+    message named it, closing offered Save, Delete and Keep, Keep left the
+    window, and Save wrote a 1.5 MB MP4 through the system dialog and removed
+    the temporary recording.
+- **AddressSanitizer, locally.** 20 of the 21 unit tests and the 10
+  integration and private-desktop tests that hosted CI runs passed without a
+  report. The crash-report test is excluded: the sanitizer takes its
+  deliberate failures first. Preview and visible-desktop tests were not run
+  under it.
+- **Packaging.** `package-release.ps1` produced the ZIP, the installer, the
+  symbols ZIP and their checksum files from this build, after checking that
+  both executables report 1.1.0-beta.1 with the prerelease flag and name their
+  symbol files without a directory. `package-manifests.ps1` wrote the winget
+  and Scoop manifests from those packages.
