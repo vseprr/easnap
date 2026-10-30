@@ -13,12 +13,15 @@ releases are in the [validation records](releases/validation-history.md).
 ## Baseline
 
 - Latest stable release: v1.0.2. Latest prerelease:
-  [v1.1.0-beta.1](https://github.com/vseprr/easnap/releases/tag/v1.1.0-beta.1),
-  published on 2026-10-13 from `main`.
-- v1.1.0-beta.2 is released from `main` with the MP4 writer change for
-  software H.264 encoders and the beta feedback corrections, both described
-  below ([release notes](releases/v1.1.0-beta.2.md)). The isolated test lab
-  is a development aid and ships nothing.
+  [v1.1.0-beta.2](https://github.com/vseprr/easnap/releases/tag/v1.1.0-beta.2),
+  published on 2026-10-30 from `main` (tag on the merge of pull request #13),
+  with the MP4 writer change for software H.264 encoders and the beta feedback
+  corrections, both described below
+  ([release notes](releases/v1.1.0-beta.2.md)). The isolated test lab is a
+  development aid and ships nothing.
+- The Release workflow built, tested and attested the packages on the hosted
+  runner; the draft's SHA-256 files and the installer's attestation were
+  verified and both executables report 1.1.0-beta.2 before it was published.
 
 ## Beta feedback corrections: v1.1.0-beta.2 (2026-10-30)
 
@@ -118,11 +121,12 @@ audio cable and no GPU; `lab.ps1 parity` lists the differences from the host.
 A green verdict does not cover what those differences touch, and it is a
 local aid, not a release gate.
 
-## Current slice: v1.1.0-beta.1, published
+## The v1.1 beta: v1.1.0-beta.1 and what it contains
 
 The branch `feature/v1.1-beta` was merged into `main` and published on
 2026-10-13 as the prerelease
 [v1.1.0-beta.1](https://github.com/vseprr/easnap/releases/tag/v1.1.0-beta.1).
+Everything below also ships in v1.1.0-beta.2.
 
 ### Implemented in the beta
 
@@ -349,7 +353,7 @@ post-v1 without a promised date.
 
 ## Next slice
 
-v1.1.0-beta.1 is published. The beta's feedback decides the work before
+v1.1.0-beta.2 is published. The betas' feedback decides the work before
 v1.1.0; the checks listed above as not validated (Windows 11, an N edition,
 Scrollshot on real applications, other scale factors, the installer) come
 first. The package manager submissions remain the owner's step
