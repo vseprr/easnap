@@ -5,14 +5,15 @@
 Read this with [project status](docs/project-status.md). This file records the
 phase boundaries; what is implemented and validated belongs in project status,
 and what each release contained in its
-[release notes](docs/releases/v1.1.0-beta.1.md).
+[release notes](docs/releases/v1.1.0-beta.2.md).
 
-## Current: v1.1.0-beta.1, published
+## Current: v1.1.0-beta.2, published
 
 The first beta of v1.1 was published on 2026-10-13 as a prerelease of
 [`vseprr/easnap`](https://github.com/vseprr/easnap): Scrollshot in the
-application and the work a public beta needs. The latest stable version is
-v1.0.2, the second maintenance release on top of v1.0.0.
+application and the work a public beta needs. The second beta, with the
+corrections from testing the first, was published on 2026-10-30. The latest
+stable version is v1.0.2, the second maintenance release on top of v1.0.0.
 
 | Phase | State |
 |---|---|
@@ -22,7 +23,7 @@ v1.0.2, the second maintenance release on top of v1.0.0.
 | GIF export and recording/trim integration | Implemented |
 | Release hardening | v1.0.0 published; v1.0.1 and v1.0.2 maintenance releases; broader physical validation remains |
 | Scrollshot | Implemented, including editing of the stitched image; released in v1.1.0-beta.1 |
-| Beta readiness | Implemented; v1.1.0-beta.1 published as a prerelease |
+| Beta readiness | Implemented; v1.1.0-beta.1 and v1.1.0-beta.2 published as prereleases |
 | Isolated test lab | Implemented 2026-10-19: Hyper-V VM driven by winlab, direct build, capture-path reporting ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md)) |
 | OCR | Planned after v1; not implemented and no date committed |
 
