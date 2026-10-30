@@ -1211,13 +1211,14 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     // This title identifies the pop-up to tests (FindWindow); it is not localized.
     brush_popup_=::CreateWindowExW(kEditorExStyle,kEditorClassName,L"Brush sizes",kEditorStyle,window.left,window.bottom,
         static_cast<int>(132*scale_),static_cast<int>((kToolbarRowHeight+6)*scale_),hwnd_,nullptr,::GetModuleHandleW(nullptr),this);
-    if(brush_popup_) { ::SetWindowDisplayAffinity(brush_popup_,0x11); }
+    if(brush_popup_) { static_cast<void>(ui::ExcludeFromCapture(brush_popup_)); }
     if(!context_ || !brush_popup_ || !CreateToolbarControls()) { Destroy(); return false; }
     CreateContextControls();
     if(!Control(2600) || !Control(2601) || !Control(2604)) { Destroy(); return false; }
-    ::SetWindowDisplayAffinity(context_,0x11);
+    // The property island is layered already: it fades in.
     ::SetLayeredWindowAttributes(context_,0,255,LWA_ALPHA);
-    static_cast<void>(::SetWindowDisplayAffinity(hwnd_, 0x11));
+    static_cast<void>(ui::ExcludeFromCapture(context_));
+    static_cast<void>(ui::ExcludeFromCapture(hwnd_));
     CreateTextFormats();
     RebuildRedactedBase();
 

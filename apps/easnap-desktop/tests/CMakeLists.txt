@@ -646,6 +646,33 @@ add_test(NAME scrollshot_real_desktop COMMAND test_scrollshot_desktop)
 set_tests_properties(scrollshot_real_desktop PROPERTIES
     LABELS "integration;scrollshot;real-desktop-capture" TIMEOUT 90 SKIP_RETURN_CODE 77)
 
+# The recording panel and the Scrollshot island over a window of one colour,
+# captured through the GDI blit and through Desktop Duplication: the island
+# never appears in the picture.
+add_executable(test_island_capture
+    test_island_capture.cpp
+    ../src/capture/capture_provider.cpp
+    ../src/editor/screenshot_editor.cpp
+    ../src/editor/image_viewport.cpp
+    ../src/editor/redaction_renderer.cpp
+    ../src/ui/capture_workspace.cpp
+    ../src/ui/island_layout.cpp
+    ../src/ui/recording_controls.cpp
+    ../src/ui/scrollshot_controls.cpp
+    ../src/ui/scrollshot_layout.cpp
+    ../src/ui/ui_theme.cpp
+    ../src/ui/native_controls.cpp
+    ../src/app/recording_workflow.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_island_capture PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_island_capture PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi dxguid dwmapi gdiplus uxtheme windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+add_test(NAME island_capture_exclusion COMMAND test_island_capture)
+set_tests_properties(island_capture_exclusion PROPERTIES
+    LABELS "integration;real-desktop-capture;recording;scrollshot" TIMEOUT 90 SKIP_RETURN_CODE 77)
+
 add_executable(test_ui_modernization
     test_ui_modernization.cpp
     ../src/capture/capture_provider.cpp
@@ -778,7 +805,7 @@ set_tests_properties(annotation_editing_native PROPERTIES LABELS "integration;ed
 # The three capture_* tests left this list: they are message-driven and run on
 # a private desktop instead.
 set(interactive_desktop_tests
-    real_desktop_recording_session recording_pause_stop_stress scrollshot_real_desktop
+    real_desktop_recording_session recording_pause_stop_stress scrollshot_real_desktop island_capture_exclusion
     ui_modernization_native annotation_editing_native trim_endpoint_presentation
     trim_timeline_seek_stress trim_timeline_seek_soak)
 set_tests_properties(${interactive_desktop_tests} PROPERTIES RUN_SERIAL TRUE)

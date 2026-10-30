@@ -68,3 +68,55 @@ Startup and pause also synchronously wait for their existing native/barrier work
 their completion has no newly introduced timeout guarantee.
 If worker creation fails, the existing synchronous safe-drain fallback remains.
 Permanently hung native calls retain the limitation in ADR-021.
+
+## Capture exclusion of the islands (2026-10-30)
+
+**Defect.** A window excluded with `WDA_EXCLUDEFROMCAPTURE` is not always
+left out of a picture: Windows 10 can put a black hole of its shape in its
+place. Two beta reports had this cause. A recording panel once appeared as a
+uniformly black box in a GIF; and a screenshot whose frame had been dragged
+until the tools island lay over it, then fixed, held a black rounded
+rectangle of 1040 x 60 px, the tools island at 125 %, while the island moved
+to the place freed above the frame (development PC, 2026-10-30 22:03).
+
+**Measured cause** (`island_capture_exclusion`, lab VM, probes of
+2026-10-30). A backdrop is painted once; islands are then shown, shown again
+after hiding (as during a frame drag) and moved while visible, and nothing
+under them is drawn again before the screen is read as a screenshot reads
+it (`CaptureDesktop`) and as a screen blit:
+
+| Window | First shown | Shown again after hiding | Moved while visible |
+|---|---:|---:|---:|
+| Plain excluded test window, 160 x 120 | 0 | 19,200 | 19,200 |
+| Layered excluded test window (alpha 255) | 0 | 0 | 0 |
+| Tools island, before the change | 46,744 | 46,744 | 45,304 |
+| Recording panel, before the change | 28,984 | 28,984 | 28,984 |
+| Scrollshot island, before the change | 34,142 | 34,142 | 31,982 |
+| Each of the three after the change | 0 | 0 | 0 |
+
+The figures are black pixels under the window, the same through Desktop
+Duplication and through the screen blit. The islands had been shown once
+before the first round, so every round was a showing again. A plain window
+leaves no hole when it is first shown, and none while the content under it
+is being redrawn: the first version of the test repainted its backdrop before
+each read and passed, on the development PC as well (68 checks). A visible
+tooltip elsewhere on the screen also suppressed the hole in one run. That is
+why the defect came and went.
+
+**Decision.** `ui::ExcludeFromCapture` makes a window that is not layered a
+layered window at full opacity before excluding it; it looks and paints as
+before. The tools island, the brush pop-up, the property island (layered
+already), the recording panel and its boundary bars, the Scrollshot island
+and its preview, and the Copied/Saved and status notices go through it. A new
+window that is excluded from capture uses it as well.
+
+**Tooltips.** A tooltip is layered from creation, and Windows refused its
+exclusion before it was first composed: the affinity read 0 after styling and
+after showing, and the tooltip appeared in pictures with its own colour
+(5,060 px of 0x2c2f33). `StyleTooltip` now excludes it again whenever a
+showing begins (`WM_WINDOWPOSCHANGING` with `SWP_SHOWWINDOW`); it then reads
+0x11 and leaves nothing in the picture in all three rounds.
+
+**Not validated.** The changed build on the development PC (the owner's
+manual check and a host run of the test); message dialogs and menus, which
+are created anew for each showing, are not covered by the test.

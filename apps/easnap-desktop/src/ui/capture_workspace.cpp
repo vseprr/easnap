@@ -168,7 +168,7 @@ void ShowCaptureNotice(const RECT& region,const std::wstring& text,bool status) 
         monitor.work_area.bottom - height - theme::Scaled(24.0f, monitor.scale()),
         width, height, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
     if (notice) {
-        ::SetWindowDisplayAffinity(notice, WDA_EXCLUDEFROMCAPTURE); RoundWindow(notice);
+        static_cast<void>(ExcludeFromCapture(notice)); RoundWindow(notice);
         ::SetWindowLongPtrW(notice,GWLP_USERDATA,status);
         if (::SetTimer(notice, 1, status ? 4000:1400, nullptr)) { ::ShowWindow(notice, SW_SHOWNOACTIVATE); }
         else { ::DestroyWindow(notice); }

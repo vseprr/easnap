@@ -43,10 +43,6 @@ constexpr int kIdStop = 121;
 constexpr DWORD kPanelStyle = WS_POPUP | WS_CLIPCHILDREN;
 constexpr DWORD kPanelExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTROLPARENT;
 
-#ifndef WDA_EXCLUDEFROMCAPTURE
-constexpr DWORD WDA_EXCLUDEFROMCAPTURE = 0x00000011;
-#endif
-
 [[nodiscard]] int ScaleDip(int value, float scale) noexcept {
     return (std::max)(1, static_cast<int>(static_cast<float>(value) * scale + 0.5f));
 }
@@ -86,8 +82,8 @@ void SetControlFont(HWND control, HFONT font) {
     }
 }
 
-[[nodiscard]] bool ApplyCaptureExclusion(HWND hwnd) noexcept {
-    return hwnd != nullptr && ::SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) != FALSE;
+[[nodiscard]] bool ApplyCaptureExclusion(HWND hwnd) {
+    return ExcludeFromCapture(hwnd);
 }
 
 }  // namespace

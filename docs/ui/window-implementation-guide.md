@@ -20,7 +20,7 @@ maximize-transition presentation or for the whole resize matrix.
 |---|---|---|
 | Resizable native content window | `StyleWindowChrome(hwnd, true)`, `WindowChrome`, and the `TrimWindow` layout/lifetime pattern | Native resize frame and OS move/maximize/restore behavior |
 | Fixed confirmation/dialog | Shared nonresizable chrome and existing native modal-dialog/control helpers | Real default/cancel buttons, keyboard behavior and owner lifetime |
-| Floating editor/recording island | `ui/island_layout` for the place around the frame, shared controls and theme materials | Owner/z-order, capture exclusion, grip dragging, work-area containment, and never covering the mode island ([ADR-036](../decisions/ADR-036-island-placement-around-the-frame.md)) |
+| Floating editor/recording island | `ui/island_layout` for the place around the frame, shared controls and theme materials | Owner/z-order, capture exclusion through `ui::ExcludeFromCapture` (layered at full opacity; a plain excluded window leaves a black hole in pictures, [ADR-008](../decisions/ADR-008-recording-ui-and-safe-finalization.md#capture-exclusion-of-the-islands-2026-10-30)), grip dragging, work-area containment, and never covering the mode island ([ADR-036](../decisions/ADR-036-island-placement-around-the-frame.md)) |
 | Capture image/overlay | Existing redirected layered-image and damage-limited overlay path | Immutable source, display affinity and controlled first exposure |
 
 These are different surface types. The trim's `WS_EX_COMPOSITED` choice is not
