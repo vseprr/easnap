@@ -19,6 +19,7 @@
 
 #include "media/media_foundation_writer.h"
 #include "media/temp_session.h"
+#include "platform/platform_utils.h"
 
 namespace {
 
@@ -806,9 +807,15 @@ void TestMp4TrimExporter() {
     CHECK(FingerprintFile(av_source) == av_source_before);
 }
 
+// The exporter says why an export failed only through LogMessage. Printing
+// the lines lets a failure on another machine, such as a hosted runner with a
+// software encoder, show its reason in the test output.
+void PrintLogLine(const wchar_t* line) noexcept { std::fwprintf(stderr, L"log: %ls\n", line); }
+
 }  // namespace
 
 int main() {
+    easnap::platform::SetLogSink(PrintLogLine);
     TestMp4TrimExporter();
     if (g_fail == 0) {
         std::printf("PASSED  %d/%d checks\n", g_pass, g_pass + g_fail);
