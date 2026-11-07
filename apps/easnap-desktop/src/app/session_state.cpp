@@ -911,6 +911,7 @@ void CaptureCoordinator::BeginRecordingFinalization() {
         }
     } catch (...) {
         // Preparing the callable can allocate before Start is entered.
+        platform::LogMessage(L"The recording finalizer could not be started; finishing on this thread");
     }
     // Preserve the existing safe drain fallback if a worker cannot be created.
     FinishRecordingWorkflow(recording_session_->Stop());
@@ -1022,13 +1023,25 @@ void CaptureCoordinator::BeginTrimWorkflow(const std::wstring& source_path) {
                 }
             });
     } catch (...) {
+        platform::LogMessage(L"The trim view could not be created");
         trim_window_.reset();
         trim_export_.reset();
     }
 
     if (!trim_window_ || !trim_export_ ||
         !trim_window_->Open(trim_source_path_, recording_region_)) {
-        ui::ShowErrorMessage(host_window_, strings::Get(IDS_RECORDING_KEPT_FOR_RECOVERY));
+        platform::LogMessage(L"The trim view could not be opened");
+        // The next start offers the recording only if it carries the marker;
+        // marking is repeated here because its first attempt may have failed.
+        const std::optional<media::TemporarySession> session =
+            recording_session_ ? recording_session_->temporary_session() : std::nullopt;
+        const bool offered_later = session.has_value() && temp_store_ && temp_store_->MarkRecoverable(*session);
+        if (offered_later) {
+            ui::ShowErrorMessage(host_window_, strings::Get(IDS_RECORDING_KEPT_FOR_RECOVERY));
+        } else {
+            ui::ShowErrorMessage(host_window_,
+                                 strings::Format(IDS_RECORDING_KEPT_UNTIL_NEXT_START, {trim_source_path_}).c_str());
+        }
         FinishTrimWorkflow(false);
         return;
     }
@@ -1306,8 +1319,10 @@ void CaptureCoordinator::SaveUntrimmedRecording() {
     }
     if (::CopyFileW(trim_source_path_.c_str(), destination->c_str(), FALSE) == FALSE) {
         platform::LogMessage(L"Saving a recording without a preview failed (error %lu)", ::GetLastError());
+        // The recording stays open here; a normal exit would delete it, so the
+        // message must not promise an offer at the next start.
         ui::ShowErrorMessage(trim_window_ != nullptr ? trim_window_->hwnd() : host_window_,
-                             strings::Get(IDS_RECOVERY_SAVE_FAILED));
+                             strings::Get(IDS_TRIM_SAVE_UNTRIMMED_FAILED));
         return;
     }
     settings_.last_video_directory = platform::DirectoryOf(*destination);

@@ -259,6 +259,8 @@ public:
                 session.id = directory.substr(directory.find_last_of(L'\\') + 1);
                 adopted.push_back(std::move(session));
             } catch (...) {
+                // Not adopted this time; it keeps its marker and is offered at the next start.
+                platform::LogMessage(L"An unsaved recording could not be adopted in this run");
                 if (!owned_.empty() && owned_.back().directory == directory) {
                     owned_.pop_back();
                 } else {
