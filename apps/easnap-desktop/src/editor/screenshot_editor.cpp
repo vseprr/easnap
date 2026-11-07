@@ -1929,7 +1929,9 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 ::SetWindowLongPtrW(info.hwndList, GWL_STYLE, ::GetWindowLongPtrW(info.hwndList, GWL_STYLE) & ~WS_BORDER);
                 ::SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE, ::GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
                 ui::RoundWindow(info.hwndList);
-                ::SetWindowDisplayAffinity(info.hwndList, 0x11);
+                // Shown again on every drop-down: excluded as an opaque layered
+                // window, it leaves no hole in a capture.
+                static_cast<void>(ui::ExcludeFromCapture(info.hwndList));
                 return 0;
             }
             if (id == 2700 && notification == EN_CHANGE) {
@@ -2656,7 +2658,7 @@ void ScreenshotEditor::StartTextEditing(std::optional<size_t> index, POINT point
     last_text_double_ = 0;
     ui::SetAccessibleName(text_edit_, strings::Get(IDS_EDITOR_TEXT_NAME));
     ::SetWindowSubclass(text_edit_, TextEditProc, 1, reinterpret_cast<DWORD_PTR>(this));
-    ::SetWindowDisplayAffinity(text_host_, 0x11);
+    static_cast<void>(ui::ExcludeFromCapture(text_host_));
     LayoutTextEditor();
     ::ShowWindow(text_host_, SW_SHOWNORMAL);
     ::SetFocus(text_edit_);

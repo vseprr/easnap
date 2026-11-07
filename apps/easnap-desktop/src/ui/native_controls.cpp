@@ -258,6 +258,9 @@ LRESULT CALLBACK MenuHook(int code, WPARAM wparam, LPARAM lparam) {
         if (call->message == WM_WINDOWPOSCHANGED || call->message == WM_SHOWWINDOW) {
             wchar_t name[32]{};
             ::GetClassNameW(call->hwnd, name, ARRAYSIZE(name));
+            // Menus are the system's own windows, with their own animation and
+            // shadow, so they are not made layered; they keep the plain
+            // exclusion (ADR-008).
             if (::lstrcmpW(name, L"#32768") == 0) { ::SetWindowDisplayAffinity(call->hwnd, 0x11); }
         }
     }
@@ -1309,7 +1312,9 @@ INT_PTR CALLBACK MessageDialogProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
         data = reinterpret_cast<MessageDialog*>(lparam);
         ::SetWindowLongPtrW(hwnd, DWLP_USER, lparam);
         ::SetWindowTextW(hwnd, data->title);
-        ::SetWindowDisplayAffinity(hwnd, 0x11);
+        // Help can be open during a Scrollshot and the Exit question during a
+        // recording: excluded as an opaque layered window, it leaves no hole.
+        static_cast<void>(ExcludeFromCapture(hwnd));
         if (!StyleWindowChrome(hwnd, false)) {
             ::EndDialog(hwnd, -1);
             return TRUE;

@@ -134,7 +134,7 @@ struct Dialog {
 
     [[nodiscard]] bool Create() {
         ::SetWindowTextW(hwnd, strings::Get(IDS_SETTINGS_TITLE));
-        ::SetWindowDisplayAffinity(hwnd, 0x11);
+        static_cast<void>(ExcludeFromCapture(hwnd));
         if (!StyleWindowChrome(hwnd, false)) { return false; }
         scale = static_cast<float>(::GetDpiForWindow(hwnd)) / 96.0f;
         font = theme::CreateUiFont(14, scale, false);

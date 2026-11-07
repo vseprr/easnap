@@ -3,7 +3,8 @@
 **Status:** Accepted  
 **Date:** 2026-08-28  
 **Amended:** 2026-09-13 — current workspace and terminal completion  
-**Amended:** 2026-10-30 — capture exclusion of the islands
+**Amended:** 2026-10-30 — capture exclusion of the islands  
+**Amended:** 2026-11-07 — dialogs, lists and the text box excluded the same way
 
 ## Context
 
@@ -127,3 +128,13 @@ the islands drawn again: on the development PC only its first version ran,
 which repainted the backdrop (68 checks); the current version ran only in the
 lab VM (108 checks). Message dialogs and menus, which are created anew for
 each showing, are not covered by the test.
+
+**Dialogs, lists and the text box** (amended 2026-11-07). Easnap's message
+dialogs (Help can be open during a Scrollshot, the Exit question during a
+recording), the Settings dialog, the font-size drop-down list of the editor,
+which is shown again on every drop-down, and the host of the text box now go
+through `ui::ExcludeFromCapture` as well; before, they were excluded plainly.
+Menus stay the exception: they are the system's own windows (`#32768`), with
+their own animation and shadow, and a hook excludes them plainly when they
+are shown. Not measured: whether any of these left a hole before; the test
+covers the islands only.
