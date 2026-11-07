@@ -138,3 +138,15 @@ Menus stay the exception: they are the system's own windows (`#32768`), with
 their own animation and shadow, and a hook excludes them plainly when they
 are shown. Not measured: whether any of these left a hole before; the test
 covers the islands only.
+
+**Dragged dialogs** (2026-11-07). A layered window gets no frame from the
+compositor, so Windows could paint parts of a caption into such a dialog
+itself. While checking v1.1.0-rc.1 on the development PC, the owner saw a
+white button over the Close button of Settings after moving it, gone once the
+pointer passed over it. `island_capture_exclusion` now drags the Exit
+question and Settings by their header with real input: while active, after
+another window was active and with the pointer resting on Close first, in
+both appearances. It compares the Close button as the user sees it, with the
+exclusion lifted for the read, with Easnap's own painting of it. In the lab
+at 125 % no pixel differed, before or after the drag, in any of the seven
+cases. What the owner saw is not explained yet.

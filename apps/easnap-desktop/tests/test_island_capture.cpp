@@ -7,6 +7,10 @@
 // Each island is put over a window of one colour and the region under it is
 // read: every pixel must be that colour, never the island and never black.
 //
+// What the exclusion must not change for the user: a dialog dragged by its
+// header and the themed menu show only what Easnap paints. They are read as
+// the user sees them, with their exclusion lifted for the read.
+//
 // Visible desktop: capture needs the composed input desktop.
 
 #include "native_test_monitor.h"
@@ -20,6 +24,7 @@
 #include "ui/recording_controls.h"
 #include "ui/native_controls.h"
 #include "ui/scrollshot_controls.h"
+#include "ui/settings_dialog.h"
 #include "ui/ui_theme.h"
 
 #include <commctrl.h>
@@ -31,6 +36,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <thread>
@@ -251,6 +257,326 @@ void Examine(const char* name, std::initializer_list<HWND> windows, HWND backdro
 void CheckExcluded(HWND window) {
     DWORD affinity = 0;
     CHECK(::GetWindowDisplayAffinity(window, &affinity) && affinity == WDA_EXCLUDEFROMCAPTURE);
+}
+
+/// `area` of the screen as the user sees it, `window` included: its capture
+/// exclusion is lifted for the read and put back.
+bool ReadAsSeen(HWND window, const RECT& area, platform::BgraImage& out) {
+    DWORD affinity = WDA_NONE;
+    if (!::GetWindowDisplayAffinity(window, &affinity) || !::SetWindowDisplayAffinity(window, WDA_NONE)) { return false; }
+    ::DwmFlush();
+    ::DwmFlush();
+    const bool read = ScreenBlit(area, out);
+    CHECK(::SetWindowDisplayAffinity(window, affinity) != FALSE);
+    return read;
+}
+
+/// Pixels that differ visibly between two pictures of the same size.
+Foreign Differences(const platform::BgraImage& expected, const platform::BgraImage& seen) {
+    Foreign foreign;
+    if (expected.empty() || expected.width != seen.width || expected.height != seen.height) { return foreign; }
+    foreign.count = 0;
+    for (int y = 0; y < seen.height; ++y) {
+        const uint32_t* a = expected.row(y);
+        const uint32_t* b = seen.row(y);
+        for (int x = 0; x < seen.width; ++x) {
+            const auto apart = [&](int shift) {
+                return std::abs(static_cast<int>((a[x] >> shift) & 0xff) - static_cast<int>((b[x] >> shift) & 0xff)) > 24;
+            };
+            if (apart(16) || apart(8) || apart(0)) {
+                if (foreign.count++ == 0) { foreign.sample = b[x] & 0xffffffu; }
+                foreign.bounds = RECT{(std::min)(foreign.bounds.left, static_cast<LONG>(x)),
+                                      (std::min)(foreign.bounds.top, static_cast<LONG>(y)),
+                                      (std::max)(foreign.bounds.right, static_cast<LONG>(x + 1)),
+                                      (std::max)(foreign.bounds.bottom, static_cast<LONG>(y + 1))};
+            }
+        }
+    }
+    return foreign;
+}
+
+/// No paint is pending for `window` or any window inside it.
+bool Settled(HWND window) {
+    if (::GetUpdateRect(window, nullptr, FALSE)) { return false; }
+    bool settled = true;
+    ::EnumChildWindows(
+        window,
+        [](HWND child, LPARAM reference) -> BOOL {
+            if (::GetUpdateRect(child, nullptr, FALSE)) {
+                *reinterpret_cast<bool*>(reference) = false;
+                return FALSE;
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&settled));
+    return settled;
+}
+
+bool WaitFor(const std::function<bool()>& condition, ULONGLONG milliseconds) {
+    const ULONGLONG end = ::GetTickCount64() + milliseconds;
+    while (!condition()) {
+        if (::GetTickCount64() > end) { return false; }
+        ::Sleep(2);
+    }
+    return true;
+}
+
+/// `window` as Easnap paints it, through WM_PRINT.
+bool ReadAsPainted(HWND window, platform::BgraImage& out) {
+    RECT rect{};
+    ::GetWindowRect(window, &rect);
+    out.Reset(platform::RectWidth(rect), platform::RectHeight(rect));
+    platform::GdiImageSurface surface(out);
+    if (!surface.valid()) { return false; }
+    ::SendMessageW(window, WM_PRINT, reinterpret_cast<WPARAM>(surface.dc()), PRF_CLIENT | PRF_ERASEBKGND | PRF_CHILDREN);
+    ::GdiFlush();
+    return true;
+}
+
+// A dialog dragged by its header, as the user moves Settings or the Exit
+// question. Its Close button is read as the user sees it and compared with
+// what Easnap paints for it, before and after the drag: nothing but
+// Easnap's own painting may be on it.
+enum DragStage { kFindDialog,
+                 kHoverClose,
+                 kSettleBefore,
+                 kReadyToDrag,
+                 kDragged,
+                 kSettleAfter,
+                 kDragDone,
+                 kDragFailed };
+struct DialogDrag {
+    HWND thief{};       // activated before the drag when set
+    bool hover_close{};  // the pointer rests on Close before the drag
+    HWND dialog{}, header{}, close{};
+    POINT press{};
+    std::atomic<int> stage{kFindDialog};
+    ULONGLONG since{}, deadline{};
+    RECT before_rect{}, after_rect{};
+    Foreign before, after;
+    std::atomic<int> steps_moved{0};
+};
+DialogDrag* active_drag{};
+
+/// Pixels on the Close button that Easnap did not paint there.
+Foreign CloseButtonAsSeen(const DialogDrag& drag) {
+    RECT rect{};
+    ::GetWindowRect(drag.close, &rect);
+    platform::BgraImage seen, painted;
+    Foreign foreign;
+    if (!ReadAsSeen(drag.dialog, rect, seen) || !ReadAsPainted(drag.close, painted)) {
+        CHECK(!"the Close button could not be read");
+        return foreign;
+    }
+    return Differences(painted, seen);
+}
+
+void CALLBACK DragTimer(HWND, UINT, UINT_PTR id, DWORD) {
+    DialogDrag& drag = *active_drag;
+    const ULONGLONG now = ::GetTickCount64();
+    const auto finish = [&](int stage) {
+        drag.stage = stage;
+        ::KillTimer(nullptr, id);
+        // Close whatever dialog this thread shows.
+        ::EnumThreadWindows(
+            ::GetCurrentThreadId(),
+            [](HWND window, LPARAM) -> BOOL {
+                wchar_t name[32]{};
+                ::GetClassNameW(window, name, 32);
+                if (::lstrcmpW(name, L"#32770") == 0) { ::PostMessageW(window, WM_CLOSE, 0, 0); }
+                return TRUE;
+            },
+            0);
+    };
+    if (now > drag.deadline) {
+        std::printf("dialog drag: timed out at stage %d\n", drag.stage.load());
+        finish(kDragFailed);
+        return;
+    }
+    switch (drag.stage.load()) {
+        case kFindDialog: {
+            ::EnumThreadWindows(
+                ::GetCurrentThreadId(),
+                [](HWND window, LPARAM reference) -> BOOL {
+                    wchar_t name[32]{};
+                    ::GetClassNameW(window, name, 32);
+                    if (::lstrcmpW(name, L"#32770") == 0 && ::IsWindowVisible(window)) {
+                        *reinterpret_cast<HWND*>(reference) = window;
+                        return FALSE;
+                    }
+                    return TRUE;
+                },
+                reinterpret_cast<LPARAM>(&drag.dialog));
+            if (!drag.dialog) { return; }
+            drag.header = ::FindWindowExW(drag.dialog, nullptr, L"EasnapWindowChrome", nullptr);
+            drag.close = drag.header ? ::GetWindow(drag.header, GW_CHILD) : nullptr;
+            if (!drag.close) {
+                std::printf("dialog drag: the dialog has no header with a Close button\n");
+                finish(kDragFailed);
+                return;
+            }
+            RECT header{};
+            ::GetWindowRect(drag.header, &header);
+            drag.press = {header.left + platform::RectWidth(header) / 3, (header.top + header.bottom) / 2};
+            CHECK(::SetCursorPos(drag.press.x, drag.press.y) != FALSE);
+            if (drag.thief) {
+                ::SetForegroundWindow(drag.thief);
+                CHECK(::GetForegroundWindow() == drag.thief);
+            }
+            if (drag.hover_close) {
+                RECT close{};
+                ::GetWindowRect(drag.close, &close);
+                CHECK(::SetCursorPos((close.left + close.right) / 2, (close.top + close.bottom) / 2) != FALSE);
+            }
+            drag.since = now;
+            drag.stage = drag.hover_close ? kHoverClose : kSettleBefore;
+            return;
+        }
+        case kHoverClose:
+            if (!Settled(drag.dialog)) {
+                drag.since = now;
+                return;
+            }
+            if (now - drag.since < 300) { return; }
+            CHECK(::SetCursorPos(drag.press.x, drag.press.y) != FALSE);
+            drag.since = now;
+            drag.stage = kSettleBefore;
+            return;
+        case kSettleBefore:
+        case kSettleAfter: {
+            if (!Settled(drag.dialog)) {
+                drag.since = now;
+                return;
+            }
+            if (now - drag.since < 300) { return; }
+            if (drag.stage.load() == kSettleBefore) {
+                ::GetWindowRect(drag.dialog, &drag.before_rect);
+                drag.before = CloseButtonAsSeen(drag);
+                drag.stage = kReadyToDrag;
+            } else {
+                ::GetWindowRect(drag.dialog, &drag.after_rect);
+                drag.after = CloseButtonAsSeen(drag);
+                finish(kDragDone);
+            }
+            return;
+        }
+        case kDragged:
+            drag.since = now;
+            drag.stage = kSettleAfter;
+            return;
+        default: return;
+    }
+}
+
+/// Presses on the header, moves the pointer 80 by 40 pixels in eight steps
+/// and releases, from a thread of its own while the dialog runs its loop.
+void DriveDrag(DialogDrag& drag, DWORD ui_thread) {
+    const bool ready = WaitFor([&] { const int stage = drag.stage.load(); return stage == kReadyToDrag || stage == kDragFailed; }, 12000);
+    if (!ready || drag.stage.load() != kReadyToDrag) { return; }
+    const auto moving = [&] {
+        GUITHREADINFO info{sizeof(info)};
+        return ::GetGUIThreadInfo(ui_thread, &info) && (info.flags & GUI_INMOVESIZE) != 0;
+    };
+    // Never send input into another application.
+    if (::WindowFromPoint(drag.press) != drag.header) {
+        std::printf("dialog drag: the pointer is not over the dialog's header; no input sent\n");
+        int expected = kReadyToDrag;
+        drag.stage.compare_exchange_strong(expected, kDragged);
+        return;
+    }
+    INPUT input{};
+    input.type = INPUT_MOUSE;
+    input.mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    CHECK(::SendInput(1, &input, sizeof(input)) == 1);
+    const bool entered = WaitFor(moving, 2000);
+    BOOL full_windows = TRUE;
+    ::SystemParametersInfoW(SPI_GETDRAGFULLWINDOWS, 0, &full_windows, 0);
+    for (int step = 1; entered && step <= 8; ++step) {
+        ::SetCursorPos(drag.press.x + 10 * step, drag.press.y + 5 * step);
+        const bool moved = WaitFor(
+            [&] {
+                RECT now{};
+                ::GetWindowRect(drag.dialog, &now);
+                return now.left == drag.before_rect.left + 10 * step && now.top == drag.before_rect.top + 5 * step;
+            },
+            full_windows ? 1000 : 100);
+        if (moved) { ++drag.steps_moved; }
+    }
+    input.mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    CHECK(::SendInput(1, &input, sizeof(input)) == 1);
+    WaitFor([&] { return !moving(); }, 2000);
+    if (!entered) { std::printf("dialog drag: the move loop was not entered\n"); }
+    if (!full_windows) { std::printf("dialog drag: Windows shows only an outline while dragging\n"); }
+    int expected = kReadyToDrag;
+    drag.stage.compare_exchange_strong(expected, kDragged);
+}
+
+// A themed menu with a submenu, as the tray menu's Appearance: the submenu
+// item on screen is what Easnap draws for it, and nothing else. Windows
+// draws its own arrow into an owner-drawn item that has a submenu unless
+// the item is clipped after drawing.
+struct MenuLook {
+    HWND owner{};
+    HMENU root{};
+    HWND menu{};
+    RECT item{};
+    ULONGLONG since{}, deadline{};
+    platform::BgraImage seen, drawn;
+    bool done{};
+};
+MenuLook* active_menu{};
+
+void CALLBACK MenuTimer(HWND, UINT, UINT_PTR id, DWORD) {
+    MenuLook& look = *active_menu;
+    const ULONGLONG now = ::GetTickCount64();
+    if (now > look.deadline) {
+        std::printf("themed menu: timed out\n");
+        ::KillTimer(nullptr, id);
+        ::EndMenu();
+        return;
+    }
+    if (!look.menu) {
+        ::EnumThreadWindows(
+            ::GetCurrentThreadId(),
+            [](HWND window, LPARAM reference) -> BOOL {
+                wchar_t name[32]{};
+                ::GetClassNameW(window, name, 32);
+                if (::lstrcmpW(name, L"#32768") == 0 && ::IsWindowVisible(window)) {
+                    *reinterpret_cast<HWND*>(reference) = window;
+                    return FALSE;
+                }
+                return TRUE;
+            },
+            reinterpret_cast<LPARAM>(&look.menu));
+        look.since = now;
+        return;
+    }
+    if (!Settled(look.menu) || !::GetMenuItemRect(nullptr, look.root, 0, &look.item)) {
+        look.since = now;
+        return;
+    }
+    if (now - look.since < 200) { return; }
+    ::KillTimer(nullptr, id);
+    CHECK(ReadAsSeen(look.menu, look.item, look.seen));
+    MENUITEMINFOW info{sizeof(info)};
+    info.fMask = MIIM_DATA | MIIM_STATE;
+    CHECK(::GetMenuItemInfoW(look.root, 0, TRUE, &info) != FALSE);
+    look.drawn.Reset(platform::RectWidth(look.item), platform::RectHeight(look.item));
+    {
+        platform::GdiImageSurface surface(look.drawn);
+        CHECK(surface.valid());
+        DRAWITEMSTRUCT draw{};
+        draw.CtlType = ODT_MENU;
+        draw.itemAction = ODA_DRAWENTIRE;
+        draw.hwndItem = reinterpret_cast<HWND>(look.root);
+        draw.hDC = surface.dc();
+        draw.rcItem = {0, 0, platform::RectWidth(look.item), platform::RectHeight(look.item)};
+        draw.itemData = info.dwItemData;
+        ::SendMessageW(look.owner, WM_DRAWITEM, 0, reinterpret_cast<LPARAM>(&draw));
+        ::GdiFlush();
+    }
+    look.done = true;
+    ::EndMenu();
 }
 
 int Run() {
@@ -574,6 +900,107 @@ int Run() {
             std::printf("recording start over the region: no composed frame was read; not checked\n");
         }
     }
+
+    // What making a dialog layered for its exclusion must not change: dragged
+    // by its header, it shows only its own painting. The Exit question owned
+    // by a window, as during a recording, and Settings, which has no owner,
+    // dragged while active and dragged when another window was active, in
+    // both appearances.
+    const app::AppearanceTheme appearance = ui::theme::Preference();
+    ::ShowWindow(backdrop, SW_HIDE);
+    HWND thief = ::CreateWindowExW(0, backdrop_class.lpszClassName, L"Island capture test focus", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                                   monitor.work_area.left + 10, monitor.work_area.top + 10, 200, 120, nullptr, nullptr,
+                                   backdrop_class.hInstance, nullptr);
+    CHECK(thief != nullptr);
+    Paint(thief, kColours[1]);
+    struct Scenario {
+        const char* name;
+        bool settings, deactivated, hover_close;
+        app::AppearanceTheme theme;
+    };
+    for (const Scenario scenario :
+         {Scenario{"message dialog, dark", false, false, false, app::AppearanceTheme::Dark},
+          Scenario{"Settings, dark", true, false, false, app::AppearanceTheme::Dark},
+          Scenario{"Settings, dark, pointer on Close first", true, false, true, app::AppearanceTheme::Dark},
+          Scenario{"Settings, dark, another window active first", true, true, false, app::AppearanceTheme::Dark},
+          Scenario{"Settings, light, another window active first", true, true, false, app::AppearanceTheme::Light},
+          Scenario{"Settings, light, pointer on Close first", true, false, true, app::AppearanceTheme::Light},
+          Scenario{"message dialog, light, another window active first", false, true, false, app::AppearanceTheme::Light}}) {
+        ui::theme::ApplyPreference(scenario.theme);
+        ui::theme::NotifyWindows();
+        DialogDrag drag;
+        drag.thief = scenario.deactivated ? thief : nullptr;
+        drag.hover_close = scenario.hover_close;
+        drag.deadline = ::GetTickCount64() + 15000;
+        active_drag = &drag;
+        std::thread input(DriveDrag, std::ref(drag), ::GetCurrentThreadId());
+        CHECK(::SetTimer(nullptr, 0, 50, DragTimer) != 0);
+        if (scenario.settings) {
+            ui::SettingsDialogModel model;
+            static_cast<void>(ui::ShowSettingsDialog(nullptr, model, {}));
+        } else {
+            ui::ShowMessage(thief, L"The header of this dialog is dragged by the test.", L"Dialog drag test", MB_OK);
+        }
+        if (drag.stage.load() != kDragDone && drag.stage.load() != kDragFailed) { drag.stage = kDragFailed; }
+        input.join();
+        active_drag = nullptr;
+        std::printf("dialog dragged by its header (%s): moved %ld,%ld in %d of 8 steps; on its Close button %ld pixels "
+                    "not painted by Easnap before the drag, %ld after (first 0x%06x in %ld,%ld,%ld,%ld)\n",
+                    scenario.name, drag.after_rect.left - drag.before_rect.left, drag.after_rect.top - drag.before_rect.top,
+                    drag.steps_moved.load(), drag.before.count, drag.after.count, static_cast<unsigned>(drag.after.sample),
+                    drag.after.bounds.left, drag.after.bounds.top, drag.after.bounds.right, drag.after.bounds.bottom);
+        CHECK(drag.stage.load() == kDragDone);
+        CHECK(drag.after_rect.left - drag.before_rect.left == 80 && drag.after_rect.top - drag.before_rect.top == 40);
+        CHECK(drag.before.count == 0);
+        CHECK(drag.after.count == 0);
+        Pump(std::chrono::milliseconds(100));
+    }
+    if (thief) { ::DestroyWindow(thief); }
+    ui::theme::ApplyPreference(app::AppearanceTheme::Dark);
+    ui::theme::NotifyWindows();
+    ::ShowWindow(backdrop, SW_SHOWNOACTIVATE);
+    Pump(std::chrono::milliseconds(100));
+
+    // The themed menu's submenu item, in both appearances.
+    for (const app::AppearanceTheme theme : {app::AppearanceTheme::Dark, app::AppearanceTheme::Light}) {
+        ui::theme::ApplyPreference(theme);
+        ui::theme::NotifyWindows();
+        HMENU root = ::CreatePopupMenu();
+        HMENU submenu = ui::CreateAppearanceMenu(false);
+        CHECK(root != nullptr && submenu != nullptr);
+        CHECK(::AppendMenuW(root, MF_POPUP, reinterpret_cast<UINT_PTR>(submenu), L"Appearance") != FALSE);
+        CHECK(::AppendMenuW(root, MF_STRING, 1, L"About Easnap") != FALSE);
+        MenuLook look;
+        look.owner = backdrop;
+        look.root = root;
+        look.deadline = ::GetTickCount64() + 10000;
+        active_menu = &look;
+        const POINT at{monitor.work_area.left + 200, monitor.work_area.top + 200};
+        // The pointer away from the menu: no item is hot.
+        CHECK(::SetCursorPos(monitor.work_area.left + 20, monitor.work_area.bottom - 20) != FALSE);
+        {
+            ui::PopupScope scope(nullptr);
+            ui::MenuThemeScope themed(backdrop, root);
+            CHECK(::SetTimer(nullptr, 0, 50, MenuTimer) != 0);
+            ::TrackPopupMenuEx(root, TPM_RETURNCMD | TPM_NONOTIFY | TPM_NOANIMATION, at.x, at.y, backdrop, nullptr);
+        }
+        active_menu = nullptr;
+        ::DestroyMenu(root);
+        CHECK(look.done);
+        if (look.done) {
+            const Foreign extra = Differences(look.drawn, look.seen);
+            std::printf("themed menu, %s: %ld pixels of the %ldx%ld submenu item not drawn by Easnap (first 0x%06x in "
+                        "%ld,%ld,%ld,%ld)\n",
+                        theme == app::AppearanceTheme::Dark ? "dark" : "light", extra.count,
+                        platform::RectWidth(look.item), platform::RectHeight(look.item),
+                        static_cast<unsigned>(extra.sample), extra.bounds.left, extra.bounds.top, extra.bounds.right,
+                        extra.bounds.bottom);
+            CHECK(extra.count == 0);
+        }
+        Pump(std::chrono::milliseconds(100));
+    }
+    ui::theme::ApplyPreference(appearance);
+    ui::theme::NotifyWindows();
 
     ::DestroyWindow(backdrop);
     ::UnregisterClassW(backdrop_class.lpszClassName, backdrop_class.hInstance);

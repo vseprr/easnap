@@ -1024,6 +1024,10 @@ struct MenuThemeScope::State {
                     const LONG x = draw->rcItem.right - theme::Scaled(14, self->scale), y = (draw->rcItem.top + draw->rcItem.bottom) / 2, d = theme::Scaled(3, self->scale);
                     theme::DrawSolidLine(draw->hDC, {x - d, y - d}, {x, y}, ink, 1);
                     theme::DrawSolidLine(draw->hDC, {x, y}, {x - d, y + d}, ink, 1);
+                    // Windows draws its own submenu arrow into the item after
+                    // this message, in the system's colours: a second arrow
+                    // beside this one. Clip the item so it cannot.
+                    ::ExcludeClipRect(draw->hDC, draw->rcItem.left, draw->rcItem.top, draw->rcItem.right, draw->rcItem.bottom);
                 }
                 return TRUE;
             }

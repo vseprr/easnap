@@ -662,13 +662,15 @@ add_executable(test_island_capture
     ../src/ui/scrollshot_layout.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/settings_dialog.cpp
+    ../src/app/app_settings.cpp
     ../src/app/recording_workflow.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_island_capture PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
 target_link_libraries(test_island_capture PRIVATE easnap_project_options easnap_strings
     d3d11 d2d1 dwrite dxgi dxguid dwmapi gdiplus uxtheme windowscodecs
-    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
 add_test(NAME island_capture_exclusion COMMAND test_island_capture)
 set_tests_properties(island_capture_exclusion PROPERTIES
     LABELS "integration;real-desktop-capture;recording;scrollshot" TIMEOUT 90 SKIP_RETURN_CODE 77)

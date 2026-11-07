@@ -29,7 +29,10 @@ and the individual runs in the [validation records](releases/validation-history.
   `.clang-format` and checked in CI, a report-only clang-tidy job, and a
   second lab image at 150 % (`lab.ps1 -Variant Scale150`), whose first runs
   led to the 150 % text-fit correction and to two visible-desktop tests that
-  no longer assume 125 %.
+  no longer assume 125 %. From the owner's check of rc.1: the tray menu's
+  submenu arrow is no longer drawn twice, and `island_capture_exclusion` also
+  drags the Exit question and Settings and reads the themed menu as the user
+  sees them.
 
 ## Validated
 
@@ -105,6 +108,10 @@ and the individual runs in the [validation records](releases/validation-history.
   Settings dialog can be open then, and it closes.
 - The mode island's home now starts below a taskbar docked at the top
   (2026-11-07); this was not seen with a top taskbar.
+- After moving Settings, the owner saw a white button over its Close button
+  on the development PC (rc.1, 2026-11-07), gone once the pointer passed over
+  it. The lab did not reproduce it in seven drag scenarios; the cause is not
+  known ([ADR-008](decisions/ADR-008-recording-ui-and-safe-finalization.md)).
 - The log gets one line per audio packet for the first packets of every
   recording; these lines are diagnostic and carry no content.
 - On the host, tests share the user's clipboard: `capture_workspace_production`
@@ -187,12 +194,13 @@ post-v1 without a promised date.
 
 ## Next slice
 
-The owner checks v1.1.0-rc.1 by hand where the lab cannot (the installer's
-pages and an upgrade over beta.2, Start with Windows and its removal on
-uninstall, Scrollshot on real applications, the Turkish text), opens a pull request from the branch to `main`, whose CI
-run shows whether the hosted runner's two failures are gone and whether the
-new Format and clang-tidy jobs work there, and tags and publishes rc.1. Each problem found
-gets its own fix and lab run. Then v1.1.0: an empty prerelease label, release
-notes for everything since v1.0.2, and the README and `SECURITY.md` naming it
-the latest stable version. The package-manager submissions remain the owner's
-step ([distribution](distribution.md)).
+The white button over the Close button of Settings, which the owner saw and
+the lab did not reproduce, is to be understood and corrected. The owner then
+checks a new rc.1 package by hand. On the owner's approval the agent pushes
+the branch and opens a pull request to `main`, whose CI run shows whether the
+hosted runner's two failures are gone and whether the new Format and
+clang-tidy jobs work there, merges it, and tags and publishes rc.1. Each
+problem found gets its own fix and lab run. Then v1.1.0: an empty prerelease
+label, release notes for everything since v1.0.2, and the README and
+`SECURITY.md` naming it the latest stable version. The package-manager
+submissions remain the owner's step ([distribution](distribution.md)).

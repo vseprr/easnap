@@ -435,3 +435,19 @@ display and no GPU: the one of beta.2 at 125 % and a second at 150 %
   clang-tidy, report only, left 47 findings at `74b75d7`.
 - **Hosted runner:** the branch has not been run there; that happens when
   the pull request is opened.
+- **The owner's check by hand** of the first rc.1 package on the development
+  PC (2026-11-07) found two problems and nothing else: two arrows next to
+  Appearance in the tray menu, and a white button over the Close button of
+  Settings after moving it. For both, `island_capture_exclusion` gained a
+  check that reads the window as the user sees it, with its exclusion lifted,
+  and compares it with Easnap's own painting. Probes in the 125 % lab VM, each
+  running the test twice:
+  - `20261107-215252`, on the unchanged sources: the menu's submenu item
+    differed in 25 pixels at its right end, Windows' own arrow; a message
+    dialog dragged by its header changed nothing in the header.
+  - `20261107-221132`, with the item clipped after drawing: 0 pixels in the
+    dark and the light appearance. The Exit question and Settings dragged
+    while active, after another window was active and with the pointer on
+    Close first, in both appearances: no pixel of the Close button differed
+    from Easnap's painting in any of the seven cases. The white button was not
+    reproduced.

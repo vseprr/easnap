@@ -7,7 +7,7 @@ phase boundaries; what is implemented and validated belongs in project status,
 and what each release contained in its release notes, listed in the
 [documentation index](docs/README.md).
 
-## Current: v1.1.0-rc.1 prepared, waiting for the owner's checks
+## Current: v1.1.0-rc.1, corrections from the owner's check
 
 The first beta of v1.1 was published on 2026-10-13 as a prerelease of
 [`vseprr/easnap`](https://github.com/vseprr/easnap): Scrollshot in the
@@ -15,8 +15,9 @@ application and the work a public beta needs. The second beta, with the
 corrections from testing the first, was published on 2026-10-30. The
 stabilization toward v1.1.0 ran on 2026-11-07 on the branch
 `stabilize/v1.1.0` and ends with the release candidate v1.1.0-rc.1, which is
-not tagged or published yet. The latest stable version is v1.0.2, the second
-maintenance release on top of v1.0.0.
+not tagged or published yet. The owner's check of its first package found two
+problems. The latest stable version is v1.0.2, the second maintenance release
+on top of v1.0.0.
 
 | Phase | State |
 |---|---|
@@ -35,12 +36,14 @@ maintenance release on top of v1.0.0.
 
 In this order (details in [project status](docs/project-status.md#next-slice)):
 
-1. The owner's checks of v1.1.0-rc.1 by hand, then its tag and publication by
-   the owner.
-2. A fix for each problem those checks find, each with its own lab run.
+1. The owner's findings on rc.1: the tray menu's second submenu arrow
+   (corrected) and a white button over the Close button of Settings after
+   moving it (not reproduced in the lab yet).
+2. The owner checks a new rc.1 package. Then the pull request, the merge and
+   the publication: on the owner's approval the agent does these steps.
 3. v1.1.0: an empty prerelease label, release notes for everything since
    v1.0.2, and the README and `SECURITY.md` naming v1.1.0 as the latest
-   stable version. The owner tags and publishes.
+   stable version.
 
 Open on the owner's side: the host Full run for the writer fix, since the host
 desktop is used only when the owner asks. Not covered yet: Windows 11, an N
