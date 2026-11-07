@@ -1199,7 +1199,9 @@ private:
         const LONG count = static_cast<LONG>(kModes.size());
         const LONG panel_width = button_width * count + padding * (count + 1) + grip;
         const LONG panel_left = local ? 0 : (client_width() - panel_width) / 2;
-        const LONG panel_top = 0;
+        // The home is at the top of the work area, below a taskbar docked at
+        // the top; with the taskbar elsewhere that is the top of the monitor.
+        const LONG panel_top = local ? 0 : monitor_.work_area.top - monitor_.bounds.top;
 
         constexpr std::array<UINT, 3> labels{IDS_MODE_SCREENSHOT, IDS_MODE_SCROLLSHOT, IDS_MODE_RECORD};
         std::array<PaletteButton, 3> buttons{};

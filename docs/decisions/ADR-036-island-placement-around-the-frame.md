@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-10-13
 **Amended:** 2026-10-30 — room for the property island
+**Amended:** 2026-11-07 — the mode island's home is below a top taskbar
 
 ## Context
 
@@ -102,8 +103,10 @@ other side of the frame.
 - A stitched image in the editor follows the same rule. Its view area leaves
   room below the picture, so its tools are below it as before.
 - Sharing the top edge between the tools island and the mode island depends on
-  the exact rectangle, not on a reserved strip. A top-docked taskbar still
-  overlaps the mode island; that limitation is unchanged.
+  the exact rectangle, not on a reserved strip. Amended 2026-11-07: the mode
+  island's home is at the top of the work area, so a taskbar docked at the top
+  no longer covers it; with the taskbar elsewhere the home is unchanged. Not
+  seen with a top taskbar: that needs a change to the Windows setting.
 
 ## Validation
 

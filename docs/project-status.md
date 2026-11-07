@@ -87,7 +87,8 @@ and the individual runs in the [validation records](releases/validation-history.
   it; screenshots do not yet.
 - A window that is open when the language changes keeps its text; only the
   Settings dialog can be open then, and it closes.
-- A top-docked taskbar still overlaps the mode island.
+- The mode island's home now starts below a taskbar docked at the top
+  (2026-11-07); this was not seen with a top taskbar.
 - The log gets one line per audio packet for the first packets of every
   recording; these lines are diagnostic and carry no content.
 - On the host, tests share the user's clipboard: `capture_workspace_production`
