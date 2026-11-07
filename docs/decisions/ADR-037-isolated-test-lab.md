@@ -4,6 +4,7 @@
 **Date:** 2026-10-19
 **Amends:** [ADR-026](ADR-026-test-tiers-and-desktop-isolation.md) (the Standard and Full tiers, visible-desktop tests included, run in a Hyper-V VM; a run on the host desktop is made only when the owner asks)
 **Relates to:** [ADR-025](ADR-025-incremental-test-execution.md)
+**Amended:** 2026-11-07 — a second image at 150 %, and two tests corrected for it
 
 ## Context
 
@@ -234,6 +235,40 @@ The earlier explanation for the host run of 2026-10-13, that the PC was in
 use, is not established either: the host log of that run does not show which
 of the two signatures it had.
 
+### The image at 150 % (2026-11-07)
+
+A second VM, `easnap-lab-150`, is built from the same `testenv.json` with the
+display scale at 150 % (`lab.ps1 -Variant Scale150`, see
+[testing](../testing.md#lab)). Creating it took 4 minutes and provisioning
+37, most of that Windows Update (to build 19045.6456). Its first runs failed
+three tests that pass at 125 %. One was a product fault, text cut off at
+150 %
+([ADR-032](ADR-032-interface-text-in-string-tables.md#text-has-to-fit)). The
+other two were assumptions in the tests; each failed on the first try and
+on the retry of the first Full run (`20261107-190243-full`):
+
+- `annotation_editing_native` began a line at a fixed point below a 36 pt
+  text. The text's size follows the display scale (72 px per em at 150 %, 60
+  at 125 %), so at 150 % the point lay inside it, and a press on an object
+  moves the object with every tool. No line was made and the handle check
+  failed. The line now starts lower, clear of the text at 125, 150 and
+  200 %.
+- `trim_timeline_seek_stress` failed its pointer check once per run, each
+  time at the move the test makes right after its second press, while the
+  timeline holds capture. The cursor stayed at the previous point (x 837 and
+  878 where 756 was wanted, y matching): 2 of the 23 such moves in the two
+  runs, none of the other 192. The test now lets the messages after that press
+  arrive (20 ms) before it moves on, as it already did after the first
+  press. `MovePointer` issues a move again every 100 ms until it lands and
+  reports the repeats (`issued again`, `lost`).
+
+After the corrections the Full run at 150 % passed 48 of 48 and the Soak run
+at 125 % 54 of 54, both with no retry, and three probes ran each of the two
+tests six more times at 150 %, all passing. Over those seven executions at
+150 % the seek test made 925 pointer moves: one landed late (30 ms) and none
+had to be issued again, so the pause alone was enough there. Which Windows
+mechanism held the cursor back is not established.
+
 ## Not validated
 
 - The lab verdict has not yet been compared with a Full run on the host for
@@ -243,5 +278,5 @@ of the two signatures it had.
 - `mfplay_preview_startup`, `ui_modernization_native` and
   `annotation_editing_native` report no capture path: those modes use no
   capture observer, so "capture path unknown" is the honest reading.
-- Windows 11, N editions and other scale factors remain unmeasured; the lab
-  runs one Windows 10 22H2 image.
+- Windows 11, N editions and scale factors other than 125 and 150 % remain
+  unmeasured; both images are Windows 10 22H2.

@@ -8,14 +8,18 @@
 // move to land, without dispatching messages: a timeline holding capture must
 // not receive the real move before the test's own message. A pointer that
 // never arrives is still rejected by the caller's authentication.
+// In the lab VM at 150 % a move made while the timeline held capture was
+// occasionally never reported at all; it is issued again every 100 ms until
+// it lands, and those repeats are counted.
 struct PointerMoves {
-    unsigned moves = 0, late = 0;
+    unsigned moves = 0, late = 0, repeated = 0, lost = 0;
     double longest_ms = 0;
 };
 bool MovePointer(POINT screen, PointerMoves& record) {
     if (!::SetCursorPos(screen.x, screen.y)) return false;
     ++record.moves;
     const auto start = std::chrono::steady_clock::now();
+    double next_repeat_ms = 100;
     for (bool first = true;; first = false) {
         POINT actual{};
         const auto waited = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -26,7 +30,17 @@ bool MovePointer(POINT screen, PointerMoves& record) {
             }
             return true;
         }
-        if (waited >= 1000) return false;
+        if (waited >= 1000) {
+            ++record.lost;
+            std::printf("Pointer move did not land within 1 s: wanted=%ld,%ld actual=%ld,%ld\n",
+                        screen.x, screen.y, actual.x, actual.y);
+            return false;
+        }
+        if (waited >= next_repeat_ms) {
+            ++record.repeated;
+            next_repeat_ms += 100;
+            if (!::SetCursorPos(screen.x, screen.y)) return false;
+        }
         ::Sleep(1);
     }
 }
@@ -186,6 +200,11 @@ void TrimSeekStress(unsigned click_count = 72) {
                 if (!authenticate_pointer(x)) break;
                 ::SendMessageW(timeline, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
                 CHECK(trim.range().current() == target);
+                // As after the first press: let the move that capture can
+                // synthesize at x arrive before the pointer moves on. The
+                // timeline ignores a move to the position it already sought.
+                Pump(20);
+                if (!authenticate_pointer(x)) break;
                 const int next_x = coordinate(25);
                 if (!place_pointer(next_x)) break;
                 ::SendMessageW(timeline, WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(next_x, y));
@@ -397,7 +416,8 @@ void TrimSeekStress(unsigned click_count = 72) {
         std::filesystem::remove(source, error);
         CHECK(!error);
     }
-    std::printf("Pointer moves: %u, reported late: %u, longest wait %.1f ms\n",
-                pointer_moves.moves, pointer_moves.late, pointer_moves.longest_ms);
+    std::printf("Pointer moves: %u, reported late: %u, issued again: %u, lost: %u, longest wait %.1f ms\n",
+                pointer_moves.moves, pointer_moves.late, pointer_moves.repeated, pointer_moves.lost,
+                pointer_moves.longest_ms);
     Appearance(original_theme);
 }

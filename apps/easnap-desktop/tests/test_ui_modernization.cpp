@@ -1568,10 +1568,12 @@ void AnnotationEditing() {
     Appearance(app::AppearanceTheme::Dark);
     CHECK(editor.Composite().pixels == tag_before.pixels);
     tool(ToolId::Line);
-    draw({150, 300}, {380, 380});
+    // The 36 pt text above grows with the display scale (72 px per em at
+    // 150 %), and a press on it moves it with every tool. Start below it.
+    draw({150, 400}, {380, 460});
     CHECK(editor.document().annotations().back().Handles().size() == 2);
     const auto line_before = editor.Composite();
-    draw({380, 380}, {400, 410});
+    draw({380, 460}, {400, 490});
     CHECK(editor.Composite().pixels != line_before.pixels);
     undo();
     CHECK(editor.Composite().pixels == line_before.pixels);
