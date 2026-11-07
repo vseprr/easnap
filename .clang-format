@@ -1,0 +1,51 @@
+# C++ style of the Easnap sources, derived from the code as it was written
+# (4-space indent, attached braces, `T* p`, unindented namespaces).
+# ColumnLimit 0 keeps each line break the author chose; include order and
+# using-declarations are meaningful and stay as written.
+# Apply with scripts/format.ps1; CI checks it with scripts/format.ps1 -Check.
+Language: Cpp
+BasedOnStyle: LLVM
+Standard: c++20
+ColumnLimit: 0
+IndentWidth: 4
+ContinuationIndentWidth: 4
+ConstructorInitializerIndentWidth: 4
+UseTab: Never
+AccessModifierOffset: -4
+IndentCaseLabels: true
+NamespaceIndentation: None
+CompactNamespaces: false
+FixNamespaceComments: true
+ShortNamespaceLines: 0
+SpacesBeforeTrailingComments: 2
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+DerivePointerAlignment: false
+BreakBeforeBraces: Attach
+AlignAfterOpenBracket: Align
+AlignOperands: Align
+AlignTrailingComments:
+  Kind: Leave
+AllowShortFunctionsOnASingleLine: All
+AllowShortBlocksOnASingleLine: Always
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortLambdasOnASingleLine: All
+AllowShortEnumsOnASingleLine: true
+AlwaysBreakTemplateDeclarations: Yes
+BinPackArguments: true
+BinPackParameters: true
+BreakConstructorInitializers: BeforeColon
+PackConstructorInitializers: BinPack
+Cpp11BracedListStyle: true
+SpaceBeforeParens: ControlStatements
+SpaceAfterTemplateKeyword: true
+SortIncludes: Never
+SortUsingDeclarations: Never
+IncludeBlocks: Preserve
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 2
+LineEnding: DeriveLF
+ReflowComments: false
+InsertBraces: false
