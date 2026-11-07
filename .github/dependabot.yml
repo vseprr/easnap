@@ -8,3 +8,9 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
+    groups:
+      # init and analyze must move together: CodeQL refuses a run whose
+      # init and analyze steps are at different versions.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"

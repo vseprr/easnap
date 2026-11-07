@@ -13,7 +13,6 @@
 /Easnap-UI-Modernization-Agent-Prompt.en.md
 /docs/ui-references/
 /docs/evidence/
-/.abacus.donotdelete
 # Local credentials, environment overrides and private signing material.
 .env
 .env.*

@@ -83,7 +83,9 @@ $download = "https://github.com/vseprr/easnap/releases/download/v$versionText"
 # moves a stable installation to a beta.
 $identifier = if ($prerelease) { 'vseprr.Easnap.Beta' } else { 'vseprr.Easnap' }
 $name = if ($prerelease) { 'Easnap (Beta)' } else { 'Easnap' }
-$schema = '1.6.0'
+# The winget-pkgs repository accepts only recent schema versions (1.28.0 is
+# its recommendation as of November 2026); check before each submission.
+$schema = '1.28.0'
 $winget = Join-Path $output 'winget'
 
 Write-NewFile (Join-Path $winget "$identifier.yaml") @"
