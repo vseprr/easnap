@@ -137,7 +137,13 @@ private:
 };
 
 constexpr wchar_t kWebsite[] = L"https://github.com/vseprr/easnap";
-constexpr wchar_t kReleasesPage[] = L"https://github.com/vseprr/easnap/releases";
+// "Check for updates": a stable build opens the latest stable release; a
+// prerelease opens the list, where newer prereleases appear too.
+#if EASNAP_VERSION_IS_PRERELEASE
+constexpr wchar_t kUpdatesPage[] = L"https://github.com/vseprr/easnap/releases";
+#else
+constexpr wchar_t kUpdatesPage[] = L"https://github.com/vseprr/easnap/releases/latest";
+#endif
 /// A second launch posts this to the running instance: start a capture.
 constexpr wchar_t kActivateMessageName[] = L"Easnap.StartCapture";
 constexpr int kProbeHotkeyId = 2;
@@ -412,7 +418,7 @@ void OnTrayCommand(HWND hwnd, UINT command) {
             break;
         case IDM_TRAY_CHECK_UPDATES:
             // The browser opens the releases page. Easnap itself asks nobody.
-            ::ShellExecuteW(nullptr, L"open", kReleasesPage, nullptr, nullptr, SW_SHOWNORMAL);
+            ::ShellExecuteW(nullptr, L"open", kUpdatesPage, nullptr, nullptr, SW_SHOWNORMAL);
             break;
         case IDM_TRAY_ABOUT:
             ShowAboutDialog(hwnd);

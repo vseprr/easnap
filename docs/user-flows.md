@@ -397,7 +397,8 @@ capture.
 **About** shows the version, the shortcut and the Windows build. **Copy
 details** puts the version, Windows build, language, shortcut and display
 layout on the clipboard for a bug report. **Check for updates** opens the
-releases page in the browser; Easnap itself connects to nothing.
+latest release in the browser (a prerelease opens the list of all releases);
+Easnap itself connects to nothing.
 
 Easnap needs Windows 10 version 2004 (build 19041) or later and says so
 instead of starting on an older build.

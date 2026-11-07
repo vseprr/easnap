@@ -2,6 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-10-13
+**Amended:** 2026-11-07 — "Check for updates" opens the latest stable release in a stable build
 
 ## Context
 
@@ -72,7 +73,10 @@ replaced by the two new keys.
 About shows the version text, the shortcut and the Windows build. "Copy
 details" puts version, Windows build, language, shortcut and display layout on
 the clipboard for a bug report. "Check for updates" opens the releases page in
-the browser. Easnap itself still opens no network connection.
+the browser. Easnap itself still opens no network connection. Amended
+2026-11-07: a stable build opens the latest stable release
+(`/releases/latest`); a prerelease opens the list of releases, where newer
+prereleases appear too.
 
 ## Consequences
 
