@@ -1,9 +1,7 @@
-// Easnap - media layer contracts (Phase 2/3 implementation boundaries).
+// Easnap - media layer contracts: audio capture, media writing and trim export.
 //
 // Nothing in this header allocates audio, encoder or GPU resources: the Idle
-// state must stay passive. These interfaces exist now so the screenshot slice
-// already compiles against the final boundaries and the recording work never has
-// to reshape the application core.
+// state must stay passive.
 #pragma once
 
 #include <array>
@@ -175,7 +173,7 @@ public:
     [[nodiscard]] virtual AudioCaptureDiagnostics diagnostics() const = 0;
 };
 
-/// Incremental media persistence (Media Foundation sink writer in Phase 2).
+/// Incremental media persistence (implemented with the Media Foundation sink writer).
 ///
 /// The writer streams to a disk-backed session file; it never requires the full
 /// media in memory and must keep partial output recoverable after failures.
@@ -196,7 +194,7 @@ public:
     [[nodiscard]] virtual std::wstring last_error() const = 0;
 };
 
-/// Non-destructive trim export (Phase 2.9 for MP4, Phase 3 for GIF).
+/// Non-destructive trim export to MP4 or GIF.
 enum class TrimVideoPipeline {
     Unknown,
     D3d11DxgiNv12,
@@ -264,21 +262,7 @@ public:
     [[nodiscard]] virtual TrimExportFailure LastFailure() const { return {}; }
 };
 
-/// Reserved extension point for v1.1 scrolling screenshots.
-///
-/// Intentionally unused by every v1 capture path: implementing it must not
-/// require changes to the coordinator, overlay or editor.
-class IScrollshotProvider {
-public:
-    virtual ~IScrollshotProvider() = default;
-
-    /// Probes whether the window under `origin` exposes a scrollable surface.
-    [[nodiscard]] virtual bool IsSupportedTarget(POINT origin) const = 0;
-    /// Captures and stitches the scrollable content of the target region.
-    virtual bool CaptureStitched(const RECT& region, platform::BgraImage& out) = 0;
-};
-
-// Phase 2/3 factories.
+// Factories.
 std::unique_ptr<IAudioCaptureProvider> CreateWasapiAudioCaptureProvider();
 
 std::unique_ptr<ITrimExporter> CreateMp4TrimExporter();

@@ -1,9 +1,10 @@
 #include "ui/native_controls.h"
 // Easnap - application entry point.
 //
-// Easnap is a tray-resident tool: there is no main window. A hidden message-only
-// style window owns the notification icon, the global shortcut and the single
-// message loop that every UI surface (overlay, editor) is pumped from.
+// Easnap is a tray-resident tool: there is no main window. A hidden top-level
+// tool window (it must receive broadcasts such as TaskbarCreated) owns the
+// notification icon, the global shortcut and the single message loop that
+// every UI surface (overlay, editor) is pumped from.
 //
 // Design rules enforced here:
 //   * Exactly one instance may run, so the global shortcut has a single owner.
@@ -11,7 +12,7 @@
 //   * Windows are always destroyed outside their own window procedure, via the
 //     deferred kMsgSessionCleanup message.
 #include <windows.h>
-// windows.h must stay first: the shell headers below depend on its types.
+// windows.h comes before the shell headers below, which depend on its types.
 #include <shellapi.h>
 #include <shlobj.h>
 

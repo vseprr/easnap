@@ -678,8 +678,8 @@ RECT ModestPrimaryMonitorRegion() {
 
     const LONG monitor_width = info.rcMonitor.right - info.rcMonitor.left;
     const LONG monitor_height = info.rcMonitor.bottom - info.rcMonitor.top;
-    // Match the non-macroblock-aligned shape from the Phase 3.2 acceptance
-    // defect when the desktop is large enough. Both dimensions force the H.264
+    // A shape that is not a multiple of the 16-pixel macroblock, when the
+    // desktop is large enough. Both dimensions force the H.264
     // decoder's coded surface/aperture boundary to be exercised.
     LONG width = (std::min)(492L, monitor_width);
     LONG height = (std::min)(748L, monitor_height);

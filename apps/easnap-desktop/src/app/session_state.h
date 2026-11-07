@@ -61,8 +61,7 @@ inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
 /// theirs is running its own message loop any more.
 inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
 
-/// The full v1 session lifecycle. Recording states exist already so Phase 2 only
-/// adds behaviour, never new control flow.
+/// The session lifecycle; session_transitions.cpp lists the legal transitions.
 ///
 ///   Idle
 ///     -> RegionSelecting

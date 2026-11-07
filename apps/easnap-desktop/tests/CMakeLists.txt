@@ -487,7 +487,7 @@ target_link_libraries(test_capture_overlay PRIVATE easnap_project_options easnap
 add_test(NAME capture_magnifier_logic COMMAND test_capture_overlay)
 set_tests_properties(capture_magnifier_logic PROPERTIES LABELS "unit;overlay" TIMEOUT 30)
 # Native dispatch regression: synthetic snapshot, real production windows; no
-# backend capture or OS clipboard writes. Requires an interactive desktop.
+# backend capture or OS clipboard writes. Runs on a private desktop of its own.
 add_test(NAME capture_overlay_interaction
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_overlay> --native)
 set_tests_properties(capture_overlay_interaction PROPERTIES
@@ -735,7 +735,7 @@ foreach(ui_target test_region_selector test_redaction_renderer test_capture_over
 endforeach()
 
 # ---------------------------------------------------------------------------
-# test_gif_encoder — Phase 3.1 stream, timing, palette, delta and publication
+# test_gif_encoder — GIF stream, timing, palette, delta and publication
 # ---------------------------------------------------------------------------
 
 add_executable(test_gif_encoder

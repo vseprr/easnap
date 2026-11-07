@@ -407,8 +407,8 @@ AudioCaptureResult WasapiAudioProvider::Start(AudioSource source, PacketCallback
         return AudioCaptureResult::InvalidSource;
     }
     if (source == AudioSource::Both) {
-        // Two-source synchronized capture requires clock alignment and mixing.
-        // Not implemented in this slice.
+        // One provider captures one endpoint. AudioSource::Both is composed
+        // from two of them by AudioCaptureProvider (dual_audio_provider.cpp).
         return AudioCaptureResult::InvalidSource;
     }
 

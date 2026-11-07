@@ -154,7 +154,7 @@ public:
 std::unique_ptr<IRegionCaptureProvider> CreateRegionCaptureProvider();
 
 /// Draws the live mouse cursor into `image`, which maps to `image_rect` on the
-/// virtual desktop. Exposed for reuse by the Phase 2 recording pipeline.
+/// virtual desktop.
 bool CompositeCursor(BgraImage& image, const RECT& image_rect);
 
 }  // namespace easnap::capture

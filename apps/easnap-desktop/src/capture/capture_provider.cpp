@@ -567,8 +567,8 @@ private:
                 OutputDuplication& output = outputs_[static_cast<size_t>(index)];
                 const bool rotated = output.rotation != DXGI_MODE_ROTATION_IDENTITY &&
                                      output.rotation != DXGI_MODE_ROTATION_UNSPECIFIED;
-                // Rotated outputs need a transform pass; the GDI path already
-                // returns upright pixels, so use it until Phase 2 adds one.
+                // Rotated outputs would need a transform pass; the GDI path
+                // already returns upright pixels, so it reads them.
                 if (!rotated && !output.unusable &&
                     AcquireFrame(output, out, nullptr, kAcquireTimeoutMs, kAcquireAttempts,
                                  nullptr, nullptr) == FrameAcquireStatus::Acquired) {
