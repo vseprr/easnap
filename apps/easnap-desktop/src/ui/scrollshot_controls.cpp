@@ -42,6 +42,19 @@ constexpr float kButton = 40.0f;
 constexpr float kStatusWidth = 250.0f;
 constexpr float kGap = 12.0f;
 
+/// The height of one line of `font`, as a static label draws it.
+[[nodiscard]] LONG LineHeight(HFONT font) {
+    LONG height = 0;
+    if (HDC dc = ::CreateCompatibleDC(nullptr)) {
+        const HGDIOBJ previous = ::SelectObject(dc, font);
+        TEXTMETRICW metrics{};
+        if (::GetTextMetricsW(dc, &metrics)) { height = metrics.tmHeight; }
+        ::SelectObject(dc, previous);
+        ::DeleteDC(dc);
+    }
+    return height;
+}
+
 [[nodiscard]] LONG TextWidth(HFONT font, const wchar_t* text) {
     LONG width = 0;
     if (HDC dc = ::CreateCompatibleDC(nullptr)) {
@@ -172,7 +185,13 @@ public:
             const LONG text_left = grip + theme::Scaled(4, scale);
             const LONG text_width = status_width - theme::Scaled(4, scale);
             ::MoveWindow(size_, text_left, theme::Scaled(8, scale), text_width, theme::Scaled(20, scale), TRUE);
-            ::MoveWindow(message_, text_left, theme::Scaled(28, scale), text_width, theme::Scaled(36, scale), TRUE);
+            // Room for two lines of the message as the font draws them: its
+            // pixel height does not follow the scale exactly, and 36 DIP held
+            // two lines at 125 % but not at 150 %.
+            const LONG message_top = theme::Scaled(28, scale);
+            const LONG message_height = std::min<LONG>(
+                height - message_top, std::max<LONG>(theme::Scaled(36, scale), 2 * LineHeight(ui_font_)));
+            ::MoveWindow(message_, text_left, message_top, text_width, message_height, TRUE);
             LONG x = grip + status_width + padding;
             for (HWND control : {edit_, save_, discard_, copy_}) {
                 ::MoveWindow(control, x, button_top, button, button, TRUE);

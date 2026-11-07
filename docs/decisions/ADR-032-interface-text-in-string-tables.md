@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-10-13
 **Amended:** 2026-10-30 — the Copied and Saved notices size themselves to their text
+**Amended:** 2026-11-07 — the Scrollshot status and the editor's value labels fit at 150 %
 
 ## Context
 
@@ -67,6 +68,16 @@ Turkish "Saved" text: it needs 385 px at 125 %.
 desktop in both languages and checks that no label is wider than the control
 that shows it. The notices are among those windows; with the old width the
 check fails on the Turkish text.
+
+A width that fits at one scale does not fit at every scale (amended
+2026-11-07): a font's pixel height is rounded, so text is relatively wider at
+150 % than at 125 %. The first run of the test in the lab image at 150 %
+failed 22 of 416 checks: the Scrollshot status message, whose 36 DIP held two
+lines at 125 % but not at 150 % (54 px for 56 px), and the editor's value
+labels ("Boyut 96 pt" needed 102 px of 98). The status message is now two
+lines of its font high, and the value labels (blur or block size, opacity,
+text size) are as wide as the widest text they can show, never narrower than
+before.
 
 `strings_catalog` reads both tables through the accessor and checks that
 every identifier has text in both languages, that the two use the same

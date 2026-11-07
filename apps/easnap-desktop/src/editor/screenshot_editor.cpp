@@ -121,6 +121,20 @@ void AdjustForNonClient(RECT& rect, UINT dpi) {
     ::AdjustWindowRectEx(&rect, kEditorStyle, FALSE, kEditorExStyle);
 }
 
+/// The width in pixels of `text` on one line in `font`, as a static label draws it.
+float TextPixelWidth(HFONT font, const std::wstring& text) {
+    float width = 0;
+    if (HDC dc = ::CreateCompatibleDC(nullptr)) {
+        const HGDIOBJ previous = font != nullptr ? ::SelectObject(dc, font) : nullptr;
+        RECT box{};
+        ::DrawTextW(dc, text.c_str(), -1, &box, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+        width = static_cast<float>(box.right - box.left);
+        if (previous != nullptr) { ::SelectObject(dc, previous); }
+        ::DeleteDC(dc);
+    }
+    return width;
+}
+
 void DrawArrow(ID2D1RenderTarget* target, const Annotation& annotation, ID2D1SolidColorBrush* brush) {
     const D2D1_POINT_2F start = annotation.points.front();
     const D2D1_POINT_2F end = annotation.points.back();
@@ -1274,6 +1288,15 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             widest = std::max(widest, r.right + pad);
             fields.push_back({id, {static_cast<LONG>(r.left), static_cast<LONG>(r.top), static_cast<LONG>(r.right), static_cast<LONG>(r.bottom)}});
         };
+        // A value label is as wide as the widest text it can show, and never
+        // narrower than its design width. A font's pixel height does not follow
+        // the scale exactly, so a fixed width that fits at 125 % cut
+        // "Boyut 96 pt" at 150 %.
+        const auto value_field = [&](int id, float minimum, std::initializer_list<std::wstring> texts) {
+            float text_width = 0;
+            for (const std::wstring& value : texts) { text_width = std::max(text_width, TextPixelWidth(toolbar_font_, value)); }
+            field(id, std::max(minimum, (text_width + 1.0f) / s));
+        };
         const auto separator = [&] {
             const auto r = place(8 * s);
             separators.push_back({static_cast<LONG>((r.left + r.right) / 2), static_cast<LONG>(r.top + 8 * s), static_cast<LONG>((r.left + r.right) / 2 + 1), static_cast<LONG>(r.bottom - 8 * s)});
@@ -1300,7 +1323,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         option(2521, IDS_EDITOR_OPTION_REGION, effect);
         if (effect) {
             separator();
-            field(2611, 125);
+            value_field(2611, 125, {strings::Format(IDS_EDITOR_BLUR_INTENSITY_VALUE, {L"100"}), strings::Format(IDS_EDITOR_BLOCK_SIZE_VALUE, {L"72"})});
             field(2601, 155);
         }
         option(2530, IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE, spot);
@@ -1308,7 +1331,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         option(2532, IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED, spot);
         if (spot) {
             separator();
-            field(2612, 110);
+            value_field(2612, 110, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
             field(2602, 155);
         }
         if (text || tag) {
@@ -1349,10 +1372,10 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         }
         if (watermark) {
             separator();
-            field(2612, 85);
+            value_field(2612, 85, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
             field(2602, 100);
             separator();
-            field(2613, 65);
+            value_field(2613, 65, {strings::Format(IDS_EDITOR_SIZE_VALUE, {L"96"})});
             field(2603, 100);
         }
         for (size_t i = 0; i < kBrushSizeOptions.size(); ++i) {
