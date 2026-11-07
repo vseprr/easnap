@@ -23,9 +23,13 @@ namespace easnap::media {
 
 /// Audio routing offered for MP4 recordings. GIF never exposes these options
 /// because an animated GIF has no audio stream.
-enum class AudioSource { None, SystemAudio, Microphone, Both };
+enum class AudioSource { None,
+                         SystemAudio,
+                         Microphone,
+                         Both };
 
-enum class RecordingFormat { Mp4, Gif };
+enum class RecordingFormat { Mp4,
+                             Gif };
 
 struct RecordingOptions {
     RECT region{};
@@ -137,7 +141,8 @@ struct AudioCaptureDiagnostics {
     std::size_t peak_queue_occupancy{0};
     std::size_t timestamp_resolution_count{0};
     std::array<AudioTimestampResolutionDiagnostic,
-               kAudioTimestampDiagnosticCapacity> timestamp_resolutions{};
+               kAudioTimestampDiagnosticCapacity>
+        timestamp_resolutions{};
 };
 
 /// Microphone / system-audio capture (WASAPI).

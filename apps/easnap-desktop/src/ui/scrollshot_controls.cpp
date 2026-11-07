@@ -85,7 +85,10 @@ public:
     }
 
     void Destroy() noexcept {
-        if (tooltip_ != nullptr) { ::DestroyWindow(tooltip_); tooltip_ = nullptr; }
+        if (tooltip_ != nullptr) {
+            ::DestroyWindow(tooltip_);
+            tooltip_ = nullptr;
+        }
         if (preview_ != nullptr) {
             ::SetWindowLongPtrW(preview_, GWLP_USERDATA, 0);
             ::DestroyWindow(preview_);
@@ -98,7 +101,10 @@ public:
         }
         ClearControlHandles();
         for (HFONT* font : {&ui_font_, &strong_font_}) {
-            if (*font != nullptr) { ::DeleteObject(*font); *font = nullptr; }
+            if (*font != nullptr) {
+                ::DeleteObject(*font);
+                *font = nullptr;
+            }
         }
     }
 
@@ -124,7 +130,7 @@ public:
         // The mode options sit at the top of a monitor; keep clear of them.
         for (platform::MonitorInfo& monitor : monitors) {
             monitor.work_area.top = std::max(monitor.work_area.top, monitor.bounds.top +
-                theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
+                                                                        theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
         }
 
         const bool start = owner_.view_ == View::Start;
@@ -222,8 +228,14 @@ public:
         if (ConsumePopupInput(message.message, message.wParam)) { return true; }
         if (message.message == WM_KEYDOWN && (::GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
             owner_.view_ == View::Capture) {
-            if (message.wParam == 'S') { owner_.Dispatch(Action::Save); return true; }
-            if (message.wParam == 'C') { owner_.Dispatch(Action::Copy); return true; }
+            if (message.wParam == 'S') {
+                owner_.Dispatch(Action::Save);
+                return true;
+            }
+            if (message.wParam == 'C') {
+                owner_.Dispatch(Action::Copy);
+                return true;
+            }
         }
         return ActivateFocusedButton(message, island_) || ::IsDialogMessageW(island_, &message) != FALSE;
     }
@@ -368,7 +380,7 @@ private:
             case WM_CTLCOLORSTATIC: {
                 const HWND control = reinterpret_cast<HWND>(lparam);
                 const COLORREF text = control == size_ ? theme::Current().text
-                    : (warning_ ? theme::Current().error : theme::Current().muted_text);
+                                                       : (warning_ ? theme::Current().error : theme::Current().muted_text);
                 return ControlBackground(wparam, text);
             }
             default:
@@ -486,11 +498,10 @@ private:
         UpdateButtonStyle(copy_, {Icon::Check, ButtonRole::Success, true});
 
         tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
-            WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, island_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+                                     WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, island_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
         if (tooltip_ != nullptr) {
             const std::pair<HWND, UINT> tips[] = {
-                {help_, IDS_SCROLLSHOT_HELP}, {edit_, IDS_SCROLLSHOT_EDIT}, {save_, IDS_SCROLLSHOT_SAVE},
-                {discard_, IDS_SCROLLSHOT_DISCARD}, {copy_, IDS_SCROLLSHOT_COPY}};
+                {help_, IDS_SCROLLSHOT_HELP}, {edit_, IDS_SCROLLSHOT_EDIT}, {save_, IDS_SCROLLSHOT_SAVE}, {discard_, IDS_SCROLLSHOT_DISCARD}, {copy_, IDS_SCROLLSHOT_COPY}};
             for (const auto& [control, id] : tips) {
                 TOOLINFOW info{sizeof(info)};
                 info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;

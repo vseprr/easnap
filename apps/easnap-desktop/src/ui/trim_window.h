@@ -58,7 +58,10 @@ public:
     }
 
 private:
-    enum class TimelineDrag { None, Seek, In, Out };
+    enum class TimelineDrag { None,
+                              Seek,
+                              In,
+                              Out };
 
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam,
                                        LPARAM lparam);

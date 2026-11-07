@@ -121,29 +121,29 @@ void Trace(const char* fmt, ...) {
     std::fflush(stdout);
 }
 
-#define TEST_ASSERT(cond, msg)                                                   \
-    do {                                                                         \
-        if (!(cond)) {                                                           \
-            Trace("  FAIL: %s (line %d)\n", (msg), __LINE__);                    \
-            return false;                                                        \
-        }                                                                        \
+#define TEST_ASSERT(cond, msg)                                \
+    do {                                                      \
+        if (!(cond)) {                                        \
+            Trace("  FAIL: %s (line %d)\n", (msg), __LINE__); \
+            return false;                                     \
+        }                                                     \
     } while (false)
 
-#define RUN_TEST(fn)                                                             \
-    do {                                                                         \
-        ++g_tests_run;                                                           \
-        Trace("=== %s ===\n", #fn);                                              \
-        const int result = fn();                                                 \
-        if (result > 0) {                                                        \
-            ++g_tests_passed;                                                    \
-            Trace("  PASSED\n\n");                                               \
-        } else if (result == 0) {                                                \
-            ++g_tests_failed;                                                    \
-            Trace("  FAILED\n\n");                                               \
-        } else {                                                                 \
-            ++g_tests_skipped;                                                   \
-            Trace("  SKIPPED\n\n");                                              \
-        }                                                                        \
+#define RUN_TEST(fn)                \
+    do {                            \
+        ++g_tests_run;              \
+        Trace("=== %s ===\n", #fn); \
+        const int result = fn();    \
+        if (result > 0) {           \
+            ++g_tests_passed;       \
+            Trace("  PASSED\n\n");  \
+        } else if (result == 0) {   \
+            ++g_tests_failed;       \
+            Trace("  FAILED\n\n");  \
+        } else {                    \
+            ++g_tests_skipped;      \
+            Trace("  SKIPPED\n\n"); \
+        }                           \
     } while (false)
 
 // ---------------------------------------------------------------------------
@@ -185,7 +185,7 @@ public:
 
         // Use default shared mode without event callback for simplicity.
         hr = client_->Initialize(AUDCLNT_SHAREMODE_SHARED, 0,
-                                  0, 0, format_, nullptr);
+                                 0, 0, format_, nullptr);
         if (FAILED(hr)) return false;
 
         hr = client_->GetBufferSize(&buffer_frames_);

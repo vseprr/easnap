@@ -23,7 +23,10 @@ inline constexpr std::size_t kDefaultVideoFrameQueueCapacity = 3;
 inline constexpr uint32_t kMaximumTargetFrameRate = 240;
 inline constexpr std::size_t kCaptureFailureDiagnosticCapacity = 8;
 
-enum class RecordingWorkerState { Stopped, Running, Paused, Stopping };
+enum class RecordingWorkerState { Stopped,
+                                  Running,
+                                  Paused,
+                                  Stopping };
 
 /// Deterministic lifecycle state used by the worker. The owner supplies
 /// synchronization; this type contains no hidden command or event queue.
@@ -82,7 +85,7 @@ private:
 };
 
 [[nodiscard]] media::MediaTime MediaTimestampForFrame(uint64_t frame_index,
-                                                       uint32_t frame_rate) noexcept;
+                                                      uint32_t frame_rate) noexcept;
 
 struct CaptureFailureDiagnosticEntry {
     uint64_t capture_attempt{0};
@@ -93,7 +96,8 @@ struct CaptureFailureDiagnosticEntry {
 
 struct CaptureFailureDiagnostics {
     std::array<CaptureFailureDiagnosticEntry,
-               kCaptureFailureDiagnosticCapacity> entries{};
+               kCaptureFailureDiagnosticCapacity>
+        entries{};
     std::size_t count{0};
     uint64_t omitted{0};
 };

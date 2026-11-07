@@ -10,7 +10,8 @@
 
 namespace easnap::media::detail {
 
-enum class DualAudioInput : uint8_t { SystemAudio, Microphone };
+enum class DualAudioInput : uint8_t { SystemAudio,
+                                      Microphone };
 
 enum class DualAudioMixerPushResult : uint8_t {
     Success,            // All frames placed into mixer buffer

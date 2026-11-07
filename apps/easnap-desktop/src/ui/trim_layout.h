@@ -54,9 +54,9 @@ struct TrimTextMetrics final {
 /// Fits without stretching; surplus width/height is consumed before the image
 /// itself shrinks. Width/height are source pixels, not UI dimensions.
 [[nodiscard]] TrimLayoutRect FitTrimVideo(TrimLayoutRect area, int source_width,
-                                         int source_height) noexcept;
+                                          int source_height) noexcept;
 [[nodiscard]] TrimLayoutRect InitialTrimWindowSize(int work_width, int work_height,
-    float dpi_scale, int source_width, int source_height) noexcept;
+                                                   float dpi_scale, int source_width, int source_height) noexcept;
 
 [[nodiscard]] bool IsTrimWindowLayoutContained(
     const TrimWindowLayout& layout, int client_width,

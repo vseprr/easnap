@@ -99,7 +99,10 @@ public:
     static constexpr LONG kMinimumSize = 8;
 
 private:
-    enum class Interaction { Idle, Creating, Moving, Resizing };
+    enum class Interaction { Idle,
+                             Creating,
+                             Moving,
+                             Resizing };
 
     [[nodiscard]] RECT ClampToBounds(RECT region) const;
 

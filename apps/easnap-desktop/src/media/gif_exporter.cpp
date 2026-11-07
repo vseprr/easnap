@@ -189,7 +189,9 @@ private:
         std::optional<MediaTime> nominal_frame_duration;
     };
 
-    enum class RawReadResult { Frame, End, Error };
+    enum class RawReadResult { Frame,
+                               End,
+                               Error };
 
     MfGifFrameSource(std::wstring source_path, MediaTime start, MediaTime end)
         : source_path_(std::move(source_path)), start_(start), end_(end) {}
@@ -237,7 +239,7 @@ private:
              format.buffer_height >
                  static_cast<UINT32>((std::numeric_limits<int>::max)()) ||
              format.buffer_width > static_cast<UINT32>(
-                         (std::numeric_limits<LONG>::max)() / 4))) {
+                                       (std::numeric_limits<LONG>::max)() / 4))) {
             result = MF_E_INVALIDMEDIATYPE;
         }
         UINT32 raw_stride = 0;
@@ -297,7 +299,7 @@ private:
             UINT32 reported_height = 0;
             UINT32 reported_stride = 0;
             if (SUCCEEDED(reader_->GetCurrentMediaType(video_stream_,
-                                                        &reported_type))) {
+                                                       &reported_type))) {
                 static_cast<void>(reported_type->GetGUID(MF_MT_MAJOR_TYPE,
                                                          &reported_major));
                 static_cast<void>(reported_type->GetGUID(MF_MT_SUBTYPE,
@@ -721,9 +723,9 @@ bool ExportOnWorker(const std::wstring& source_path,
                                    : (options.gif_dither
                                           ? GifQuantizationPolicy::Balanced
                                           : GifQuantizationPolicy::Sharp);
-    gif_options.palette = options.gif_low_size ? GifPalettePolicy::FixedWebSafe
-        : options.gif_fixed_rgb332 ? GifPalettePolicy::FixedRgb332
-                                  : GifPalettePolicy::AdaptiveMedianCut;
+    gif_options.palette = options.gif_low_size       ? GifPalettePolicy::FixedWebSafe
+                          : options.gif_fixed_rgb332 ? GifPalettePolicy::FixedRgb332
+                                                     : GifPalettePolicy::AdaptiveMedianCut;
     gif_options.temporal_tolerance = options.gif_low_size ? 8 : 0;
     gif_options.transparent_sparse_deltas =
         options.gif_sparse_transparency;

@@ -33,7 +33,15 @@ using ui::ScrollshotCommand;
 using ui::ScrollshotControls;
 
 int passed{}, failed{};
-#define CHECK(...) do { if (__VA_ARGS__) { ++passed; } else { ++failed; std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); } } while (false)
+#define CHECK(...)                                                         \
+    do {                                                                   \
+        if (__VA_ARGS__) {                                                 \
+            ++passed;                                                      \
+        } else {                                                           \
+            ++failed;                                                      \
+            std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); \
+        }                                                                  \
+    } while (false)
 
 platform::BgraImage ToBgra(const Image& image, int first_row = 0, int rows = -1) {
     platform::BgraImage out;
@@ -68,8 +76,7 @@ int ThreadWindowCount() {
     int count = 0;
     ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND, LPARAM value) -> BOOL {
         ++*reinterpret_cast<int*>(value);
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&count));
+        return TRUE; }, reinterpret_cast<LPARAM>(&count));
     return count;
 }
 
@@ -104,7 +111,10 @@ bool Overlaps(const RECT& a, const RECT& b) {
 
 /// The visible windows that darken the desktop outside the frame on `monitor`.
 std::vector<HWND> VisibleShading(const RECT& monitor) {
-    struct Query { std::vector<HWND> windows; RECT monitor; } query{{}, monitor};
+    struct Query {
+        std::vector<HWND> windows;
+        RECT monitor;
+    } query{{}, monitor};
     ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM value) -> BOOL {
         auto* found = reinterpret_cast<Query*>(value);
         RECT rect{};
@@ -112,8 +122,7 @@ std::vector<HWND> VisibleShading(const RECT& monitor) {
             ::GetWindowRect(window, &rect) && Overlaps(rect, found->monitor)) {
             found->windows.push_back(window);
         }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&query));
+        return TRUE; }, reinterpret_cast<LPARAM>(&query));
     return query.windows;
 }
 

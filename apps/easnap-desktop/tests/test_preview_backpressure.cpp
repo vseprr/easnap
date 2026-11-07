@@ -22,9 +22,13 @@ using easnap::media::MediaTime;
 
 int failures = 0;
 
-#define CHECK(condition) do { if (!(condition)) { \
-    std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #condition); \
-    ++failures; } } while (false)
+#define CHECK(condition)                                                      \
+    do {                                                                      \
+        if (!(condition)) {                                                   \
+            std::fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #condition); \
+            ++failures;                                                       \
+        }                                                                     \
+    } while (false)
 
 template <typename Predicate>
 bool WaitFor(Predicate predicate, ULONGLONG timeout_ms = 5'000) {
@@ -59,7 +63,7 @@ void ProbeHelper(HWND helper, ULONGLONG started, ProbeResult& result) {
         const auto before = ::GetTickCount64();
         ::SetLastError(ERROR_SUCCESS);
         const auto replied = ::SendMessageTimeoutW(helper, WM_NULL, 0, 0,
-            SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT, 250, &ignored);
+                                                   SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT, 250, &ignored);
         const auto error = ::GetLastError();
         const auto elapsed = ::GetTickCount64() - before;
         const auto longest = result.longest_reply_ms.load();
@@ -85,55 +89,60 @@ void ResizeWhileTimersAreDeferred(easnap::media::IMediaPreview& preview, HWND pa
     // Native input/paint has priority over WM_TIMER. Keep servicing posted and
     // sent messages while deliberately deferring timers, as sustained input
     // can do. Resize must make repeated progress, not stop after its first ack.
-    const auto before=preview.snapshot();
-    timer_dispatches=0;
-    const UINT_PTR sentinel=::SetTimer(nullptr,0,25,TimerDispatch);
-    CHECK(sentinel!=0);
-    const auto started=::GetTickCount64();
-    ULONGLONG next_resize=started;
-    unsigned requests=0,observed_resizes=0,posted=0;
-    RECT previous{};CHECK(::GetClientRect(helper,&previous));
-    while(::GetTickCount64()-started<1000) {
-        if(::GetTickCount64()>=next_resize) {
+    const auto before = preview.snapshot();
+    timer_dispatches = 0;
+    const UINT_PTR sentinel = ::SetTimer(nullptr, 0, 25, TimerDispatch);
+    CHECK(sentinel != 0);
+    const auto started = ::GetTickCount64();
+    ULONGLONG next_resize = started;
+    unsigned requests = 0, observed_resizes = 0, posted = 0;
+    RECT previous{};
+    CHECK(::GetClientRect(helper, &previous));
+    while (::GetTickCount64() - started < 1000) {
+        if (::GetTickCount64() >= next_resize) {
             ++requests;
-            CHECK(::SetWindowPos(parent,nullptr,0,0,640+static_cast<int>(requests)*4,
-                360+static_cast<int>(requests)*2,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOREDRAW));
+            CHECK(::SetWindowPos(parent, nullptr, 0, 0, 640 + static_cast<int>(requests) * 4,
+                                 360 + static_cast<int>(requests) * 2, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW));
             preview.UpdateVideo();
-            next_resize=::GetTickCount64()+16;
+            next_resize = ::GetTickCount64() + 16;
         }
         MSG message{};
-        while(::PeekMessageW(&message,nullptr,WM_APP,0xBFFF,PM_REMOVE)) {
+        while (::PeekMessageW(&message, nullptr, WM_APP, 0xBFFF, PM_REMOVE)) {
             ::DispatchMessageW(&message);
-            if(++posted>requests*4+100) break;
+            if (++posted > requests * 4 + 100) break;
         }
-        if(posted>requests*4+100) break;
-        ::PeekMessageW(&message,nullptr,WM_NULL,WM_KEYFIRST-1,PM_NOREMOVE|PM_QS_SENDMESSAGE);
-        RECT current{};CHECK(::GetClientRect(helper,&current));
-        if(current.right!=previous.right || current.bottom!=previous.bottom) {
-            ++observed_resizes;previous=current;
+        if (posted > requests * 4 + 100) break;
+        ::PeekMessageW(&message, nullptr, WM_NULL, WM_KEYFIRST - 1, PM_NOREMOVE | PM_QS_SENDMESSAGE);
+        RECT current{};
+        CHECK(::GetClientRect(helper, &current));
+        if (current.right != previous.right || current.bottom != previous.bottom) {
+            ++observed_resizes;
+            previous = current;
         }
-        ::MsgWaitForMultipleObjects(0,nullptr,FALSE,5,QS_SENDMESSAGE|QS_POSTMESSAGE);
+        ::MsgWaitForMultipleObjects(0, nullptr, FALSE, 5, QS_SENDMESSAGE | QS_POSTMESSAGE);
     }
-    if(sentinel) ::KillTimer(nullptr,sentinel);
+    if (sentinel) ::KillTimer(nullptr, sentinel);
     std::printf("resize_without_timers: requests=%u observed=%u posted=%u timers=%u\n",
-        requests,observed_resizes,posted,timer_dispatches);
-    CHECK(timer_dispatches==0);
-    CHECK(requests>=10 && observed_resizes>=3);
-    CHECK(posted<=requests*4+100);
-    CHECK(preview.snapshot().backend_process_id==before.backend_process_id);
-    CHECK(preview.snapshot().player_generation==before.player_generation);
+                requests, observed_resizes, posted, timer_dispatches);
+    CHECK(timer_dispatches == 0);
+    CHECK(requests >= 10 && observed_resizes >= 3);
+    CHECK(posted <= requests * 4 + 100);
+    CHECK(preview.snapshot().backend_process_id == before.backend_process_id);
+    CHECK(preview.snapshot().player_generation == before.player_generation);
     CHECK(WaitFor([&] {
-        RECT current{};::GetClientRect(helper,&current);
-        return current.right==640+static_cast<int>(requests)*4 &&
-            current.bottom==360+static_cast<int>(requests)*2;
-    },3000));
+        RECT current{};
+        ::GetClientRect(helper, &current);
+        return current.right == 640 + static_cast<int>(requests) * 4 &&
+               current.bottom == 360 + static_cast<int>(requests) * 2;
+    },
+                  3000));
 }
 
 void RunBackpressure(const std::wstring& source) {
-    const RECT placement=easnap::test::OnTestMonitor({0,0,640,360});
+    const RECT placement = easnap::test::OnTestMonitor({0, 0, 640, 360});
     const HWND parent = ::CreateWindowExW(0, L"STATIC", L"Preview backpressure test",
-        WS_POPUP | WS_CLIPCHILDREN, placement.left, placement.top, 640, 360, nullptr, nullptr,
-        ::GetModuleHandleW(nullptr), nullptr);
+                                          WS_POPUP | WS_CLIPCHILDREN, placement.left, placement.top, 640, 360, nullptr, nullptr,
+                                          ::GetModuleHandleW(nullptr), nullptr);
     CHECK(parent != nullptr);
     if (parent == nullptr) return;
 
@@ -146,16 +155,16 @@ void RunBackpressure(const std::wstring& source) {
     const bool opened = preview->Open(source, parent, parent, WM_APP + 1);
     CHECK(opened);
     const bool ready = opened && WaitFor([&] {
-        return preview->snapshot().state == MediaPreviewState::Ready;
-    });
+                           return preview->snapshot().state == MediaPreviewState::Ready;
+                       });
     CHECK(ready);
     const bool requested = ready && preview->Play();
     CHECK(requested);
     const bool playing = requested && WaitFor([&] {
-        const auto state = preview->snapshot();
-        return state.native_playing && state.native_position_valid &&
-            !state.command_pending && state.native_position > MediaTime{1'000'000};
-    });
+                             const auto state = preview->snapshot();
+                             return state.native_playing && state.native_position_valid &&
+                                    !state.command_pending && state.native_position > MediaTime{1'000'000};
+                         });
     CHECK(playing);
 
     if (playing) {
@@ -164,9 +173,9 @@ void RunBackpressure(const std::wstring& source) {
         DWORD helper_process = 0;
         const DWORD helper_thread = ::GetWindowThreadProcessId(helper, &helper_process);
         const bool owned = helper != nullptr && helper_process != 0 &&
-            helper_process != ::GetCurrentProcessId() &&
-            helper_process == before.backend_process_id &&
-            helper_thread == before.backend_thread_id;
+                           helper_process != ::GetCurrentProcessId() &&
+                           helper_process == before.backend_process_id &&
+                           helper_thread == before.backend_thread_id;
         CHECK(owned);
         if (owned) {
             // This timer is a sentinel for the same posted-message category as
@@ -183,13 +192,13 @@ void RunBackpressure(const std::wstring& source) {
                 // PeekMessage dispatches incoming sent messages itself. Do not
                 // remove or dispatch WM_TIMER, including the preview Poll.
                 ::PeekMessageW(&message, nullptr, WM_NULL, WM_KEYFIRST - 1,
-                    PM_NOREMOVE | PM_QS_SENDMESSAGE);
+                               PM_NOREMOVE | PM_QS_SENDMESSAGE);
                 if (!resized && ::GetTickCount64() - started >= 600 &&
                     probe_result.replies.load() >= 2) {
                     // Only our parent is positioned. Production UpdateVideo
                     // must deliver resizing to the helper over its own channel.
                     CHECK(::SetWindowPos(parent, nullptr, 0, 0, 832, 468,
-                        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW) != FALSE);
+                                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW) != FALSE);
                     preview->UpdateVideo();
                     resized = true;
                 }
@@ -212,18 +221,18 @@ void RunBackpressure(const std::wstring& source) {
             // were consumed, before normal polling is permitted to resume.
             CHECK(child_bounds.right == 832 && child_bounds.bottom == 468);
             std::fprintf(stdout,
-                "parent_poll_starved_ms=%llu helper_replies=%u max_reply_ms=%llu "
-                "failure_at_ms=%llu error=%lu child=%ldx%ld\n",
-                starved_ms, probe_result.replies.load(), probe_result.longest_reply_ms.load(),
-                probe_result.failure_at_ms.load(), probe_result.error.load(),
-                child_bounds.right, child_bounds.bottom);
+                         "parent_poll_starved_ms=%llu helper_replies=%u max_reply_ms=%llu "
+                         "failure_at_ms=%llu error=%lu child=%ldx%ld\n",
+                         starved_ms, probe_result.replies.load(), probe_result.longest_reply_ms.load(),
+                         probe_result.failure_at_ms.load(), probe_result.error.load(),
+                         child_bounds.right, child_bounds.bottom);
 
             const bool resumed = WaitFor([&] {
                 const auto state = preview->snapshot();
                 return state.backend_process_id == before.backend_process_id &&
-                    state.player_generation == before.player_generation &&
-                    state.native_playing && !state.command_pending &&
-                    state.native_position > before.native_position + MediaTime{20'000'000};
+                       state.player_generation == before.player_generation &&
+                       state.native_playing && !state.command_pending &&
+                       state.native_position > before.native_position + MediaTime{20'000'000};
             });
             CHECK(resumed);
             const auto after = preview->snapshot();
@@ -234,9 +243,9 @@ void RunBackpressure(const std::wstring& source) {
             CHECK(WaitFor([&] {
                 const auto state = preview->snapshot();
                 return state.state == MediaPreviewState::Paused &&
-                    !state.native_playing && !state.command_pending;
+                       !state.native_playing && !state.command_pending;
             }));
-            ResizeWhileTimersAreDeferred(*preview,parent,helper);
+            ResizeWhileTimersAreDeferred(*preview, parent, helper);
         }
     }
     if (failures != 0) {
@@ -261,10 +270,9 @@ int wmain(int argc, wchar_t** argv) {
         return 1;
     }
 
-    const auto root = argc > 1 ? std::filesystem::path(argv[1]) :
-        std::filesystem::temp_directory_path() / L"easnap-preview-backpressure";
+    const auto root = argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::temp_directory_path() / L"easnap-preview-backpressure";
     const auto directory = root / (std::to_wstring(::GetCurrentProcessId()) + L"-" +
-        std::to_wstring(::GetTickCount64()));
+                                   std::to_wstring(::GetTickCount64()));
     std::error_code error;
     std::filesystem::create_directories(directory, error);
     CHECK(!error);

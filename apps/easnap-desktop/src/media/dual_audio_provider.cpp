@@ -113,7 +113,7 @@ private:
 };
 
 AudioCaptureResult AudioCaptureProvider::Start(AudioSource source,
-                                                PacketCallback on_packet) {
+                                               PacketCallback on_packet) {
     // A failed Both session is unhealthy but still owns its mixer thread and
     // endpoints until Stop(); it must not be restarted over them.
     if (active() || dual_active_.load(std::memory_order_acquire)) {

@@ -44,7 +44,7 @@ constexpr media::MediaTime kQpcDiscontinuityThreshold{500'000};  // 50 ms
 }
 
 [[nodiscard]] uint64_t TimeToFramesCeiling(media::MediaTime time,
-                                            uint32_t sample_rate) noexcept {
+                                           uint32_t sample_rate) noexcept {
     if (time <= media::MediaTime::zero() || sample_rate == 0) {
         return 0;
     }
@@ -59,7 +59,7 @@ constexpr media::MediaTime kQpcDiscontinuityThreshold{500'000};  // 50 ms
 }
 
 [[nodiscard]] media::MediaTime AbsoluteDifference(media::MediaTime left,
-                                                   media::MediaTime right) noexcept {
+                                                  media::MediaTime right) noexcept {
     return left >= right ? left - right : right - left;
 }
 

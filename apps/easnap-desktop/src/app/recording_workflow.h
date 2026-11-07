@@ -25,7 +25,8 @@ inline constexpr std::array<media::RecordingFormat, 2> kSupportedRecordingFormat
     media::RecordingFormat::Gif,
 };
 
-enum class GifExportPreset { HighQuality, LowSize };
+enum class GifExportPreset { HighQuality,
+                             LowSize };
 
 /// Product-level GIF policy. Encoder details such as palette size, disposal and
 /// LZW behavior deliberately stay behind this boundary.

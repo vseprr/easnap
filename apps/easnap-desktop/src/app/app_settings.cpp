@@ -97,15 +97,17 @@ AppSettings AppSettings::Load(const std::wstring& custom_path) {
     // Exact values only: unknown, truncated and legacy values fall back
     // independently. A file without the key follows Windows.
     settings.appearance_theme = ::wcscmp(appearance, L"Dark") == 0
-                                    ? AppearanceTheme::Dark : AppearanceTheme::Light;
+                                    ? AppearanceTheme::Dark
+                                    : AppearanceTheme::Light;
     settings.appearance_follows_system = ::wcscmp(appearance, L"System") == 0;
     const std::wstring language = ReadText(path, L"Language");
-    settings.language = language == L"English" ? LanguageSetting::English
-                        : language == L"Turkish" ? LanguageSetting::Turkish : LanguageSetting::System;
+    settings.language = language == L"English"   ? LanguageSetting::English
+                        : language == L"Turkish" ? LanguageSetting::Turkish
+                                                 : LanguageSetting::System;
     settings.hotkey_virtual_key = ::GetPrivateProfileIntW(kSettingsSection, L"HotkeyVirtualKey",
                                                           static_cast<INT>(settings.hotkey_virtual_key), path.c_str());
     settings.capture_cursor = ::GetPrivateProfileIntW(kSettingsSection, L"CaptureCursor",
-                                                       settings.capture_cursor ? 1 : 0, path.c_str()) != 0;
+                                                      settings.capture_cursor ? 1 : 0, path.c_str()) != 0;
     const auto loaded_format = static_cast<media::RecordingFormat>(
         ::GetPrivateProfileIntW(kSettingsSection, L"RecordingFormat",
                                 static_cast<INT>(settings.recording_format),
@@ -180,10 +182,14 @@ bool AppSettings::Save(const std::wstring& custom_path) const {
     };
 
     bool ok = write_int(L"HotkeyModifiers", static_cast<int>(hotkey_modifiers));
-    ok = write_text(L"AppearanceTheme", appearance_follows_system ? L"System"
-                    : appearance_theme == AppearanceTheme::Dark ? L"Dark" : L"Light") && ok;
-    ok = write_text(L"Language", language == LanguageSetting::English ? L"English"
-                    : language == LanguageSetting::Turkish ? L"Turkish" : L"System") && ok;
+    ok = write_text(L"AppearanceTheme", appearance_follows_system                   ? L"System"
+                                        : appearance_theme == AppearanceTheme::Dark ? L"Dark"
+                                                                                    : L"Light") &&
+         ok;
+    ok = write_text(L"Language", language == LanguageSetting::English   ? L"English"
+                                 : language == LanguageSetting::Turkish ? L"Turkish"
+                                                                        : L"System") &&
+         ok;
     ok = write_int(L"HotkeyVirtualKey", static_cast<int>(hotkey_virtual_key)) && ok;
     ok = write_int(L"CaptureCursor", capture_cursor ? 1 : 0) && ok;
     ok = write_int(L"RecordingFormat", static_cast<int>(recording_format)) && ok;

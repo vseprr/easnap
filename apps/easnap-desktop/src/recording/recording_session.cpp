@@ -559,18 +559,18 @@ void RecordingSession::ConsumerMain() noexcept {
         }
 
         if (write_failed) {
-                std::wstring message =
-                    writer_ != nullptr ? writer_->last_error() : std::wstring{};
-                if (message.empty()) {
-                    message = L"Writing a captured video frame failed";
-                }
-                RecordFailure(std::move(message));
-                audio_accepting_.store(false, std::memory_order_release);
-                frame_queue_.close();
-                capture_worker_->Stop();
-                if (writer_ != nullptr) {
-                    writer_->Abort();
-                }
+            std::wstring message =
+                writer_ != nullptr ? writer_->last_error() : std::wstring{};
+            if (message.empty()) {
+                message = L"Writing a captured video frame failed";
+            }
+            RecordFailure(std::move(message));
+            audio_accepting_.store(false, std::memory_order_release);
+            frame_queue_.close();
+            capture_worker_->Stop();
+            if (writer_ != nullptr) {
+                writer_->Abort();
+            }
         }
         if (capture_worker_->failed()) {
             RecordFailure(L"The desktop capture worker failed unexpectedly");
@@ -769,15 +769,13 @@ void RecordingSession::TraceSilenceWrite(
         if (silence_write_diagnostic_count_ <
             silence_write_diagnostics_.size()) {
             SilenceWriteDiagnostic& entry =
-                silence_write_diagnostics_[
-                    silence_write_diagnostic_count_++];
+                silence_write_diagnostics_[silence_write_diagnostic_count_++];
             entry.tick_sequence = sequence;
             entry.tick_pts_100ns = tick.count();
             entry.triggering_video_position_100ns = video_position.count();
             entry.committed_audio_end_100ns = committed_audio_end.count();
             entry.pending_audio_start_100ns =
-                pending_audio_start.has_value() ? pending_audio_start->count() :
-                                                  -1;
+                pending_audio_start.has_value() ? pending_audio_start->count() : -1;
             entry.submission_microseconds = submission_microseconds;
             entry.writer_accepted = writer_accepted;
         } else if (silence_write_timeline_omitted_ !=
@@ -868,7 +866,7 @@ bool RecordingSession::WriteSilenceUpTo(
         const uint64_t elapsed_microseconds =
             microseconds > 0 ? static_cast<uint64_t>(microseconds) : 0;
         TraceSilenceWrite(*target, video_position, committed_before,
-                             pending_before, elapsed_microseconds, any_written);
+                          pending_before, elapsed_microseconds, any_written);
         if (any_written) {
             silence_write_position_ = committed_audio_end_;
             silence_writes_.Increment();
@@ -973,7 +971,7 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
             mapped.frame_count -= static_cast<uint32_t>(overlap_frames);
             mapped.timestamp = committed_audio_end_;
             mapped.duration = AudioFramesToTime(mapped.frame_count,
-                                                 audio_format_.sample_rate);
+                                                audio_format_.sample_rate);
         }
         if (mapped.timestamp < silence_write_position_) {
             RecordFailure(L"Captured audio arrived behind an already committed audio gap");
@@ -1041,11 +1039,9 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
             std::chrono::duration_cast<std::chrono::microseconds>(wait_elapsed)
                 .count();
         audio_backpressure_wait_timing_.Add(
-            wait_microseconds > 0 ? static_cast<uint64_t>(wait_microseconds) :
-                                    0);
+            wait_microseconds > 0 ? static_cast<uint64_t>(wait_microseconds) : 0);
         const uint64_t gate_wait_microseconds =
-            wait_microseconds > 0 ? static_cast<uint64_t>(wait_microseconds) :
-                                    0;
+            wait_microseconds > 0 ? static_cast<uint64_t>(wait_microseconds) : 0;
         if (video_stalled) {
             write_failed = true;
             write_failure_context =

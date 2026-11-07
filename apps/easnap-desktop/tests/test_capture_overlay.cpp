@@ -95,9 +95,9 @@ void TestPixelMapping() {
 void TestPlacement() {
     for (float scale : {1.0f, 1.25f, 2.0f}) {
         const SIZE size{ui::theme::Scaled(ui::theme::kMagnifierWidth, scale),
-            ui::theme::kMagnifierGridPixels * ui::theme::Scaled(ui::theme::kMagnifierCell, scale) +
-            3 * ui::theme::Scaled(ui::theme::kMagnifierPadding, scale) +
-            3 * ui::theme::Scaled(ui::theme::kMagnifierLineHeight, scale)};
+                        ui::theme::kMagnifierGridPixels * ui::theme::Scaled(ui::theme::kMagnifierCell, scale) +
+                            3 * ui::theme::Scaled(ui::theme::kMagnifierPadding, scale) +
+                            3 * ui::theme::Scaled(ui::theme::kMagnifierLineHeight, scale)};
         const LONG gap = ui::theme::Scaled(ui::theme::kMagnifierPointerGap, scale);
         for (const RECT monitor : {RECT{0, 0, 1920, 1080}, RECT{-1920, -1080, 0, 0}}) {
             const RECT toolbar{monitor.left + 600, monitor.top + 60,
@@ -113,7 +113,7 @@ void TestPlacement() {
                 }
             }
             for (POINT corner : {POINT{monitor.left, monitor.top}, POINT{monitor.right - 1, monitor.top},
-                    POINT{monitor.left, monitor.bottom - 1}, POINT{monitor.right - 1, monitor.bottom - 1}}) {
+                                 POINT{monitor.left, monitor.bottom - 1}, POINT{monitor.right - 1, monitor.bottom - 1}}) {
                 const RECT box = ui::PlaceCaptureMagnifier(corner, monitor, size, gap, toolbar);
                 CHECK(!::PtInRect(&box, corner));
             }
@@ -130,10 +130,12 @@ void TestSelectionDamage() {
     for (float scale : {1.0f, 1.25f, 2.0f}) {
         for (const RECT monitor : {RECT{0, 0, 640, 360}, RECT{-640, -360, 0, 0}}) {
             ui::RegionSelector selector;
-            selector.Reset({-2000, -2000, 2000, 2000}); selector.set_enabled(true);
+            selector.Reset({-2000, -2000, 2000, 2000});
+            selector.set_enabled(true);
             const HFONT font = ui::theme::CreateUiFont(13.0f, scale, false);
             platform::BgraImage partial, full;
-            partial.Reset(640, 360); full.Reset(640, 360);
+            partial.Reset(640, 360);
+            full.Reset(640, 360);
             const RECT client{0, 0, 640, 360};
             auto render = [&](platform::BgraImage& image, HRGN damage) {
                 platform::GdiImageSurface surface(image);
@@ -143,7 +145,8 @@ void TestSelectionDamage() {
                 selector.RenderGdi(surface.dc(), monitor, scale, font);
             };
             RECT previous = monitor;
-            selector.SetSelection(previous); render(partial, nullptr);
+            selector.SetSelection(previous);
+            render(partial, nullptr);
             for (int i = 0; i < 96; ++i) {
                 const LONG x = monitor.left - 80 + (i * 71) % 720;
                 const LONG y = monitor.top - 60 + (i * 37) % 420;
@@ -154,10 +157,12 @@ void TestSelectionDamage() {
                 for (const RECT& selection : {previous, current}) {
                     for (const RECT& rect : ui::RegionSelector::GdiSelectionDamage(selection, monitor, scale)) {
                         HRGN part = ::CreateRectRgnIndirect(&rect);
-                        ::CombineRgn(damage, damage, part, RGN_OR); ::DeleteObject(part);
+                        ::CombineRgn(damage, damage, part, RGN_OR);
+                        ::DeleteObject(part);
                     }
                 }
-                render(partial, damage); render(full, nullptr);
+                render(partial, damage);
+                render(full, nullptr);
                 CHECK(partial.pixels == full.pixels);
                 ::DeleteObject(damage);
                 previous = current;
@@ -207,11 +212,15 @@ LPARAM ClientPoint(LONG x, LONG y) { return MAKELPARAM(static_cast<SHORT>(x), st
 void TestFirstSelectionLatency() {
     using Clock = std::chrono::steady_clock;
     const auto monitors = platform::EnumerateMonitors();
-    if (monitors.empty()) { CHECK(false); return; }
-    const RECT bounds = test::SelectedTestMonitor() ? test::SelectedTestMonitor()->bounds:monitors.front().bounds;
+    if (monitors.empty()) {
+        CHECK(false);
+        return;
+    }
+    const RECT bounds = test::SelectedTestMonitor() ? test::SelectedTestMonitor()->bounds : monitors.front().bounds;
     const LONG width = platform::RectWidth(bounds), height = platform::RectHeight(bounds);
     const POINT origin{bounds.left + width / 4, bounds.top + height / 3};
-    capture::DesktopSnapshot snapshot; snapshot.virtual_bounds = platform::VirtualScreenBounds();
+    capture::DesktopSnapshot snapshot;
+    snapshot.virtual_bounds = platform::VirtualScreenBounds();
     ui::OverlayController overlay({});
     const auto started = Clock::now();
     CHECK(overlay.Show(snapshot, origin));
@@ -222,7 +231,8 @@ void TestFirstSelectionLatency() {
     const auto pump = [] {
         MSG message{};
         while (::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
-            ::TranslateMessage(&message); ::DispatchMessageW(&message);
+            ::TranslateMessage(&message);
+            ::DispatchMessageW(&message);
         }
         ::GdiFlush();
     };
@@ -237,13 +247,13 @@ void TestFirstSelectionLatency() {
         pump();
         milliseconds[step] = std::chrono::duration<double, std::milli>(Clock::now() - before).count();
         CHECK(Equal(overlay.selector().selection(),
-            RECT{origin.x, origin.y, bounds.left + x, bounds.top + y}));
+                    RECT{origin.x, origin.y, bounds.left + x, bounds.top + y}));
     }
     const double first = milliseconds.front();
     std::sort(milliseconds.begin(), milliseconds.end());
     std::printf("Native selection timing: show %.2f ms, first drag %.2f ms, p95 %.2f ms, max %.2f ms\n",
-        std::chrono::duration<double, std::milli>(visible - started).count(),
-        first, milliseconds[60], milliseconds.back());
+                std::chrono::duration<double, std::milli>(visible - started).count(),
+                first, milliseconds[60], milliseconds.back());
     ::SendMessageW(windows.dim, WM_LBUTTONUP, 0, ClientPoint(width / 2 + 63, height * 2 / 3));
     overlay.Destroy();
 }
@@ -252,46 +262,61 @@ void TestModeFade() {
     const auto monitors = platform::EnumerateMonitors();
     CHECK(!monitors.empty());
     if (monitors.empty()) { return; }
-    const RECT bounds = test::SelectedTestMonitor() ? test::SelectedTestMonitor()->bounds:monitors.front().bounds;
+    const RECT bounds = test::SelectedTestMonitor() ? test::SelectedTestMonitor()->bounds : monitors.front().bounds;
     const POINT point{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
-    capture::DesktopSnapshot snapshot; snapshot.virtual_bounds = platform::VirtualScreenBounds();
+    capture::DesktopSnapshot snapshot;
+    snapshot.virtual_bounds = platform::VirtualScreenBounds();
     ui::OverlayController overlay({});
-    CHECK(overlay.Show(snapshot, point)); overlay.EnterEditing();
+    CHECK(overlay.Show(snapshot, point));
+    overlay.EnterEditing();
     NativeWindows windows{bounds};
     ::EnumThreadWindows(::GetCurrentThreadId(), FindWindows, reinterpret_cast<LPARAM>(&windows));
     CHECK(windows.modes && ::IsWindowVisible(windows.modes));
-    overlay.Hide(); overlay.FixScreenshot(); overlay.Resume();
+    overlay.Hide();
+    overlay.FixScreenshot();
+    overlay.Resume();
     CHECK(!overlay.workspace().can_switch_mode() && !overlay.selector().enabled());
-    overlay.SetMode(CaptureMode::Record); CHECK(overlay.mode() == CaptureMode::Screenshot);
-    ::SetFocus(windows.dim); const HWND focus = ::GetFocus();
-    BYTE previous = 255; bool intermediate = false;
+    overlay.SetMode(CaptureMode::Record);
+    CHECK(overlay.mode() == CaptureMode::Screenshot);
+    ::SetFocus(windows.dim);
+    const HWND focus = ::GetFocus();
+    BYTE previous = 255;
+    bool intermediate = false;
     const ULONGLONG started = ::GetTickCount64();
     while (::IsWindowVisible(windows.modes) && ::GetTickCount64() - started < 900) {
-        BYTE alpha{}; DWORD flags{}; COLORREF key{};
+        BYTE alpha{};
+        DWORD flags{};
+        COLORREF key{};
         CHECK(::GetLayeredWindowAttributes(windows.modes, &key, &alpha, &flags));
         CHECK(alpha <= previous && flags == (LWA_COLORKEY | LWA_ALPHA) && key == ui::theme::kChromeColorKey);
-        intermediate = intermediate || (alpha > 0 && alpha < 255); previous = alpha;
+        intermediate = intermediate || (alpha > 0 && alpha < 255);
+        previous = alpha;
         MSG message{};
         while (::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
-            ::TranslateMessage(&message); ::DispatchMessageW(&message);
+            ::TranslateMessage(&message);
+            ::DispatchMessageW(&message);
         }
         ::MsgWaitForMultipleObjects(0, nullptr, FALSE, 16, QS_ALLINPUT);
     }
     CHECK(intermediate && !::IsWindowVisible(windows.modes));
     std::printf("Fade state: focus_preserved=%d chrome_visible=%d image_visible=%d dpi=%u\n",
-        ::GetFocus()==focus,::IsWindowVisible(windows.chrome),::IsWindowVisible(windows.image),::GetDpiForWindow(windows.chrome));
+                ::GetFocus() == focus, ::IsWindowVisible(windows.chrome), ::IsWindowVisible(windows.image), ::GetDpiForWindow(windows.chrome));
     CHECK(::GetFocus() == focus && ::IsWindowVisible(windows.chrome) && ::IsWindowVisible(windows.image));
-    overlay.Hide(); overlay.Resume();
+    overlay.Hide();
+    overlay.Resume();
     CHECK(!::IsWindowVisible(windows.modes));
     overlay.Destroy();
     CHECK(!::IsWindow(windows.modes));
     CHECK(overlay.Show(snapshot, point));
     windows = NativeWindows{bounds};
     ::EnumThreadWindows(::GetCurrentThreadId(), FindWindows, reinterpret_cast<LPARAM>(&windows));
-    BYTE alpha{}; DWORD flags{};
+    BYTE alpha{};
+    DWORD flags{};
     CHECK(::GetLayeredWindowAttributes(windows.modes, nullptr, &alpha, &flags) && alpha == 255);
     CHECK(::IsWindowVisible(windows.modes) && overlay.workspace().can_switch_mode());
-    overlay.EnterEditing(); overlay.FixScreenshot(); overlay.Destroy();
+    overlay.EnterEditing();
+    overlay.FixScreenshot();
+    overlay.Destroy();
     CHECK(!::IsWindow(windows.modes)); // Teardown during the animation.
 }
 
@@ -326,13 +351,16 @@ void TestNativeOverlay() {
         CHECK(overlay.Show(snapshot, origin));
         CHECK(overlay.mode() == CaptureMode::Screenshot);
         CHECK(!overlay.workspace().editing() && overlay.workspace().magnifier_visible());
-    CHECK(overlay.workspace().accent() == ui::theme::Current().screenshot_border);
+        CHECK(overlay.workspace().accent() == ui::theme::Current().screenshot_border);
         CHECK(overlay.selector().has_implicit_selection() && Equal(overlay.selector().selection(), bounds));
         NativeWindows windows{bounds};
         ::EnumThreadWindows(::GetCurrentThreadId(), FindWindows, reinterpret_cast<LPARAM>(&windows));
         CHECK(windows.dim && windows.magnifier);
         CHECK(::IsWindowVisible(windows.chrome));
-        if (!windows.dim || !windows.magnifier) { overlay.Destroy(); continue; }
+        if (!windows.dim || !windows.magnifier) {
+            overlay.Destroy();
+            continue;
+        }
         RECT magnifier_client{};
         ::GetClientRect(windows.magnifier, &magnifier_client);
         platform::BgraImage magnifier_pixels;
@@ -426,7 +454,7 @@ void TestNativeOverlay() {
         send(WM_MOUSEMOVE, width / 2, height * 3 / 4, MK_LBUTTON);
         send(WM_LBUTTONUP, width / 2 + 3, height * 3 / 4 + 3);
         const RECT custom{bounds.left + width / 4, bounds.top + height / 2,
-            bounds.left + width / 2 + 3, bounds.top + height * 3 / 4 + 3};
+                          bounds.left + width / 2 + 3, bounds.top + height * 3 / 4 + 3};
         CHECK(overlay.workspace().editing() && Equal(overlay.selector().selection(), custom));
         CHECK(completions == before_completions + 2);
         for (int i = 0; i < 4; ++i) {
@@ -447,7 +475,8 @@ void TestNativeOverlay() {
         send(WM_LBUTTONDBLCLK, width / 3, height * 5 / 8);
         send(WM_MOUSEMOVE, width / 3 + 20, height * 5 / 8 + 20, MK_LBUTTON);
         send(WM_LBUTTONUP, width / 3 + 20, height * 5 / 8 + 20);
-        RECT moved = custom; ::OffsetRect(&moved, 20, 20);
+        RECT moved = custom;
+        ::OffsetRect(&moved, 20, 20);
         CHECK(Equal(overlay.selector().selection(), moved));
         CHECK(completions == before_completions + 3);
         CHECK(overlay.SamplePixel(origin) == RGB(255, 0, 255));
@@ -466,14 +495,17 @@ void TestNativeOverlay() {
         annotation_tool = false;
         std::array<BYTE, 256> original_keys{}, keys{};
         ::GetKeyboardState(original_keys.data());
-        keys[VK_SHIFT] = 0x80; ::SetKeyboardState(keys.data());
+        keys[VK_SHIFT] = 0x80;
+        ::SetKeyboardState(keys.data());
         ::SendMessageW(windows.dim, WM_KEYDOWN, VK_SHIFT, 0);
         ::SendMessageW(windows.dim, WM_KEYDOWN, VK_RIGHT, 0);
         ::SendMessageW(windows.dim, WM_KEYUP, VK_SHIFT, 0);
         ::OffsetRect(&moved, 10, 0);
         CHECK(Equal(overlay.selector().selection(), moved));
         CHECK(overlay.color_readout().representation() == ColorRepresentation::Rgb);
-        keys.fill(0); keys[VK_CONTROL] = 0x80; ::SetKeyboardState(keys.data());
+        keys.fill(0);
+        keys[VK_CONTROL] = 0x80;
+        ::SetKeyboardState(keys.data());
         const int prior_editor_keys = editor_keys;
         ::SendMessageW(windows.dim, WM_KEYDOWN, 'C', 0);
         CHECK(editor_keys == prior_editor_keys + 1 && completions == before_completions + 3);
@@ -493,7 +525,8 @@ void TestNativeOverlay() {
         send(WM_MOUSEMOVE, custom.left - bounds.left - 20, custom.top - bounds.top - 20, MK_LBUTTON);
         send(WM_LBUTTONUP, custom.left - bounds.left - 20, custom.top - bounds.top - 20);
         ::SendMessageW(windows.dim, WM_KEYDOWN, 'A', 0);
-        keys.fill(0); ::SetKeyboardState(keys.data());
+        keys.fill(0);
+        ::SetKeyboardState(keys.data());
         ::SendMessageW(windows.dim, WM_KEYDOWN, VK_RIGHT, 0);
         send(WM_LBUTTONDOWN, record_button.x, record_button.y);
         send(WM_LBUTTONUP, record_button.x, record_button.y);
@@ -502,7 +535,8 @@ void TestNativeOverlay() {
         send(WM_MOUSEMOVE, width / 3, height * 5 / 8);
         // Transparent sibling windows defer painting; clear existing damage so
         // this assertion measures only the next pointer event's invalidation.
-        ::ValidateRect(windows.dim, nullptr); ::ValidateRect(windows.chrome, nullptr);
+        ::ValidateRect(windows.dim, nullptr);
+        ::ValidateRect(windows.chrome, nullptr);
         send(WM_MOUSEMOVE, width / 3 + 1, height * 5 / 8 + 1);
         CHECK(!::GetUpdateRect(windows.dim, nullptr, FALSE));
         CHECK(!::GetUpdateRect(windows.chrome, nullptr, FALSE));
@@ -518,7 +552,8 @@ void TestNativeOverlay() {
         windows = NativeWindows{bounds};
         ::EnumThreadWindows(::GetCurrentThreadId(), FindWindows, reinterpret_cast<LPARAM>(&windows));
         overlay.EnterEditing();
-        overlay.SetMode(CaptureMode::Record); overlay.SetMode(CaptureMode::Screenshot);
+        overlay.SetMode(CaptureMode::Record);
+        overlay.SetMode(CaptureMode::Screenshot);
         overlay.FixScreenshot();
         annotation_tool = true;
         send(WM_LBUTTONDOWN, width / 2, height / 2);
@@ -538,7 +573,8 @@ void TestNativeOverlay() {
         DWORD idle_gdi = ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS);
         DWORD idle_user = ::GetGuiResources(::GetCurrentProcess(), GR_USEROBJECTS);
         for (int cycle = 0; cycle < 4; ++cycle) {
-            CHECK(overlay.Show(snapshot, origin)); overlay.EnterEditing();
+            CHECK(overlay.Show(snapshot, origin));
+            overlay.EnterEditing();
             windows = NativeWindows{bounds};
             ::EnumThreadWindows(::GetCurrentThreadId(), FindWindows, reinterpret_cast<LPARAM>(&windows));
             auto paint = [&] {
@@ -549,8 +585,10 @@ void TestNativeOverlay() {
             paint();
             const DWORD warm_gdi = ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS);
             for (int step = 0; step < 32; ++step) {
-                RECT region = custom; ::OffsetRect(&region, step, step / 2);
-                overlay.selector().SetSelection(region); overlay.RegionChanged();
+                RECT region = custom;
+                ::OffsetRect(&region, step, step / 2);
+                overlay.selector().SetSelection(region);
+                overlay.RegionChanged();
                 CHECK(!::GetUpdateRect(windows.dim, nullptr, FALSE));
                 paint();
                 CHECK(::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS) == warm_gdi);
@@ -567,24 +605,26 @@ void TestNativeOverlay() {
                     reinterpret_cast<std::vector<HWND>*>(children)->push_back(child);
                     return TRUE;
                 }, context);
-                return TRUE;
-            }, reinterpret_cast<LPARAM>(&owned_windows));
+                return TRUE; }, reinterpret_cast<LPARAM>(&owned_windows));
             CHECK(!owned_windows.empty());
             overlay.Destroy();
             for (HWND window : owned_windows) { CHECK(!::IsWindow(window)); }
             ::GdiFlush();
             std::printf("Overlay resources cycle %d: GDI %lu -> %lu, USER %lu -> %lu\n", cycle,
-                idle_gdi, ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS),
-                idle_user, ::GetGuiResources(::GetCurrentProcess(), GR_USEROBJECTS));
+                        idle_gdi, ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS),
+                        idle_user, ::GetGuiResources(::GetCurrentProcess(), GR_USEROBJECTS));
             if (cycle == 0) {
                 ::EnumWindows([](HWND window, LPARAM) -> BOOL {
-                    DWORD process{}; ::GetWindowThreadProcessId(window, &process);
+                    DWORD process{};
+                    ::GetWindowThreadProcessId(window, &process);
                     if (process == ::GetCurrentProcessId()) {
-                        wchar_t name[80]{}; ::GetClassNameW(window, name, 80);
+                        wchar_t name[80]{};
+                        ::GetClassNameW(window, name, 80);
                         std::printf("Warm native window: %ls visible=%d\n", name, ::IsWindowVisible(window));
                     }
                     return TRUE;
-                }, 0);
+                },
+                              0);
                 // Warm the complete native paint lifecycle before comparing
                 // sessions; Windows retains one first-use GDI resource here.
                 idle_gdi = ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS);

@@ -60,11 +60,14 @@ constexpr int kRailChannelTolerance = 12;
 constexpr int kRailDecisionFrames = 8;
 constexpr int kNoPosition = std::numeric_limits<int>::min();
 
-enum RowState : uint8_t { kEmpty = 0, kContent = 1, kTail = 2 };
+enum RowState : uint8_t { kEmpty = 0,
+                          kContent = 1,
+                          kTail = 2 };
 
 [[nodiscard]] inline int Luma(uint32_t pixel) noexcept {
     return static_cast<int>(((pixel & 0xFFu) * 29u + ((pixel >> 8) & 0xFFu) * 150u +
-                             ((pixel >> 16) & 0xFFu) * 77u) >> 8);
+                             ((pixel >> 16) & 0xFFu) * 77u) >>
+                            8);
 }
 
 [[nodiscard]] inline bool NearPixel(uint32_t a, uint32_t b) noexcept {
@@ -77,7 +80,10 @@ enum RowState : uint8_t { kEmpty = 0, kContent = 1, kTail = 2 };
 
 [[nodiscard]] inline int Popcount(uint32_t value) noexcept {
     int count = 0;
-    while (value != 0) { value &= value - 1; ++count; }
+    while (value != 0) {
+        value &= value - 1;
+        ++count;
+    }
     return count;
 }
 
@@ -262,7 +268,9 @@ struct StitchEngine::Impl {
             const uint64_t hash = out.hash[static_cast<size_t>(y)];
             out.distinct[static_cast<size_t>(y)] =
                 (y > 0 && out.hash[static_cast<size_t>(y) - 1] != hash) ||
-                (y + 1 < frame_height && out.hash[static_cast<size_t>(y) + 1] != hash) ? 1 : 0;
+                        (y + 1 < frame_height && out.hash[static_cast<size_t>(y) + 1] != hash)
+                    ? 1
+                    : 0;
         }
     }
 
@@ -422,7 +430,10 @@ struct StitchEngine::Impl {
         for (int y = first_row; y < end_row; ++y) {
             const int row = candidate + y;
             if (row < 0) { continue; }
-            if (row >= max_rows) { at_limit = true; break; }
+            if (row >= max_rows) {
+                at_limit = true;
+                break;
+            }
             const bool is_new = row >= rows || state[static_cast<size_t>(row)] == kEmpty;
             if (only_new && !is_new && state[static_cast<size_t>(row)] == kContent) { continue; }
             EnsureRows(row + 1);
@@ -486,8 +497,13 @@ struct StitchEngine::Impl {
             for (int x = 0; x < width; ++x) {
                 const bool same_place = NearPixel(now[x], still[x]);
                 const bool followed = NearPixel(now[x], moved[x]);
-                if (same_place && !followed) { votes[x] = 1; ++fixed[static_cast<size_t>(x)]; }
-                else if (followed && !same_place) { votes[x] = 2; ++scrolled[static_cast<size_t>(x)]; }
+                if (same_place && !followed) {
+                    votes[x] = 1;
+                    ++fixed[static_cast<size_t>(x)];
+                } else if (followed && !same_place) {
+                    votes[x] = 2;
+                    ++scrolled[static_cast<size_t>(x)];
+                }
             }
         }
         const auto measure = [&](bool from_left) {
@@ -496,8 +512,14 @@ struct StitchEngine::Impl {
             bool bounded = false;
             for (int i = 0; i < width; ++i) {
                 const size_t x = static_cast<size_t>(from_left ? i : width - 1 - i);
-                if (scrolled[x] >= 3 && scrolled[x] > fixed[x]) { bounded = true; break; }
-                if (fixed[x] >= 3) { last_evidence = i; ++evidence; }
+                if (scrolled[x] >= 3 && scrolled[x] > fixed[x]) {
+                    bounded = true;
+                    break;
+                }
+                if (fixed[x] >= 3) {
+                    last_evidence = i;
+                    ++evidence;
+                }
             }
             // A rail reaches as far as its own detail does; blank columns
             // between it and the content say nothing and stay content. Without
@@ -529,7 +551,9 @@ struct StitchEngine::Impl {
                 const uint64_t hash = current.hash[static_cast<size_t>(y)];
                 current.distinct[static_cast<size_t>(y)] =
                     (y > 0 && current.hash[static_cast<size_t>(y) - 1] != hash) ||
-                    (y + 1 < frame_height && current.hash[static_cast<size_t>(y) + 1] != hash) ? 1 : 0;
+                            (y + 1 < frame_height && current.hash[static_cast<size_t>(y) + 1] != hash)
+                        ? 1
+                        : 0;
             }
             return;
         }
@@ -574,7 +598,9 @@ struct StitchEngine::Impl {
             const uint64_t hash = canvas.hash[static_cast<size_t>(row)];
             canvas.distinct[static_cast<size_t>(row)] =
                 (row > 0 && canvas.hash[static_cast<size_t>(row) - 1] != hash) ||
-                (row + 1 < rows && canvas.hash[static_cast<size_t>(row) + 1] != hash) ? 1 : 0;
+                        (row + 1 < rows && canvas.hash[static_cast<size_t>(row) + 1] != hash)
+                    ? 1
+                    : 0;
         }
     }
 
@@ -808,10 +834,15 @@ struct StitchEngine::Impl {
         last_displacement = displacement;
         const int appended = rows - rows_before;
         FrameOutcome outcome = FrameOutcome::Moved;
-        if (position < 0) { outcome = FrameOutcome::OutsideCaptured; }
-        else if (position + frame_height > max_rows) { outcome = FrameOutcome::LimitReached; }
-        else if (appended > 0) { outcome = FrameOutcome::Extended; }
-        else if (!has_moved) { outcome = FrameOutcome::Refreshed; }
+        if (position < 0) {
+            outcome = FrameOutcome::OutsideCaptured;
+        } else if (position + frame_height > max_rows) {
+            outcome = FrameOutcome::LimitReached;
+        } else if (appended > 0) {
+            outcome = FrameOutcome::Extended;
+        } else if (!has_moved) {
+            outcome = FrameOutcome::Refreshed;
+        }
         return Report(outcome, true, displacement, appended, by_continuity && !use_same);
     }
 };

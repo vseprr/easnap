@@ -47,7 +47,7 @@ RECT SizeLabelRect(const RECT& selection, const RECT& monitor, float scale, LONG
     LONG top = selection.top - label_height - padding - theme::Scaled(theme::kSelectionBorder, scale);
     if (top < monitor.top) { top = selection.top + padding; }
     const LONG left = std::clamp(selection.left, monitor.left + padding,
-        std::max(monitor.left + padding, monitor.right - label_width - padding));
+                                 std::max(monitor.left + padding, monitor.right - label_width - padding));
     return RECT{left, top, left + label_width, top + label_height};
 }
 
@@ -359,18 +359,17 @@ std::array<RECT, 5> RegionSelector::GdiSelectionDamage(
     // Include handles even when hidden, allowing implicit -> adjustable changes
     // and very small selections without a separate invalidation policy.
     const LONG margin = std::max(theme::Scaled(theme::kHandleSize, scale) / 2,
-                                 theme::Scaled(theme::kSelectionBorder, scale)) + 1;
+                                 theme::Scaled(theme::kSelectionBorder, scale)) +
+                        1;
     const RECT monitor = ToClientRect(monitor_rect, monitor_rect);
-    std::array<RECT, 5> damage{{
-        {rect.left - margin, rect.top - margin, rect.right + margin, rect.top + margin},
-        {rect.left - margin, rect.bottom - margin, rect.right + margin, rect.bottom + margin},
-        {rect.left - margin, rect.top - margin, rect.left + margin, rect.bottom + margin},
-        {rect.right - margin, rect.top - margin, rect.right + margin, rect.bottom + margin},
-        SizeLabelRect(rect, monitor, scale)
-    }};
+    std::array<RECT, 5> damage{{{rect.left - margin, rect.top - margin, rect.right + margin, rect.top + margin},
+                                {rect.left - margin, rect.bottom - margin, rect.right + margin, rect.bottom + margin},
+                                {rect.left - margin, rect.top - margin, rect.left + margin, rect.bottom + margin},
+                                {rect.right - margin, rect.top - margin, rect.right + margin, rect.bottom + margin},
+                                SizeLabelRect(rect, monitor, scale)}};
     // The antialiased rounded label has one physical pixel of edge coverage
     // beyond its nominal right/bottom coordinates, independent of UI scale.
-    ::InflateRect(&damage.back(),1,1);
+    ::InflateRect(&damage.back(), 1, 1);
     for (RECT& part : damage) { part = platform::IntersectRects(part, monitor); }
     return damage;
 }

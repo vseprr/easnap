@@ -22,12 +22,13 @@ struct AccessibleTimelineSnapshot {
 class TimelineAccessibility final {
 public:
     TimelineAccessibility(HWND window, std::function<AccessibleTimelineSnapshot()> read,
-        std::function<bool(int, double)> set, std::function<void(int)> focus);
+                          std::function<bool(int, double)> set, std::function<void(int)> focus);
     ~TimelineAccessibility();
     TimelineAccessibility(const TimelineAccessibility&) = delete;
     TimelineAccessibility& operator=(const TimelineAccessibility&) = delete;
     LRESULT HandleGetObject(WPARAM wparam, LPARAM lparam);
     void NotifyChanged();
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

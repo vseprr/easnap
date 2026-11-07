@@ -16,10 +16,13 @@
 
 namespace easnap::strings {
 
-enum class Language { English, Turkish };
+enum class Language { English,
+                      Turkish };
 
 /// What the user chose. `System` follows the Windows display language.
-enum class LanguagePreference { System, English, Turkish };
+enum class LanguagePreference { System,
+                                English,
+                                Turkish };
 
 /// Selects the language. Text requested afterwards uses it; windows that are
 /// already open keep the text they were created with.

@@ -372,7 +372,8 @@ void TestPreviewOrderingRegressions() {
     const MediaTime displayed = timer.ResolvePosition(MediaTime{900});
     CHECK(displayed == MediaTime{200});
     CHECK(easnap::app::PlanTrimPlaybackProgress(timer.play_requested(), displayed,
-                                               MediaTime{900}).action ==
+                                                MediaTime{900})
+              .action ==
           easnap::app::TrimPlaybackAction::None);
 
     // The second click must cancel Play even while the old Ended/Out snapshot
@@ -432,7 +433,8 @@ void TestPreviewCallbackPermutations() {
                                              PreviewNativeState::Playing));
                 }
                 if (terminal_slot == 4) transport.Ended(last_play
-                    ? PreviewNativeState::Playing : PreviewNativeState::Paused);
+                                                            ? PreviewNativeState::Playing
+                                                            : PreviewNativeState::Paused);
                 CHECK(transport.playing() == last_play);
                 CHECK(transport.play_requested() == last_play);
                 CHECK(!transport.command_pending());
@@ -496,15 +498,22 @@ void TestGeneratedPreviewOrderings() {
                 native_position = outstanding.position;
             } else {
                 native = outstanding.type == PreviewTransportCommandType::Play
-                    ? PreviewNativeState::Playing : PreviewNativeState::Paused;
+                             ? PreviewNativeState::Playing
+                             : PreviewNativeState::Paused;
             }
             CHECK(transport.Complete(outstanding.type, native));
             outstanding = {};
         };
         for (unsigned step = 0; step < 128; ++step) {
             switch ((next() >> 24) % 8) {
-                case 0: wanted = true; transport.RequestPlay(); break;
-                case 1: wanted = false; transport.RequestPause(); break;
+                case 0:
+                    wanted = true;
+                    transport.RequestPlay();
+                    break;
+                case 1:
+                    wanted = false;
+                    transport.RequestPause();
+                    break;
                 case 2:
                     last_position = MediaTime{100 + static_cast<int64_t>(next() % 700)};
                     transport.RequestSeek(last_position);
@@ -542,7 +551,10 @@ void TestGeneratedPreviewOrderings() {
         }
         // Fair delivery: one completion per issued call. With no more user
         // requests, at most Pause + final Seek + Play can remain.
-        for (unsigned drain = 0; drain < 4; ++drain) { complete(); dispatch(); }
+        for (unsigned drain = 0; drain < 4; ++drain) {
+            complete();
+            dispatch();
+        }
         CHECK(outstanding.type == PreviewTransportCommandType::None);
         CHECK(!transport.command_pending());
         CHECK(transport.playing() == wanted);
@@ -626,7 +638,6 @@ void TestPreviewLogicalEndWaitsForRealSeekCompletion() {
                             PreviewNativeState::Playing));
     CHECK(endpoint.play_requested());
     CHECK(!endpoint.command_pending());
-
 }
 
 void TestPreviewPlaybackPositionFloor() {
@@ -744,8 +755,8 @@ void TestMissingEndpointSeekCompletionPreservesOwnership() {
     CHECK(command.position == out);
     const auto observe = [&](uint64_t now) {
         return liveness.Observe(now, 7, 59, transport.in_flight(),
-            transport.play_requested(), transport.playing(), out,
-            transport.position_pending());
+                                transport.play_requested(), transport.playing(), out,
+                                transport.position_pending());
     };
     CHECK(observe(100) == PreviewLivenessFailure::None);
     transport.RequestPlayFrom(in);
@@ -954,13 +965,15 @@ void TestTimedPreviewIntentConvergence() {
             PreviewTransport transport;
             PreviewTransportCommand outstanding;
             PreviewNativeState native = (seed % 2) != 0
-                ? PreviewNativeState::Playing : PreviewNativeState::Paused;
+                                            ? PreviewNativeState::Playing
+                                            : PreviewNativeState::Paused;
             transport.Reset(native == PreviewNativeState::Playing);
             MediaTime native_position = millisecond * start_ms;
             const MediaTime duration = millisecond * 12000;
             const MediaTime selected_in = millisecond * 1000;
             const MediaTime selected_out = start_ms >= 11900
-                ? duration : millisecond * 9000;
+                                               ? duration
+                                               : millisecond * 9000;
             unsigned now = 0;
             unsigned apply_at = 0;
             unsigned callback_at = 0;
@@ -986,9 +999,11 @@ void TestTimedPreviewIntentConvergence() {
                     case TrimPlaybackAction::Play: transport.RequestPlay(); break;
                     case TrimPlaybackAction::Pause: transport.RequestPause(); break;
                     case TrimPlaybackAction::SeekThenPlay:
-                        transport.RequestPlayFrom(decision.position); break;
+                        transport.RequestPlayFrom(decision.position);
+                        break;
                     case TrimPlaybackAction::PauseAt:
-                        transport.RequestPauseAt(decision.position); break;
+                        transport.RequestPauseAt(decision.position);
+                        break;
                     default: break;
                 }
                 dispatch();
@@ -1012,7 +1027,8 @@ void TestTimedPreviewIntentConvergence() {
                         native_position = outstanding.position;
                     } else {
                         native = outstanding.type == PreviewTransportCommandType::Play
-                            ? PreviewNativeState::Playing : PreviewNativeState::Paused;
+                                     ? PreviewNativeState::Playing
+                                     : PreviewNativeState::Paused;
                     }
                 }
                 if (ended_at && now >= *ended_at) {
@@ -1040,7 +1056,7 @@ void TestTimedPreviewIntentConvergence() {
                         case 3: transport.RequestPlayFrom(selected_in); break;
                         case 4: {
                             const auto target = millisecond *
-                                (1000 + static_cast<int64_t>(next() % 8500));
+                                                (1000 + static_cast<int64_t>(next() % 8500));
                             const auto accepted = easnap::app::PlanTrimTimelineSeek(
                                 transport.play_requested(), target,
                                 selected_in, selected_out);
@@ -1066,23 +1082,24 @@ void TestTimedPreviewIntentConvergence() {
                 dispatch();
                 const unsigned deadline = now + 1500;
                 while (now < deadline && (transport.command_pending() ||
-                       transport.playing() != playing || ended_at)) tick(false);
+                                          transport.playing() != playing || ended_at)) tick(false);
                 const bool settled = !transport.command_pending() &&
-                    transport.play_requested() == playing &&
-                    transport.playing() == playing &&
-                    outstanding.type == PreviewTransportCommandType::None &&
-                    (native == PreviewNativeState::Playing) == playing;
+                                     transport.play_requested() == playing &&
+                                     transport.playing() == playing &&
+                                     outstanding.type == PreviewTransportCommandType::None &&
+                                     (native == PreviewNativeState::Playing) == playing;
                 if (!settled) {
                     std::fprintf(stderr,
-                        "Timed preview liveness seed=%u start_ms=%lld now=%u "
-                        "wanted=%u observed=%u native=%u owned=%u logical=%lld "
-                        "native_position=%lld\n", seed, start_ms, now,
-                        static_cast<unsigned>(transport.play_requested()),
-                        static_cast<unsigned>(transport.playing()),
-                        static_cast<unsigned>(native),
-                        static_cast<unsigned>(transport.in_flight()),
-                        transport.ResolvePosition(native_position).count(),
-                        native_position.count());
+                                 "Timed preview liveness seed=%u start_ms=%lld now=%u "
+                                 "wanted=%u observed=%u native=%u owned=%u logical=%lld "
+                                 "native_position=%lld\n",
+                                 seed, start_ms, now,
+                                 static_cast<unsigned>(transport.play_requested()),
+                                 static_cast<unsigned>(transport.playing()),
+                                 static_cast<unsigned>(native),
+                                 static_cast<unsigned>(transport.in_flight()),
+                                 transport.ResolvePosition(native_position).count(),
+                                 native_position.count());
                 }
                 CHECK(settled);
                 return settled;
@@ -1265,7 +1282,6 @@ void TestPreviewTransportReconcilesStoppedPauseRace() {
     CHECK(command.position == MediaTime{700});
     CHECK(pause_at_out.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
     CHECK(!pause_at_out.command_pending());
-
 }
 
 void CheckLayout(int width, int height, float scale) {
@@ -1273,10 +1289,10 @@ void CheckLayout(int width, int height, float scale) {
         easnap::ui::CalculateTrimWindowLayout(width, height, scale);
     CHECK(easnap::ui::IsTrimWindowLayoutContained(layout, width, height));
     CHECK(layout.video.bottom() <= layout.timeline.y);
-    CHECK(layout.video.y==static_cast<int>(std::lround(40*scale)));
-    CHECK(layout.video.x==0 && layout.video.width==width);
-    CHECK(layout.timeline.bottom()<=layout.time_label.y);
-    CHECK(layout.time_label.bottom()<=layout.range_label.y);
+    CHECK(layout.video.y == static_cast<int>(std::lround(40 * scale)));
+    CHECK(layout.video.x == 0 && layout.video.width == width);
+    CHECK(layout.timeline.bottom() <= layout.time_label.y);
+    CHECK(layout.time_label.bottom() <= layout.range_label.y);
     CHECK(layout.timeline.bottom() <= layout.help.y);
     CHECK(layout.help.bottom() <= layout.range_label.y);
     CHECK(layout.range_label.bottom() <= layout.play_pause.y);
@@ -1301,89 +1317,88 @@ void TestTrimLayoutContainmentAcrossDpiAndResize() {
     const auto narrow = easnap::ui::CalculateTrimWindowLayout(800, 640, 2.0f);
     CHECK(narrow.save_or_cancel.height == 80); // Actual DPI; no text/target shrink.
     CHECK(narrow.play_pause.height == 80);
-    const auto message=easnap::ui::CalculateTrimWindowLayout(720,540,1,52);
-    const auto busy=easnap::ui::CalculateTrimWindowLayout(720,540,1,0,true);
-    CHECK(message.status.height==52 && message.progress.height==0);
-    CHECK(busy.status.height==0 && busy.progress.height==28);
-    CHECK(message.status.bottom()<=message.save_or_cancel.y);
-    CHECK(busy.progress.bottom()<=busy.save_or_cancel.y);
-    for(const float scale:{1.0f,1.25f,1.5f,2.0f}) {
-        const auto dip=[scale](int value) { return static_cast<int>(std::lround(value*scale)); };
-        for(const auto size:{std::pair{480,400},std::pair{1200,400},std::pair{480,800}}) {
-            for(const bool exporting:{false,true}) {
-                for(const int status:{0,52,10'000}) {
+    const auto message = easnap::ui::CalculateTrimWindowLayout(720, 540, 1, 52);
+    const auto busy = easnap::ui::CalculateTrimWindowLayout(720, 540, 1, 0, true);
+    CHECK(message.status.height == 52 && message.progress.height == 0);
+    CHECK(busy.status.height == 0 && busy.progress.height == 28);
+    CHECK(message.status.bottom() <= message.save_or_cancel.y);
+    CHECK(busy.progress.bottom() <= busy.save_or_cancel.y);
+    for (const float scale : {1.0f, 1.25f, 1.5f, 2.0f}) {
+        const auto dip = [scale](int value) { return static_cast<int>(std::lround(value * scale)); };
+        for (const auto size : {std::pair{480, 400}, std::pair{1200, 400}, std::pair{480, 800}}) {
+            for (const bool exporting : {false, true}) {
+                for (const int status : {0, 52, 10'000}) {
                     // The range readout can wrap at the supported minimum.
                     // No text or dynamic row may borrow caption/timeline space.
-                    const easnap::ui::TrimTextMetrics font{dip(17),dip(22),dip(34)};
-                    const auto current=easnap::ui::CalculateTrimWindowLayout(
-                        dip(size.first),dip(size.second),scale,dip(status),exporting,font);
-                    CHECK(easnap::ui::IsTrimWindowLayoutContained(current,dip(size.first),dip(size.second)));
-                    CHECK(current.video.y==dip(easnap::ui::kTrimChromeHeightDip));
-                    CHECK(current.video.height>=dip(24));
-                    CHECK(current.video.bottom()<=current.timeline.y);
-                    CHECK(current.timeline_label_height>=font.line_height);
-                    CHECK(current.timeline_track_center-dip(23)>=current.timeline_label_height);
-                    CHECK(current.timeline_track_center+dip(23)<=current.timeline.height);
-                    CHECK(current.timeline.bottom()<=current.time_label.y);
-                    CHECK(current.time_label.height>=font.time_height);
-                    CHECK(current.time_label.bottom()<=current.range_label.y);
-                    CHECK(current.range_label.height>=font.range_height);
-                    CHECK(current.range_label.bottom()<=current.play_pause.y);
-                    CHECK(current.play_pause.bottom()<=current.status.y);
-                    CHECK(current.status.bottom()<=current.progress.y);
-                    CHECK(current.progress.bottom()<=current.save_or_cancel.y);
-                    CHECK(current.status.height<=dip(status));
-                    CHECK(status==0 || current.status.height>0);
+                    const easnap::ui::TrimTextMetrics font{dip(17), dip(22), dip(34)};
+                    const auto current = easnap::ui::CalculateTrimWindowLayout(
+                        dip(size.first), dip(size.second), scale, dip(status), exporting, font);
+                    CHECK(easnap::ui::IsTrimWindowLayoutContained(current, dip(size.first), dip(size.second)));
+                    CHECK(current.video.y == dip(easnap::ui::kTrimChromeHeightDip));
+                    CHECK(current.video.height >= dip(24));
+                    CHECK(current.video.bottom() <= current.timeline.y);
+                    CHECK(current.timeline_label_height >= font.line_height);
+                    CHECK(current.timeline_track_center - dip(23) >= current.timeline_label_height);
+                    CHECK(current.timeline_track_center + dip(23) <= current.timeline.height);
+                    CHECK(current.timeline.bottom() <= current.time_label.y);
+                    CHECK(current.time_label.height >= font.time_height);
+                    CHECK(current.time_label.bottom() <= current.range_label.y);
+                    CHECK(current.range_label.height >= font.range_height);
+                    CHECK(current.range_label.bottom() <= current.play_pause.y);
+                    CHECK(current.play_pause.bottom() <= current.status.y);
+                    CHECK(current.status.bottom() <= current.progress.y);
+                    CHECK(current.progress.bottom() <= current.save_or_cancel.y);
+                    CHECK(current.status.height <= dip(status));
+                    CHECK(status == 0 || current.status.height > 0);
                 }
             }
         }
     }
-    for(const auto source: {std::pair{1920,1080},std::pair{1080,1920},std::pair{800,800},std::pair{3440,1440},std::pair{10000,100},std::pair{100,10000}}) {
-        const auto initial=easnap::ui::InitialTrimWindowSize(1920,1040,1,source.first,source.second);
-        CHECK(initial.width>=560 && initial.width<=1920 && initial.height<=1040);
-        const auto layout=easnap::ui::CalculateTrimWindowLayout(initial.width,initial.height,1);
-        const auto image=easnap::ui::FitTrimVideo(layout.video,source.first,source.second);
+    for (const auto source : {std::pair{1920, 1080}, std::pair{1080, 1920}, std::pair{800, 800}, std::pair{3440, 1440}, std::pair{10000, 100}, std::pair{100, 10000}}) {
+        const auto initial = easnap::ui::InitialTrimWindowSize(1920, 1040, 1, source.first, source.second);
+        CHECK(initial.width >= 560 && initial.width <= 1920 && initial.height <= 1040);
+        const auto layout = easnap::ui::CalculateTrimWindowLayout(initial.width, initial.height, 1);
+        const auto image = easnap::ui::FitTrimVideo(layout.video, source.first, source.second);
         // Independent pixel rounding can magnify a subpixel width difference
         // on an extreme portrait source. Bound the error in both source axes.
-        CHECK(std::abs(static_cast<double>(image.width)/source.first-static_cast<double>(image.height)/source.second)
-            <=0.5/source.first+0.5/source.second);
-        CHECK(image.width<=layout.video.width && image.height<=layout.video.height);
-        CHECK(initial.height>=easnap::ui::kTrimMinClientHeightDip);
+        CHECK(std::abs(static_cast<double>(image.width) / source.first - static_cast<double>(image.height) / source.second) <= 0.5 / source.first + 0.5 / source.second);
+        CHECK(image.width <= layout.video.width && image.height <= layout.video.height);
+        CHECK(initial.height >= easnap::ui::kTrimMinClientHeightDip);
     }
-    const auto wide=easnap::ui::FitTrimVideo({0,0,1200,400},800,800);
-    const auto less_bar=easnap::ui::FitTrimVideo({0,0,600,400},800,800);
-    const auto narrow_image=easnap::ui::FitTrimVideo({0,0,300,400},800,800);
-    CHECK(wide.width==400 && less_bar.width==400 && narrow_image.width==300 && narrow_image.height==300);
+    const auto wide = easnap::ui::FitTrimVideo({0, 0, 1200, 400}, 800, 800);
+    const auto less_bar = easnap::ui::FitTrimVideo({0, 0, 600, 400}, 800, 800);
+    const auto narrow_image = easnap::ui::FitTrimVideo({0, 0, 300, 400}, 800, 800);
+    CHECK(wide.width == 400 && less_bar.width == 400 && narrow_image.width == 300 && narrow_image.height == 300);
 }
 
 // Display matrix: work areas from a small laptop panel to 4K and ultrawide at
 // every Windows scale factor that leaves a usable desktop. The initial window
 // must fit the work area and its controls must stay inside the client.
 void TestTrimLayoutAcrossDisplayMatrix() {
-    const std::pair<int,int> work_areas[]{{1366,728},{1280,680},{1600,860},{1920,1040},{2560,1400},
-                                          {3440,1400},{3840,2120},{5120,1400},{1080,1880},{2160,3800}};
-    const float scales[]{1.0f,1.25f,1.5f,1.75f,2.0f,2.25f,2.5f,3.0f,3.5f};
-    const std::pair<int,int> sources[]{{1920,1080},{640,360},{100,100},{3840,2160},{200,1200},{5120,1440}};
-    int combinations=0;
-    for(const auto work:work_areas) for(const float scale:scales) {
+    const std::pair<int, int> work_areas[]{{1366, 728}, {1280, 680}, {1600, 860}, {1920, 1040}, {2560, 1400}, {3440, 1400}, {3840, 2120}, {5120, 1400}, {1080, 1880}, {2160, 3800}};
+    const float scales[]{1.0f, 1.25f, 1.5f, 1.75f, 2.0f, 2.25f, 2.5f, 3.0f, 3.5f};
+    const std::pair<int, int> sources[]{{1920, 1080}, {640, 360}, {100, 100}, {3840, 2160}, {200, 1200}, {5120, 1440}};
+    int combinations = 0;
+    for (const auto work : work_areas)
+        for (const float scale : scales) {
         // Windows does not offer a scale that leaves less than about 500
         // effective rows or 600 effective columns.
-        if(work.second/scale<500 || work.first/scale<600) { continue; }
-        for(const auto source:sources) {
-            ++combinations;
-            const auto initial=easnap::ui::InitialTrimWindowSize(work.first,work.second,scale,source.first,source.second);
-            CHECK(initial.width>0 && initial.height>0);
-            CHECK(initial.width<=work.first && initial.height<=work.second);
-            const auto layout=easnap::ui::CalculateTrimWindowLayout(initial.width,initial.height,scale);
-            CHECK(easnap::ui::IsTrimWindowLayoutContained(layout,initial.width,initial.height));
-            CHECK(layout.video.height>0 && layout.video.bottom()<=layout.timeline.y);
-            CHECK(layout.play_pause.bottom()<=layout.save_or_cancel.y+layout.save_or_cancel.height);
-            const auto image=easnap::ui::FitTrimVideo(layout.video,source.first,source.second);
-            CHECK(image.width>0 && image.height>0);
-            CHECK(image.width<=layout.video.width && image.height<=layout.video.height);
+            if (work.second / scale < 500 || work.first / scale < 600) { continue; }
+            for (const auto source : sources) {
+                ++combinations;
+                const auto initial = easnap::ui::InitialTrimWindowSize(work.first, work.second, scale, source.first, source.second);
+                CHECK(initial.width > 0 && initial.height > 0);
+                CHECK(initial.width <= work.first && initial.height <= work.second);
+                const auto layout = easnap::ui::CalculateTrimWindowLayout(initial.width, initial.height, scale);
+                CHECK(easnap::ui::IsTrimWindowLayoutContained(layout, initial.width, initial.height));
+                CHECK(layout.video.height > 0 && layout.video.bottom() <= layout.timeline.y);
+                CHECK(layout.play_pause.bottom() <= layout.save_or_cancel.y + layout.save_or_cancel.height);
+                const auto image = easnap::ui::FitTrimVideo(layout.video, source.first, source.second);
+                CHECK(image.width > 0 && image.height > 0);
+                CHECK(image.width <= layout.video.width && image.height <= layout.video.height);
+            }
         }
-    }
-    CHECK(combinations>=300);
+    CHECK(combinations >= 300);
 }
 
 void TestSuccessfulExportAndDuplicatePrevention() {
@@ -1522,9 +1537,9 @@ int main() {
     TestPreviewLivenessCompletedSeeksBetweenPolls();
     TestTimedPreviewIntentConvergence();
     TestPreviewTransportRecoversAcrossPendingPause();
-        TestPreviewNaturalEndKeepsLogicalPosition();
-        TestPreviewTransportKeepsRestartAcrossLateEndedEvent();
-        TestPreviewTransportReconcilesStoppedPauseRace();
+    TestPreviewNaturalEndKeepsLogicalPosition();
+    TestPreviewTransportKeepsRestartAcrossLateEndedEvent();
+    TestPreviewTransportReconcilesStoppedPauseRace();
     TestTrimLayoutContainmentAcrossDpiAndResize();
     TestTrimLayoutAcrossDisplayMatrix();
     TestSuccessfulExportAndDuplicatePrevention();

@@ -376,7 +376,9 @@ void TestFixedHeaderAndFooter() {
         }
         for (int y = 0; y < footer; ++y) {
             band_errors += std::equal(last.Row(kView - footer + y), last.Row(kView - footer + y) + kWidth,
-                                      engine.Row(height - footer + y)) ? 0 : 1;
+                                      engine.Row(height - footer + y))
+                               ? 0
+                               : 1;
         }
         CHECK(band_errors == 0);
         CHECK(engine.layout().header_rows >= header);
@@ -476,7 +478,10 @@ void TestLazyPictureIsRefreshed() {
     Scene scene{&document, kView};
     StitchEngine engine;
     Moment pending;
-    pending.lazy_top = 700; pending.lazy_bottom = 900; pending.lazy_left = 60; pending.lazy_right = 520;
+    pending.lazy_top = 700;
+    pending.lazy_bottom = 900;
+    pending.lazy_left = 60;
+    pending.lazy_right = 520;
     bool exact = true;
     for (int scroll : Even(300, 620, 40)) {
         pending.scroll = scroll;
@@ -507,8 +512,7 @@ void TestLowInformationIsReported() {
     bool invented = false;
     for (int scroll : Even(720, 1300, 60)) {
         const FrameResult result = Submit(engine, Compose(scene, Moment{scroll}));
-        invented = invented || result.appended_rows != 0 || (result.placed && result.position != 660 &&
-                                                              result.outcome != FrameOutcome::Unchanged);
+        invented = invented || result.appended_rows != 0 || (result.placed && result.position != 660 && result.outcome != FrameOutcome::Unchanged);
     }
     CHECK(!invented);
     CHECK(engine.height() == height);

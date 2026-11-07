@@ -287,9 +287,9 @@ void TestContinuousPacketsIgnoreQpcJitter() {
     for (uint32_t index = 0; index < packet_count; ++index) {
         const int64_t ideal_qpc =
             10'000'000 + static_cast<int64_t>(
-                (static_cast<uint64_t>(index) * frames_per_packet *
-                 10'000'000ULL) /
-                format.sample_rate);
+                             (static_cast<uint64_t>(index) * frames_per_packet *
+                              10'000'000ULL) /
+                             format.sample_rate);
         const int64_t callback_jitter = index == 0 ? 0 : (index % 2 == 0 ? 30'000 : -20'000);
         easnap::recording::MappedAudioPacket mapped;
         const auto result = timeline.Map(

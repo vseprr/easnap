@@ -47,7 +47,15 @@ namespace {
 using namespace easnap;
 
 int passed{}, failed{};
-#define CHECK(...) do { if (__VA_ARGS__) { ++passed; } else { ++failed; std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); } } while (false)
+#define CHECK(...)                                                         \
+    do {                                                                   \
+        if (__VA_ARGS__) {                                                 \
+            ++passed;                                                      \
+        } else {                                                           \
+            ++failed;                                                      \
+            std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); \
+        }                                                                  \
+    } while (false)
 
 constexpr COLORREF kColours[]{RGB(64, 128, 192), RGB(160, 96, 48)};
 
@@ -55,7 +63,10 @@ void Pump(std::chrono::milliseconds duration) {
     const auto end = std::chrono::steady_clock::now() + duration;
     do {
         MSG message{};
-        while (::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { ::TranslateMessage(&message); ::DispatchMessageW(&message); }
+        while (::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            ::TranslateMessage(&message);
+            ::DispatchMessageW(&message);
+        }
         ::DwmFlush();
     } while (std::chrono::steady_clock::now() < end);
 }
@@ -86,7 +97,11 @@ bool Matches(uint32_t pixel, COLORREF colour) {
            std::abs(static_cast<int>(pixel & 0xff) - GetBValue(colour)) <= 2;
 }
 
-struct Foreign { long count{-1}; uint32_t sample{}; RECT bounds{LONG_MAX, LONG_MAX, LONG_MIN, LONG_MIN}; };
+struct Foreign {
+    long count{-1};
+    uint32_t sample{};
+    RECT bounds{LONG_MAX, LONG_MAX, LONG_MIN, LONG_MIN};
+};
 
 /// Pixels of `image` (read at `area`) inside `window` that are not `colour`.
 Foreign ForeignPixels(const platform::BgraImage& image, const RECT& area, const RECT& window, COLORREF colour) {
@@ -145,9 +160,12 @@ bool ScreenBlit(const RECT& area, platform::BgraImage& out) {
     return ok;
 }
 
-enum class Path { ScreenBlit, Gdi, Duplication };
+enum class Path { ScreenBlit,
+                  Gdi,
+                  Duplication };
 const char* Name(Path path) {
-    return path == Path::ScreenBlit ? "a screen blit" : path == Path::Gdi ? "the provider's GDI fallback" : "Desktop Duplication";
+    return path == Path::ScreenBlit ? "a screen blit" : path == Path::Gdi ? "the provider's GDI fallback"
+                                                                          : "Desktop Duplication";
 }
 
 /// Reads `area` through `path` once the backdrop shows `colour`. False when
@@ -197,7 +215,9 @@ bool Capture(Path path, HWND backdrop, COLORREF colour, const RECT& area, platfo
     return false;
 }
 
-struct Reached { bool blit{}, gdi{}, duplication{}; };
+struct Reached {
+    bool blit{}, gdi{}, duplication{};
+};
 
 /// Reads the area under `windows` through every path. With `assert_absent`
 /// each must be missing from the picture; otherwise the counts are reported.
@@ -210,7 +230,8 @@ void Examine(const char* name, std::initializer_list<HWND> windows, HWND backdro
                 std::printf("%s: %s could not be reached on this machine; not checked\n", name, Name(path));
                 break;
             }
-            (path == Path::ScreenBlit ? reached.blit : path == Path::Gdi ? reached.gdi : reached.duplication) = true;
+            (path == Path::ScreenBlit ? reached.blit : path == Path::Gdi ? reached.gdi
+                                                                         : reached.duplication) = true;
             CHECK(image.width == platform::RectWidth(area) && image.height == platform::RectHeight(area));
             for (HWND window : windows) {
                 RECT rect{};
@@ -320,7 +341,12 @@ int Run() {
                 Paint(window, RGB(220, 30, 30));
                 CHECK(::SetWindowDisplayAffinity(window, WDA_EXCLUDEFROMCAPTURE) != FALSE);
             }
-            struct Island { HWND window; const char* name; POINT place; bool product; };
+            struct Island {
+                HWND window;
+                const char* name;
+                POINT place;
+                bool product;
+            };
             const Island islands[]{
                 {plain, "plain excluded window", {area.left + 60, area.top + 40}, false},
                 {layered, "layered excluded window", {area.left + 300, area.top + 40}, false},
@@ -509,7 +535,8 @@ int Run() {
                 if (foreign.count > 0) {
                     ++dirty;
                     if (foreign.count > worst.load()) {
-                        worst = foreign.count; sample = foreign.sample;
+                        worst = foreign.count;
+                        sample = foreign.sample;
                         std::printf("  frame %d: %ld foreign pixels in %ld,%ld,%ld,%ld\n", frames.load(), foreign.count,
                                     foreign.bounds.left, foreign.bounds.top, foreign.bounds.right, foreign.bounds.bottom);
                     }

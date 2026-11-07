@@ -101,7 +101,10 @@ public:
     }
 
 private:
-    enum class ReadResult { Unavailable, Received, Disconnected, Invalid };
+    enum class ReadResult { Unavailable,
+                            Received,
+                            Disconnected,
+                            Invalid };
 
     static LRESULT CALLBACK WindowProc(HWND window, UINT message,
                                        WPARAM wparam, LPARAM lparam) {
@@ -111,7 +114,7 @@ private:
             const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
             host = static_cast<PreviewHost*>(create->lpCreateParams);
             ::SetWindowLongPtrW(window, GWLP_USERDATA,
-                               reinterpret_cast<LONG_PTR>(host));
+                                reinterpret_cast<LONG_PTR>(host));
         }
         if (host == nullptr) return ::DefWindowProcW(window, message, wparam, lparam);
         if (message == kPreviewChangedMessage) return 0;
@@ -148,7 +151,8 @@ private:
     void PumpMessages() {
         MSG message{};
         for (unsigned count = 0; count < 128 &&
-             ::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++count) {
+                                 ::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE);
+             ++count) {
             if (message.message == WM_QUIT) {
                 closing_ = true;
                 return;
@@ -176,7 +180,8 @@ private:
         if (available < header.size) return ReadResult::Unavailable;
         DWORD received = 0;
         if (!::ReadFile(input_, packet_buffer_.data(), header.size,
-                        &received, nullptr) || received != header.size) {
+                        &received, nullptr) ||
+            received != header.size) {
             return ReadResult::Disconnected;
         }
         switch (header.type) {
@@ -283,10 +288,12 @@ private:
             operation = MediaPreviewOperation::Seek;
             const MediaTime position{desired_.position};
             accepted = desired_.play_requested != 0
-                ? preview_->PlayFrom(position) : preview_->PauseAt(position, desired_.exclusive_end != 0);
+                           ? preview_->PlayFrom(position)
+                           : preview_->PauseAt(position, desired_.exclusive_end != 0);
         } else {
             operation = desired_.play_requested != 0
-                ? MediaPreviewOperation::Play : MediaPreviewOperation::Pause;
+                            ? MediaPreviewOperation::Play
+                            : MediaPreviewOperation::Pause;
             accepted = desired_.play_requested != 0 ? preview_->Play() : preview_->Pause();
         }
         if (accepted) {
@@ -316,7 +323,7 @@ private:
         packet.acknowledged_resize = acknowledged_resize_;
         packet.video_window = reinterpret_cast<uintptr_t>(video_window_);
         packet.snapshot = failed_ ? failure_
-            : (preview_ ? preview_->snapshot() : MediaPreviewSnapshot{});
+                                  : (preview_ ? preview_->snapshot() : MediaPreviewSnapshot{});
         if (video_window_ && !video_shown_ && packet.snapshot.state != MediaPreviewState::Opening &&
             packet.snapshot.state != MediaPreviewState::Closed && packet.snapshot.state != MediaPreviewState::Failed) {
             video_shown_ = true;

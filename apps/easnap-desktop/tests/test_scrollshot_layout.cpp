@@ -70,7 +70,10 @@ ScrollshotPlacement Place(const RECT& frame, const std::vector<MonitorInfo>& mon
 
 void TestSurfacesStayOutsideTheFrame() {
     const std::vector<MonitorInfo> one{Monitor({0, 0, 1920, 1080})};
-    struct Case { const char* name; RECT frame; };
+    struct Case {
+        const char* name;
+        RECT frame;
+    };
     const Case cases[] = {
         {"centre", {500, 200, 1300, 700}},
         {"bottom edge", {500, 500, 1300, 1040}},      // No room below: the island goes above.
@@ -255,10 +258,16 @@ void TestZoomKeepsTheAnchor() {
     // The ladder moves strictly and stops at its ends.
     float zoom = 1.0f;
     int steps = 0;
-    while (StepZoom(zoom, 1) > zoom && steps < 32) { zoom = StepZoom(zoom, 1); ++steps; }
+    while (StepZoom(zoom, 1) > zoom && steps < 32) {
+        zoom = StepZoom(zoom, 1);
+        ++steps;
+    }
     CHECK(zoom == easnap::editor::kMaximumZoom && steps > 0 && steps < 32);
     steps = 0;
-    while (StepZoom(zoom, -1) < zoom && steps < 32) { zoom = StepZoom(zoom, -1); ++steps; }
+    while (StepZoom(zoom, -1) < zoom && steps < 32) {
+        zoom = StepZoom(zoom, -1);
+        ++steps;
+    }
     CHECK(zoom == easnap::editor::kMinimumZoom && steps > 0 && steps < 32);
     CHECK(StepZoom(0.9f, 1) == 1.0f && StepZoom(1.1f, -1) == 1.0f);  // Off-ladder values snap to it.
 }

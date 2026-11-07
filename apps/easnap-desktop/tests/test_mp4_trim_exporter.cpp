@@ -612,7 +612,8 @@ void TestMp4TrimExporter() {
     CHECK(exporter != nullptr &&
           !exporter->EstimateOutputBytes(video_source, MediaTime{0},
                                          MediaTime{kSecond},
-                                         TestOptions(false)).has_value());
+                                         TestOptions(false))
+               .has_value());
     if (exporter == nullptr) {
         return;
     }
@@ -669,7 +670,7 @@ void TestMp4TrimExporter() {
     CHECK(av_inspection.first_video_time <= kSecond / kFrameRate);
     CHECK(av_inspection.first_audio_time >= 0);
     CHECK(av_inspection.first_audio_time <= 2 * 1024ll * kSecond /
-                                               kAudioSampleRate);
+                                                kAudioSampleRate);
     CheckDurationNear(av_inspection, expected_interior, kAvTolerance);
     const int64_t av_endpoint_delta =
         std::abs(av_inspection.video_end - av_inspection.audio_end);
@@ -770,7 +771,7 @@ void TestMp4TrimExporter() {
         const bool with_audio = attempt % 2 != 0;
         const float cancel_at = cancellation_points[(attempt / 2) % 3];
         const std::wstring destination = session->directory +
-            L"\\cancel-in-flight-" + std::to_wstring(attempt) + L".mp4";
+                                         L"\\cancel-in-flight-" + std::to_wstring(attempt) + L".mp4";
         bool cancelled_in_flight = false;
         CHECK(!exporter->Export(
             with_audio ? av_source : video_source, destination, MediaTime{0},

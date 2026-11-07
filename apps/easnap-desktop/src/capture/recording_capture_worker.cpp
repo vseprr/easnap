@@ -263,8 +263,7 @@ void RecordingCaptureWorker::RecordCaptureFailureLocked(
     const RegionCaptureResult& result) noexcept {
     if (capture_failure_diagnostics_.count <
         capture_failure_diagnostics_.entries.size()) {
-        auto& entry = capture_failure_diagnostics_.entries[
-            capture_failure_diagnostics_.count++];
+        auto& entry = capture_failure_diagnostics_.entries[capture_failure_diagnostics_.count++];
         entry.capture_attempt = capture_attempts_.value();
         entry.timestamp = timestamp;
         entry.primary_failure = result.primary_failure;

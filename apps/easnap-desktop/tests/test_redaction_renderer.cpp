@@ -190,8 +190,14 @@ void TestRandomEditSequences() {
                 what = "move";
                 const float dx = random.Real(-30.0f, 30.0f), dy = random.Real(-30.0f, 30.0f);
                 auto& effect = effects[index];
-                effect.box.left += dx; effect.box.right += dx; effect.box.top += dy; effect.box.bottom += dy;
-                for (auto& point : effect.brush_path) { point.x += dx; point.y += dy; }
+                effect.box.left += dx;
+                effect.box.right += dx;
+                effect.box.top += dy;
+                effect.box.bottom += dy;
+                for (auto& point : effect.brush_path) {
+                    point.x += dx;
+                    point.y += dy;
+                }
             } else if (action == 4) {
                 what = "restyle";
                 effects[index].strength = random.Real(0.0f, 100.0f);

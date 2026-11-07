@@ -360,7 +360,9 @@ public:
                 const uint32_t red_range = box.red_max - box.red_min;
                 const uint32_t green_range = box.green_max - box.green_min;
                 const uint32_t blue_range = box.blue_max - box.blue_min;
-                enum class Channel { Red, Green, Blue };
+                enum class Channel { Red,
+                                     Green,
+                                     Blue };
                 const Channel channel =
                     red_range >= green_range && red_range >= blue_range
                         ? Channel::Red
@@ -675,7 +677,7 @@ bool ValidateDestination(const std::wstring& destination, bool replace_existing,
 }
 
 std::optional<std::wstring> MakeStagingPath(const std::wstring& destination,
-                                             std::wstring& error) {
+                                            std::wstring& error) {
     GUID identifier{};
     if (FAILED(::CoCreateGuid(&identifier))) {
         SetError(error, L"Creating the GIF staging identifier failed");
@@ -738,7 +740,7 @@ public:
                                   ? quantizer_.palette()[index]
                                   : quantizer_.palette().back();
             const std::array<uint8_t, 3> bytes = {color.red, color.green,
-                                                   color.blue};
+                                                  color.blue};
             if (!file_.Write(bytes)) {
                 SetError(error, L"Writing the GIF global color table failed");
                 return false;
@@ -1038,7 +1040,7 @@ private:
         const std::array<uint8_t, 4> graphic_control = {
             0x21, 0xF9, 0x04,
             static_cast<uint8_t>(transparent_index.has_value() ? 0x05u
-                                                                : 0x04u)};
+                                                               : 0x04u)};
         if (!file_.Write(graphic_control) || !file_.WriteWord(delay) ||
             !file_.WriteByte(transparent_index.value_or(0)) ||
             !file_.WriteByte(0) ||

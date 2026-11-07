@@ -14,8 +14,12 @@
 
 namespace easnap::editor {
 
-enum class RedactionKind { Blur, Pixelate, Spotlight };
-enum class RedactionOutline { Rectangle, Ellipse, Rounded };
+enum class RedactionKind { Blur,
+                           Pixelate,
+                           Spotlight };
+enum class RedactionOutline { Rectangle,
+                              Ellipse,
+                              Rounded };
 
 /// One pixel effect in source-image coordinates.
 struct RedactionEffect {

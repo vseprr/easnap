@@ -21,7 +21,7 @@ void Check(bool ok, const char* expression, int line) {
 
 bool WriteSentinel(const std::wstring& path) {
     easnap::platform::UniqueHandle file(::CreateFileW(path.c_str(), GENERIC_WRITE, 0,
-        nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
+                                                      nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr));
     if (file.get() == INVALID_HANDLE_VALUE) return false;
     constexpr char data[] = "storage-cleanup-sentinel";
     DWORD written = 0;
@@ -31,7 +31,7 @@ bool WriteSentinel(const std::wstring& path) {
 
 bool SentinelIntact(const std::wstring& path) {
     easnap::platform::UniqueHandle file(::CreateFileW(path.c_str(), GENERIC_READ,
-        FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+                                                      FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
     if (file.get() == INVALID_HANDLE_VALUE) return false;
     constexpr char expected[] = "storage-cleanup-sentinel";
     char actual[sizeof(expected)]{};
@@ -43,8 +43,8 @@ bool SentinelIntact(const std::wstring& path) {
 bool CreateJunction(const std::wstring& link, const std::wstring& target) {
     if (!::CreateDirectoryW(link.c_str(), nullptr)) return false;
     easnap::platform::UniqueHandle handle(::CreateFileW(link.c_str(), GENERIC_WRITE, 0,
-        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-        nullptr));
+                                                        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                                                        nullptr));
     if (handle.get() == INVALID_HANDLE_VALUE) return false;
     // Mount-point reparse data uses byte offsets relative to PathBuffer.
     struct MountPointData {
@@ -73,7 +73,7 @@ bool CreateJunction(const std::wstring& link, const std::wstring& target) {
     std::memcpy(buffer.data() + sizeof(header) + header.print_offset, target.data(), print_bytes);
     DWORD returned = 0;
     return ::DeviceIoControl(handle.get(), FSCTL_SET_REPARSE_POINT, buffer.data(),
-        static_cast<DWORD>(buffer.size()), nullptr, 0, &returned, nullptr) != FALSE;
+                             static_cast<DWORD>(buffer.size()), nullptr, 0, &returned, nullptr) != FALSE;
 }
 void TestPinnedAncestor(const std::wstring& fixture) {
     const std::wstring directory = fixture + L"\\pin-target";
@@ -83,15 +83,15 @@ void TestPinnedAncestor(const std::wstring& fixture) {
     CHECK(WriteSentinel(file));
     easnap::platform::UniqueHandle event(::CreateEventW(nullptr, TRUE, FALSE, nullptr));
     easnap::platform::UniqueHandle oplock(::CreateFileW(file.c_str(), GENERIC_READ,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-        FILE_FLAG_OVERLAPPED, nullptr));
+                                                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                                        FILE_FLAG_OVERLAPPED, nullptr));
     CHECK(event.get() != nullptr && oplock.get() != INVALID_HANDLE_VALUE);
     if (event && oplock.get() != INVALID_HANDLE_VALUE) {
         OVERLAPPED pending{};
         pending.hEvent = event.get();
         DWORD bytes = 0;
         const BOOL completed = ::DeviceIoControl(oplock.get(), FSCTL_REQUEST_BATCH_OPLOCK,
-            nullptr, 0, nullptr, 0, &bytes, &pending);
+                                                 nullptr, 0, nullptr, 0, &bytes, &pending);
         const bool registered = !completed && ::GetLastError() == ERROR_IO_PENDING;
         CHECK(registered);
         if (registered) {
@@ -105,9 +105,9 @@ void TestPinnedAncestor(const std::wstring& fixture) {
             if (wait == WAIT_OBJECT_0) {
                 for (const DWORD access : {DWORD{DELETE}, DWORD{GENERIC_WRITE}}) {
                     easnap::platform::UniqueHandle mutator(::CreateFileW(fixture.c_str(), access,
-                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-                        nullptr));
+                                                                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                                                         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                                                                         nullptr));
                     const DWORD error = ::GetLastError();
                     CHECK(mutator.get() == INVALID_HANDLE_VALUE);
                     CHECK(error == ERROR_SHARING_VIOLATION);
@@ -182,7 +182,7 @@ int main() {
     CHECK(!RemoveDirectoryTree(link + L"\\nested"));
     CHECK(SentinelIntact(nested_sentinel));
     CHECK(!RemoveDirectoryTree(fixture + L"\\..\\..\\" +
-          outside.substr(outside.find_last_of(L'\\') + 1)));
+                               outside.substr(outside.find_last_of(L'\\') + 1)));
     CHECK(SentinelIntact(sentinel));
     CHECK(::CreateDirectoryW(ordinary.c_str(), nullptr) != FALSE);
     CHECK(::CreateDirectoryW(child.c_str(), nullptr) != FALSE);
@@ -194,7 +194,7 @@ int main() {
     CHECK(WriteSentinel(locked_file));
     {
         easnap::platform::UniqueHandle hold(::CreateFileW(locked_file.c_str(), GENERIC_READ,
-            0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+                                                          0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
         CHECK(hold.get() != INVALID_HANDLE_VALUE);
         CHECK(!RemoveDirectoryTree(locked));
     }

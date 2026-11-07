@@ -119,8 +119,9 @@ struct Dialog {
 
     void ReadControls() {
         const LRESULT language = ::SendMessageW(Item(kSettingsLanguage), CB_GETCURSEL, 0, 0);
-        model.language = language == 1 ? app::LanguageSetting::English
-                         : language == 2 ? app::LanguageSetting::Turkish : app::LanguageSetting::System;
+        model.language = language == 1   ? app::LanguageSetting::English
+                         : language == 2 ? app::LanguageSetting::Turkish
+                                         : app::LanguageSetting::System;
         const LRESULT appearance = ::SendMessageW(Item(kSettingsAppearance), CB_GETCURSEL, 0, 0);
         model.appearance_follows_system = appearance != 1 && appearance != 2;
         if (appearance == 1) { model.appearance_theme = app::AppearanceTheme::Light; }
@@ -149,7 +150,10 @@ struct Dialog {
             HWND control = ::CreateWindowExW(0, class_name, text, WS_CHILD | WS_VISIBLE | style, x, y, w, h, hwnd,
                                              reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                              ::GetModuleHandleW(nullptr), nullptr);
-            if (control == nullptr) { ok = false; return control; }
+            if (control == nullptr) {
+                ok = false;
+                return control;
+            }
             ::SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), FALSE);
             return control;
         };
@@ -177,7 +181,8 @@ struct Dialog {
 
         label(IDS_SETTINGS_LANGUAGE, y);
         combo(kSettingsLanguage, y, {strings::Get(IDS_SETTINGS_SAME_AS_WINDOWS), L"English", L"Türkçe"},
-              model.language == app::LanguageSetting::English ? 1 : model.language == app::LanguageSetting::Turkish ? 2 : 0,
+              model.language == app::LanguageSetting::English ? 1 : model.language == app::LanguageSetting::Turkish ? 2
+                                                                                                                    : 0,
               IDS_SETTINGS_LANGUAGE);
         y += step;
 
@@ -185,7 +190,8 @@ struct Dialog {
         combo(kSettingsAppearance, y,
               {strings::Get(IDS_SETTINGS_SAME_AS_WINDOWS), strings::Get(IDS_SHELL_APPEARANCE_LIGHT),
                strings::Get(IDS_SHELL_APPEARANCE_DARK)},
-              model.appearance_follows_system ? 0 : model.appearance_theme == app::AppearanceTheme::Dark ? 2 : 1,
+              model.appearance_follows_system ? 0 : model.appearance_theme == app::AppearanceTheme::Dark ? 2
+                                                                                                         : 1,
               IDS_SETTINGS_APPEARANCE);
         y += step;
 
@@ -311,8 +317,14 @@ INT_PTR CALLBACK SettingsProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpa
                     return TRUE;
                 case kSettingsImageChange: dialog->ChangeFolder(dialog->model.image_folder); return TRUE;
                 case kSettingsVideoChange: dialog->ChangeFolder(dialog->model.video_folder); return TRUE;
-                case kSettingsImageReset: dialog->model.image_folder.clear(); dialog->ShowFolders(); return TRUE;
-                case kSettingsVideoReset: dialog->model.video_folder.clear(); dialog->ShowFolders(); return TRUE;
+                case kSettingsImageReset:
+                    dialog->model.image_folder.clear();
+                    dialog->ShowFolders();
+                    return TRUE;
+                case kSettingsVideoReset:
+                    dialog->model.video_folder.clear();
+                    dialog->ShowFolders();
+                    return TRUE;
                 default: break;
             }
             break;

@@ -165,7 +165,8 @@ DWORD WINAPI ReportThread(void*) noexcept {
     if (::TryAcquireSRWLockExclusive(&log.lock) != FALSE) {
         if (log.file != INVALID_HANDLE_VALUE) {
             const DWORD code = state.pointers != nullptr && state.pointers->ExceptionRecord != nullptr
-                                   ? state.pointers->ExceptionRecord->ExceptionCode : 0;
+                                   ? state.pointers->ExceptionRecord->ExceptionCode
+                                   : 0;
             wchar_t text[160]{};
             ::swprintf(text, ARRAYSIZE(text), L"Fatal error 0x%08lX on thread %lu; crash report %s", code,
                        state.thread_id, written ? L"written" : L"could not be written");
@@ -193,7 +194,8 @@ LONG WINAPI Filter(EXCEPTION_POINTERS* pointers) noexcept {
         ::WaitForSingleObject(state.done, 20000);
     }
     const DWORD code = pointers != nullptr && pointers->ExceptionRecord != nullptr
-                           ? pointers->ExceptionRecord->ExceptionCode : kTerminateCode;
+                           ? pointers->ExceptionRecord->ExceptionCode
+                           : kTerminateCode;
     ::TerminateProcess(::GetCurrentProcess(), code);
     return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -315,7 +317,8 @@ void InstallCrashHandler(const std::wstring& directory, const wchar_t* name, int
     state.request = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
     state.done = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
     HANDLE thread = state.request != nullptr && state.done != nullptr
-                        ? ::CreateThread(nullptr, 256 * 1024, ReportThread, nullptr, 0, nullptr) : nullptr;
+                        ? ::CreateThread(nullptr, 256 * 1024, ReportThread, nullptr, 0, nullptr)
+                        : nullptr;
     if (thread == nullptr) {
         return;  // Windows Error Reporting keeps its default behaviour.
     }

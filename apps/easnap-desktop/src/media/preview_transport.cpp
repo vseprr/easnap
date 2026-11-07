@@ -142,7 +142,7 @@ bool PreviewTransport::Complete(PreviewTransportCommandType type,
     }
     in_flight_ = PreviewTransportCommandType::None;
     if ((type == PreviewTransportCommandType::Seek ||
-        type == PreviewTransportCommandType::Play) &&
+         type == PreviewTransportCommandType::Play) &&
         !desired_position_ && observed == PreviewNativeState::Playing) {
         if (position_override_) playback_position_floor_ = position_override_;
         position_override_.reset();

@@ -19,14 +19,14 @@ namespace {
 int g_passed = 0;
 int g_failed = 0;
 
-#define CHECK(expression)                                                        \
-    do {                                                                         \
-        if (expression) {                                                        \
-            ++g_passed;                                                          \
-        } else {                                                                 \
-            ++g_failed;                                                          \
+#define CHECK(expression)                                                      \
+    do {                                                                       \
+        if (expression) {                                                      \
+            ++g_passed;                                                        \
+        } else {                                                               \
+            ++g_failed;                                                        \
             std::cerr << "FAIL line " << __LINE__ << ": " #expression << '\n'; \
-        }                                                                        \
+        }                                                                      \
     } while (false)
 
 using easnap::app::IRecordingCompletionBackend;
@@ -480,7 +480,7 @@ void TestGifSaveAndClipboardPublication() {
     auto backend = std::make_unique<FakeBackend>();
     FakeBackend* probe = backend.get();
     easnap::app::RecordingCompletionController controller(store,
-                                                           std::move(backend));
+                                                          std::move(backend));
 
     probe->persist_succeeds = false;
     CHECK(!controller.Save(L"C:\\session\\trimmed.gif",
@@ -496,8 +496,8 @@ void TestGifSaveAndClipboardPublication() {
     CHECK(destination.has_value() &&
           std::filesystem::path(*destination).extension() == L".gif");
     CHECK(destination.has_value() && controller.PublishClipboardArtifact(
-                                        nullptr, *destination,
-                                        RecordingFormat::Gif));
+                                         nullptr, *destination,
+                                         RecordingFormat::Gif));
     CHECK(probe->last_checked_format == RecordingFormat::Gif);
     CHECK(probe->clipboard_paths.has_value() &&
           probe->clipboard_paths->size() == 1 &&
@@ -515,7 +515,7 @@ void TestGifSaveAndClipboardPublication() {
     CHECK(failed_destination.has_value());
     CHECK(failed_destination.has_value() &&
           !controller.PublishClipboardArtifact(nullptr, *failed_destination,
-                                                RecordingFormat::Gif));
+                                               RecordingFormat::Gif));
     CHECK(controller.prepared_clipboard_session().has_value());
     CHECK(store.delete_count == 1);
     controller.AbandonPreparedClipboardArtifact();
@@ -556,7 +556,7 @@ void TestSaveFailurePreservesSession() {
     FakeBackend* probe = backend.get();
     probe->persist_succeeds = false;
     easnap::app::RecordingCompletionController controller(store,
-                                                           std::move(backend));
+                                                          std::move(backend));
     CHECK(!controller.Save(L"C:\\session\\trimmed.mp4",
                            L"C:\\Videos\\saved.mp4", RecordingFormat::Mp4,
                            false));
@@ -573,13 +573,13 @@ void TestCopyLifetimeAndFailure() {
     auto backend = std::make_unique<FakeBackend>();
     FakeBackend* probe = backend.get();
     easnap::app::RecordingCompletionController controller(store,
-                                                           std::move(backend));
+                                                          std::move(backend));
     const auto staged = controller.StageClipboardArtifact(
         L"C:\\session\\trimmed.mp4", RecordingFormat::Mp4, false);
     CHECK(staged.has_value());
     CHECK(staged.has_value() &&
           controller.PublishClipboardArtifact(nullptr, *staged,
-                                               RecordingFormat::Mp4));
+                                              RecordingFormat::Mp4));
     CHECK(controller.clipboard_session().has_value());
     CHECK(store.delete_count == 0);
     CHECK(staged.has_value() && probe->last_destination == *staged);
@@ -602,7 +602,7 @@ void TestCopyLifetimeAndFailure() {
     CHECK(failed_staged.has_value());
     CHECK(failed_staged.has_value() &&
           !controller.PublishClipboardArtifact(nullptr, *failed_staged,
-                                                RecordingFormat::Mp4));
+                                               RecordingFormat::Mp4));
     CHECK(controller.prepared_clipboard_session().has_value());
     controller.AbandonPreparedClipboardArtifact();
     CHECK(store.delete_count == 2);
@@ -614,7 +614,7 @@ void TestOptimizedClipboardStaging() {
     auto backend = std::make_unique<FakeBackend>();
     FakeBackend* probe = backend.get();
     easnap::app::RecordingCompletionController controller(store,
-                                                           std::move(backend));
+                                                          std::move(backend));
 
     const auto moved = controller.StageClipboardArtifact(
         L"C:\\session\\derived-trim.mp4", RecordingFormat::Mp4, true);
@@ -638,14 +638,14 @@ void TestOptimizedClipboardStaging() {
     CHECK(direct_destination.has_value());
     CHECK(direct_destination.has_value() &&
           controller.PublishClipboardArtifact(nullptr, *direct_destination,
-                                               RecordingFormat::Mp4));
+                                              RecordingFormat::Mp4));
     CHECK(probe->move_count == moves_before_direct);
     CHECK(probe->persist_count == copies_before_direct);
 
     probe->security_succeeds = false;
     const int deletes_before = store.delete_count;
     CHECK(!controller.StageClipboardArtifact(
-               L"C:\\session\\recoverable.mp4", RecordingFormat::Mp4, true)
+                         L"C:\\session\\recoverable.mp4", RecordingFormat::Mp4, true)
                .has_value());
     CHECK(probe->move_count == 2);
     CHECK(store.delete_count == deletes_before + 1);
@@ -658,7 +658,7 @@ void TestClipboardShutdownAndStaleProtection() {
     probe->clipboard_paths = std::vector<std::wstring>{
         L"C:\\fake\\easnap\\stale-session\\recording.mp4"};
     easnap::app::RecordingCompletionController controller(store,
-                                                           std::move(backend));
+                                                          std::move(backend));
     CHECK(controller.CleanupStaleSessions() == 2);
     CHECK(store.cleanup_count == 1);
     CHECK(store.last_protected.size() == 1);
@@ -669,7 +669,7 @@ void TestClipboardShutdownAndStaleProtection() {
     CHECK(staged.has_value());
     CHECK(staged.has_value() &&
           controller.PublishClipboardArtifact(nullptr, *staged,
-                                               RecordingFormat::Mp4));
+                                              RecordingFormat::Mp4));
     const std::wstring active = controller.clipboard_session()->directory;
     controller.Shutdown();
     CHECK(store.release_count == 1);
@@ -681,7 +681,7 @@ void TestDiscardArtifactAndClosePolicy() {
     FakeSessionStore store;
     auto backend = std::make_unique<FakeBackend>();
     easnap::app::RecordingCompletionController controller(store,
-                                                           std::move(backend));
+                                                          std::move(backend));
     TemporarySession active{L"active", L"C:\\fake\\easnap\\active"};
     CHECK(controller.Discard(active));
     CHECK(store.delete_count == 1);

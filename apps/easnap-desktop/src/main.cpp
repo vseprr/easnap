@@ -229,11 +229,12 @@ void ShowAboutDialog(HWND owner) {
     const std::wstring text = strings::Format(
         IDS_ABOUT_TEXT, {EASNAP_VERSION_TEXT_W, CaptureCoordinator::Instance().settings().HotkeyDisplayText(),
                          std::to_wstring(windows.build)});
-    enum : int { kCopy = 100, kWeb = 101, kClose = 102 };
+    enum : int { kCopy = 100,
+                 kWeb = 101,
+                 kClose = 102 };
     const int choice = easnap::ui::ShowChoice(
         nullptr, text.c_str(), strings::Get(IDS_SHELL_ABOUT_TITLE),
-        {{kCopy, strings::Get(IDS_ABOUT_COPY_DETAILS)}, {kWeb, strings::Get(IDS_ABOUT_WEBSITE)},
-         {kClose, strings::Get(IDS_SHELL_CHROME_CLOSE)}},
+        {{kCopy, strings::Get(IDS_ABOUT_COPY_DETAILS)}, {kWeb, strings::Get(IDS_ABOUT_WEBSITE)}, {kClose, strings::Get(IDS_SHELL_CHROME_CLOSE)}},
         kClose, kClose);
     if (choice == kCopy) {
         CopyTextToClipboard(owner, DiagnosticDetails());
@@ -329,7 +330,8 @@ void ShowCrashNotice(const std::wstring& directory) {
     }
     diagnostics::AcknowledgeCrashReports(directory);
     easnap::platform::LogMessage(L"The previous run ended with a crash report");
-    enum : int { kOpen = 100, kLater = 101 };
+    enum : int { kOpen = 100,
+                 kLater = 101 };
     const int choice = easnap::ui::ShowChoice(
         nullptr, strings::Get(IDS_CRASH_TEXT), strings::Get(IDS_CRASH_TITLE),
         {{kOpen, strings::Get(IDS_CRASH_OPEN)}, {kLater, strings::Get(IDS_NOT_NOW)}}, kLater, kLater);
@@ -357,8 +359,8 @@ void ShowTrayMenu(HWND hwnd) {
     auto& coordinator = CaptureCoordinator::Instance();
     // The tab in the pattern separates the label from the right-aligned shortcut.
     const std::wstring capture_item = g_hotkey_registered
-        ? strings::Format(IDS_SHELL_TRAY_CAPTURE, {coordinator.settings().HotkeyDisplayText()})
-        : std::wstring(strings::Get(IDS_TRAY_CAPTURE_NO_SHORTCUT));
+                                          ? strings::Format(IDS_SHELL_TRAY_CAPTURE, {coordinator.settings().HotkeyDisplayText()})
+                                          : std::wstring(strings::Get(IDS_TRAY_CAPTURE_NO_SHORTCUT));
     const UINT capture_flags = coordinator.state() == SessionState::Idle ? MF_STRING : (MF_STRING | MF_GRAYED);
 
     ::AppendMenuW(menu, capture_flags, IDM_TRAY_CAPTURE, capture_item.c_str());
@@ -383,7 +385,7 @@ void ShowTrayMenu(HWND hwnd) {
     ::SetForegroundWindow(hwnd);
     {
         easnap::ui::PopupScope scope(invoking_focus);
-        easnap::ui::MenuThemeScope menu_theme(hwnd,menu);
+        easnap::ui::MenuThemeScope menu_theme(hwnd, menu);
         const UINT command = ::TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
                                                 cursor.x, cursor.y, hwnd, nullptr);
         if (command) { ::PostMessageW(hwnd, WM_COMMAND, command, 0); }
@@ -462,7 +464,8 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
         case WM_COMMAND:
             if (LOWORD(wparam) == easnap::ui::kAppearanceLight || LOWORD(wparam) == easnap::ui::kAppearanceDark) {
                 coordinator.SetAppearanceTheme(LOWORD(wparam) == easnap::ui::kAppearanceDark
-                    ? easnap::app::AppearanceTheme::Dark : easnap::app::AppearanceTheme::Light);
+                                                   ? easnap::app::AppearanceTheme::Dark
+                                                   : easnap::app::AppearanceTheme::Light);
                 return 0;
             }
             if (LOWORD(wparam) == easnap::ui::kAppearanceSystem) {
@@ -498,8 +501,11 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             return 0;
 
         case WM_SETTINGCHANGE:
-            if (wparam == SPI_SETWORKAREA) { coordinator.OnDisplayChanged(); }
-            else { coordinator.OnVisualSettingsChanged(); }
+            if (wparam == SPI_SETWORKAREA) {
+                coordinator.OnDisplayChanged();
+            } else {
+                coordinator.OnVisualSettingsChanged();
+            }
             return 0;
 
         case WM_THEMECHANGED:
@@ -619,14 +625,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
     const easnap::platform::ComRuntime com;
     if (!com.ok()) {
         easnap::ui::ShowMessage(nullptr, easnap::strings::Get(IDS_SHELL_COM_FAILED), kProductName,
-                      MB_OK | MB_ICONERROR);
+                                MB_OK | MB_ICONERROR);
         return 1;
     }
 
     HWND host = CreateHostWindow(instance);
     if (host == nullptr) {
         easnap::ui::ShowMessage(nullptr, easnap::strings::Get(IDS_SHELL_HOST_WINDOW_FAILED), kProductName,
-                      MB_OK | MB_ICONERROR);
+                                MB_OK | MB_ICONERROR);
         return 1;
     }
 
@@ -647,7 +653,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
     const bool shortcut_works = RegisterCaptureHotkey(host);
     if (!g_tray.Add(host, TrayTooltip())) {
         easnap::ui::ShowMessage(nullptr, easnap::strings::Get(IDS_SHELL_TRAY_ICON_FAILED), kProductName,
-                      MB_OK | MB_ICONERROR);
+                                MB_OK | MB_ICONERROR);
     }
     const std::wstring shortcut = coordinator.settings().HotkeyDisplayText();
     if (!shortcut_works) {

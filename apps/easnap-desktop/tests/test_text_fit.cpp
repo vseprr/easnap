@@ -31,7 +31,15 @@ namespace {
 using namespace easnap;
 
 int passed{}, failed{};
-#define CHECK(...) do { if (__VA_ARGS__) { ++passed; } else { ++failed; std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); } } while (false)
+#define CHECK(...)                                                         \
+    do {                                                                   \
+        if (__VA_ARGS__) {                                                 \
+            ++passed;                                                      \
+        } else {                                                           \
+            ++failed;                                                      \
+            std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); \
+        }                                                                  \
+    } while (false)
 
 const char* g_language = "";
 
@@ -44,7 +52,10 @@ std::wstring TextOf(HWND window) {
 /// Checks every visible button and label below `top`. Returns how many
 /// controls with text were examined.
 int CheckFits(HWND top, const char* surface) {
-    struct Context { const char* surface; int examined; } context{surface, 0};
+    struct Context {
+        const char* surface;
+        int examined;
+    } context{surface, 0};
     ::EnumChildWindows(top, [](HWND child, LPARAM value) -> BOOL {
         auto* context = reinterpret_cast<Context*>(value);
         if (::IsWindowVisible(child) == FALSE) { return TRUE; }
@@ -88,20 +99,21 @@ int CheckFits(HWND top, const char* surface) {
                 ++passed;
             }
         }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&context));
+        return TRUE; }, reinterpret_cast<LPARAM>(&context));
     return context.examined;
 }
 
 std::vector<HWND> ThreadWindows(const wchar_t* class_name) {
-    struct Query { std::vector<HWND> windows; const wchar_t* class_name; } query{{}, class_name};
+    struct Query {
+        std::vector<HWND> windows;
+        const wchar_t* class_name;
+    } query{{}, class_name};
     ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM value) -> BOOL {
         auto* found = reinterpret_cast<Query*>(value);
         wchar_t name[64]{};
         ::GetClassNameW(window, name, ARRAYSIZE(name));
         if (::lstrcmpW(name, found->class_name) == 0 && ::IsWindowVisible(window)) { found->windows.push_back(window); }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&query));
+        return TRUE; }, reinterpret_cast<LPARAM>(&query));
     return query.windows;
 }
 
@@ -178,8 +190,7 @@ void EditorIslands(const RECT& region) {
                 if (::IsWindowVisible(child) && ::lstrcmpiW(name, TRACKBAR_CLASSW) == 0) {
                     reinterpret_cast<std::vector<HWND>*>(value)->push_back(child);
                 }
-                return TRUE;
-            }, reinterpret_cast<LPARAM>(&sliders));
+                return TRUE; }, reinterpret_cast<LPARAM>(&sliders));
             for (HWND slider : sliders) {
                 for (const UINT limit : {TBM_GETRANGEMIN, TBM_GETRANGEMAX}) {
                     const LRESULT position = ::SendMessageW(slider, limit, 0, 0);
@@ -210,8 +221,7 @@ void Settings() {
             wchar_t name[32]{};
             ::GetClassNameW(window, name, ARRAYSIZE(name));
             if (::lstrcmpW(name, L"#32770") == 0 && ::IsWindowVisible(window)) { *reinterpret_cast<HWND*>(value) = window; return FALSE; }
-            return TRUE;
-        }, reinterpret_cast<LPARAM>(&dialog));
+            return TRUE; }, reinterpret_cast<LPARAM>(&dialog));
         if (dialog == nullptr) { return; }
         ::KillTimer(nullptr, id);
         examined = CheckFits(dialog, "settings");
@@ -245,8 +255,14 @@ void ModeBar(const platform::MonitorInfo& monitor) {
 /// The notices draw their own text. The copied and saved notices take one
 /// line; a status notice may wrap, but never beyond its window.
 void Notices(const RECT& region) {
-    enum class Kind { Copied, Saved, Status };
-    struct Notice { Kind kind; std::wstring text; bool one_line; };
+    enum class Kind { Copied,
+                      Saved,
+                      Status };
+    struct Notice {
+        Kind kind;
+        std::wstring text;
+        bool one_line;
+    };
     const Notice notices[]{
         {Kind::Copied, strings::Get(IDS_NOTICE_COPIED), true},
         {Kind::Saved, strings::Get(IDS_NOTICE_SAVED), true},
@@ -254,9 +270,13 @@ void Notices(const RECT& region) {
         {Kind::Status, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED), false},
     };
     for (const Notice& notice : notices) {
-        if (notice.kind == Kind::Copied) { ui::ShowCaptureCopiedNotice(region); }
-        else if (notice.kind == Kind::Saved) { ui::ShowCaptureSavedNotice(region); }
-        else { ui::ShowCaptureStatusNotice(region, notice.text); }
+        if (notice.kind == Kind::Copied) {
+            ui::ShowCaptureCopiedNotice(region);
+        } else if (notice.kind == Kind::Saved) {
+            ui::ShowCaptureSavedNotice(region);
+        } else {
+            ui::ShowCaptureStatusNotice(region, notice.text);
+        }
         const std::vector<HWND> windows = ThreadWindows(L"EasnapCaptureCopiedNotice");
         CHECK(windows.size() == 1);
         for (HWND window : windows) {
@@ -298,7 +318,10 @@ int main() {
     if (!monitors.empty()) {
         const platform::MonitorInfo monitor = test::SelectedTestMonitor() ? *test::SelectedTestMonitor() : monitors.front();
         const RECT region{monitor.bounds.left + 300, monitor.bounds.top + 160, monitor.bounds.left + 940, monitor.bounds.top + 520};
-        struct Language { strings::LanguagePreference preference; const char* name; };
+        struct Language {
+            strings::LanguagePreference preference;
+            const char* name;
+        };
         for (const Language& language : {Language{strings::LanguagePreference::English, "English"},
                                          Language{strings::LanguagePreference::Turkish, "Turkish"}}) {
             strings::SetPreference(language.preference);

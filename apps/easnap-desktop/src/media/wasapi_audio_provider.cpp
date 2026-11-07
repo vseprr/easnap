@@ -153,8 +153,8 @@ detail::AudioTimestampResolutionResult ResolveAudioPacketTimestampImpl(
         RelativeTimestamp(correlated_packet_qpc, input.qpc_epoch_100ns);
 
     const uint32_t capped_buffered = input.maximum_buffer_frames > 0
-        ? (std::min)(input.buffered_frame_count, input.maximum_buffer_frames)
-        : input.buffered_frame_count;
+                                         ? (std::min)(input.buffered_frame_count, input.maximum_buffer_frames)
+                                         : input.buffered_frame_count;
     const uint32_t buffered_frames =
         (std::max)(input.frame_count, capped_buffered);
     const auto buffered_duration =
@@ -276,7 +276,8 @@ private:
     mutable std::mutex timestamp_diagnostics_mutex_;
     std::size_t timestamp_resolution_count_{0};
     std::array<AudioTimestampResolutionDiagnostic,
-               kAudioTimestampDiagnosticCapacity> timestamp_resolutions_{};
+               kAudioTimestampDiagnosticCapacity>
+        timestamp_resolutions_{};
 };
 
 // ---------------------------------------------------------------------------
@@ -552,7 +553,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
 
     platform::ComPtr<IAudioClient> audio_client;
     hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL,
-                           nullptr, reinterpret_cast<void**>(audio_client.GetAddressOf()));
+                          nullptr, reinterpret_cast<void**>(audio_client.GetAddressOf()));
     if (FAILED(hr) || !audio_client) {
         platform::LogMessage(L"[Audio] IMMDevice::Activate failed: 0x%08lX", hr);
         last_failure_hresult_.store(hr, std::memory_order_release);
@@ -713,7 +714,9 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
         // Defensive: if GetBufferSize fails, fall back to one period.
         negotiated_buffer_frames = static_cast<UINT32>(
             (static_cast<uint64_t>(effective_period_ms) *
-             captured_format.sample_rate + 999) / 1000);
+                 captured_format.sample_rate +
+             999) /
+            1000);
     }
 
     // Create bounded audio queue.
@@ -781,7 +784,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
                 SUCCEEDED(audio_client->GetCurrentPadding(&buffered_frames_available));
 
             hr = capture_client->GetBuffer(&data, &frames_available, &flags,
-                                            &device_position, &qpc_position);
+                                           &device_position, &qpc_position);
 
             // A failed call reports no frames, so it must be classified before
             // the empty-buffer exit or endpoint loss would look like silence.

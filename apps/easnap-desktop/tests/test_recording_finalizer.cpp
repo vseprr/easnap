@@ -12,7 +12,10 @@ int failures = 0;
 int checks = 0;
 void Check(bool condition, int line) {
     ++checks;
-    if (!condition) { ++failures; std::printf("FAIL finalizer:%d\n", line); }
+    if (!condition) {
+        ++failures;
+        std::printf("FAIL finalizer:%d\n", line);
+    }
 }
 #define CHECK(value) Check((value), __LINE__)
 constexpr UINT kComplete = WM_APP + 23;
@@ -91,7 +94,9 @@ void TestJoinAndRepeatedSessions(HWND owner) {
     auto gate = release.get_future().share();
     std::atomic<bool> finished{false};
     CHECK(worker.Start(owner, kComplete, [gate, &finished] {
-        gate.wait(); finished.store(true); return true;
+        gate.wait();
+        finished.store(true);
+        return true;
     }));
     std::thread unblock([&release] { std::this_thread::sleep_for(20ms); release.set_value(); });
     worker.Join(); // shutdown must drain before releasing captured owner state

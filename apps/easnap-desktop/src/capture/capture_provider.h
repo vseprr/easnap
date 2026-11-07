@@ -46,7 +46,9 @@ struct DesktopSnapshot {
     [[nodiscard]] bool RegionComplete(const RECT& region) const noexcept;
 };
 
-enum class RegionCaptureStatus { FrameAcquired, NoNewFrame, Failed };
+enum class RegionCaptureStatus { FrameAcquired,
+                                 NoNewFrame,
+                                 Failed };
 
 /// Privacy-safe stage identifiers for native desktop-capture failures. The
 /// associated code is retained separately so diagnostics never contain pixels,
@@ -74,7 +76,9 @@ enum class RegionCaptureFailureStage : uint8_t {
     GdiBitBlt,
 };
 
-enum class RegionCaptureFailureCodeKind : uint8_t { None, HResult, Win32 };
+enum class RegionCaptureFailureCodeKind : uint8_t { None,
+                                                    HResult,
+                                                    Win32 };
 
 struct RegionCaptureFailureDiagnostic {
     RegionCaptureFailureStage stage{RegionCaptureFailureStage::None};
