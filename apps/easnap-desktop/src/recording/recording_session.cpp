@@ -932,7 +932,8 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
     }
 
     bool write_failed = false;
-    std::wstring write_failure_context;
+    // Only literals are assigned, so setting it in a failure path cannot allocate.
+    const wchar_t* write_failure_context = nullptr;
     try {
         std::unique_lock audio_lock(audio_callback_mutex_);
         if (!audio_accepting_.load(std::memory_order_acquire)) {
@@ -1097,7 +1098,7 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
             written_audio_frames_.Add(mapped.frame_count);
         } else {
             write_failed = true;
-            if (write_failure_context.empty()) {
+            if (write_failure_context == nullptr) {
                 write_failure_context =
                     L"The AAC writer rejected a captured PCM packet";
             }
@@ -1111,13 +1112,18 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
     }
 
     if (write_failed) {
-        std::wstring message = writer_ != nullptr ? writer_->last_error() : std::wstring{};
-        if (message.empty()) {
-            message = write_failure_context.empty()
-                          ? L"Writing a captured audio packet failed"
-                          : std::move(write_failure_context);
+        // This function is noexcept: building the text can fail for lack of
+        // memory, and the session must still fail cleanly.
+        try {
+            std::wstring message = writer_ != nullptr ? writer_->last_error() : std::wstring{};
+            if (message.empty()) {
+                message = write_failure_context != nullptr ? write_failure_context
+                                                           : L"Writing a captured audio packet failed";
+            }
+            RecordFailure(std::move(message));
+        } catch (...) {
+            RecordFailure({});
         }
-        RecordFailure(std::move(message));
         audio_accepting_.store(false, std::memory_order_release);
         frame_queue_.close();
         capture_worker_->Stop();

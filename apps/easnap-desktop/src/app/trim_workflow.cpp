@@ -266,7 +266,11 @@ void TrimExportController::Run(TrimExportRequest request) noexcept {
         }
     } catch (...) {
         failure.stage = media::TrimExportFailureStage::Unknown;
-        failure.detail = L"Unexpected exception from the trim exporter";
+        try {
+            failure.detail = L"Unexpected exception from the trim exporter";
+        } catch (...) {
+            // The stage alone still reports the failure.
+        }
         platform::LogMessage(L"[Trim] Unexpected exception from the trim exporter");
     }
 

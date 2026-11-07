@@ -1033,11 +1033,14 @@ private:
         aac_channels_ = 0;
     }
 
-    void SetError(const wchar_t* operation, HRESULT result) {
-        const std::wstring message = DescribeHresult(operation, result);
-        {
+    void SetError(const wchar_t* operation, HRESULT result) noexcept {
+        try {
+            const std::wstring message = DescribeHresult(operation, result);
             const std::scoped_lock lock(error_mutex_);
             last_error_ = message;
+        } catch (...) {
+            // No memory to describe the failure: has_error() still reports it,
+            // and the callers fall back to their own text when it is empty.
         }
         has_error_.store(true, std::memory_order_relaxed);
     }
