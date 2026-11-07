@@ -294,4 +294,6 @@ BEGIN
     IDS_TRIM_NO_PREVIEW_TEXT "This recording cannot be previewed, so it cannot be trimmed here.\n\nThe recording itself is complete. You can save it as it is, as an MP4 file."
     IDS_TRIM_PREVIEW_FAILED_NEXT "Close this window to save the recording as it is."
     IDS_TRIM_PREVIEW_HELPER_MISSING "EasnapPreviewHost.exe is missing from the Easnap folder, so recordings cannot be previewed or trimmed. Extract the complete ZIP again, or reinstall Easnap."
+    IDS_RECORDING_KEPT_UNTIL_NEXT_START "Easnap could not open the trim view.\n\nThe recording is kept only until Easnap starts again. To keep it, copy it from here:\n%1"
+    IDS_TRIM_SAVE_UNTRIMMED_FAILED "The recording could not be saved there. It is still open; choose another place."
 END

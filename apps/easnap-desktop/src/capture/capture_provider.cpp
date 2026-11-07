@@ -21,7 +21,9 @@ using platform::MonitorInfo;
 constexpr UINT kAcquireTimeoutMs = 30;
 constexpr int kAcquireAttempts = 8;
 
-enum class FrameAcquireStatus { Acquired, NoNewFrame, Failed };
+enum class FrameAcquireStatus { Acquired,
+                                NoNewFrame,
+                                Failed };
 
 RegionCaptureFailureDiagnostic HresultFailure(
     RegionCaptureFailureStage stage, HRESULT result) noexcept {
@@ -68,7 +70,7 @@ bool ReadTextureToImage(ID3D11Device* device, ID3D11DeviceContext* context, ID3D
     if (device == nullptr || context == nullptr || texture == nullptr) {
         if (failure != nullptr) {
             *failure = HresultFailure(RegionCaptureFailureStage::DuplicationInvalidTexture,
-                                     E_INVALIDARG);
+                                      E_INVALIDARG);
         }
         return false;
     }
@@ -77,7 +79,7 @@ bool ReadTextureToImage(ID3D11Device* device, ID3D11DeviceContext* context, ID3D
     if (desc.Width == 0 || desc.Height == 0) {
         if (failure != nullptr) {
             *failure = HresultFailure(RegionCaptureFailureStage::DuplicationInvalidTexture,
-                                     E_INVALIDARG);
+                                      E_INVALIDARG);
         }
         return false;
     }
@@ -106,7 +108,7 @@ bool ReadTextureToImage(ID3D11Device* device, ID3D11DeviceContext* context, ID3D
         LogHresult(L"ID3D11DeviceContext::Map", hr);
         if (failure != nullptr) {
             *failure = HresultFailure(RegionCaptureFailureStage::DuplicationMapTexture,
-                                     hr);
+                                      hr);
         }
         return false;
     }
@@ -131,7 +133,7 @@ bool ReadTextureRegionToImage(ID3D11Device* device, ID3D11DeviceContext* context
         platform::IsEmptyRect(source_region) || source_region.left < 0 || source_region.top < 0) {
         if (failure != nullptr) {
             *failure = HresultFailure(RegionCaptureFailureStage::DuplicationInvalidTexture,
-                                     E_INVALIDARG);
+                                      E_INVALIDARG);
         }
         return false;
     }
@@ -141,7 +143,7 @@ bool ReadTextureRegionToImage(ID3D11Device* device, ID3D11DeviceContext* context
         source_region.bottom > static_cast<LONG>(source_desc.Height)) {
         if (failure != nullptr) {
             *failure = HresultFailure(RegionCaptureFailureStage::DuplicationInvalidTexture,
-                                     E_INVALIDARG);
+                                      E_INVALIDARG);
         }
         return false;
     }
@@ -187,7 +189,7 @@ bool ReadTextureRegionToImage(ID3D11Device* device, ID3D11DeviceContext* context
         LogHresult(L"ID3D11DeviceContext::Map(region)", hr);
         if (failure != nullptr) {
             *failure = HresultFailure(RegionCaptureFailureStage::DuplicationMapTexture,
-                                     hr);
+                                      hr);
         }
         return false;
     }
@@ -360,9 +362,9 @@ public:
     }
 
     RegionCaptureResult CaptureRegionFrame(const RECT& region, bool include_cursor,
-                                            media::MediaTime timestamp,
-                                            media::MediaTime duration,
-                                            media::VideoFrame& out) override {
+                                           media::MediaTime timestamp,
+                                           media::MediaTime duration,
+                                           media::VideoFrame& out) override {
         BgraImage image;
         RegionImageOptions options;
         options.include_cursor = include_cursor;
@@ -376,7 +378,7 @@ public:
     }
 
     RegionCaptureResult CaptureRegionImage(const RECT& region, const RegionImageOptions& options,
-                                            BgraImage& out) override {
+                                           BgraImage& out) override {
         return CaptureRecordingRegion(region, options, out);
     }
 
@@ -406,7 +408,7 @@ private:
     /// hybrid GPUs). Falling back for that single output keeps the other
     /// monitors on the fast path instead of degrading the whole capture.
     RegionCaptureResult CaptureRecordingRegion(const RECT& region, const RegionImageOptions& options,
-                                                BgraImage& out) {
+                                               BgraImage& out) {
         const bool include_cursor = options.include_cursor;
         RegionCaptureResult result;
         const RECT normalized = platform::IntersectRects(region, platform::VirtualScreenBounds());
@@ -485,8 +487,8 @@ private:
     }
 
     RegionCaptureResult CaptureMonitorRegion(const MonitorInfo& monitor, const RECT& region,
-                                              BgraImage& out, uint32_t wait_milliseconds,
-                                              bool await_first_composed_frame = false) {
+                                             BgraImage& out, uint32_t wait_milliseconds,
+                                             bool await_first_composed_frame = false) {
         RegionCaptureResult result;
         if (!using_fallback_ && EnsureDuplication()) {
             const int index = FindOutputIndex(monitor);
@@ -565,8 +567,8 @@ private:
                 OutputDuplication& output = outputs_[static_cast<size_t>(index)];
                 const bool rotated = output.rotation != DXGI_MODE_ROTATION_IDENTITY &&
                                      output.rotation != DXGI_MODE_ROTATION_UNSPECIFIED;
-                // Rotated outputs need a transform pass; the GDI path already
-                // returns upright pixels, so use it until Phase 2 adds one.
+                // Rotated outputs would need a transform pass; the GDI path
+                // already returns upright pixels, so it reads them.
                 if (!rotated && !output.unusable &&
                     AcquireFrame(output, out, nullptr, kAcquireTimeoutMs, kAcquireAttempts,
                                  nullptr, nullptr) == FrameAcquireStatus::Acquired) {
@@ -764,12 +766,12 @@ private:
                     texture_result);
             }
             const bool read = SUCCEEDED(texture_result) &&
-                (source_region == nullptr
-                     ? ReadTextureToImage(output.device.Get(), output.context.Get(),
-                                          texture.Get(), candidate, failure)
-                     : ReadTextureRegionToImage(output.device.Get(), output.context.Get(),
-                                                texture.Get(), *source_region,
-                                                output.region_staging, candidate, failure));
+                              (source_region == nullptr
+                                   ? ReadTextureToImage(output.device.Get(), output.context.Get(),
+                                                        texture.Get(), candidate, failure)
+                                   : ReadTextureRegionToImage(output.device.Get(), output.context.Get(),
+                                                              texture.Get(), *source_region,
+                                                              output.region_staging, candidate, failure));
             if (metrics != nullptr) {
                 metrics->region_copy_microseconds += ElapsedMicroseconds(copy_start);
             }
@@ -942,7 +944,7 @@ bool CompositeCursor(BgraImage& image, const RECT& image_rect) {
     BITMAP cursor_bitmap{};
     const HBITMAP sized = icon_info.hbmColor != nullptr ? icon_info.hbmColor : icon_info.hbmMask;
     const bool has_size = sized != nullptr &&
-        ::GetObjectW(sized, sizeof(cursor_bitmap), &cursor_bitmap) == sizeof(cursor_bitmap);
+                          ::GetObjectW(sized, sizeof(cursor_bitmap), &cursor_bitmap) == sizeof(cursor_bitmap);
     if (icon_info.hbmColor != nullptr) {
         ::DeleteObject(icon_info.hbmColor);
     }
@@ -951,7 +953,7 @@ bool CompositeCursor(BgraImage& image, const RECT& image_rect) {
     }
     const int cursor_width = has_size ? cursor_bitmap.bmWidth : ::GetSystemMetrics(SM_CXCURSOR);
     const int cursor_height = !has_size ? ::GetSystemMetrics(SM_CYCURSOR)
-        : (icon_info.hbmColor != nullptr ? cursor_bitmap.bmHeight : cursor_bitmap.bmHeight / 2);
+                                        : (icon_info.hbmColor != nullptr ? cursor_bitmap.bmHeight : cursor_bitmap.bmHeight / 2);
 
     const LONG x = cursor_info.ptScreenPos.x - image_rect.left - static_cast<LONG>(icon_info.xHotspot);
     const LONG y = cursor_info.ptScreenPos.y - image_rect.top - static_cast<LONG>(icon_info.yHotspot);

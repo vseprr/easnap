@@ -119,7 +119,7 @@ struct Mp4Inspection {
 class PreviewWindow final {
 public:
     PreviewWindow() {
-        const RECT placement=easnap::test::OnTestMonitor({0,0,320,240});
+        const RECT placement = easnap::test::OnTestMonitor({0, 0, 320, 240});
         window_ = ::CreateWindowExW(0, L"STATIC", L"Easnap preview test",
                                     WS_POPUP, placement.left, placement.top, 320, 240, nullptr, nullptr,
                                     ::GetModuleHandleW(nullptr), nullptr);
@@ -151,7 +151,8 @@ bool WaitForPreview(easnap::media::IMediaPreview& preview,
         // through this thread's message loop, including hidden owner timers.
         MSG message{};
         for (unsigned count = 0; count < 128 &&
-             ::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++count) {
+                                 ::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE);
+             ++count) {
             ::TranslateMessage(&message);
             ::DispatchMessageW(&message);
         }
@@ -667,7 +668,7 @@ Mp4Inspection InspectMp4(const std::wstring& path, UINT32 expected_width,
 
 RECT ModestPrimaryMonitorRegion() {
     POINT origin{};
-    const auto* selected=easnap::test::SelectedTestMonitor();
+    const auto* selected = easnap::test::SelectedTestMonitor();
     const HMONITOR monitor = selected ? selected->handle : ::MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO info{};
     info.cbSize = sizeof(info);
@@ -677,8 +678,8 @@ RECT ModestPrimaryMonitorRegion() {
 
     const LONG monitor_width = info.rcMonitor.right - info.rcMonitor.left;
     const LONG monitor_height = info.rcMonitor.bottom - info.rcMonitor.top;
-    // Match the non-macroblock-aligned shape from the Phase 3.2 acceptance
-    // defect when the desktop is large enough. Both dimensions force the H.264
+    // A shape that is not a multiple of the 16-pixel macroblock, when the
+    // desktop is large enough. Both dimensions force the H.264
     // decoder's coded surface/aperture boundary to be exercised.
     LONG width = (std::min)(492L, monitor_width);
     LONG height = (std::min)(748L, monitor_height);
@@ -863,13 +864,13 @@ void TestRealDesktopRecordingSession() {
 
     const auto run_scenario =
         [&](const wchar_t* name, bool show_surface, bool animate,
-             uint32_t frame_rate, easnap::media::AudioSource audio_source,
-             std::chrono::milliseconds first_active,
-             std::chrono::milliseconds pause_duration,
-             std::chrono::milliseconds second_active,
-             easnap::media::RecordingFormat format =
-                 easnap::media::RecordingFormat::Mp4,
-             bool exercise_preview = false) {
+            uint32_t frame_rate, easnap::media::AudioSource audio_source,
+            std::chrono::milliseconds first_active,
+            std::chrono::milliseconds pause_duration,
+            std::chrono::milliseconds second_active,
+            easnap::media::RecordingFormat format =
+                easnap::media::RecordingFormat::Mp4,
+            bool exercise_preview = false) {
             VisibleTestSurface surface;
             const bool surface_started = !show_surface || surface.Start(region, animate);
             CHECK(surface_started);
@@ -1347,60 +1348,60 @@ void TestRealDesktopRecordingSession() {
                     [&](const std::wstring& destination,
                         easnap::media::MediaTime start,
                         easnap::media::MediaTime end) -> bool {
-                        auto exporter = easnap::media::CreateGifExporter();
-                        CHECK(exporter != nullptr);
-                        if (exporter == nullptr) {
-                            return false;
-                        }
-                        const bool exported = exporter->Export(
-                            output_path, destination, start, end, options,
-                            [](float) { return true; });
-                        if (!exported) {
-                            const easnap::media::TrimExportFailure failure =
-                                exporter->LastFailure();
-                            std::fwprintf(
-                                stderr,
-                                L"%ls GIF export failed: stage=%u HRESULT=%ls0x%08X detail=%ls\n",
-                                name, static_cast<unsigned int>(failure.stage),
-                                failure.has_hresult ? L"" : L"n/a ",
-                                static_cast<unsigned int>(failure.hresult),
-                                failure.detail.c_str());
-                        }
-                        CHECK(exported);
-                        if (!exported) {
-                            return false;
-                        }
-                        const GifInspection gif = InspectGif(destination);
-                        if (!gif.valid) {
-                            std::fwprintf(
-                                stderr,
-                                L"%ls WIC GIF inspection failed: path=%ls HRESULT=0x%08X frame=%u frames=%llu size=%ux%u duration_cs=%llu trailer=%u\n",
-                                name, destination.c_str(),
-                                static_cast<unsigned int>(gif.decode_result),
-                                gif.failed_frame,
-                                static_cast<unsigned long long>(gif.frame_count),
-                                gif.width, gif.height,
-                                static_cast<unsigned long long>(
-                                    gif.duration_centiseconds),
-                                gif.finalized ? 1u : 0u);
-                        }
-                        CHECK(gif.valid);
-                        CHECK(gif.finalized);
-                        CHECK(gif.width == width);
-                        CHECK(gif.height == height);
-                        CHECK(gif.frame_count > 0);
-                        const uint64_t selected_ticks = static_cast<uint64_t>(
-                            (end - start).count());
-                        const uint64_t expected_centiseconds =
-                            (selected_ticks + 50'000u) / 100'000u;
-                        const uint64_t duration_delta =
-                            gif.duration_centiseconds > expected_centiseconds
-                                ? gif.duration_centiseconds - expected_centiseconds
-                                : expected_centiseconds -
-                                      gif.duration_centiseconds;
-                        CHECK(duration_delta <= 1);
-                        return gif.valid && duration_delta <= 1;
-                    };
+                    auto exporter = easnap::media::CreateGifExporter();
+                    CHECK(exporter != nullptr);
+                    if (exporter == nullptr) {
+                        return false;
+                    }
+                    const bool exported = exporter->Export(
+                        output_path, destination, start, end, options,
+                        [](float) { return true; });
+                    if (!exported) {
+                        const easnap::media::TrimExportFailure failure =
+                            exporter->LastFailure();
+                        std::fwprintf(
+                            stderr,
+                            L"%ls GIF export failed: stage=%u HRESULT=%ls0x%08X detail=%ls\n",
+                            name, static_cast<unsigned int>(failure.stage),
+                            failure.has_hresult ? L"" : L"n/a ",
+                            static_cast<unsigned int>(failure.hresult),
+                            failure.detail.c_str());
+                    }
+                    CHECK(exported);
+                    if (!exported) {
+                        return false;
+                    }
+                    const GifInspection gif = InspectGif(destination);
+                    if (!gif.valid) {
+                        std::fwprintf(
+                            stderr,
+                            L"%ls WIC GIF inspection failed: path=%ls HRESULT=0x%08X frame=%u frames=%llu size=%ux%u duration_cs=%llu trailer=%u\n",
+                            name, destination.c_str(),
+                            static_cast<unsigned int>(gif.decode_result),
+                            gif.failed_frame,
+                            static_cast<unsigned long long>(gif.frame_count),
+                            gif.width, gif.height,
+                            static_cast<unsigned long long>(
+                                gif.duration_centiseconds),
+                            gif.finalized ? 1u : 0u);
+                    }
+                    CHECK(gif.valid);
+                    CHECK(gif.finalized);
+                    CHECK(gif.width == width);
+                    CHECK(gif.height == height);
+                    CHECK(gif.frame_count > 0);
+                    const uint64_t selected_ticks = static_cast<uint64_t>(
+                        (end - start).count());
+                    const uint64_t expected_centiseconds =
+                        (selected_ticks + 50'000u) / 100'000u;
+                    const uint64_t duration_delta =
+                        gif.duration_centiseconds > expected_centiseconds
+                            ? gif.duration_centiseconds - expected_centiseconds
+                            : expected_centiseconds -
+                                  gif.duration_centiseconds;
+                    CHECK(duration_delta <= 1);
+                    return gif.valid && duration_delta <= 1;
+                };
 
                 const easnap::media::MediaTime full_end{
                     static_cast<int64_t>(inspection.duration_100ns)};
@@ -1451,32 +1452,32 @@ void TestRealDesktopRecordingSession() {
                 const auto export_and_publish_copy =
                     [&](easnap::media::MediaTime start,
                         easnap::media::MediaTime end) -> std::wstring {
-                        const auto destination =
-                            completion.PrepareClipboardDestination(
-                                easnap::media::RecordingFormat::Gif);
-                        CHECK(destination.has_value());
-                        if (!destination.has_value()) {
-                            return {};
-                        }
-                        CHECK(completion.IsPreparedClipboardArtifact(
-                            *destination));
-                        if (!export_and_inspect(*destination, start, end)) {
-                            completion.AbandonPreparedClipboardArtifact();
-                            return {};
-                        }
-                        CHECK(completion.PublishClipboardArtifact(
-                            nullptr, *destination,
-                            easnap::media::RecordingFormat::Gif));
-                        CHECK(completion.clipboard_session().has_value());
-                        easnap::platform::UniqueHandle readable{
-                            ::CreateFileW(destination->c_str(), GENERIC_READ,
-                                          FILE_SHARE_READ, nullptr,
-                                          OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-                                          nullptr)};
-                        CHECK(readable.get() != nullptr &&
-                              readable.get() != INVALID_HANDLE_VALUE);
-                        return *destination;
-                    };
+                    const auto destination =
+                        completion.PrepareClipboardDestination(
+                            easnap::media::RecordingFormat::Gif);
+                    CHECK(destination.has_value());
+                    if (!destination.has_value()) {
+                        return {};
+                    }
+                    CHECK(completion.IsPreparedClipboardArtifact(
+                        *destination));
+                    if (!export_and_inspect(*destination, start, end)) {
+                        completion.AbandonPreparedClipboardArtifact();
+                        return {};
+                    }
+                    CHECK(completion.PublishClipboardArtifact(
+                        nullptr, *destination,
+                        easnap::media::RecordingFormat::Gif));
+                    CHECK(completion.clipboard_session().has_value());
+                    easnap::platform::UniqueHandle readable{
+                        ::CreateFileW(destination->c_str(), GENERIC_READ,
+                                      FILE_SHARE_READ, nullptr,
+                                      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                                      nullptr)};
+                    CHECK(readable.get() != nullptr &&
+                          readable.get() != INVALID_HANDLE_VALUE);
+                    return *destination;
+                };
 
                 const std::wstring full_copy = export_and_publish_copy(
                     easnap::media::MediaTime::zero(), full_end);
@@ -1637,8 +1638,8 @@ void TestPauseStopStress() {
     ReportCapturePathProbe({screen.left, screen.top, screen.left + 160, screen.top + 120});
     auto probe = media::CreateWasapiAudioCaptureProvider();
     constexpr media::AudioSource sources[]{media::AudioSource::None,
-        media::AudioSource::SystemAudio, media::AudioSource::Microphone,
-        media::AudioSource::Both};
+                                           media::AudioSource::SystemAudio, media::AudioSource::Microphone,
+                                           media::AudioSource::Both};
     bool audio_source_ran = false;
     for (const auto source : sources) {
         if (source != media::AudioSource::None && !probe->IsSourceAvailable(source)) {
@@ -1688,8 +1689,10 @@ void TestPauseStopStress() {
             }
             const bool abort = cycle == 4 || cycle == 5;
             bool finished = true;
-            if (abort) session->Abort();
-            else finished = session->Stop();
+            if (abort)
+                session->Abort();
+            else
+                finished = session->Stop();
             CHECK(finished);
             if (!finished) std::fwprintf(stderr, L"STRESS Stop: %ls\n",
                                          session->last_error().c_str());
@@ -1700,22 +1703,22 @@ void TestPauseStopStress() {
             CHECK(diagnostics.capture_failures == 0);
             if (!abort && finished) {
                 const auto output = InspectMp4(session->finalized_path(), 160, 120,
-                                              source != media::AudioSource::None);
+                                               source != media::AudioSource::None);
                 CHECK(output.valid);
                 CHECK(output.sample_durations_valid);
                 CHECK(output.sample_count == diagnostics.written_frames);
                 const auto delta = output.duration_100ns > diagnostics.active_duration_100ns
-                    ? output.duration_100ns - diagnostics.active_duration_100ns
-                    : diagnostics.active_duration_100ns - output.duration_100ns;
+                                       ? output.duration_100ns - diagnostics.active_duration_100ns
+                                       : diagnostics.active_duration_100ns - output.duration_100ns;
                 CHECK(delta < 1'000'000);  // one 15-fps frame + AAC endpoint granularity
                 CHECK(session->Stop());  // completion is idempotent
                 std::printf("PAUSE_STOP_STRESS source=%d cycle=%d active=%llu output=%llu frames=%llu audio=%llu stop_paused=%d\n",
-                    static_cast<int>(source), cycle,
-                    static_cast<unsigned long long>(diagnostics.active_duration_100ns),
-                    static_cast<unsigned long long>(output.duration_100ns),
-                    static_cast<unsigned long long>(output.sample_count),
-                    static_cast<unsigned long long>(output.audio_sample_count),
-                    immediate || cycle % 2 == 0);
+                            static_cast<int>(source), cycle,
+                            static_cast<unsigned long long>(diagnostics.active_duration_100ns),
+                            static_cast<unsigned long long>(output.duration_100ns),
+                            static_cast<unsigned long long>(output.sample_count),
+                            static_cast<unsigned long long>(output.audio_sample_count),
+                            immediate || cycle % 2 == 0);
             } else if (abort) {
                 CHECK(session->state() == recording::RecordingSessionState::Aborted);
                 session->Abort();
@@ -1731,8 +1734,10 @@ void TestPauseStopStress() {
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc > 1 && std::strcmp(argv[1], "--stress") == 0) TestPauseStopStress();
-    else TestRealDesktopRecordingSession();
+    if (argc > 1 && std::strcmp(argv[1], "--stress") == 0)
+        TestPauseStopStress();
+    else
+        TestRealDesktopRecordingSession();
     if (g_fail == 0) {
         if (g_stress_audio_skipped) {
             // Video-only cycles passed, but the audio sources this stress exists

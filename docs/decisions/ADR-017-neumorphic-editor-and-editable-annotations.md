@@ -2,7 +2,8 @@
 
 Date: 2026-09-16  
 Status: Implemented.  
-**Amended by:** [ADR-018](ADR-018-editor-interaction-corrections.md) (selection, text editing, compact controls); [ADR-019](ADR-019-stable-native-paint-and-custom-window-chrome.md) (custom message dialog and window chrome); [ADR-020](ADR-020-workspace-layering-and-outline-interaction.md) (hit targets follow outlines); [ADR-036](ADR-036-island-placement-around-the-frame.md) (island placement around the frame)
+**Amended by:** [ADR-018](ADR-018-editor-interaction-corrections.md) (selection, text editing, compact controls); [ADR-019](ADR-019-stable-native-paint-and-custom-window-chrome.md) (custom message dialog and window chrome); [ADR-020](ADR-020-workspace-layering-and-outline-interaction.md) (hit targets follow outlines); [ADR-036](ADR-036-island-placement-around-the-frame.md) (island placement around the frame)  
+**Amended:** 2026-11-07 — the submenu arrow of owner-drawn menus
 
 ## Context
 
@@ -88,3 +89,16 @@ over an expanded effect area. Very large images and long effect histories still
 need hardware-specific profiling. Native HWND fixtures establish rendering,
 document behavior and message routing, not perceived animation smoothness or
 physical mixed-DPI operation.
+
+## The submenu arrow (2026-11-07)
+
+Windows draws its own arrow into an owner-drawn menu item that opens a
+submenu, after the owner has drawn the item, in the colours of the system
+theme. The tray menu's Appearance item therefore showed two arrows, the
+adapter's and the system's, from v1.0.0 on; the owner reported it while
+checking v1.1.0-rc.1. The adapter now removes the item from the device
+context's clip region once it has drawn it, so the system's arrow is not
+drawn. `island_capture_exclusion` opens a themed menu with a submenu, reads
+the item as the user sees it and compares it with the adapter's own drawing
+of it: in the lab at 125 %, 25 pixels at the item's right end differed before
+the change and none after, in the dark and the light appearance.

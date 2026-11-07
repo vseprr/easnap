@@ -178,7 +178,12 @@ void Sweep(const RECT& bounds, const RECT& work, SIZE island, const RECT& mode_h
                     CHECK(placed.rect.right - placed.rect.left == island.cx && placed.rect.bottom - placed.rect.top == island.cy);
                     CHECK(!Overlaps(placed.rect, mode));
                     const bool is_outside = placed.side != IslandSide::InsideBottom && placed.side != IslandSide::Centred;
-                    if (is_outside) { CHECK(!Overlaps(placed.rect, frame)); ++outside; } else { ++inside; }
+                    if (is_outside) {
+                        CHECK(!Overlaps(placed.rect, frame));
+                        ++outside;
+                    } else {
+                        ++inside;
+                    }
                     // The order of preference, stated from the outside: room
                     // below wins; without it, free room above wins.
                     const bool room_below = frame.bottom + kGap + island.cy <= work.bottom;

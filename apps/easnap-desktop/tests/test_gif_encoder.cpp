@@ -388,10 +388,7 @@ bool Export(IGifFrameSource& source, const std::wstring& path,
 }
 
 void TestSingleFrameAndLoopMetadata(const TestDirectory& directory) {
-    GeneratedSource source(7, 5, 1, [](std::size_t) { return MediaTime{20 * kCentisecond}; },
-                           [](std::size_t, uint32_t, uint32_t) {
-                               return Color(25, 100, 220);
-                           });
+    GeneratedSource source(7, 5, 1, [](std::size_t) { return MediaTime{20 * kCentisecond}; }, [](std::size_t, uint32_t, uint32_t) { return Color(25, 100, 220); });
     const std::wstring path = directory.File(L"single.gif");
     GifEncodeDiagnostics diagnostics;
     std::vector<float> progress;
@@ -441,12 +438,9 @@ void TestMultiFrameFirstFinalAndKnownColors(const TestDirectory& directory) {
 }
 
 void TestScalingOddAndSmallDimensions(const TestDirectory& directory) {
-    GeneratedSource source(9, 5, 2, [](std::size_t) { return MediaTime{5 * kCentisecond}; },
-                           [](std::size_t frame, uint32_t x, uint32_t y) {
-                               return Color(static_cast<uint8_t>(x * 20u),
-                                            static_cast<uint8_t>(y * 40u),
-                                            static_cast<uint8_t>(frame * 200u));
-                           });
+    GeneratedSource source(9, 5, 2, [](std::size_t) { return MediaTime{5 * kCentisecond}; }, [](std::size_t frame, uint32_t x, uint32_t y) { return Color(static_cast<uint8_t>(x * 20u),
+                                                                                                                                                          static_cast<uint8_t>(y * 40u),
+                                                                                                                                                          static_cast<uint8_t>(frame * 200u)); });
     GifEncodeOptions options = SharpOptions();
     options.output_width = 5;
     options.output_height = 0;
@@ -457,10 +451,7 @@ void TestScalingOddAndSmallDimensions(const TestDirectory& directory) {
     CHECK(DecodeWithWic(path, decoded));
     CHECK(decoded.width == 5 && decoded.height == 3);
 
-    GeneratedSource tiny(1, 1, 1, [](std::size_t) { return MediaTime{kCentisecond}; },
-                         [](std::size_t, uint32_t, uint32_t) {
-                             return Color(9, 8, 7);
-                         });
+    GeneratedSource tiny(1, 1, 1, [](std::size_t) { return MediaTime{kCentisecond}; }, [](std::size_t, uint32_t, uint32_t) { return Color(9, 8, 7); });
     CHECK(Export(tiny, directory.File(L"tiny.gif"), SharpOptions(), diagnostics));
     CHECK(DecodeWithWic(directory.File(L"tiny.gif"), decoded));
     CHECK(decoded.width == 1 && decoded.height == 1);
@@ -598,7 +589,7 @@ void TestLowSizeDesktopBenchmark(const TestDirectory& directory) {
             uint8_t red = static_cast<uint8_t>(14u + x * 24u / kWidth);
             uint8_t green = static_cast<uint8_t>(18u + y * 30u / kHeight);
             uint8_t blue = static_cast<uint8_t>(28u + (x + y) * 24u /
-                                                        (kWidth + kHeight));
+                                                          (kWidth + kHeight));
             if (x >= 12 && x < 180 && y >= 12 && y < 116) {
                 red = static_cast<uint8_t>(28u + x * 30u / kWidth);
                 green = static_cast<uint8_t>(32u + y * 28u / kHeight);
@@ -695,9 +686,7 @@ void TestLowSizeDesktopBenchmark(const TestDirectory& directory) {
 void TestLowSizeTemporalStabilityAndMotion(const TestDirectory& directory) {
     // Compression-scale noise must not become animation. Real single-pixel
     // changes and slow accumulated changes must still reach the GIF canvas.
-    GeneratedSource source(64, 32, 12,
-        [](std::size_t) { return MediaTime{10 * kCentisecond}; },
-        [](std::size_t frame, uint32_t x, uint32_t y) {
+    GeneratedSource source(64, 32, 12, [](std::size_t) { return MediaTime{10 * kCentisecond}; }, [](std::size_t frame, uint32_t x, uint32_t y) {
             if (y == 2 && x == frame + 2) return Color(255, 255, 255);
             if (x == 32 && y == 16) {
                 const auto c = static_cast<uint8_t>(29 + frame * 3);
@@ -705,8 +694,7 @@ void TestLowSizeTemporalStabilityAndMotion(const TestDirectory& directory) {
             }
             const int noise = frame == 0 ? 0 : static_cast<int>((x + y + frame) % 7) - 3;
             const auto c = static_cast<uint8_t>(29 + noise);
-            return Color(c, c, c);
-        });
+            return Color(c, c, c); });
     auto options = LowSizeOptions();
     options.maximum_frame_rate = 10;
     GifEncodeDiagnostics diagnostics;
@@ -721,11 +709,12 @@ void TestLowSizeTemporalStabilityAndMotion(const TestDirectory& directory) {
         const auto& canvas = decoded.frames[i].canvas;
         CHECK(NearColor(canvas[2 * 64 + i + 2], Color(255, 255, 255), 10));
         if (i) CHECK(NearColor(canvas[2 * 64 + i + 1], Color(34, 34, 34), 18));
-        for (uint32_t y = 20; y < 32; ++y) for (uint32_t x = 0; x < 64; ++x) {
-            CHECK(canvas[y * 64 + x] == decoded.frames[0].canvas[y * 64 + x]);
-            const auto c = canvas[y * 64 + x];
-            CHECK(((c >> 16) & 255u) == ((c >> 8) & 255u) && ((c >> 8) & 255u) == (c & 255u));
-        }
+        for (uint32_t y = 20; y < 32; ++y)
+            for (uint32_t x = 0; x < 64; ++x) {
+                CHECK(canvas[y * 64 + x] == decoded.frames[0].canvas[y * 64 + x]);
+                const auto c = canvas[y * 64 + x];
+                CHECK(((c >> 16) & 255u) == ((c >> 8) & 255u) && ((c >> 8) & 255u) == (c & 255u));
+            }
     }
     CHECK(decoded.frames.back().canvas[16 * 64 + 32] !=
           decoded.frames.front().canvas[16 * 64 + 32]);
@@ -952,7 +941,10 @@ void TestLowSizeLateFailureAndCancellation(const TestDirectory& directory) {
         uint32_t width() const noexcept override { return source_.width(); }
         uint32_t height() const noexcept override { return source_.height(); }
         MediaTime duration() const noexcept override { return source_.duration(); }
-        bool Reset() override { frames_ = 0; return source_.Reset(); }
+        bool Reset() override {
+            frames_ = 0;
+            return source_.Reset();
+        }
         GifFrameReadResult Read(VideoFrame& frame) override {
             const auto result = source_.Read(frame);
             if (result == GifFrameReadResult::Frame && ++frames_ == 30) {
@@ -961,13 +953,14 @@ void TestLowSizeLateFailureAndCancellation(const TestDirectory& directory) {
             return result;
         }
         std::wstring last_error() const override { return source_.last_error(); }
+
     private:
         IGifFrameSource& source_;
         uint32_t frames_{0};
     } malformed(source);
     std::wstring error;
     CHECK(!easnap::media::ExportGif(malformed, path, LowSizeOptions(), {}, true,
-                                   diagnostics, error));
+                                    diagnostics, error));
     CHECK(!error.empty());
     CHECK(Fingerprint(path) == original);
     CHECK(!directory.HasPartialFiles());
@@ -977,9 +970,13 @@ void TestLowSizeLateFailureAndCancellation(const TestDirectory& directory) {
         CHECK(!easnap::media::ExportGif(
             source, path, LowSizeOptions(),
             [&](float progress) {
-                if (progress >= stop_at) { cancelled = true; return false; }
+                if (progress >= stop_at) {
+                    cancelled = true;
+                    return false;
+                }
                 return true;
-            }, true, diagnostics, error));
+            },
+            true, diagnostics, error));
         CHECK(cancelled);
         CHECK(Fingerprint(path) == original);
         CHECK(!directory.HasPartialFiles());

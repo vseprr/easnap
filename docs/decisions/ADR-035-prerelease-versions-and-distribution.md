@@ -2,6 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-10-13
+**Amended:** 2026-11-07 — what was verified since the decision; winget for stable versions only
 
 ## Context
 
@@ -53,6 +54,12 @@ packages and their checksum files; it submits nothing. A prerelease gets the
 winget identifier `vseprr.Easnap.Beta`, so that `winget upgrade` never moves a
 stable installation to a beta. See [distribution](../distribution.md).
 
+Amended 2026-11-07: only stable versions are submitted to winget. A release
+candidate would appear there as "Easnap (Beta)", and no prerelease manifest
+was ever submitted, so the separate identifier stays in the script but is not
+used for submissions. The Scoop manifest goes to a bucket of the project's own
+until the project meets the Extras bucket's criteria.
+
 ### Symbol files
 
 Release builds of the two executables produce symbol files. The executables
@@ -81,3 +88,9 @@ requires Windows 10 build 19041.
   entry (the installer was compiled, not run: installing would replace the
   copy of the person who owns the development PC), and the manifests against
   `winget validate` or Scoop.
+- **Since verified** (amended 2026-11-07): the Release workflow accepted the
+  prerelease tags and created the prerelease drafts of v1.1.0-beta.1
+  (published 2026-10-13) and v1.1.0-beta.2 (published 2026-10-30). The
+  manifests were validated locally with `winget validate`; none was
+  submitted. **Still not verified:** the installer's uninstall questions and
+  its removal of the sign-in entry, and the Scoop manifest with Scoop.

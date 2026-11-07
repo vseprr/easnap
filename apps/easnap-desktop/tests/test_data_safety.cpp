@@ -25,7 +25,15 @@ namespace {
 using namespace easnap;
 
 int passed{}, failed{};
-#define CHECK(...) do { if (__VA_ARGS__) { ++passed; } else { ++failed; std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); } } while (false)
+#define CHECK(...)                                                         \
+    do {                                                                   \
+        if (__VA_ARGS__) {                                                 \
+            ++passed;                                                      \
+        } else {                                                           \
+            ++failed;                                                      \
+            std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); \
+        }                                                                  \
+    } while (false)
 
 std::wstring WindowText(HWND window) {
     wchar_t text[256]{};
@@ -42,8 +50,7 @@ HWND FindDialog() {
             *reinterpret_cast<HWND*>(value) = window;
             return FALSE;
         }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&dialog));
+        return TRUE; }, reinterpret_cast<LPARAM>(&dialog));
     return dialog;
 }
 

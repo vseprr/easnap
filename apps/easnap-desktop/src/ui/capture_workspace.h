@@ -4,10 +4,13 @@
 #include "ui/ui_theme.h"
 
 namespace easnap::ui {
-enum class WorkspaceInteraction { Standby, Editing };
+enum class WorkspaceInteraction { Standby,
+                                  Editing };
 /// Where a Scrollshot stands. `Capturing` opens the frame to the application
 /// underneath; `Stopped` keeps the frame locked while the image is reviewed.
-enum class ScrollshotPhase { Idle, Capturing, Stopped };
+enum class ScrollshotPhase { Idle,
+                             Capturing,
+                             Stopped };
 
 class CaptureWorkspace {
 public:
@@ -15,11 +18,15 @@ public:
     void EnterEditing() noexcept { interaction_ = WorkspaceInteraction::Editing; }
     void SetMode(app::CaptureMode mode) noexcept;
     void EditorFeatureUsed() noexcept;
-    void FixScreenshot() noexcept { if (screenshot_visible()) { screenshot_fixed_ = true; } }
+    void FixScreenshot() noexcept {
+        if (screenshot_visible()) { screenshot_fixed_ = true; }
+    }
     /// Locks the frame for a scrolling capture. The mode becomes Scrollshot
     /// whichever mode asked for it.
     void BeginScrollshotCapture() noexcept;
-    void StopScrollshotCapture() noexcept { if (scrollshot_locked()) { scrollshot_ = ScrollshotPhase::Stopped; } }
+    void StopScrollshotCapture() noexcept {
+        if (scrollshot_locked()) { scrollshot_ = ScrollshotPhase::Stopped; }
+    }
     /// Hands the stitched image to the screenshot editor: the workspace shows
     /// a fixed screenshot from here on.
     void EditScrollshot() noexcept;
@@ -45,6 +52,7 @@ public:
     [[nodiscard]] COLORREF accent() const noexcept {
         return mode_ == app::CaptureMode::Record ? theme::Current().record_border : theme::Current().screenshot_border;
     }
+
 private:
     WorkspaceInteraction interaction_{WorkspaceInteraction::Standby};
     app::CaptureMode mode_{app::CaptureMode::Screenshot};
@@ -55,7 +63,11 @@ private:
     bool screenshot_fixed_{false};
 };
 
-enum class WorkspacePointerTarget { Content, Creation, Handle, Annotation, Excluded };
+enum class WorkspacePointerTarget { Content,
+                                    Creation,
+                                    Handle,
+                                    Annotation,
+                                    Excluded };
 struct WorkspacePointerMetrics {
     LONG drag_width{}, drag_height{}, double_width{}, double_height{};
     DWORD double_time{};
@@ -74,6 +86,7 @@ public:
     [[nodiscard]] bool dragged() const noexcept { return dragged_; }
     [[nodiscard]] POINT origin() const noexcept { return origin_; }
     [[nodiscard]] WorkspacePointerTarget target() const noexcept { return target_; }
+
 private:
     WorkspacePointerMetrics metrics_{};
     WorkspacePointerTarget target_{WorkspacePointerTarget::Excluded};

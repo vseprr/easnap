@@ -1,10 +1,12 @@
-# Implementation and validation records: v1.0.1, v1.0.2 and v1.1.0-beta.1
+# Validation records
 
-The [release notes](v1.0.1.md) of each version say what changed and summarize
-how it was checked. This file keeps the detail behind those summaries: the
-individual runs, the ones that failed, and what was not validated. The records
-of v1.0.1 and v1.0.2 were part of the project status until 2026-10-13, those of
-[v1.1.0-beta.1](#validation-of-v110-beta1) until 2026-10-30. This file is a
+The release notes of each version (listed in the
+[documentation index](../README.md)) say what changed and summarize how it was
+checked. This file keeps the detail behind those summaries: the individual
+runs, the ones that failed, and what was not validated. The records of v1.0.1
+and v1.0.2 were part of the project status until 2026-10-13, those of
+[v1.1.0-beta.1](#validation-of-v110-beta1) until 2026-10-30 and those of
+[v1.1.0-beta.2](#validation-of-v110-beta2) until 2026-11-07. This file is a
 record, not a task list. The current state is in
 [project status](../project-status.md).
 
@@ -137,6 +139,7 @@ changed since the runs above):
   SHA-256 files match, `gh attestation verify` succeeds for both, both
   executables report 1.0.2.0, and the installer installed, ran and uninstalled
   cleanly.
+
 ## Validation of v1.0.1
 
 This section records the v1.0.1 release; v1.0.2 is under [v1.0.2](#v102).
@@ -205,7 +208,7 @@ release added, the same wait passes 5 of 5.
 This section records the v1.1.0-beta.1 branch before its publication on
 2026-10-13; the [release notes](v1.1.0-beta.1.md) summarize it. What was not
 validated is still listed in
-[project status](../project-status.md#not-validated-on-the-branch).
+[project status](../project-status.md#not-validated).
 
 One development PC, Windows 10 build 19045, NVIDIA GPU, two 1920x1080 displays
 at 125%; visible-desktop tests and manual checks ran on the secondary display.
@@ -307,3 +310,186 @@ at 125%; visible-desktop tests and manual checks ran on the secondary display.
   both executables report 1.1.0-beta.1 with the prerelease flag and name their
   symbol files without a directory. `package-manifests.ps1` wrote the winget
   and Scoop manifests from those packages.
+
+## Validation of v1.1.0-beta.2
+
+This section records v1.1.0-beta.2, published on 2026-10-30, and the
+stabilization baseline on its sources; the [release notes](v1.1.0-beta.2.md)
+summarize it. What is still not validated is listed in
+[project status](../project-status.md#not-validated).
+
+The lab VM (Windows 10 Pro 22H2, one 1920x1080 display at 125 %, no GPU) is
+described in [ADR-037](../decisions/ADR-037-isolated-test-lab.md); the
+development PC is the one of v1.1.0-beta.1 above.
+
+- **Full tier in the lab: 48 of 48 with no retry** on the final sources,
+  before the version number was raised (2026-10-30, run
+  `20261030-230104-full`). `trim_timeline_seek_stress` reported 133 pointer
+  moves, none late.
+- The Full run before it, on the same sources, failed only
+  `mfplay_preview_audio_transport`, at "Close retires a suspended native host
+  within 1500 ms". That test builds none of the changed sources and passed
+  alone in both probe variants, so it is a timing check that can miss its
+  limit under load.
+- An earlier Full run failed `annotation_editing_native` twice: the room kept
+  for the property island also held back an island the user had moved to the
+  bottom edge. Corrected.
+- **"Saved" notice.** The Copied and Saved notices had a fixed width of
+  250 DIP; the Turkish "Saved" text needs 385 px at 125 % and was cut. The
+  notices are in `text_fits_in_every_language`; with the old width that check
+  fails on the Turkish text.
+- **Private-desktop tests on the development PC:** `capture_island_placement`,
+  `scrollshot_workspace_production`, `text_fits_in_every_language`,
+  `capture_overlay_interaction`, `capture_frame_interaction` and
+  `data_safety_questions` passed.
+- `island_capture_exclusion` ran on the development PC's SAMSUNG display with
+  the owner's permission (68 of 68) before its still-desktop part existed;
+  with that part it ran in the lab only (108 of 108). Its measurements are in
+  [ADR-008](../decisions/ADR-008-recording-ui-and-safe-finalization.md#capture-exclusion-of-the-islands-2026-10-30).
+- **By hand:** the owner checked the black-box fix on the development PC
+  (recorded on 2026-10-30): the black box after moving the frame under the
+  tools island was reproduced with the first beta and is gone with this
+  version. The other corrections were not driven by hand.
+- **Release workflow.** It built, tested and attested the packages on the
+  hosted runner. Before publication the draft's SHA-256 files and the
+  installer's attestation were verified, and both executables reported
+  1.1.0-beta.2.
+- **Installer, by hand.** After publication the owner installed and removed
+  the published beta.2 installer; the uninstaller removed the settings as
+  chosen (reported 2026-11-07).
+
+**Hosted runner on `main`** (2026-10-30; the cause was under investigation on
+2026-11-07). The Build workflow failed at `a5293c8`, the merge that carries the
+beta.2 tag (run 41123963572: `diagnostics_log_and_crash_reports` in the Debug
+and AddressSanitizer jobs), and at `42b3efa` (run 41126325105:
+`mp4_trim_export_backend` in the Release job, in an export with audio). The
+Release workflow run 41123994750 at `a5293c8` succeeded.
+
+### Stabilization baseline (2026-11-07)
+
+On the beta.2 sources (`42b3efa`, branch `stabilize/v1.1.0`, no uncommitted
+changes), in the lab VM, by then at Windows 10 build 19045.6466:
+
+- The Release build succeeded in both runs.
+- **Standard: 39 of 39 passed with no retry** (run `20261107-145742-standard`,
+  3 min 37 s for the whole run). The 9 visible-desktop tests are not in that
+  tier and were not run; 6 tests are outside it.
+- **Soak: 54 of 54 passed with no retry** (run `20261107-150201-soak`, 12 min
+  41 s), the first Soak run since v1.0.1. `real_desktop_recording_session`
+  passed on the GDI fallback and the verdict marked it `VM-ok-but-fallback`,
+  the provider's documented behaviour on a still desktop.
+
+## Validation of v1.1.0
+
+The stable release, prepared on the branch `stabilize/v1.1.0` on 2026-11-07
+from the release candidate below with the two corrections from the owner's
+check and an empty prerelease label; the [release notes](v1.1.0.md)
+summarize it.
+
+- **Final sources** (tree `c8de8c4297a3`, the code of `5a5490c` with the
+  label emptied):
+  - **Soak at 125 %: 54 of 54 with no retry** (run `20261107-232024-soak`,
+    14 min 45 s).
+  - The Soak run before it on the same tree (`20261107-225336-soak`,
+    15 min 13 s) passed 53 of 54: `recording_worker_foundations` failed one
+    check, `worker.pacing_slots_missed() == 0`; its capture thread woke after
+    a frame's due time once while tests ran in parallel. The test had passed
+    in all 15 earlier lab runs that included it. Neither the test nor the
+    worker changed since v1.0.0.
+  - **Full at 150 %: 48 of 48 with no retry** (run `20261107-230849-full`,
+    10 min 9 s).
+  - In each, `real_desktop_recording_session` passed on the GDI fallback
+    (`VM-ok-but-fallback`).
+- **The two corrections** (`4392b5e`, `eaa65f8`): Full at 125 % 48 of 48 on
+  each (`20261107-222006-full`, `20261107-223026-full`) and Full at 150 %
+  48 of 48 on `eaa65f8` (`20261107-224047-full`). The probes and the runs on
+  the development PC are listed under the release candidate.
+- **Why the lab missed the caption:** both the development PC and the 125 %
+  image run visual styles (Aero), and DWM draws the non-client area of the
+  layered dialog in neither. With dark mode for apps turned on in the image,
+  as on the development PC, the press on the header still sent no
+  `WM_NCUAHDRAWCAPTION` (probe `20261107-225106`, guest setting set back
+  afterwards). The graphics adapter and the update revision remain as
+  differences ([ADR-037](../decisions/ADR-037-isolated-test-lab.md#not-validated)).
+- **Hosted runner:** the pull request's CI run is the first on the hosted
+  runner for this branch.
+
+## Validation of v1.1.0-rc.1
+
+This section records the release candidate prepared on the branch
+`stabilize/v1.1.0` on 2026-11-07; the [release notes](v1.1.0-rc.1.md)
+summarize it. What is still not validated is listed in
+[project status](../project-status.md#not-validated).
+
+The lab now has two images, both Windows 10 Pro 22H2 with one 1920x1080
+display and no GPU: the one of beta.2 at 125 % and a second at 150 %
+(`easnap-lab-150`, built on 2026-11-07 at build 19045.6456; see
+[testing](../testing.md#lab)).
+
+- **Final sources** (`60d6ab4` with the version label `rc.1`, the release
+  notes and the two test corrections below; tree `a05d93dccc65`):
+  - **Soak at 125 %: 54 of 54 with no retry** (run `20261107-193138-soak`,
+    14 min 46 s).
+  - **Full at 150 %: 48 of 48 with no retry** (run `20261107-193830-full`,
+    10 min 7 s).
+  - In both, `real_desktop_recording_session` passed on the GDI fallback
+    (`VM-ok-but-fallback`), the provider's documented behaviour on a still
+    desktop.
+  - Three probes of the two corrected tests at 150 % (`20261107-193133`,
+    `20261107-194926`, `20261107-195231`, each running them twice) passed.
+    Over these six executions and the Full run, `trim_timeline_seek_stress`
+    made 925 pointer moves: one landed late (30 ms), none had to be issued
+    again and none was lost.
+- **Runs on the way:**
+  - Before the text-fit correction, at 125 %: Full 48 of 48
+    (`20261107-163328-full`) and Soak 54 of 54 (`20261107-164346-soak`).
+  - The first Standard run at 150 % (`20261107-163347-standard`): 38 of 39.
+    `text_fits_in_every_language` failed 22 of 416 checks, the Scrollshot
+    status message and the editor's value labels; corrected
+    ([ADR-032](../decisions/ADR-032-interface-text-in-string-tables.md#text-has-to-fit)).
+  - With that correction: Soak at 125 % 54 of 54 (`20261107-184830-soak`).
+    The first Full run at 150 % (`20261107-190243-full`) passed 46 of 48:
+    `annotation_editing_native` and `trim_timeline_seek_stress` failed on the
+    first try and on the retry. Both failures came from assumptions in the
+    tests, not from Easnap, and the tests were corrected
+    ([ADR-037](../decisions/ADR-037-isolated-test-lab.md#the-image-at-150--2026-11-07)).
+- **Upgrade from v1.0.2**, in the 125 % lab VM restored from its golden
+  checkpoint, through PowerShell Direct: the v1.0.2 installer and then the
+  rc.1 installer ran silently and both exited with 0. Afterwards Windows
+  listed one Easnap entry (the same installer AppId) at version 1.1.0-rc.1,
+  `Easnap.exe` and `EasnapPreviewHost.exe` reported 1.1.0-rc.1, a settings
+  file written between the two installs had the same SHA-256, and the Start
+  menu held one Easnap shortcut. The installer's pages, an upgrade from
+  beta.2 and a return to v1.0.2 were not run there.
+- **Packages,** built locally from the final sources with
+  `package-release.ps1`: the portable ZIP, the symbols ZIP and the installer,
+  each with a SHA-256 file. `package-manifests.ps1` wrote the winget
+  manifests (identifier `vseprr.Easnap.Beta`, schema 1.28.0), which pass
+  `winget validate`, and the Scoop manifest; nothing was submitted.
+- **Static checks:** all 150 C++ files pass `scripts/format.ps1 -Check`.
+  clang-tidy, report only, left 47 findings at `74b75d7`.
+- **Hosted runner:** the branch has not been run there; that happens when
+  the pull request is opened.
+- **The owner's check by hand** of the first rc.1 package on the development
+  PC (2026-11-07) found two problems and nothing else: two arrows next to
+  Appearance in the tray menu, and a white button over the Close button of
+  Settings after moving it. For both, `island_capture_exclusion` gained a
+  check that reads the window as the user sees it, with its exclusion lifted,
+  and compares it with Easnap's own painting. Probes in the 125 % lab VM, each
+  running the test twice:
+  - `20261107-215252`, on the unchanged sources: the menu's submenu item
+    differed in 25 pixels at its right end, Windows' own arrow; a message
+    dialog dragged by its header changed nothing in the header.
+  - `20261107-221132`, with the item clipped after drawing: 0 pixels in the
+    dark and the light appearance. The Exit question and Settings dragged
+    while active, after another window was active and with the pointer on
+    Close first, in both appearances: no pixel of the Close button differed
+    from Easnap's painting in any of the seven cases. The white button was not
+    reproduced.
+  - On the development PC, at the owner's request, the same test: every drag
+    left 845 pixels of the Close button (dark) or 520 (light) that Easnap had
+    not painted, a classic caption. Windows sent the dialog
+    `WM_NCUAHDRAWCAPTION` four times on the press; in the lab VM it sent none.
+    With the chrome swallowing that message and `WM_NCUAHDRAWFRAME`, the test
+    passed there with 225 of 225 checks
+    ([ADR-008](../decisions/ADR-008-recording-ui-and-safe-finalization.md)).

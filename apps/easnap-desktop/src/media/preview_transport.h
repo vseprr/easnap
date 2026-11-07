@@ -8,15 +8,22 @@
 
 namespace easnap::media {
 
-enum class PreviewTransportCommandType { None, Play, Pause, Seek };
-enum class PreviewNativeState { Stopped, Playing, Paused };
+enum class PreviewTransportCommandType { None,
+                                         Play,
+                                         Pause,
+                                         Seek };
+enum class PreviewNativeState { Stopped,
+                                Playing,
+                                Paused };
 
 struct PreviewTransportCommand final {
     PreviewTransportCommandType type{PreviewTransportCommandType::None};
     MediaTime position{0};
 };
 
-enum class PreviewLivenessFailure { None, CommandTimeout, PlaybackStalled };
+enum class PreviewLivenessFailure { None,
+                                    CommandTimeout,
+                                    PlaybackStalled };
 
 /// Detects a backend that no longer makes progress without inventing a native
 /// completion. Only the owner may act on a failure, by invalidating/replacing
@@ -95,7 +102,8 @@ public:
         // an earlier native sample. Do not display a position before the
         // acknowledged logical target while the native clock catches up.
         return playback_position_floor_ && native < *playback_position_floor_
-            ? *playback_position_floor_ : native;
+                   ? *playback_position_floor_
+                   : native;
     }
     [[nodiscard]] bool command_pending() const noexcept {
         return in_flight_ != PreviewTransportCommandType::None ||

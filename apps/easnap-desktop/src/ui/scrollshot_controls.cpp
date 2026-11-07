@@ -42,6 +42,19 @@ constexpr float kButton = 40.0f;
 constexpr float kStatusWidth = 250.0f;
 constexpr float kGap = 12.0f;
 
+/// The height of one line of `font`, as a static label draws it.
+[[nodiscard]] LONG LineHeight(HFONT font) {
+    LONG height = 0;
+    if (HDC dc = ::CreateCompatibleDC(nullptr)) {
+        const HGDIOBJ previous = ::SelectObject(dc, font);
+        TEXTMETRICW metrics{};
+        if (::GetTextMetricsW(dc, &metrics)) { height = metrics.tmHeight; }
+        ::SelectObject(dc, previous);
+        ::DeleteDC(dc);
+    }
+    return height;
+}
+
 [[nodiscard]] LONG TextWidth(HFONT font, const wchar_t* text) {
     LONG width = 0;
     if (HDC dc = ::CreateCompatibleDC(nullptr)) {
@@ -85,7 +98,10 @@ public:
     }
 
     void Destroy() noexcept {
-        if (tooltip_ != nullptr) { ::DestroyWindow(tooltip_); tooltip_ = nullptr; }
+        if (tooltip_ != nullptr) {
+            ::DestroyWindow(tooltip_);
+            tooltip_ = nullptr;
+        }
         if (preview_ != nullptr) {
             ::SetWindowLongPtrW(preview_, GWLP_USERDATA, 0);
             ::DestroyWindow(preview_);
@@ -98,7 +114,10 @@ public:
         }
         ClearControlHandles();
         for (HFONT* font : {&ui_font_, &strong_font_}) {
-            if (*font != nullptr) { ::DeleteObject(*font); *font = nullptr; }
+            if (*font != nullptr) {
+                ::DeleteObject(*font);
+                *font = nullptr;
+            }
         }
     }
 
@@ -124,7 +143,7 @@ public:
         // The mode options sit at the top of a monitor; keep clear of them.
         for (platform::MonitorInfo& monitor : monitors) {
             monitor.work_area.top = std::max(monitor.work_area.top, monitor.bounds.top +
-                theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
+                                                                        theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
         }
 
         const bool start = owner_.view_ == View::Start;
@@ -166,7 +185,13 @@ public:
             const LONG text_left = grip + theme::Scaled(4, scale);
             const LONG text_width = status_width - theme::Scaled(4, scale);
             ::MoveWindow(size_, text_left, theme::Scaled(8, scale), text_width, theme::Scaled(20, scale), TRUE);
-            ::MoveWindow(message_, text_left, theme::Scaled(28, scale), text_width, theme::Scaled(36, scale), TRUE);
+            // Room for two lines of the message as the font draws them: its
+            // pixel height does not follow the scale exactly, and 36 DIP held
+            // two lines at 125 % but not at 150 %.
+            const LONG message_top = theme::Scaled(28, scale);
+            const LONG message_height = std::min<LONG>(
+                height - message_top, std::max<LONG>(theme::Scaled(36, scale), 2 * LineHeight(ui_font_)));
+            ::MoveWindow(message_, text_left, message_top, text_width, message_height, TRUE);
             LONG x = grip + status_width + padding;
             for (HWND control : {edit_, save_, discard_, copy_}) {
                 ::MoveWindow(control, x, button_top, button, button, TRUE);
@@ -222,8 +247,14 @@ public:
         if (ConsumePopupInput(message.message, message.wParam)) { return true; }
         if (message.message == WM_KEYDOWN && (::GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
             owner_.view_ == View::Capture) {
-            if (message.wParam == 'S') { owner_.Dispatch(Action::Save); return true; }
-            if (message.wParam == 'C') { owner_.Dispatch(Action::Copy); return true; }
+            if (message.wParam == 'S') {
+                owner_.Dispatch(Action::Save);
+                return true;
+            }
+            if (message.wParam == 'C') {
+                owner_.Dispatch(Action::Copy);
+                return true;
+            }
         }
         return ActivateFocusedButton(message, island_) || ::IsDialogMessageW(island_, &message) != FALSE;
     }
@@ -368,7 +399,7 @@ private:
             case WM_CTLCOLORSTATIC: {
                 const HWND control = reinterpret_cast<HWND>(lparam);
                 const COLORREF text = control == size_ ? theme::Current().text
-                    : (warning_ ? theme::Current().error : theme::Current().muted_text);
+                                                       : (warning_ ? theme::Current().error : theme::Current().muted_text);
                 return ControlBackground(wparam, text);
             }
             default:
@@ -486,11 +517,10 @@ private:
         UpdateButtonStyle(copy_, {Icon::Check, ButtonRole::Success, true});
 
         tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
-            WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, island_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+                                     WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, island_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
         if (tooltip_ != nullptr) {
             const std::pair<HWND, UINT> tips[] = {
-                {help_, IDS_SCROLLSHOT_HELP}, {edit_, IDS_SCROLLSHOT_EDIT}, {save_, IDS_SCROLLSHOT_SAVE},
-                {discard_, IDS_SCROLLSHOT_DISCARD}, {copy_, IDS_SCROLLSHOT_COPY}};
+                {help_, IDS_SCROLLSHOT_HELP}, {edit_, IDS_SCROLLSHOT_EDIT}, {save_, IDS_SCROLLSHOT_SAVE}, {discard_, IDS_SCROLLSHOT_DISCARD}, {copy_, IDS_SCROLLSHOT_COPY}};
             for (const auto& [control, id] : tips) {
                 TOOLINFOW info{sizeof(info)};
                 info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;

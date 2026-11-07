@@ -221,8 +221,11 @@ void ScrollshotSession::Examine(const platform::BgraImage& frame) {
 
 void ScrollshotSession::Publish(bool force) {
     ScrollshotCondition condition = ScrollshotCondition::Following;
-    if (capture_failed_) { condition = ScrollshotCondition::CaptureFailed; }
-    else if (engine_ != nullptr && engine_->at_limit()) { condition = ScrollshotCondition::AtLimit; }
+    if (capture_failed_) {
+        condition = ScrollshotCondition::CaptureFailed;
+    } else if (engine_ != nullptr && engine_->at_limit()) {
+        condition = ScrollshotCondition::AtLimit;
+    }
     const auto now = Clock::now();
     if (condition == ScrollshotCondition::Following && unplaced_ && now - unplaced_since_ >= kLostAfter) {
         condition = ScrollshotCondition::Lost;
@@ -244,16 +247,16 @@ void ScrollshotSession::Publish(bool force) {
             preview_rows_ = reduced_rows;
             const int first_row = static_cast<int>(static_cast<int64_t>(dirty_begin_) * reduced_width / width);
             const int end_row = std::min(reduced_rows, static_cast<int>(
-                (static_cast<int64_t>(dirty_end_) * reduced_width + width - 1) / width));
+                                                           (static_cast<int64_t>(dirty_end_) * reduced_width + width - 1) / width));
             for (int row = first_row; row < end_row; ++row) {
                 const int top = static_cast<int>(static_cast<int64_t>(row) * width / reduced_width);
                 const int bottom = std::min(height, std::max(top + 1, static_cast<int>(
-                    static_cast<int64_t>(row + 1) * width / reduced_width)));
+                                                                          static_cast<int64_t>(row + 1) * width / reduced_width)));
                 uint32_t* target = preview_.data() + static_cast<size_t>(row) * reduced_width;
                 for (int column = 0; column < reduced_width; ++column) {
                     const int left = static_cast<int>(static_cast<int64_t>(column) * width / reduced_width);
                     const int right = std::max(left + 1, static_cast<int>(
-                        static_cast<int64_t>(column + 1) * width / reduced_width));
+                                                             static_cast<int64_t>(column + 1) * width / reduced_width));
                     // Nine samples per box are enough for a thumbnail.
                     uint32_t blue = 0, green = 0, red = 0, samples = 0;
                     for (int step_y = 0; step_y < 3; ++step_y) {
@@ -268,7 +271,7 @@ void ScrollshotSession::Publish(bool force) {
                         }
                     }
                     target[column] = samples == 0 ? 0xFF000000u
-                        : 0xFF000000u | ((red / samples) << 16) | ((green / samples) << 8) | (blue / samples);
+                                                  : 0xFF000000u | ((red / samples) << 16) | ((green / samples) << 8) | (blue / samples);
                 }
             }
             ++progress_.preview_version;

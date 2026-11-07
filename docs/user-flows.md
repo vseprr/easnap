@@ -70,8 +70,7 @@ Empty interiors allow another drawing, including inside mosaic/highlight regions
 endpoints have two handles; shapes, effect regions and spotlight regions have
 four corner handles. Pen, text and tags move without stretching. Selection traces
 the shape or stroke; mosaic brush uses a bounding frame while pointer interaction
-still follows its brush contour. Text and tags use a hollow
-rounded coral frame.
+still follows its brush contour.
 Objects can move beyond every capture edge, including oversized text. Their
 content and selection frames are hidden outside the capture; Undo restores a
 fully hidden object's previous position.
@@ -91,9 +90,8 @@ blank press never creates another object. Clicking another text/tag while
 editing activates that box immediately. The native caret remains active until editing ends,
 and dragging its hollow frame moves the text. Plain, Fill and
 Outline apply to the whole annotation, as do color and point-size changes even
-when only part of its text is selected. Presets and custom 6–288 pt input are
-available in a rounded themed list with pt suffixes. Fill/Outline use white glyphs, or black when the chosen color is white.
-Tags have a stable dark label body and a colored dot/notch.
+when only part of its text is selected. Point-size presets and custom 6–288 pt
+input are available.
 Clicking active text again keeps its editing session; it does not consume the
 first outside click. Black and gray are included in the annotation palette.
 
@@ -109,8 +107,7 @@ edit up to 16 characters of repeated angled text, including color, opacity and
 size. Tiles grow symmetrically around the image center.
 A small round X appears at the right of the watermark text field on hover and
 clears its text; moving away hides it, and Undo restores both the watermark
-and input value. The circular button has a soft lower-right shadow and a
-recessed press animation in either theme.
+and input value.
 These effects are reversible and preview/export use the same document.
 
 To finish:
@@ -274,18 +271,16 @@ This also applies to one-frame recordings; opening does not require Play. Previe
 formats; GIF conversion happens during Save/Copy, so preview does not show the
 GIF preset's final palette or cadence. Play/Pause, seek and In/Out controls
 operate on that source.
-The trim window and discard confirmation have custom Light/Dark outer chrome.
 Trim retains dragging, resizing, minimize/maximize and system close. It opens
 to suit the recording aspect ratio while keeping the controls readable. Manual
-resizing retains a 480 x 400 DIP usable client minimum, capped to the work area. The
-video starts below the custom caption; time is below the timeline. Extreme
-source ratios fit inside the readable UI. The preview keeps its aspect ratio and
-consumes surplus side space before shrinking. Empty message/progress space
-collapses between the two button rows;
-notices expand to their wrapped text height. Export shows a themed progress bar
-driven by actual export progress, with Cancel remaining available. In/Out
-handles are raised gray ovals without horizontal caps; the slender playhead
-uses a restrained coral glow. Save uses coral ink on neutral material. Closing the discard dialog keeps the recording.
+resizing retains a 480 x 400 DIP usable client minimum, capped to the work area.
+The video starts below the custom caption; the time and range rows are below
+the timeline. Extreme source ratios fit inside the readable UI. The preview
+keeps its aspect ratio and consumes surplus side space before shrinking. Empty
+message/progress space collapses between the two button rows; notices expand
+to their wrapped text height. Export shows a themed progress bar
+driven by actual export progress, with Cancel remaining available. Closing the
+discard dialog keeps the recording.
 Playback stops at the selected Out point and keeps the cursor there. The last
 source frame before the exclusive Out remains visible until another action;
 full-length playback similarly retains its final frame. Play again seeks to In
@@ -402,7 +397,8 @@ capture.
 **About** shows the version, the shortcut and the Windows build. **Copy
 details** puts the version, Windows build, language, shortcut and display
 layout on the clipboard for a bug report. **Check for updates** opens the
-releases page in the browser; Easnap itself connects to nothing.
+latest release in the browser (a prerelease opens the list of all releases);
+Easnap itself connects to nothing.
 
 Easnap needs Windows 10 version 2004 (build 19041) or later and says so
 instead of starting on an older build.
@@ -422,7 +418,8 @@ ends without your decision: at sign-out, after a crash, or when the trim view
 could not open. The next start offers it: **Save...** writes it as an MP4
 file, **Delete** removes it, **Not now** keeps it for the start after that. A
 recording that was still being written when Easnap stopped cannot be
-recovered.
+recovered. Exit, sign-out and this recovery follow
+[ADR-031](decisions/ADR-031-unsaved-work-survives.md).
 
 After a crash the next start says so once and points to the folder with the
 crash report. Nothing is sent anywhere. The log is

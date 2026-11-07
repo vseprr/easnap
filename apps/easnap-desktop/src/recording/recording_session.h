@@ -203,11 +203,11 @@ private:
                                   uint64_t gate_wait_microseconds,
                                   bool writer_accepted) noexcept;
     void TraceSilenceWrite(media::MediaTime tick,
-                              media::MediaTime video_position,
-                              media::MediaTime committed_audio_end,
-                              std::optional<media::MediaTime> pending_audio_start,
-                              uint64_t submission_microseconds,
-                              bool writer_accepted) noexcept;
+                           media::MediaTime video_position,
+                           media::MediaTime committed_audio_end,
+                           std::optional<media::MediaTime> pending_audio_start,
+                           uint64_t submission_microseconds,
+                           bool writer_accepted) noexcept;
     void SetAudioAccepting(bool accepting) noexcept;
     [[nodiscard]] bool AudioEnabled() const noexcept;
     void RecordFailure(std::wstring message) noexcept;

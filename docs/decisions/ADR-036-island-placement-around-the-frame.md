@@ -2,6 +2,8 @@
 
 **Status:** Accepted
 **Date:** 2026-10-13
+**Amended:** 2026-10-30 — room for the property island
+**Amended:** 2026-11-07 — the mode island's home is below a top taskbar
 
 ## Context
 
@@ -73,6 +75,22 @@ Record is entered again after the frame changed. It does not move during the
 gesture and is not hidden. A panel the user has dragged stays where it was
 put. Following is a move only: nothing is laid out or painted again.
 
+### Room for the property island (2026-10-30)
+
+Choosing a tool fixes the screenshot and shows the property island below the
+tools island. Until then, when the two no longer fitted below the frame, the
+group was placed above it: choosing a tool could send the islands to the
+other side of the frame.
+
+- The tools island is placed around the frame with room for the tallest
+  property island any tool shows, whether one is shown or not, and for the
+  brush sizes when they are open. The layout measures the property island of
+  every tool to find that height. Choosing a tool therefore moves nothing.
+- The room is reserved only when the group is placed by the rule above: when
+  it follows the frame, or when it would cover the mode island.
+- An island the user moved stays where it was put. At the edge of the work
+  area it is held back by its own size, not by the reserved room.
+
 ## Consequences
 
 - With a frame of full height the tools island is beside the frame where the
@@ -85,8 +103,10 @@ put. Following is a move only: nothing is laid out or painted again.
 - A stitched image in the editor follows the same rule. Its view area leaves
   room below the picture, so its tools are below it as before.
 - Sharing the top edge between the tools island and the mode island depends on
-  the exact rectangle, not on a reserved strip. A top-docked taskbar still
-  overlaps the mode island; that limitation is unchanged.
+  the exact rectangle, not on a reserved strip. Amended 2026-11-07: the mode
+  island's home is at the top of the work area, so a taskbar docked at the top
+  no longer covers it; with the taskbar elsewhere the home is unchanged. Not
+  seen with a top taskbar: that needs a change to the Windows setting.
 
 ## Validation
 
@@ -100,6 +120,14 @@ put. Following is a move only: nothing is laid out or painted again.
   full height by its handles, a narrow frame, a frame over the mode island's
   home, a mode island moved by the user, and the recording panel during and
   after a gesture and after the user placed it.
+- Room for the property island (2026-10-30): `capture_island_placement` also
+  checks that choosing a tool and drawing move no island. An earlier Full run
+  in the lab failed `annotation_editing_native` twice, because the reserved
+  room also held back an island the user had moved to the bottom edge of the
+  work area; that was corrected before the release. The Full tier then passed
+  48 of 48 in the lab on the sources of v1.1.0-beta.2 (run
+  `20261030-230104-full`). This change was not driven by hand in the running
+  application.
 - In the running application on a 1920 x 1080 display at 125 %: a frame of
   full height with gaps at the sides put the tools island over the bottom of
   the frame and left the mode island at its home; both were hidden during a

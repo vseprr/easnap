@@ -1,7 +1,7 @@
 # ADR-018: Direct annotation manipulation and quiet capture chrome
 
 Date: 2026-09-17  
-Status: Implemented; physical interaction review remains.  
+Status: Implemented and accepted by the user with the 2026-09-21 correction session; session closed.  
 **Amended by:** [ADR-020](ADR-020-workspace-layering-and-outline-interaction.md) (outline hit targets, brush popup placement); [ADR-022](ADR-022-text-input-and-content-sized-trim.md) (native text painting and click sequence); [ADR-023](ADR-023-trim-resize-and-text-click-continuations.md) (blank double-click is a continuation)
 
 ## Context

@@ -126,19 +126,27 @@ HRESULT DecodePreviewFrame(const std::wstring& path, MediaTime position, bool ex
         if ((flags & MF_SOURCE_READERF_ERROR) != 0) return MF_E_INVALID_FILE_FORMAT;
         if (next) {
             if (timestamp < 0) return MF_E_INVALID_FILE_FORMAT;
-            if (timestamp > target.count()) { selected = sample != nullptr; break; }
+            if (timestamp > target.count()) {
+                selected = sample != nullptr;
+                break;
+            }
             sample = std::move(next);
             frame_position = MediaTime{timestamp};
-            if (timestamp == target.count()) { selected = true; break; }
+            if (timestamp == target.count()) {
+                selected = true;
+                break;
+            }
         }
-        if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0) { selected = sample != nullptr; break; }
+        if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0) {
+            selected = sample != nullptr;
+            break;
+        }
     }
     if (!selected) return sample ? HRESULT_FROM_WIN32(ERROR_TIMEOUT) : MF_E_INVALID_FILE_FORMAT;
     if (frame_end) {
         LONGLONG duration = 0;
         result = sample->GetSampleDuration(&duration);
-        if (FAILED(result) || duration <= 0 || frame_position.count() >
-            (std::numeric_limits<int64_t>::max)() - duration) return MF_E_INVALID_FILE_FORMAT;
+        if (FAILED(result) || duration <= 0 || frame_position.count() > (std::numeric_limits<int64_t>::max)() - duration) return MF_E_INVALID_FILE_FORMAT;
         *frame_end = frame_position + MediaTime{duration};
     }
     type.Reset();
@@ -153,8 +161,9 @@ HRESULT DecodePreviewFrame(const std::wstring& path, MediaTime position, bool ex
     if (!ResolveExpectedAperture(type.Get(), width, height, visible_width, visible_height,
                                  crop_left, crop_top)) return MF_E_INVALIDMEDIATYPE;
     platform::BgraImage candidate;
-    try { candidate.Reset(static_cast<int>(visible_width), static_cast<int>(visible_height)); }
-    catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
+    try {
+        candidate.Reset(static_cast<int>(visible_width), static_cast<int>(visible_height));
+    } catch (const std::bad_alloc&) { return E_OUTOFMEMORY; }
     ComPtr<IMFMediaBuffer> buffer;
     result = sample->ConvertToContiguousBuffer(&buffer);
     if (FAILED(result)) return result;
@@ -166,16 +175,21 @@ HRESULT DecodePreviewFrame(const std::wstring& path, MediaTime position, bool ex
     const bool lock_2d = SUCCEEDED(buffer.As(&two_dimensional));
     if (lock_2d) {
         result = two_dimensional->Lock2DSize(MF2DBuffer_LockFlags_Read, &scanline,
-                                            &stride, &beginning, &length);
+                                             &stride, &beginning, &length);
     } else {
         UINT32 encoded_stride = 0;
         result = type->GetUINT32(MF_MT_DEFAULT_STRIDE, &encoded_stride);
-        if (SUCCEEDED(result)) stride = static_cast<LONG>(encoded_stride);
-        else result = ::MFGetStrideForBitmapInfoHeader(MFVideoFormat_RGB32.Data1, width, &stride);
+        if (SUCCEEDED(result))
+            stride = static_cast<LONG>(encoded_stride);
+        else
+            result = ::MFGetStrideForBitmapInfoHeader(MFVideoFormat_RGB32.Data1, width, &stride);
         if (SUCCEEDED(result)) result = buffer->Lock(&beginning, nullptr, &length);
         if (SUCCEEDED(result)) {
             const uint64_t offset = stride < 0 ? static_cast<uint64_t>(-static_cast<int64_t>(stride)) * (height - 1) : 0;
-            if (offset >= length) { buffer->Unlock(); return MF_E_INVALIDMEDIATYPE; }
+            if (offset >= length) {
+                buffer->Unlock();
+                return MF_E_INVALIDMEDIATYPE;
+            }
             scanline = beginning + offset;
         }
     }
@@ -183,8 +197,8 @@ HRESULT DecodePreviewFrame(const std::wstring& path, MediaTime position, bool ex
     const int64_t first = scanline - beginning;
     const int64_t last = first + static_cast<int64_t>(stride) * (height - 1);
     const bool valid = (std::min)(first, last) >= 0 &&
-        (std::max)(first, last) + static_cast<int64_t>(row_bytes) <= length &&
-        (stride < 0 ? -static_cast<int64_t>(stride) : stride) >= static_cast<int64_t>(row_bytes);
+                       (std::max)(first, last) + static_cast<int64_t>(row_bytes) <= length &&
+                       (stride < 0 ? -static_cast<int64_t>(stride) : stride) >= static_cast<int64_t>(row_bytes);
     if (valid) {
         for (UINT32 row = 0; row < visible_height; ++row) {
             std::memcpy(candidate.row(static_cast<int>(row)),
@@ -192,7 +206,10 @@ HRESULT DecodePreviewFrame(const std::wstring& path, MediaTime position, bool ex
                         static_cast<size_t>(visible_width) * 4);
         }
     }
-    if (lock_2d) two_dimensional->Unlock2D(); else buffer->Unlock();
+    if (lock_2d)
+        two_dimensional->Unlock2D();
+    else
+        buffer->Unlock();
     if (!valid) return MF_E_INVALIDMEDIATYPE;
     candidate.MakeOpaque();
     image = std::move(candidate);
@@ -365,7 +382,8 @@ public:
         if (recovery_snapshot_) return *recovery_snapshot_;
         PROPVARIANT value{};
         const HRESULT result = player_ != nullptr
-            ? player_->GetPosition(MFP_POSITIONTYPE_100NS, &value) : E_UNEXPECTED;
+                                   ? player_->GetPosition(MFP_POSITIONTYPE_100NS, &value)
+                                   : E_UNEXPECTED;
         const auto native = SUCCEEDED(result) ? MediaTimeFromVariant(value)
                                               : std::nullopt;
         ::PropVariantClear(&value);
@@ -379,14 +397,16 @@ public:
                 native.has_value(), native_state == MFP_MEDIAPLAYER_STATE_PLAYING,
                 player_generation_, command_sequence_,
                 !first_frame_pending_ && transport_.in_flight() == PreviewTransportCommandType::None ? 0
-                    : ::GetTickCount64() - command_started_ms_, intent_sequence_};
+                                                                                                     : ::GetTickCount64() - command_started_ms_,
+                intent_sequence_};
     }
 
     [[nodiscard]] std::wstring diagnostics() const override {
         const std::scoped_lock lock(state_mutex_);
         std::wstring result;
         const uint64_t first = trace_sequence_ > trace_.size()
-            ? trace_sequence_ - trace_.size() : 0;
+                                   ? trace_sequence_ - trace_.size()
+                                   : 0;
         for (uint64_t index = first; index < trace_sequence_; ++index) {
             result.append(trace_[index % trace_.size()].data());
         }
@@ -398,7 +418,9 @@ public:
     }
 
 private:
-    enum class PositionIntent { PreservePlayback, Play, Pause };
+    enum class PositionIntent { PreservePlayback,
+                                Play,
+                                Pause };
     class Callback final : public IMFPMediaPlayerCallback {
     public:
         Callback(MfPlayPreview* owner, uint64_t generation)
@@ -460,7 +482,10 @@ private:
         }
         if (message == WM_NCHITTEST) return HTTRANSPARENT;
         if (message == WM_ERASEBKGND) return 1;
-        if (message == WM_SIZE) { ::InvalidateRect(window, nullptr, FALSE); return 0; }
+        if (message == WM_SIZE) {
+            ::InvalidateRect(window, nullptr, FALSE);
+            return 0;
+        }
         if (message == WM_PAINT) {
             PAINTSTRUCT paint{};
             ::BeginPaint(window, &paint);
@@ -484,8 +509,8 @@ private:
         RECT bounds{};
         ::GetClientRect(video_window_, &bounds);
         native_video_window_ = ::CreateWindowExW(0, name, nullptr,
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, bounds.right, bounds.bottom,
-            video_window_, nullptr, cls.hInstance, this);
+                                                 WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS, 0, 0, bounds.right, bounds.bottom,
+                                                 video_window_, nullptr, cls.hInstance, this);
         return native_video_window_ != nullptr;
     }
 
@@ -530,7 +555,7 @@ private:
         dc = paint.dc();
         ::FillRect(dc, &client, static_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH)));
         const double scale = (std::min)(static_cast<double>(client.right) / frame.width,
-                                       static_cast<double>(client.bottom) / frame.height);
+                                        static_cast<double>(client.bottom) / frame.height);
         const int width = (std::max)(1, static_cast<int>(frame.width * scale));
         const int height = (std::max)(1, static_cast<int>(frame.height * scale));
         BITMAPINFO bitmap{};
@@ -585,8 +610,8 @@ private:
         // A separate opaque surface prevents the native/GDI handoff from
         // inheriting stale pixels from the composited trim parent's backing.
         still_frame_window_ = ::CreateWindowExW(WS_EX_LAYERED, class_name, nullptr,
-            WS_CHILD | WS_CLIPSIBLINGS, 0, 0, bounds.right, bounds.bottom,
-            video_window_, nullptr, window_class.hInstance, this);
+                                                WS_CHILD | WS_CLIPSIBLINGS, 0, 0, bounds.right, bounds.bottom,
+                                                video_window_, nullptr, window_class.hInstance, this);
         return still_frame_window_ != nullptr;
     }
 
@@ -614,7 +639,7 @@ private:
         if (!PresentStillFrame(still_frame_window_)) return;
         ::SetWindowPos(native_video_window_, nullptr, 0, 0, 0, 0,
                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER |
-                       SWP_HIDEWINDOW | SWP_NOREDRAW);
+                           SWP_HIDEWINDOW | SWP_NOREDRAW);
         ::SetWindowPos(still_frame_window_, HWND_TOP, 0, 0, 0, 0,
                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOREDRAW);
         LogTransport(L"present-still", endpoint ? 1u : 0u, S_OK, 0);
@@ -668,7 +693,7 @@ private:
         }
         if (cached_still_position_ != position || cached_still_exclusive_ != exclusive_end) {
             const HRESULT result = DecodePreviewFrame(source_path_, position, exclusive_end,
-                                                       still_frame_, cached_still_pts_, &cached_still_end_);
+                                                      still_frame_, cached_still_pts_, &cached_still_end_);
             if (FAILED(result)) return result;
             cached_still_position_ = position;
             cached_still_exclusive_ = exclusive_end;
@@ -699,17 +724,18 @@ private:
                 // The exclusive endpoint has no media to play. Its last video
                 // frame is positioned by a real, safely bounded native Seek.
                 transport_.RequestPauseAt(bounded);
-            } else switch (intent) {
-                case PositionIntent::PreservePlayback:
-                    transport_.RequestSeek(bounded);
-                    break;
-                case PositionIntent::Play:
-                    transport_.RequestPlayFrom(bounded);
-                    break;
-                case PositionIntent::Pause:
-                    transport_.RequestPauseAt(bounded);
-                    break;
-            }
+            } else
+                switch (intent) {
+                    case PositionIntent::PreservePlayback:
+                        transport_.RequestSeek(bounded);
+                        break;
+                    case PositionIntent::Play:
+                        transport_.RequestPlayFrom(bounded);
+                        break;
+                    case PositionIntent::Pause:
+                        transport_.RequestPauseAt(bounded);
+                        break;
+                }
             ++intent_sequence_;
             LogTransportLocked(L"intent-position", static_cast<unsigned>(intent), S_OK, 0);
         }
@@ -737,7 +763,8 @@ private:
                 LogTransportLocked(L"dispatch", static_cast<unsigned>(command.type), S_OK, 0);
             } else {
                 LogTransportLocked(transport_.command_pending() ? L"wait-owned-callback"
-                                   : L"converged", 0, S_OK, 0);
+                                                                : L"converged",
+                                   0, S_OK, 0);
             }
         }
         if (command.type == PreviewTransportCommandType::None) {
@@ -762,7 +789,7 @@ private:
                 // Render the measured final frame; logical target ownership is
                 // unchanged and still requires the genuine POSITION_SET event.
                 MediaTime native_target = (std::min)(command.position,
-                    video_endpoint_->last_frame_position);
+                                                     video_endpoint_->last_frame_position);
                 if (pending_exclusive_end_ || show_still_ ||
                     command.position >= video_endpoint_->last_frame_position) {
                     result = PrepareStillFrame(command.position, pending_exclusive_end_, native_target);
@@ -796,7 +823,8 @@ private:
                 }
             }
             const MediaPreviewOperation operation = state_ == MediaPreviewState::Opening
-                ? MediaPreviewOperation::Open : OperationForCommand(command.type);
+                                                        ? MediaPreviewOperation::Open
+                                                        : OperationForCommand(command.type);
             SetFailure(result, operation);
             {
                 const std::scoped_lock lock(state_mutex_);
@@ -895,7 +923,8 @@ private:
             {
                 const std::scoped_lock lock(state_mutex_);
                 operation = state_ == MediaPreviewState::Opening
-                    ? MediaPreviewOperation::Open : OperationForEventFailure(event->eEventType);
+                                ? MediaPreviewOperation::Open
+                                : OperationForEventFailure(event->eEventType);
             }
             SetFailure(event->hrEvent, operation);
             platform::LogMessage(
@@ -958,7 +987,7 @@ private:
                     {
                         MediaTime decoded_position;
                         result = DecodePreviewFrame(source_path_, video_endpoint_->last_frame_position,
-                                                     false, endpoint_frame_, decoded_position);
+                                                    false, endpoint_frame_, decoded_position);
                         if (SUCCEEDED(result) && decoded_position != video_endpoint_->last_frame_position)
                             result = MF_E_INVALID_FILE_FORMAT;
                         if (SUCCEEDED(result) && !CreateStillFrameWindow()) {
@@ -1029,31 +1058,33 @@ private:
                     transport_.Failed();
                     state_ = MediaPreviewState::Failed;
                     error_ = FAILED(result) ? result
-                        : native == MFP_MEDIAPLAYER_STATE_SHUTDOWN
-                            ? MF_E_SHUTDOWN : MF_E_INVALIDREQUEST;
+                             : native == MFP_MEDIAPLAYER_STATE_SHUTDOWN
+                                 ? MF_E_SHUTDOWN
+                                 : MF_E_INVALIDREQUEST;
                     failed_operation_ = MediaPreviewOperation::Playback;
                     break;
                 }
                 if (event->eEventType == MFP_EVENT_TYPE_STOP ||
                     event->eEventType == MFP_EVENT_TYPE_PLAYBACK_ENDED) {
                     transport_.Ended(NativeState(native),
-                        event->eEventType == MFP_EVENT_TYPE_PLAYBACK_ENDED
-                            ? std::optional<MediaTime>{duration_} : std::nullopt);
+                                     event->eEventType == MFP_EVENT_TYPE_PLAYBACK_ENDED
+                                         ? std::optional<MediaTime>{duration_}
+                                         : std::nullopt);
                     hold_natural_end = event->eEventType == MFP_EVENT_TYPE_PLAYBACK_ENDED &&
-                        transport_.ended() && !transport_.command_pending() && !transport_.play_requested();
+                                       transport_.ended() && !transport_.command_pending() && !transport_.play_requested();
                 } else {
                     const auto type = event->eEventType == MFP_EVENT_TYPE_PLAY
-                        ? PreviewTransportCommandType::Play
-                        : event->eEventType == MFP_EVENT_TYPE_PAUSE
-                            ? PreviewTransportCommandType::Pause
-                            : PreviewTransportCommandType::Seek;
+                                          ? PreviewTransportCommandType::Play
+                                      : event->eEventType == MFP_EVENT_TYPE_PAUSE
+                                          ? PreviewTransportCommandType::Pause
+                                          : PreviewTransportCommandType::Seek;
                     const bool accepted = transport_.Complete(type, NativeState(native));
                     LogTransportLocked(accepted ? L"accepted" : L"unmatched", event->eEventType,
                                        event->hrEvent, event->eState);
                 }
                 state_ = transport_.playing() ? MediaPreviewState::Playing
-                    : transport_.ended() ? MediaPreviewState::Ended
-                                         : MediaPreviewState::Paused;
+                         : transport_.ended() ? MediaPreviewState::Ended
+                                              : MediaPreviewState::Paused;
                 break;
             }
 
@@ -1098,17 +1129,17 @@ private:
         if (recovery_snapshot_) {
             const auto& captured = *recovery_snapshot_;
             static_cast<void>(::swprintf_s(buffer, capacity,
-                L"[Preview] seq=%llu ms=%llu tid=%lu gen=%llu intent=%llu %s=%u hr=%08X recovery-requested=1 operation=%u cmd=%llu age=%llu pending=%u position-pending=%u logical=%lld desired=%u native-playing=%u native-position=%lld native-valid=%u\n",
-                sequence, ::GetTickCount64(), ::GetCurrentThreadId(),
-                captured.player_generation, captured.intent_sequence, kind,
-                action, static_cast<unsigned>(captured.error),
-                static_cast<unsigned>(captured.failed_operation),
-                captured.command_sequence, captured.command_age_ms,
-                captured.command_pending ? 1u : 0u,
-                captured.position_pending ? 1u : 0u, captured.position.count(),
-                captured.play_requested ? 1u : 0u,
-                captured.native_playing ? 1u : 0u,
-                captured.native_position.count(), captured.native_position_valid ? 1u : 0u));
+                                           L"[Preview] seq=%llu ms=%llu tid=%lu gen=%llu intent=%llu %s=%u hr=%08X recovery-requested=1 operation=%u cmd=%llu age=%llu pending=%u position-pending=%u logical=%lld desired=%u native-playing=%u native-position=%lld native-valid=%u\n",
+                                           sequence, ::GetTickCount64(), ::GetCurrentThreadId(),
+                                           captured.player_generation, captured.intent_sequence, kind,
+                                           action, static_cast<unsigned>(captured.error),
+                                           static_cast<unsigned>(captured.failed_operation),
+                                           captured.command_sequence, captured.command_age_ms,
+                                           captured.command_pending ? 1u : 0u,
+                                           captured.position_pending ? 1u : 0u, captured.position.count(),
+                                           captured.play_requested ? 1u : 0u,
+                                           captured.native_playing ? 1u : 0u,
+                                           captured.native_position.count(), captured.native_position_valid ? 1u : 0u));
             return;
         }
         MFP_MEDIAPLAYER_STATE native = MFP_MEDIAPLAYER_STATE_EMPTY;
@@ -1116,28 +1147,31 @@ private:
             player_ != nullptr ? player_->GetState(&native) : E_UNEXPECTED;
         PROPVARIANT position{};
         const HRESULT position_result = player_ != nullptr
-            ? player_->GetPosition(MFP_POSITIONTYPE_100NS, &position) : E_UNEXPECTED;
+                                            ? player_->GetPosition(MFP_POSITIONTYPE_100NS, &position)
+                                            : E_UNEXPECTED;
         const auto native_position = SUCCEEDED(position_result)
-            ? MediaTimeFromVariant(position) : std::nullopt;
+                                         ? MediaTimeFromVariant(position)
+                                         : std::nullopt;
         ::PropVariantClear(&position);
         const auto logical = transport_.ResolvePosition(native_position.value_or(MediaTime{-1}));
         static_cast<void>(::swprintf_s(buffer, capacity,
-            L"[Preview] seq=%llu ms=%llu tid=%lu gen=%llu intent=%llu %s=%u hr=%08X cmd=%llu/%s target=%lld desired=%u actual=%u flight=%s age=%llu dispatch=%u pending=%lld logical=%lld position-pending=%u preview=%u header=%u native=%u/%08X pos=%lld/%08X override=%lld native-target=%lld\n",
-            sequence, ::GetTickCount64(), ::GetCurrentThreadId(), player_generation_,
-            intent_sequence_, kind, action, static_cast<unsigned>(result),
-            command_sequence_, TransportCommandName(last_command_.type),
-            last_command_.position.count(), transport_.play_requested() ? 1u : 0u,
-            transport_.playing() ? 1u : 0u, TransportCommandName(transport_.in_flight()),
-            transport_.in_flight() == PreviewTransportCommandType::None ? 0
-                : ::GetTickCount64() - command_started_ms_, dispatch_call_active_ ? 1u : 0u,
-            transport_.desired_position().value_or(MediaTime{-1}).count(),
-            logical.count(), transport_.position_pending() ? 1u : 0u,
-            static_cast<unsigned>(state_), header_state,
-            static_cast<unsigned>(native), static_cast<unsigned>(state_result),
-            native_position.value_or(MediaTime{-1}).count(),
-            static_cast<unsigned>(position_result),
-            transport_.position_override().value_or(MediaTime{-1}).count(),
-            last_native_target_.count()));
+                                       L"[Preview] seq=%llu ms=%llu tid=%lu gen=%llu intent=%llu %s=%u hr=%08X cmd=%llu/%s target=%lld desired=%u actual=%u flight=%s age=%llu dispatch=%u pending=%lld logical=%lld position-pending=%u preview=%u header=%u native=%u/%08X pos=%lld/%08X override=%lld native-target=%lld\n",
+                                       sequence, ::GetTickCount64(), ::GetCurrentThreadId(), player_generation_,
+                                       intent_sequence_, kind, action, static_cast<unsigned>(result),
+                                       command_sequence_, TransportCommandName(last_command_.type),
+                                       last_command_.position.count(), transport_.play_requested() ? 1u : 0u,
+                                       transport_.playing() ? 1u : 0u, TransportCommandName(transport_.in_flight()),
+                                       transport_.in_flight() == PreviewTransportCommandType::None ? 0
+                                                                                                   : ::GetTickCount64() - command_started_ms_,
+                                       dispatch_call_active_ ? 1u : 0u,
+                                       transport_.desired_position().value_or(MediaTime{-1}).count(),
+                                       logical.count(), transport_.position_pending() ? 1u : 0u,
+                                       static_cast<unsigned>(state_), header_state,
+                                       static_cast<unsigned>(native), static_cast<unsigned>(state_result),
+                                       native_position.value_or(MediaTime{-1}).count(),
+                                       static_cast<unsigned>(position_result),
+                                       transport_.position_override().value_or(MediaTime{-1}).count(),
+                                       last_native_target_.count()));
     }
 
     void LogTransportCommand(PreviewTransportCommandType command,
@@ -1149,7 +1183,7 @@ private:
                            MFP_MEDIAPLAYER_STATE header_state) noexcept {
         if (event_type == MFP_EVENT_TYPE_MF && SUCCEEDED(result)) return;
         LogTransport(L"event", static_cast<unsigned>(event_type), result,
-                      static_cast<unsigned>(header_state));
+                     static_cast<unsigned>(header_state));
     }
 
     void SetFailure(HRESULT error, MediaPreviewOperation operation) noexcept {
@@ -1243,20 +1277,21 @@ private:
         }();
         if (!registered) return false;
         owner_window_ = ::CreateWindowExW(0, L"Easnap.PreviewTransportOwner", L"", 0,
-            0, 0, 0, 0, HWND_MESSAGE, nullptr, ::GetModuleHandleW(nullptr), this);
+                                          0, 0, 0, 0, HWND_MESSAGE, nullptr, ::GetModuleHandleW(nullptr), this);
         if (!owner_window_) return false;
         presentation_timer_ = ::CreateWaitableTimerExW(nullptr, nullptr,
-            CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE);
+                                                       CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE);
         // Preserve the existing Windows 10 baseline when the newer timer flag
         // is unavailable. Both paths deliver an owner message, not WM_TIMER.
         if (!presentation_timer_ && ::GetLastError() == ERROR_INVALID_PARAMETER)
             presentation_timer_ = ::CreateWaitableTimerExW(nullptr, nullptr, 0,
-                TIMER_MODIFY_STATE | SYNCHRONIZE);
+                                                           TIMER_MODIFY_STATE | SYNCHRONIZE);
         if (!presentation_timer_) return false;
         presentation_wait_ = ::CreateThreadpoolWait(
             [](PTP_CALLBACK_INSTANCE, void* context, PTP_WAIT, TP_WAIT_RESULT) noexcept {
                 ::PostMessageW(static_cast<HWND>(context), kPresentationMessage, 0, 0);
-            }, owner_window_, nullptr);
+            },
+            owner_window_, nullptr);
         if (!presentation_wait_) return false;
         return ::SetTimer(owner_window_, 1, 100, nullptr) != 0;
     }
@@ -1284,7 +1319,8 @@ private:
                     current.command_sequence = command_sequence_;
                     current.command_age_ms =
                         transport_.in_flight() == PreviewTransportCommandType::None
-                            ? 0 : now - command_started_ms_;
+                            ? 0
+                            : now - command_started_ms_;
                     current.intent_sequence = intent_sequence_;
                 }
                 RequestRecovery(current, MediaPreviewOperation::Open,
@@ -1294,10 +1330,9 @@ private:
         }
         const auto current = snapshot();
         const auto failure = liveness_.Observe(now, player_generation_,
-            command_sequence_, transport_.in_flight(), current.play_requested,
-            current.native_playing, current.native_position_valid
-                ? std::optional<MediaTime>{current.native_position} : std::nullopt,
-            current.position_pending);
+                                               command_sequence_, transport_.in_flight(), current.play_requested,
+                                               current.native_playing, current.native_position_valid ? std::optional<MediaTime>{current.native_position} : std::nullopt,
+                                               current.position_pending);
         if (failure != PreviewLivenessFailure::None) {
             RequestRecovery(current, MediaPreviewOperation::Playback, failure);
         }
@@ -1327,14 +1362,14 @@ private:
         LogTransport(L"liveness-timeout", static_cast<unsigned>(failure),
                      current.error, 0);
         const uint64_t first = trace_sequence_ > trace_.size()
-            ? trace_sequence_ - trace_.size() : 0;
+                                   ? trace_sequence_ - trace_.size()
+                                   : 0;
         for (uint64_t index = first; index < trace_sequence_; ++index) {
             ::OutputDebugStringW(trace_[index % trace_.size()].data());
         }
         Notify();
     }
 
-    
 
     mutable std::mutex state_mutex_;
     ComPtr<IMFPMediaPlayer> player_;

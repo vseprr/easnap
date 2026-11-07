@@ -293,4 +293,6 @@ BEGIN
     IDS_TRIM_NO_PREVIEW_TEXT "Bu kayıt önizlenemiyor; bu yüzden burada kırpılamıyor.\n\nKaydın kendisi eksiksiz. Olduğu gibi, MP4 dosyası olarak kaydedebilirsiniz."
     IDS_TRIM_PREVIEW_FAILED_NEXT "Kaydı olduğu gibi kaydetmek için bu pencereyi kapatın."
     IDS_TRIM_PREVIEW_HELPER_MISSING "EasnapPreviewHost.exe Easnap klasöründe yok; bu yüzden kayıtlar önizlenemiyor ve kırpılamıyor. ZIP dosyasının tamamını yeniden çıkarın ya da Easnap'i yeniden kurun."
+    IDS_RECORDING_KEPT_UNTIL_NEXT_START "Easnap kırpma görünümünü açamadı.\n\nKayıt yalnızca Easnap yeniden açılana kadar tutulur. Saklamak için buradan kopyalayın:\n%1"
+    IDS_TRIM_SAVE_UNTRIMMED_FAILED "Kayıt oraya kaydedilemedi. Kayıt hâlâ açık; başka bir yer seçin."
 END

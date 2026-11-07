@@ -69,12 +69,12 @@ public:
     bool CaptureDesktop(bool, easnap::capture::DesktopSnapshot&) override { return false; }
     bool CaptureRegion(const RECT&, bool, BgraImage&) override { return false; }
     RegionCaptureResult CaptureRegionFrame(const RECT&, bool, easnap::media::MediaTime, easnap::media::MediaTime,
-                                            easnap::media::VideoFrame&) override {
+                                           easnap::media::VideoFrame&) override {
         return {};
     }
 
     RegionCaptureResult CaptureRegionImage(const RECT& region, const RegionImageOptions& options,
-                                            BgraImage& out) override {
+                                           BgraImage& out) override {
         std::chrono::milliseconds capture_time{0};
         {
             const std::scoped_lock lock(screen_->mutex);
@@ -186,8 +186,8 @@ void TestCaptureStitchesWhatScrollsPast() {
         ScrollTo(*screen, scroll);
         const int expected = scroll - 200 + kView;
         followed = followed && WaitForProgress(session, [expected](const ScrollshotProgress& p) {
-            return p.height == expected;
-        });
+                       return p.height == expected;
+                   });
     }
     CHECK(followed);
 
@@ -262,9 +262,7 @@ void TestLostTrackingAndCaptureFailureAreReportedAndKeepTheImage() {
         const std::scoped_lock lock(screen->mutex);
         screen->fail = true;
     }
-    CHECK(WaitForProgress(session, [](const ScrollshotProgress& p) {
-        return p.condition == ScrollshotCondition::CaptureFailed;
-    }, 8000ms));
+    CHECK(WaitForProgress(session, [](const ScrollshotProgress& p) { return p.condition == ScrollshotCondition::CaptureFailed; }, 8000ms));
     CHECK(session.progress().height == 300 + kView);
     {
         const std::scoped_lock lock(screen->mutex);

@@ -9,12 +9,49 @@
 namespace easnap::ui {
 
 // Geometry icons shared by GDI native buttons. No font-dependent pictographs.
-enum class Icon { None, Record, Pause, Play, Stop, SystemAudio, Microphone, Cursor,
-                  Copy, Save, Discard, Appearance, Sun, Moon, Pen, Arrow,
-                  Rectangle, Ellipse, Text, Mosaic, Undo, Redo, Clear, Check, Line, Droplet, Tag, Spotlight, Watermark,
-                  TextFill, TextOutline, Hand, Region, RoundedRectangle, ChevronDown, Minimize, Maximize,
-                  Scissors, Help };
-enum class ButtonRole { Standard, Primary, Destructive, Success };
+enum class Icon { None,
+                  Record,
+                  Pause,
+                  Play,
+                  Stop,
+                  SystemAudio,
+                  Microphone,
+                  Cursor,
+                  Copy,
+                  Save,
+                  Discard,
+                  Appearance,
+                  Sun,
+                  Moon,
+                  Pen,
+                  Arrow,
+                  Rectangle,
+                  Ellipse,
+                  Text,
+                  Mosaic,
+                  Undo,
+                  Redo,
+                  Clear,
+                  Check,
+                  Line,
+                  Droplet,
+                  Tag,
+                  Spotlight,
+                  Watermark,
+                  TextFill,
+                  TextOutline,
+                  Hand,
+                  Region,
+                  RoundedRectangle,
+                  ChevronDown,
+                  Minimize,
+                  Maximize,
+                  Scissors,
+                  Help };
+enum class ButtonRole { Standard,
+                        Primary,
+                        Destructive,
+                        Success };
 struct ButtonStyle {
     Icon icon{Icon::None};
     ButtonRole role{ButtonRole::Standard};
@@ -39,6 +76,7 @@ public:
     NativeRedrawGuard(const NativeRedrawGuard&) = delete;
     NativeRedrawGuard& operator=(const NativeRedrawGuard&) = delete;
     static void VisibilityChanged(HWND window, bool visible);
+
 private:
     HWND window_{};
     bool visible_{true};
@@ -94,6 +132,7 @@ public:
     ~MenuThemeScope();
     MenuThemeScope(const MenuThemeScope&) = delete;
     MenuThemeScope& operator=(const MenuThemeScope&) = delete;
+
 private:
     struct State;
     std::unique_ptr<State> state_;
@@ -116,7 +155,7 @@ int ShowChoice(HWND owner, const wchar_t* text, const wchar_t* title, const std:
 /// default and the answer to Esc. True only when `confirm` was chosen.
 [[nodiscard]] bool ConfirmDestructive(HWND owner, const wchar_t* text, const wchar_t* title, const wchar_t* confirm,
                                       const wchar_t* keep);
-inline void ShowErrorMessage(HWND owner,const wchar_t* text) { ShowMessage(owner,text,L"Easnap",MB_OK|MB_ICONWARNING); }
+inline void ShowErrorMessage(HWND owner, const wchar_t* text) { ShowMessage(owner, text, L"Easnap", MB_OK | MB_ICONWARNING); }
 
 // Covers native menu input and capture exclusion; scope also used by the tray.
 class PopupScope final {
@@ -125,6 +164,7 @@ public:
     ~PopupScope();
     PopupScope(const PopupScope&) = delete;
     PopupScope& operator=(const PopupScope&) = delete;
+
 private:
     HWND invoker_{};
     HHOOK hook_{};

@@ -378,7 +378,9 @@ void CaptureCoordinator::OfferRecoveredRecordings() {
     if (!initialized_ || !temp_store_ || state_ != SessionState::Idle) {
         return;
     }
-    enum : int { kSave = 100, kDelete = 101, kLater = 102 };
+    enum : int { kSave = 100,
+                 kDelete = 101,
+                 kLater = 102 };
     for (const media::TemporarySession& session : temp_store_->AdoptRecoverableSessions()) {
         const std::wstring source = session.recording_path();
         WIN32_FILE_ATTRIBUTE_DATA data{};
@@ -644,8 +646,11 @@ bool CaptureCoordinator::PrepareWorkspaceScreenshot() {
     const RECT region = overlay_->selector().selection();
     // Capture-excluded workspace windows can remain composed during acquisition.
     // Older Windows builds or any unprotected popup retain the safe hide fallback.
-    const bool keep_visible=ui::CanCaptureVisibleWindows();
-    if(!keep_visible) { editor_->Hide(); overlay_->Hide(); }
+    const bool keep_visible = ui::CanCaptureVisibleWindows();
+    if (!keep_visible) {
+        editor_->Hide();
+        overlay_->Hide();
+    }
     ::DwmFlush();
     capture::DesktopSnapshot final_snapshot;
     platform::BgraImage image;
@@ -663,7 +668,10 @@ bool CaptureCoordinator::PrepareWorkspaceScreenshot() {
         snapshot_.Clear();
         capture_provider_->Release();
     }
-    if(!keep_visible) { overlay_->Resume(); editor_->Show(); }
+    if (!keep_visible) {
+        overlay_->Resume();
+        editor_->Show();
+    }
     ::SetForegroundWindow(editor_->hwnd());
     ::SetFocus(editor_->hwnd());
     return captured;
@@ -903,6 +911,7 @@ void CaptureCoordinator::BeginRecordingFinalization() {
         }
     } catch (...) {
         // Preparing the callable can allocate before Start is entered.
+        platform::LogMessage(L"The recording finalizer could not be started; finishing on this thread");
     }
     // Preserve the existing safe drain fallback if a worker cannot be created.
     FinishRecordingWorkflow(recording_session_->Stop());
@@ -957,7 +966,7 @@ void CaptureCoordinator::FinishRecordingWorkflow(bool finalized) {
         message += L"\n\n" + strings::Format(IDS_RECORDING_UNFINISHED_KEPT, {retained_path});
     }
     ui::ShowMessage(host_window_, message.c_str(), L"Easnap",
-                  MB_OK | MB_ICONWARNING);
+                    MB_OK | MB_ICONWARNING);
     RequestTransition(SessionState::Idle);
     recording_session_.reset();
     EndSession();
@@ -1014,13 +1023,25 @@ void CaptureCoordinator::BeginTrimWorkflow(const std::wstring& source_path) {
                 }
             });
     } catch (...) {
+        platform::LogMessage(L"The trim view could not be created");
         trim_window_.reset();
         trim_export_.reset();
     }
 
     if (!trim_window_ || !trim_export_ ||
         !trim_window_->Open(trim_source_path_, recording_region_)) {
-        ui::ShowErrorMessage(host_window_, strings::Get(IDS_RECORDING_KEPT_FOR_RECOVERY));
+        platform::LogMessage(L"The trim view could not be opened");
+        // The next start offers the recording only if it carries the marker;
+        // marking is repeated here because its first attempt may have failed.
+        const std::optional<media::TemporarySession> session =
+            recording_session_ ? recording_session_->temporary_session() : std::nullopt;
+        const bool offered_later = session.has_value() && temp_store_ && temp_store_->MarkRecoverable(*session);
+        if (offered_later) {
+            ui::ShowErrorMessage(host_window_, strings::Get(IDS_RECORDING_KEPT_FOR_RECOVERY));
+        } else {
+            ui::ShowErrorMessage(host_window_,
+                                 strings::Format(IDS_RECORDING_KEPT_UNTIL_NEXT_START, {trim_source_path_}).c_str());
+        }
         FinishTrimWorkflow(false);
         return;
     }
@@ -1267,7 +1288,9 @@ void CaptureCoordinator::OnTrimWindowClosed() {
 }
 
 void CaptureCoordinator::SaveUntrimmedRecording() {
-    enum : int { kSave = 100, kDelete = 101, kKeep = 102 };
+    enum : int { kSave = 100,
+                 kDelete = 101,
+                 kKeep = 102 };
     const HWND owner = trim_window_ != nullptr ? trim_window_->hwnd() : host_window_;
     const int choice = ui::ShowChoice(
         owner, strings::Get(IDS_TRIM_NO_PREVIEW_TEXT), strings::Get(IDS_RECOVERY_TITLE),
@@ -1296,8 +1319,10 @@ void CaptureCoordinator::SaveUntrimmedRecording() {
     }
     if (::CopyFileW(trim_source_path_.c_str(), destination->c_str(), FALSE) == FALSE) {
         platform::LogMessage(L"Saving a recording without a preview failed (error %lu)", ::GetLastError());
+        // The recording stays open here; a normal exit would delete it, so the
+        // message must not promise an offer at the next start.
         ui::ShowErrorMessage(trim_window_ != nullptr ? trim_window_->hwnd() : host_window_,
-                             strings::Get(IDS_RECOVERY_SAVE_FAILED));
+                             strings::Get(IDS_TRIM_SAVE_UNTRIMMED_FAILED));
         return;
     }
     settings_.last_video_directory = platform::DirectoryOf(*destination);
@@ -1771,11 +1796,20 @@ void CaptureCoordinator::UpdateScrollshotStatus() {
             if (capturing && following) { message = IDS_SCROLLSHOT_STATUS_WHEEL; }
             break;
         case ScrollshotNotice::DisplayChanged: message = IDS_SCROLLSHOT_STATUS_DISPLAY_CHANGED; break;
-        case ScrollshotNotice::Stopping: message = IDS_SCROLLSHOT_STATUS_STOPPING; warning = true; break;
+        case ScrollshotNotice::Stopping:
+            message = IDS_SCROLLSHOT_STATUS_STOPPING;
+            warning = true;
+            break;
         case ScrollshotNotice::Copying: message = IDS_SCROLLSHOT_STATUS_COPYING; break;
         case ScrollshotNotice::Saving: message = IDS_SCROLLSHOT_STATUS_SAVING; break;
-        case ScrollshotNotice::CopyFailed: message = IDS_SCROLLSHOT_STATUS_COPY_FAILED; warning = true; break;
-        case ScrollshotNotice::SaveFailed: message = IDS_SCROLLSHOT_STATUS_SAVE_FAILED; warning = true; break;
+        case ScrollshotNotice::CopyFailed:
+            message = IDS_SCROLLSHOT_STATUS_COPY_FAILED;
+            warning = true;
+            break;
+        case ScrollshotNotice::SaveFailed:
+            message = IDS_SCROLLSHOT_STATUS_SAVE_FAILED;
+            warning = true;
+            break;
         case ScrollshotNotice::None: break;
     }
     scrollshot_controls_->SetStatus(

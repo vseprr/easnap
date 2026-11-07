@@ -53,7 +53,8 @@ bool CaptureColorReadout::OnKeyUp(WPARAM key) noexcept {
     shift_candidate_ = false;
     if (toggle) {
         representation_ = representation_ == ColorRepresentation::Rgb
-            ? ColorRepresentation::Hex : ColorRepresentation::Rgb;
+                              ? ColorRepresentation::Hex
+                              : ColorRepresentation::Rgb;
     }
     return toggle;
 }

@@ -7,16 +7,16 @@ pushes, tags, publishes a release or submits a package manifest.
 
 ## Version
 
-The version lives in the root `CMakeLists.txt`:
+The version lives in the root `CMakeLists.txt`, for example:
 
 ```cmake
 project(Easnap VERSION 1.1.0 ...)
-set(EASNAP_VERSION_PRERELEASE "beta.1")   # "" for a stable release
+set(EASNAP_VERSION_PRERELEASE "")   # "beta.N", "rc.N", or "" for a stable release
 ```
 
-Together they give the version users see (`1.1.0-beta.1`): About, the product
+Together they give the version users see (`1.1.0-rc.1`): About, the product
 version of both executables, the log, the package names and the release tag
-`v1.1.0-beta.1`. The file version of the executables stays numeric
+`v1.1.0-rc.1`. The file version of the executables stays numeric
 (`1.1.0.0`), and a prerelease sets the prerelease flag in the version
 resource.
 
@@ -87,30 +87,30 @@ from the packages and their checksum files.
 
 ### winget
 
-- A stable release uses the identifier `vseprr.Easnap`. A prerelease uses
-  `vseprr.Easnap.Beta`, so that `winget upgrade` never moves a stable
-  installation to a beta.
+- Only stable versions are meant for winget. A stable release uses the
+  identifier `vseprr.Easnap`. For a prerelease, a beta as well as a release
+  candidate such as `1.1.0-rc.1`, the script writes the identifier
+  `vseprr.Easnap.Beta` and the name "Easnap (Beta)", so that `winget upgrade`
+  never moves a stable installation to it; such manifests are not submitted.
+  Both identifiers describe the same installed program (see above).
 - Check the files: `winget validate --manifest dist\manifests\winget` and
-  `winget install --manifest dist\manifests\winget` on a test machine. Neither
-  has been run so far: the manifests were generated and read, not validated
-  by winget.
-- Both identifiers describe the same installed program (see above). Do not
-  keep a beta and a stable version of the same release in winget at once.
-- Submit them as a pull request to
+  `winget install --manifest dist\manifests\winget` on a test machine. So far
+  the manifests were validated locally with `winget validate`.
+- Submit the manifests of a stable release as a pull request to
   [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) under
-  `manifests/v/vseprr/Easnap/<version>/` (or `.../Easnap/Beta/<version>/`).
-  Its validation installs the package on Microsoft's machines; an unsigned
-  installer can be held for manual review there.
+  `manifests/v/vseprr/Easnap/<version>/`. Its validation installs the package
+  on Microsoft's machines; an unsigned installer can be held for manual review
+  there.
 
 ### Scoop
 
 - Scoop installs the portable ZIP and creates a Start menu shortcut.
-- A prerelease does not belong in the main or extras bucket. Either keep the
-  manifest in a bucket of your own, or submit it to
-  [ScoopInstaller/Versions](https://github.com/ScoopInstaller/Versions) as
-  `easnap-beta.json`. A stable release goes to
-  [ScoopInstaller/Extras](https://github.com/ScoopInstaller/Extras) as
-  `easnap.json`.
+- For now the manifest is meant for a bucket of the project's own, for a
+  stable release as well as a prerelease. A package request to
+  [ScoopInstaller/Extras](https://github.com/ScoopInstaller/Extras) needs a
+  project with at least 100 stars and/or 50 forks, and Easnap has neither
+  (2026-11-07). A stable release can go there as `easnap.json` later; a
+  prerelease does not belong in the main or extras bucket.
 - Check it first: `scoop install .\dist\manifests\scoop\easnap.json`.
 
 Neither submission has been made for any version so far.

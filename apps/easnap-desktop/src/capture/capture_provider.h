@@ -46,7 +46,9 @@ struct DesktopSnapshot {
     [[nodiscard]] bool RegionComplete(const RECT& region) const noexcept;
 };
 
-enum class RegionCaptureStatus { FrameAcquired, NoNewFrame, Failed };
+enum class RegionCaptureStatus { FrameAcquired,
+                                 NoNewFrame,
+                                 Failed };
 
 /// Privacy-safe stage identifiers for native desktop-capture failures. The
 /// associated code is retained separately so diagnostics never contain pixels,
@@ -74,7 +76,9 @@ enum class RegionCaptureFailureStage : uint8_t {
     GdiBitBlt,
 };
 
-enum class RegionCaptureFailureCodeKind : uint8_t { None, HResult, Win32 };
+enum class RegionCaptureFailureCodeKind : uint8_t { None,
+                                                    HResult,
+                                                    Win32 };
 
 struct RegionCaptureFailureDiagnostic {
     RegionCaptureFailureStage stage{RegionCaptureFailureStage::None};
@@ -150,7 +154,7 @@ public:
 std::unique_ptr<IRegionCaptureProvider> CreateRegionCaptureProvider();
 
 /// Draws the live mouse cursor into `image`, which maps to `image_rect` on the
-/// virtual desktop. Exposed for reuse by the Phase 2 recording pipeline.
+/// virtual desktop.
 bool CompositeCursor(BgraImage& image, const RECT& image_rect);
 
 }  // namespace easnap::capture

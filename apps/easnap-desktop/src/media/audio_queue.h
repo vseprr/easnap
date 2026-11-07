@@ -130,7 +130,7 @@ public:
 
     /// Derives packet-slot capacity from a latency budget and packet period.
     [[nodiscard]] static std::size_t CapacityFromBudget(uint32_t budget_ms,
-                                                         uint32_t period_ms) noexcept {
+                                                        uint32_t period_ms) noexcept {
         if (period_ms == 0) {
             return kMinimumAudioQueueCapacity;
         }

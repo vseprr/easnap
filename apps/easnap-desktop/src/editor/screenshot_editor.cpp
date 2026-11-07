@@ -121,6 +121,20 @@ void AdjustForNonClient(RECT& rect, UINT dpi) {
     ::AdjustWindowRectEx(&rect, kEditorStyle, FALSE, kEditorExStyle);
 }
 
+/// The width in pixels of `text` on one line in `font`, as a static label draws it.
+float TextPixelWidth(HFONT font, const std::wstring& text) {
+    float width = 0;
+    if (HDC dc = ::CreateCompatibleDC(nullptr)) {
+        const HGDIOBJ previous = font != nullptr ? ::SelectObject(dc, font) : nullptr;
+        RECT box{};
+        ::DrawTextW(dc, text.c_str(), -1, &box, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
+        width = static_cast<float>(box.right - box.left);
+        if (previous != nullptr) { ::SelectObject(dc, previous); }
+        ::DeleteDC(dc);
+    }
+    return width;
+}
+
 void DrawArrow(ID2D1RenderTarget* target, const Annotation& annotation, ID2D1SolidColorBrush* brush) {
     const D2D1_POINT_2F start = annotation.points.front();
     const D2D1_POINT_2F end = annotation.points.back();
@@ -177,47 +191,77 @@ ComPtr<IDWriteTextLayout> TextLayout(const Annotation& a);
 // selection rectangle or a bitmap dilation of the whole label.
 class OutlineRenderer final : public IDWriteTextRenderer {
 public:
-    OutlineRenderer(ID2D1RenderTarget* target,ID2D1SolidColorBrush* brush,D2D1_COLOR_F outline,D2D1_COLOR_F fill,float width)
-        : target_(target),brush_(brush),outline_(outline),fill_(fill),width_(width) {}
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid,void** result) override {
-        if(!result) { return E_POINTER; } *result=nullptr;
-        if(iid==__uuidof(IUnknown) || iid==__uuidof(IDWritePixelSnapping) || iid==__uuidof(IDWriteTextRenderer)) {
-            *result=static_cast<IDWriteTextRenderer*>(this); AddRef(); return S_OK;
-        } return E_NOINTERFACE;
+    OutlineRenderer(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, D2D1_COLOR_F outline, D2D1_COLOR_F fill, float width)
+        : target_(target), brush_(brush), outline_(outline), fill_(fill), width_(width) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override {
+        if (!result) { return E_POINTER; }
+        *result = nullptr;
+        if (iid == __uuidof(IUnknown) || iid == __uuidof(IDWritePixelSnapping) || iid == __uuidof(IDWriteTextRenderer)) {
+            *result = static_cast<IDWriteTextRenderer*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
     }
     ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
     ULONG STDMETHODCALLTYPE Release() override { return 1; }
-    HRESULT STDMETHODCALLTYPE IsPixelSnappingDisabled(void*,BOOL* disabled) override { *disabled=FALSE; return S_OK; }
-    HRESULT STDMETHODCALLTYPE GetCurrentTransform(void*,DWRITE_MATRIX* transform) override {
-        D2D1_MATRIX_3X2_F matrix; target_->GetTransform(&matrix); std::memcpy(transform,&matrix,sizeof(matrix)); return S_OK;
+    HRESULT STDMETHODCALLTYPE IsPixelSnappingDisabled(void*, BOOL* disabled) override {
+        *disabled = FALSE;
+        return S_OK;
     }
-    HRESULT STDMETHODCALLTYPE GetPixelsPerDip(void*,FLOAT* pixels) override { *pixels=1; return S_OK; }
-    HRESULT STDMETHODCALLTYPE DrawGlyphRun(void*,FLOAT x,FLOAT y,DWRITE_MEASURING_MODE,
-        const DWRITE_GLYPH_RUN* run,const DWRITE_GLYPH_RUN_DESCRIPTION*,IUnknown*) override {
-        ComPtr<ID2D1PathGeometry> geometry; ComPtr<ID2D1GeometrySink> sink;
-        auto* factory=platform::GraphicsEnvironment::Get().d2d_factory();
-        HRESULT hr=factory->CreatePathGeometry(&geometry); if(FAILED(hr)) { return hr; }
-        hr=geometry->Open(&sink); if(FAILED(hr)) { return hr; }
-        hr=run->fontFace->GetGlyphRunOutline(run->fontEmSize,run->glyphIndices,run->glyphAdvances,run->glyphOffsets,
-            run->glyphCount,run->isSideways,run->bidiLevel%2,sink.Get());
-        if(FAILED(hr)) { return hr; } hr=sink->Close(); if(FAILED(hr)) { return hr; }
-        D2D1_MATRIX_3X2_F original; target_->GetTransform(&original);
-        target_->SetTransform(D2D1::Matrix3x2F::Translation(x,y)*original);
-        brush_->SetColor(outline_); target_->DrawGeometry(geometry.Get(),brush_,width_,RoundStrokeStyle());
-        brush_->SetColor(fill_); target_->FillGeometry(geometry.Get(),brush_);
-        target_->SetTransform(original); return S_OK;
+    HRESULT STDMETHODCALLTYPE GetCurrentTransform(void*, DWRITE_MATRIX* transform) override {
+        D2D1_MATRIX_3X2_F matrix;
+        target_->GetTransform(&matrix);
+        std::memcpy(transform, &matrix, sizeof(matrix));
+        return S_OK;
     }
-    HRESULT STDMETHODCALLTYPE DrawUnderline(void*,FLOAT x,FLOAT y,const DWRITE_UNDERLINE* line,IUnknown*) override {
-        brush_->SetColor(fill_); target_->FillRectangle({x,y+line->offset,x+line->width,y+line->offset+line->thickness},brush_); return S_OK;
+    HRESULT STDMETHODCALLTYPE GetPixelsPerDip(void*, FLOAT* pixels) override {
+        *pixels = 1;
+        return S_OK;
     }
-    HRESULT STDMETHODCALLTYPE DrawStrikethrough(void*,FLOAT x,FLOAT y,const DWRITE_STRIKETHROUGH* line,IUnknown*) override {
-        brush_->SetColor(fill_); target_->FillRectangle({x,y+line->offset,x+line->width,y+line->offset+line->thickness},brush_); return S_OK;
+    HRESULT STDMETHODCALLTYPE DrawGlyphRun(void*, FLOAT x, FLOAT y, DWRITE_MEASURING_MODE,
+                                           const DWRITE_GLYPH_RUN* run, const DWRITE_GLYPH_RUN_DESCRIPTION*, IUnknown*) override {
+        ComPtr<ID2D1PathGeometry> geometry;
+        ComPtr<ID2D1GeometrySink> sink;
+        auto* factory = platform::GraphicsEnvironment::Get().d2d_factory();
+        HRESULT hr = factory->CreatePathGeometry(&geometry);
+        if (FAILED(hr)) { return hr; }
+        hr = geometry->Open(&sink);
+        if (FAILED(hr)) { return hr; }
+        hr = run->fontFace->GetGlyphRunOutline(run->fontEmSize, run->glyphIndices, run->glyphAdvances, run->glyphOffsets,
+                                               run->glyphCount, run->isSideways, run->bidiLevel % 2, sink.Get());
+        if (FAILED(hr)) { return hr; }
+        hr = sink->Close();
+        if (FAILED(hr)) { return hr; }
+        D2D1_MATRIX_3X2_F original;
+        target_->GetTransform(&original);
+        target_->SetTransform(D2D1::Matrix3x2F::Translation(x, y) * original);
+        brush_->SetColor(outline_);
+        target_->DrawGeometry(geometry.Get(), brush_, width_, RoundStrokeStyle());
+        brush_->SetColor(fill_);
+        target_->FillGeometry(geometry.Get(), brush_);
+        target_->SetTransform(original);
+        return S_OK;
     }
-    HRESULT STDMETHODCALLTYPE DrawInlineObject(void* context,FLOAT x,FLOAT y,IDWriteInlineObject* object,BOOL sideways,BOOL rtl,IUnknown* effect) override {
-        return object->Draw(context,this,x,y,sideways,rtl,effect);
+    HRESULT STDMETHODCALLTYPE DrawUnderline(void*, FLOAT x, FLOAT y, const DWRITE_UNDERLINE* line, IUnknown*) override {
+        brush_->SetColor(fill_);
+        target_->FillRectangle({x, y + line->offset, x + line->width, y + line->offset + line->thickness}, brush_);
+        return S_OK;
     }
+    HRESULT STDMETHODCALLTYPE DrawStrikethrough(void*, FLOAT x, FLOAT y, const DWRITE_STRIKETHROUGH* line, IUnknown*) override {
+        brush_->SetColor(fill_);
+        target_->FillRectangle({x, y + line->offset, x + line->width, y + line->offset + line->thickness}, brush_);
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE DrawInlineObject(void* context, FLOAT x, FLOAT y, IDWriteInlineObject* object, BOOL sideways, BOOL rtl, IUnknown* effect) override {
+        return object->Draw(context, this, x, y, sideways, rtl, effect);
+    }
+
 private:
-    ID2D1RenderTarget* target_; ID2D1SolidColorBrush* brush_; D2D1_COLOR_F outline_,fill_; float width_;
+    ID2D1RenderTarget* target_;
+    ID2D1SolidColorBrush* brush_;
+    D2D1_COLOR_F outline_, fill_;
+    float width_;
 };
 
 void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
@@ -252,61 +296,81 @@ void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
             }
             break;
         case ToolId::Line:
-            if(annotation.points.size()>=2) { target->DrawLine(annotation.points.front(),annotation.points.back(),brush,thickness,RoundStrokeStyle()); }
+            if (annotation.points.size() >= 2) { target->DrawLine(annotation.points.front(), annotation.points.back(), brush, thickness, RoundStrokeStyle()); }
             break;
         case ToolId::Text:
         case ToolId::Tag: {
-            auto layout=TextLayout(annotation); if(!layout || annotation.text.empty()) { break; }
-            const auto box=annotation.bounds();
-            auto origin=annotation.points.front();
-            const float em=annotation.FontPixels();
-            const bool white=annotation.style.color.r>0.98f && annotation.style.color.g>0.98f && annotation.style.color.b>0.98f;
-            const auto ink=D2D1::ColorF(white ? D2D1::ColorF::Black : D2D1::ColorF::White);
-            if(annotation.tool==ToolId::Tag) {
-                const float dot=em*0.16f, body=origin.x+em*0.9f;
+            auto layout = TextLayout(annotation);
+            if (!layout || annotation.text.empty()) { break; }
+            const auto box = annotation.bounds();
+            auto origin = annotation.points.front();
+            const float em = annotation.FontPixels();
+            const bool white = annotation.style.color.r > 0.98f && annotation.style.color.g > 0.98f && annotation.style.color.b > 0.98f;
+            const auto ink = D2D1::ColorF(white ? D2D1::ColorF::Black : D2D1::ColorF::White);
+            if (annotation.tool == ToolId::Tag) {
+                const float dot = em * 0.16f, body = origin.x + em * 0.9f;
                 brush->SetColor(annotation.style.color);
-                target->FillEllipse(D2D1::Ellipse({origin.x+dot, (box.top+box.bottom)/2},dot,dot),brush);
+                target->FillEllipse(D2D1::Ellipse({origin.x + dot, (box.top + box.bottom) / 2}, dot, dot), brush);
                 brush->SetColor(D2D1::ColorF(0x30343c));
-                target->FillRoundedRectangle(D2D1::RoundedRect({body,box.top,box.right,box.bottom},em*0.2f,em*0.2f),brush);
-                ComPtr<ID2D1PathGeometry> notch; ComPtr<ID2D1GeometrySink> sink;
-                if(SUCCEEDED(platform::GraphicsEnvironment::Get().d2d_factory()->CreatePathGeometry(&notch)) && SUCCEEDED(notch->Open(&sink))) {
-                    const float mid=(box.top+box.bottom)/2;
-                    sink->BeginFigure({body-em*0.25f,mid},D2D1_FIGURE_BEGIN_FILLED);
-                    sink->AddLine({body+1,mid-em*0.25f}); sink->AddLine({body+1,mid+em*0.25f});
-                    sink->EndFigure(D2D1_FIGURE_END_CLOSED); sink->Close(); target->FillGeometry(notch.Get(),brush);
+                target->FillRoundedRectangle(D2D1::RoundedRect({body, box.top, box.right, box.bottom}, em * 0.2f, em * 0.2f), brush);
+                ComPtr<ID2D1PathGeometry> notch;
+                ComPtr<ID2D1GeometrySink> sink;
+                if (SUCCEEDED(platform::GraphicsEnvironment::Get().d2d_factory()->CreatePathGeometry(&notch)) && SUCCEEDED(notch->Open(&sink))) {
+                    const float mid = (box.top + box.bottom) / 2;
+                    sink->BeginFigure({body - em * 0.25f, mid}, D2D1_FIGURE_BEGIN_FILLED);
+                    sink->AddLine({body + 1, mid - em * 0.25f});
+                    sink->AddLine({body + 1, mid + em * 0.25f});
+                    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                    sink->Close();
+                    target->FillGeometry(notch.Get(), brush);
                 }
-                origin={body+em*0.45f,origin.y+em*0.45f}; brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
-                target->DrawTextLayout(origin,layout.Get(),brush); break;
+                origin = {body + em * 0.45f, origin.y + em * 0.45f};
+                brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+                target->DrawTextLayout(origin, layout.Get(), brush);
+                break;
             }
-            if(annotation.style.text_mode==TextMode::Fill) {
-                target->FillRoundedRectangle(D2D1::RoundedRect(box,em*0.22f,em*0.22f),brush);
-                origin.x+=em*0.25f; origin.y+=em*0.25f; brush->SetColor(ink);
+            if (annotation.style.text_mode == TextMode::Fill) {
+                target->FillRoundedRectangle(D2D1::RoundedRect(box, em * 0.22f, em * 0.22f), brush);
+                origin.x += em * 0.25f;
+                origin.y += em * 0.25f;
+                brush->SetColor(ink);
             }
-            if(annotation.style.text_mode==TextMode::Outline) {
-                origin.x+=em*0.075f; origin.y+=em*0.075f;
-                OutlineRenderer renderer(target,brush,annotation.style.color,ink,em*0.12f);
-                layout->Draw(nullptr,&renderer,origin.x,origin.y);
-            } else { target->DrawTextLayout(origin,layout.Get(),brush); }
+            if (annotation.style.text_mode == TextMode::Outline) {
+                origin.x += em * 0.075f;
+                origin.y += em * 0.075f;
+                OutlineRenderer renderer(target, brush, annotation.style.color, ink, em * 0.12f);
+                layout->Draw(nullptr, &renderer, origin.x, origin.y);
+            } else {
+                target->DrawTextLayout(origin, layout.Get(), brush);
+            }
             break;
         }
         case ToolId::Watermark: {
-            auto layout=TextLayout(annotation); if(!layout || annotation.text.empty() || annotation.points.size()<2) { break; }
-            DWRITE_TEXT_METRICS metrics{}; layout->GetMetrics(&metrics);
-            const float stepX=std::max(annotation.FontPixels()*5,metrics.width+annotation.FontPixels()*3);
-            const float stepY=std::max(annotation.FontPixels()*4,metrics.height*3);
-            D2D1_MATRIX_3X2_F original; target->GetTransform(&original);
-            auto color=annotation.style.color; color.a=annotation.style.opacity/100; brush->SetColor(color);
-            target->PushAxisAlignedClip({0,0,annotation.points.back().x,annotation.points.back().y},D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            const D2D1_POINT_2F center{annotation.points.back().x/2,annotation.points.back().y/2};
-            const float reach=std::hypot(center.x,center.y)+std::max(stepX,stepY);
-            target->SetTransform(D2D1::Matrix3x2F::Rotation(-18,center)*original);
-            const int columns=static_cast<int>(std::ceil(reach/stepX)),rows=static_cast<int>(std::ceil(reach/stepY));
-            for(int row=-rows;row<=rows;++row) for(int column=-columns;column<=columns;++column) {
-                const D2D1_POINT_2F origin{center.x+column*stepX-metrics.widthIncludingTrailingWhitespace/2,
-                    center.y+row*stepY-metrics.height/2};
-                target->DrawTextLayout(origin,layout.Get(),brush);
-            }
-            target->SetTransform(original); target->PopAxisAlignedClip(); break;
+            auto layout = TextLayout(annotation);
+            if (!layout || annotation.text.empty() || annotation.points.size() < 2) { break; }
+            DWRITE_TEXT_METRICS metrics{};
+            layout->GetMetrics(&metrics);
+            const float stepX = std::max(annotation.FontPixels() * 5, metrics.width + annotation.FontPixels() * 3);
+            const float stepY = std::max(annotation.FontPixels() * 4, metrics.height * 3);
+            D2D1_MATRIX_3X2_F original;
+            target->GetTransform(&original);
+            auto color = annotation.style.color;
+            color.a = annotation.style.opacity / 100;
+            brush->SetColor(color);
+            target->PushAxisAlignedClip({0, 0, annotation.points.back().x, annotation.points.back().y}, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            const D2D1_POINT_2F center{annotation.points.back().x / 2, annotation.points.back().y / 2};
+            const float reach = std::hypot(center.x, center.y) + std::max(stepX, stepY);
+            target->SetTransform(D2D1::Matrix3x2F::Rotation(-18, center) * original);
+            const int columns = static_cast<int>(std::ceil(reach / stepX)), rows = static_cast<int>(std::ceil(reach / stepY));
+            for (int row = -rows; row <= rows; ++row)
+                for (int column = -columns; column <= columns; ++column) {
+                    const D2D1_POINT_2F origin{center.x + column * stepX - metrics.widthIncludingTrailingWhitespace / 2,
+                                               center.y + row * stepY - metrics.height / 2};
+                    target->DrawTextLayout(origin, layout.Get(), brush);
+                }
+            target->SetTransform(original);
+            target->PopAxisAlignedClip();
+            break;
         }
         case ToolId::Spotlight: break; // Union dim layer is derived with the base pixels.
         case ToolId::Mosaic: {
@@ -331,158 +395,213 @@ void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
 
 namespace {
 ComPtr<IDWriteTextLayout> TextLayout(const Annotation& a) {
-    struct Entry { std::wstring text; float size; ComPtr<IDWriteTextLayout> layout; };
+    struct Entry {
+        std::wstring text;
+        float size;
+        ComPtr<IDWriteTextLayout> layout;
+    };
     static thread_local std::deque<Entry> cache;
-    const float size=a.FontPixels();
-    for(const auto& e:cache) if(e.text==a.text && e.size==size) { return e.layout; }
-    auto& graphics=platform::GraphicsEnvironment::Get();
-    if(!graphics.EnsureInitialized()) { return {}; }
-    auto format=graphics.CreateTextFormat(size,DWRITE_FONT_WEIGHT_NORMAL);
-    if(!format) { return {}; }
+    const float size = a.FontPixels();
+    for (const auto& e : cache)
+        if (e.text == a.text && e.size == size) { return e.layout; }
+    auto& graphics = platform::GraphicsEnvironment::Get();
+    if (!graphics.EnsureInitialized()) { return {}; }
+    auto format = graphics.CreateTextFormat(size, DWRITE_FONT_WEIGHT_NORMAL);
+    if (!format) { return {}; }
     format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     ComPtr<IDWriteTextLayout> layout;
-    if(FAILED(graphics.dwrite_factory()->CreateTextLayout(a.text.c_str(),static_cast<UINT32>(a.text.size()),format.Get(),
-        65536,65536,&layout))) { return {}; }
-    if(cache.size()==64) { cache.pop_front(); }
-    cache.push_back({a.text,size,layout}); return layout;
+    if (FAILED(graphics.dwrite_factory()->CreateTextLayout(a.text.c_str(), static_cast<UINT32>(a.text.size()), format.Get(),
+                                                           65536, 65536, &layout))) { return {}; }
+    if (cache.size() == 64) { cache.pop_front(); }
+    cache.push_back({a.text, size, layout});
+    return layout;
 }
-float SegmentDistance(D2D1_POINT_2F p,D2D1_POINT_2F a,D2D1_POINT_2F b) {
-    const float dx=b.x-a.x,dy=b.y-a.y;
-    const float t=dx*dx+dy*dy>0 ? std::clamp(((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy),0.0f,1.0f) : 0;
-    return std::hypot(p.x-a.x-t*dx,p.y-a.y-t*dy);
+float SegmentDistance(D2D1_POINT_2F p, D2D1_POINT_2F a, D2D1_POINT_2F b) {
+    const float dx = b.x - a.x, dy = b.y - a.y;
+    const float t = dx * dx + dy * dy > 0 ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy), 0.0f, 1.0f) : 0;
+    return std::hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
 }
-bool SameList(const std::vector<Annotation>& a,const std::vector<Annotation>& b) {
-    return a.size()==b.size() && std::equal(a.begin(),a.end(),b.begin(),[](const auto& x,const auto& y){return x.Same(y);});
+bool SameList(const std::vector<Annotation>& a, const std::vector<Annotation>& b) {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](const auto& x, const auto& y) { return x.Same(y); });
 }
-}
+}  // namespace
 
 D2D1_RECT_F Annotation::bounds() const {
-    if(points.empty()) { return {}; }
-    auto box=NormalizedD2DRect(points.front(),points.front());
-    for(const auto& point:points) {
-        box.left=std::min(box.left,point.x); box.top=std::min(box.top,point.y);
-        box.right=std::max(box.right,point.x); box.bottom=std::max(box.bottom,point.y);
+    if (points.empty()) { return {}; }
+    auto box = NormalizedD2DRect(points.front(), points.front());
+    for (const auto& point : points) {
+        box.left = std::min(box.left, point.x);
+        box.top = std::min(box.top, point.y);
+        box.right = std::max(box.right, point.x);
+        box.bottom = std::max(box.bottom, point.y);
     }
-    if(tool==ToolId::Text || tool==ToolId::Tag) {
-        auto layout=TextLayout(*this); DWRITE_TEXT_METRICS metrics{};
-        if(layout) { layout->GetMetrics(&metrics); }
-        const float padding=tool==ToolId::Tag ? FontPixels()*0.45f : style.text_mode==TextMode::Fill ? FontPixels()*0.25f : style.text_mode==TextMode::Outline ? FontPixels()*0.075f : 0;
-        box.right=box.left+std::max(1.0f,metrics.widthIncludingTrailingWhitespace)+padding*2;
-        box.bottom=box.top+std::max(FontPixels(),metrics.height)+padding*2;
-        if(tool==ToolId::Tag) { box.right+=FontPixels()*0.9f; }
+    if (tool == ToolId::Text || tool == ToolId::Tag) {
+        auto layout = TextLayout(*this);
+        DWRITE_TEXT_METRICS metrics{};
+        if (layout) { layout->GetMetrics(&metrics); }
+        const float padding = tool == ToolId::Tag ? FontPixels() * 0.45f : style.text_mode == TextMode::Fill  ? FontPixels() * 0.25f
+                                                                       : style.text_mode == TextMode::Outline ? FontPixels() * 0.075f
+                                                                                                              : 0;
+        box.right = box.left + std::max(1.0f, metrics.widthIncludingTrailingWhitespace) + padding * 2;
+        box.bottom = box.top + std::max(FontPixels(), metrics.height) + padding * 2;
+        if (tool == ToolId::Tag) { box.right += FontPixels() * 0.9f; }
         return box;
     }
-    const float pad=tool==ToolId::Mosaic ? (style.method==EffectMethod::Brush ? style.brush_size/2 : 0) :
-        tool==ToolId::Spotlight ? 0 : tool==ToolId::Arrow ? style.thickness*3 : style.thickness/2;
-    box.left-=pad; box.top-=pad; box.right+=pad; box.bottom+=pad;
+    const float pad = tool == ToolId::Mosaic ? (style.method == EffectMethod::Brush ? style.brush_size / 2 : 0) : tool == ToolId::Spotlight ? 0
+                                                                                                              : tool == ToolId::Arrow       ? style.thickness * 3
+                                                                                                                                            : style.thickness / 2;
+    box.left -= pad;
+    box.top -= pad;
+    box.right += pad;
+    box.bottom += pad;
     return box;
 }
 
 bool Annotation::Same(const Annotation& b) const {
-    const auto& x=style; const auto& y=b.style;
-    return tool==b.tool && text==b.text && points.size()==b.points.size() &&
-        x.color.r==y.color.r && x.color.g==y.color.g && x.color.b==y.color.b && x.color.a==y.color.a &&
-        x.thickness==y.thickness && x.font_size==y.font_size && x.image_scale==y.image_scale &&
-        x.brush_size==y.brush_size && x.text_mode==y.text_mode && x.effect==y.effect && x.method==y.method &&
-        x.shape==y.shape && x.strength==y.strength && x.opacity==y.opacity &&
-        std::equal(points.begin(),points.end(),b.points.begin(),[](auto a,auto c){ return a.x==c.x && a.y==c.y; });
+    const auto& x = style;
+    const auto& y = b.style;
+    return tool == b.tool && text == b.text && points.size() == b.points.size() &&
+           x.color.r == y.color.r && x.color.g == y.color.g && x.color.b == y.color.b && x.color.a == y.color.a &&
+           x.thickness == y.thickness && x.font_size == y.font_size && x.image_scale == y.image_scale &&
+           x.brush_size == y.brush_size && x.text_mode == y.text_mode && x.effect == y.effect && x.method == y.method &&
+           x.shape == y.shape && x.strength == y.strength && x.opacity == y.opacity &&
+           std::equal(points.begin(), points.end(), b.points.begin(), [](auto a, auto c) { return a.x == c.x && a.y == c.y; });
 }
 
-bool Annotation::HitTest(D2D1_POINT_2F p,float tolerance) const {
-    if(points.empty() || tool==ToolId::Watermark) { return false; }
-    const auto r=bounds();
-    if(p.x<r.left-tolerance || p.x>r.right+tolerance || p.y<r.top-tolerance || p.y>r.bottom+tolerance) { return false; }
+bool Annotation::HitTest(D2D1_POINT_2F p, float tolerance) const {
+    if (points.empty() || tool == ToolId::Watermark) { return false; }
+    const auto r = bounds();
+    if (p.x < r.left - tolerance || p.x > r.right + tolerance || p.y < r.top - tolerance || p.y > r.bottom + tolerance) { return false; }
     // Text remains directly editable. Closed geometry only responds at its
     // outline, so another annotation can start inside an existing shape.
-    if(tool==ToolId::Text || tool==ToolId::Tag) { return true; }
-    if(tool==ToolId::Arrow && points.size()>=2) {
-        const auto a=points.front(),b=points.back();
-        const float dx=b.x-a.x,dy=b.y-a.y,length=std::hypot(dx,dy);
-        if(length<1) { return false; }
-        const float ux=dx/length,uy=dy/length;
-        const float head=std::min(length,std::max(14.0f,style.thickness*5));
-        const D2D1_POINT_2F base{b.x-ux*head,b.y-uy*head};
-        const D2D1_POINT_2F left{base.x-uy*head*.31f,base.y+ux*head*.31f};
-        const D2D1_POINT_2F right{base.x+uy*head*.31f,base.y-ux*head*.31f};
-        return SegmentDistance(p,a,base)<=style.thickness/2+tolerance ||
-            SegmentDistance(p,b,left)<=tolerance || SegmentDistance(p,left,right)<=tolerance || SegmentDistance(p,right,b)<=tolerance;
+    if (tool == ToolId::Text || tool == ToolId::Tag) { return true; }
+    if (tool == ToolId::Arrow && points.size() >= 2) {
+        const auto a = points.front(), b = points.back();
+        const float dx = b.x - a.x, dy = b.y - a.y, length = std::hypot(dx, dy);
+        if (length < 1) { return false; }
+        const float ux = dx / length, uy = dy / length;
+        const float head = std::min(length, std::max(14.0f, style.thickness * 5));
+        const D2D1_POINT_2F base{b.x - ux * head, b.y - uy * head};
+        const D2D1_POINT_2F left{base.x - uy * head * .31f, base.y + ux * head * .31f};
+        const D2D1_POINT_2F right{base.x + uy * head * .31f, base.y - ux * head * .31f};
+        return SegmentDistance(p, a, base) <= style.thickness / 2 + tolerance ||
+               SegmentDistance(p, b, left) <= tolerance || SegmentDistance(p, left, right) <= tolerance || SegmentDistance(p, right, b) <= tolerance;
     }
-    if(tool==ToolId::Line || tool==ToolId::Pen || (tool==ToolId::Mosaic && style.method==EffectMethod::Brush)) {
-        float distance=std::hypot(p.x-points[0].x,p.y-points[0].y);
-        for(size_t i=1;i<points.size();++i) { distance=std::min(distance,SegmentDistance(p,points[i-1],points[i])); }
-        if(tool==ToolId::Mosaic) { return std::abs(distance-style.brush_size/2)<=tolerance; }
-        return distance<=style.thickness/2+tolerance;
+    if (tool == ToolId::Line || tool == ToolId::Pen || (tool == ToolId::Mosaic && style.method == EffectMethod::Brush)) {
+        float distance = std::hypot(p.x - points[0].x, p.y - points[0].y);
+        for (size_t i = 1; i < points.size(); ++i) { distance = std::min(distance, SegmentDistance(p, points[i - 1], points[i])); }
+        if (tool == ToolId::Mosaic) { return std::abs(distance - style.brush_size / 2) <= tolerance; }
+        return distance <= style.thickness / 2 + tolerance;
     }
-    const auto box=NormalizedD2DRect(points.front(),points.back());
-    const float margin=tolerance+((tool==ToolId::Rectangle || tool==ToolId::Ellipse) ? style.thickness/2:0);
-    if(tool==ToolId::Ellipse || (tool==ToolId::Spotlight && style.shape==SpotlightShape::Ellipse)) {
-        const float rx=(box.right-box.left)/2,ry=(box.bottom-box.top)/2;
-        const float dx=p.x-(box.left+box.right)/2,dy=p.y-(box.top+box.bottom)/2;
-        const auto ellipse=[&](float x,float y) { return x>0 && y>0 && dx*dx/(x*x)+dy*dy/(y*y)<1; };
-        return ellipse(rx+margin,ry+margin) && !ellipse(rx-margin,ry-margin);
+    const auto box = NormalizedD2DRect(points.front(), points.back());
+    const float margin = tolerance + ((tool == ToolId::Rectangle || tool == ToolId::Ellipse) ? style.thickness / 2 : 0);
+    if (tool == ToolId::Ellipse || (tool == ToolId::Spotlight && style.shape == SpotlightShape::Ellipse)) {
+        const float rx = (box.right - box.left) / 2, ry = (box.bottom - box.top) / 2;
+        const float dx = p.x - (box.left + box.right) / 2, dy = p.y - (box.top + box.bottom) / 2;
+        const auto ellipse = [&](float x, float y) { return x > 0 && y > 0 && dx * dx / (x * x) + dy * dy / (y * y) < 1; };
+        return ellipse(rx + margin, ry + margin) && !ellipse(rx - margin, ry - margin);
     }
-    if(tool==ToolId::Spotlight && style.shape==SpotlightShape::Rounded) {
-        const float rx=(box.right-box.left)/2,ry=(box.bottom-box.top)/2;
-        const float radius=std::min({rx,ry,16*style.image_scale});
-        const float dx=std::abs(p.x-(box.left+rx))-(rx-radius),dy=std::abs(p.y-(box.top+ry))-(ry-radius);
-        const float distance=std::hypot(std::max(dx,0.0f),std::max(dy,0.0f))+std::min(std::max(dx,dy),0.0f)-radius;
-        return std::abs(distance)<=margin;
+    if (tool == ToolId::Spotlight && style.shape == SpotlightShape::Rounded) {
+        const float rx = (box.right - box.left) / 2, ry = (box.bottom - box.top) / 2;
+        const float radius = std::min({rx, ry, 16 * style.image_scale});
+        const float dx = std::abs(p.x - (box.left + rx)) - (rx - radius), dy = std::abs(p.y - (box.top + ry)) - (ry - radius);
+        const float distance = std::hypot(std::max(dx, 0.0f), std::max(dy, 0.0f)) + std::min(std::max(dx, dy), 0.0f) - radius;
+        return std::abs(distance) <= margin;
     }
-    const D2D1_POINT_2F tl{box.left,box.top},tr{box.right,box.top},br{box.right,box.bottom},bl{box.left,box.bottom};
-    return std::min({SegmentDistance(p,tl,tr),SegmentDistance(p,tr,br),SegmentDistance(p,br,bl),SegmentDistance(p,bl,tl)})<=margin;
+    const D2D1_POINT_2F tl{box.left, box.top}, tr{box.right, box.top}, br{box.right, box.bottom}, bl{box.left, box.bottom};
+    return std::min({SegmentDistance(p, tl, tr), SegmentDistance(p, tr, br), SegmentDistance(p, br, bl), SegmentDistance(p, bl, tl)}) <= margin;
 }
 
 std::vector<D2D1_POINT_2F> Annotation::Handles() const {
-    if(points.size()<2) { return {}; }
-    if(tool==ToolId::Line || tool==ToolId::Arrow) { return {points.front(),points.back()}; }
-    if(tool==ToolId::Rectangle || tool==ToolId::Ellipse || tool==ToolId::Spotlight ||
-        (tool==ToolId::Mosaic && style.method==EffectMethod::Region)) {
-        const auto r=NormalizedD2DRect(points.front(),points.back());
-        return {{r.left,r.top},{r.right,r.top},{r.right,r.bottom},{r.left,r.bottom}};
+    if (points.size() < 2) { return {}; }
+    if (tool == ToolId::Line || tool == ToolId::Arrow) { return {points.front(), points.back()}; }
+    if (tool == ToolId::Rectangle || tool == ToolId::Ellipse || tool == ToolId::Spotlight ||
+        (tool == ToolId::Mosaic && style.method == EffectMethod::Region)) {
+        const auto r = NormalizedD2DRect(points.front(), points.back());
+        return {{r.left, r.top}, {r.right, r.top}, {r.right, r.bottom}, {r.left, r.bottom}};
     }
     return {};
 }
 
 void AnnotationDocument::Checkpoint() {
-    if(!transaction_) { undo_stack_.push_back(annotations_); redo_stack_.clear(); }
+    if (!transaction_) {
+        undo_stack_.push_back(annotations_);
+        redo_stack_.clear();
+    }
 }
-void AnnotationDocument::Apply(Annotation annotation) { Checkpoint(); annotations_.push_back(std::move(annotation)); ++revision_; }
-void AnnotationDocument::Replace(size_t index,Annotation annotation) {
-    if(index>=annotations_.size() || annotations_[index].Same(annotation)) { return; }
-    Checkpoint(); annotations_[index]=std::move(annotation); ++revision_;
+void AnnotationDocument::Apply(Annotation annotation) {
+    Checkpoint();
+    annotations_.push_back(std::move(annotation));
+    ++revision_;
+}
+void AnnotationDocument::Replace(size_t index, Annotation annotation) {
+    if (index >= annotations_.size() || annotations_[index].Same(annotation)) { return; }
+    Checkpoint();
+    annotations_[index] = std::move(annotation);
+    ++revision_;
 }
 void AnnotationDocument::Remove(size_t index) {
-    if(index>=annotations_.size()) { return; }
-    Checkpoint(); annotations_.erase(annotations_.begin()+static_cast<ptrdiff_t>(index)); ++revision_;
+    if (index >= annotations_.size()) { return; }
+    Checkpoint();
+    annotations_.erase(annotations_.begin() + static_cast<ptrdiff_t>(index));
+    ++revision_;
 }
-void AnnotationDocument::BeginTransaction() { if(!transaction_) { transaction_=annotations_; } }
+void AnnotationDocument::BeginTransaction() {
+    if (!transaction_) { transaction_ = annotations_; }
+}
 void AnnotationDocument::CommitTransaction() {
-    if(!transaction_) { return; }
-    if(!SameList(*transaction_,annotations_)) { undo_stack_.push_back(std::move(*transaction_)); redo_stack_.clear(); }
+    if (!transaction_) { return; }
+    if (!SameList(*transaction_, annotations_)) {
+        undo_stack_.push_back(std::move(*transaction_));
+        redo_stack_.clear();
+    }
     transaction_.reset();
 }
 void AnnotationDocument::CancelTransaction() {
-    if(!transaction_) { return; }
-    if(!SameList(*transaction_,annotations_)) { annotations_=std::move(*transaction_); ++revision_; }
+    if (!transaction_) { return; }
+    if (!SameList(*transaction_, annotations_)) {
+        annotations_ = std::move(*transaction_);
+        ++revision_;
+    }
     transaction_.reset();
 }
 bool AnnotationDocument::Undo() {
-    CancelTransaction(); if(undo_stack_.empty()) { return false; }
-    redo_stack_.push_back(std::move(annotations_)); annotations_=std::move(undo_stack_.back()); undo_stack_.pop_back(); ++revision_; return true;
+    CancelTransaction();
+    if (undo_stack_.empty()) { return false; }
+    redo_stack_.push_back(std::move(annotations_));
+    annotations_ = std::move(undo_stack_.back());
+    undo_stack_.pop_back();
+    ++revision_;
+    return true;
 }
 bool AnnotationDocument::Redo() {
-    CancelTransaction(); if(redo_stack_.empty()) { return false; }
-    undo_stack_.push_back(std::move(annotations_)); annotations_=std::move(redo_stack_.back()); redo_stack_.pop_back(); ++revision_; return true;
+    CancelTransaction();
+    if (redo_stack_.empty()) { return false; }
+    undo_stack_.push_back(std::move(annotations_));
+    annotations_ = std::move(redo_stack_.back());
+    redo_stack_.pop_back();
+    ++revision_;
+    return true;
 }
-void AnnotationDocument::Clear() { if(annotations_.empty()) { return; } Checkpoint(); annotations_.clear(); ++revision_; }
+void AnnotationDocument::Clear() {
+    if (annotations_.empty()) { return; }
+    Checkpoint();
+    annotations_.clear();
+    ++revision_;
+}
 void AnnotationDocument::Reset() {
-    annotations_={}; undo_stack_={}; redo_stack_={}; transaction_.reset(); revision_=0;
+    annotations_ = {};
+    undo_stack_ = {};
+    redo_stack_ = {};
+    transaction_.reset();
+    revision_ = 0;
 }
 bool AnnotationDocument::HasRedactions() const {
-    return std::any_of(annotations_.begin(),annotations_.end(),[](const auto& a){ return a.tool==ToolId::Mosaic; });
+    return std::any_of(annotations_.begin(), annotations_.end(), [](const auto& a) { return a.tool == ToolId::Mosaic; });
 }
-std::optional<size_t> AnnotationDocument::HitTest(D2D1_POINT_2F point,float tolerance) const {
-    for(size_t i=annotations_.size();i>0;--i) if(annotations_[i-1].HitTest(point,tolerance)) { return i-1; }
+std::optional<size_t> AnnotationDocument::HitTest(D2D1_POINT_2F point, float tolerance) const {
+    for (size_t i = annotations_.size(); i > 0; --i)
+        if (annotations_[i - 1].HitTest(point, tolerance)) { return i - 1; }
     return {};
 }
 
@@ -491,7 +610,12 @@ std::optional<size_t> AnnotationDocument::HitTest(D2D1_POINT_2F point,float tole
 // ---------------------------------------------------------------------------
 
 struct ScreenshotEditor::ToolbarItem {
-    enum class Kind { Tool, Color, Thickness, BrushSize, Option, Command };
+    enum class Kind { Tool,
+                      Color,
+                      Thickness,
+                      BrushSize,
+                      Option,
+                      Command };
 
     Kind kind{Kind::Tool};
     ToolId tool{ToolId::Pointer};
@@ -513,11 +637,11 @@ ScreenshotEditor::~ScreenshotEditor() { Destroy(); }
 bool ScreenshotEditor::CreateToolbarControls() {
     using namespace ui;
     constexpr std::array<Icon, 11> tools{Icon::Cursor, Icon::Pen, Icon::Arrow, Icon::Rectangle,
-        Icon::Ellipse, Icon::Text, Icon::Mosaic, Icon::Line, Icon::Tag, Icon::Spotlight, Icon::Watermark};
+                                         Icon::Ellipse, Icon::Text, Icon::Mosaic, Icon::Line, Icon::Tag, Icon::Spotlight, Icon::Watermark};
     constexpr std::array<UINT, 8> colors{IDS_EDITOR_COLOR_RED, IDS_EDITOR_COLOR_AMBER, IDS_EDITOR_COLOR_GREEN, IDS_EDITOR_COLOR_BLUE,
-        IDS_EDITOR_COLOR_VIOLET, IDS_EDITOR_COLOR_WHITE, IDS_EDITOR_COLOR_BLACK, IDS_EDITOR_COLOR_GRAY};
+                                         IDS_EDITOR_COLOR_VIOLET, IDS_EDITOR_COLOR_WHITE, IDS_EDITOR_COLOR_BLACK, IDS_EDITOR_COLOR_GRAY};
     tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
-        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0,0,0,0, hwnd_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+                                 WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, hwnd_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
     StyleTooltip(tooltip_);
     for (const auto& item : toolbar_) {
         ButtonStyle style;
@@ -531,54 +655,85 @@ bool ScreenshotEditor::CreateToolbarControls() {
                 name = strings::Get(colors[static_cast<size_t>(item.identifier - 2100)]);
                 style.swatch = true;
                 style.content_color = RGB(static_cast<BYTE>(std::lround(item.color.r * 255)),
-                    static_cast<BYTE>(std::lround(item.color.g * 255)), static_cast<BYTE>(std::lround(item.color.b * 255)));
+                                          static_cast<BYTE>(std::lround(item.color.g * 255)), static_cast<BYTE>(std::lround(item.color.b * 255)));
                 break;
             case ToolbarItem::Kind::Thickness:
                 name = strings::Format(IDS_EDITOR_THICKNESS_BUTTON, {std::to_wstring(static_cast<int>(item.thickness))});
-                style.sample = 2; style.sample_size = kBrushSizeOptions[static_cast<size_t>(item.identifier-2200)];
+                style.sample = 2;
+                style.sample_size = kBrushSizeOptions[static_cast<size_t>(item.identifier - 2200)];
                 break;
             case ToolbarItem::Kind::BrushSize:
                 name = strings::Format(IDS_EDITOR_BRUSH_SIZE_BUTTON, {std::to_wstring(static_cast<int>(item.brush_size))});
-                style.sample = 2; style.sample_size = item.brush_size;
+                style.sample = 2;
+                style.sample_size = item.brush_size;
                 break;
             case ToolbarItem::Kind::Option:
-                style.segmented=true;
-                if(item.identifier==2500) { style.icon=Icon::Text; }
-                if(item.identifier==2501) { style.icon=Icon::TextFill; }
-                if(item.identifier==2502) { style.icon=Icon::TextOutline; }
-                if(item.identifier==2510) { style.icon=Icon::Droplet; }
-                if(item.identifier==2511) { style.icon=Icon::Mosaic; }
-                if(item.identifier==2520) { style.icon=Icon::Hand; style.dropdown=true; }
-                if(item.identifier==2521) { style.icon=Icon::Region; }
-                if(item.identifier==2530) { style.icon=Icon::Rectangle; }
-                if(item.identifier==2531) { style.icon=Icon::Ellipse; }
-                if(item.identifier==2532) { style.icon=Icon::RoundedRectangle; }
+                style.segmented = true;
+                if (item.identifier == 2500) { style.icon = Icon::Text; }
+                if (item.identifier == 2501) { style.icon = Icon::TextFill; }
+                if (item.identifier == 2502) { style.icon = Icon::TextOutline; }
+                if (item.identifier == 2510) { style.icon = Icon::Droplet; }
+                if (item.identifier == 2511) { style.icon = Icon::Mosaic; }
+                if (item.identifier == 2520) {
+                    style.icon = Icon::Hand;
+                    style.dropdown = true;
+                }
+                if (item.identifier == 2521) { style.icon = Icon::Region; }
+                if (item.identifier == 2530) { style.icon = Icon::Rectangle; }
+                if (item.identifier == 2531) { style.icon = Icon::Ellipse; }
+                if (item.identifier == 2532) { style.icon = Icon::RoundedRectangle; }
                 break;
             case ToolbarItem::Kind::Command:
                 style.icon_only = true;
-                if (item.command == kCommandUndo) { style.icon = Icon::Undo; name = strings::Get(IDS_EDITOR_UNDO_BUTTON); }
-                if (item.command == kCommandRedo) { style.icon = Icon::Redo; name = strings::Get(IDS_EDITOR_REDO_BUTTON); }
-                if (item.command == kCommandClear) { style.icon = Icon::Clear; name = strings::Get(IDS_EDITOR_CLEAR_BUTTON); }
-                if (item.command == kCommandCopy) { style.icon = Icon::Check; style.role = ButtonRole::Success; }
-                if (item.command == kCommandSave) { style.icon = Icon::Save; name=strings::Get(IDS_EDITOR_SAVE_BUTTON); }
-                if (item.command == kCommandCancel) { style.icon = Icon::Discard; name=strings::Get(IDS_EDITOR_DISCARD_BUTTON); }
-                if (item.command == kCommandTheme) { style.icon = Icon::Appearance; name=strings::Get(IDS_EDITOR_THEME_BUTTON); }
-                if (item.command == kCommandScrollshot) { style.icon = Icon::Scissors; name = strings::Get(IDS_SCROLLSHOT_TOOL); }
+                if (item.command == kCommandUndo) {
+                    style.icon = Icon::Undo;
+                    name = strings::Get(IDS_EDITOR_UNDO_BUTTON);
+                }
+                if (item.command == kCommandRedo) {
+                    style.icon = Icon::Redo;
+                    name = strings::Get(IDS_EDITOR_REDO_BUTTON);
+                }
+                if (item.command == kCommandClear) {
+                    style.icon = Icon::Clear;
+                    name = strings::Get(IDS_EDITOR_CLEAR_BUTTON);
+                }
+                if (item.command == kCommandCopy) {
+                    style.icon = Icon::Check;
+                    style.role = ButtonRole::Success;
+                }
+                if (item.command == kCommandSave) {
+                    style.icon = Icon::Save;
+                    name = strings::Get(IDS_EDITOR_SAVE_BUTTON);
+                }
+                if (item.command == kCommandCancel) {
+                    style.icon = Icon::Discard;
+                    name = strings::Get(IDS_EDITOR_DISCARD_BUTTON);
+                }
+                if (item.command == kCommandTheme) {
+                    style.icon = Icon::Appearance;
+                    name = strings::Get(IDS_EDITOR_THEME_BUTTON);
+                }
+                if (item.command == kCommandScrollshot) {
+                    style.icon = Icon::Scissors;
+                    name = strings::Get(IDS_SCROLLSHOT_TOOL);
+                }
                 break;
         }
         const DWORD type = item.kind == ToolbarItem::Kind::Command ? BS_PUSHBUTTON : BS_RADIOBUTTON | BS_PUSHLIKE;
         const bool first = item.identifier == 2000 || item.identifier == 2100 || item.identifier == 2200 ||
                            item.identifier == 2300 || item.identifier == 2401 ||
                            item.identifier == 2400 + kCommandScrollshot;
-        const HWND parent=item.kind==ToolbarItem::Kind::Tool || item.kind==ToolbarItem::Kind::Command ? hwnd_ : item.kind==ToolbarItem::Kind::BrushSize ? brush_popup_:context_;
+        const HWND parent = item.kind == ToolbarItem::Kind::Tool || item.kind == ToolbarItem::Kind::Command ? hwnd_ : item.kind == ToolbarItem::Kind::BrushSize ? brush_popup_
+                                                                                                                                                                : context_;
         HWND button = ::CreateWindowExW(0, L"BUTTON", name.c_str(), WS_CHILD | WS_TABSTOP | type | (first ? WS_GROUP : 0),
-            0,0,1,1, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(item.identifier)), ::GetModuleHandleW(nullptr), nullptr);
+                                        0, 0, 1, 1, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(item.identifier)), ::GetModuleHandleW(nullptr), nullptr);
         if (!button || !StyleButton(button, style) ||
             !::SetWindowSubclass(button, ToolbarButtonProc, 1, reinterpret_cast<DWORD_PTR>(this))) { return false; }
         if (tooltip_) {
             TOOLINFOW info{sizeof(info)};
             info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-            info.hwnd = parent; info.uId = reinterpret_cast<UINT_PTR>(button);
+            info.hwnd = parent;
+            info.uId = reinterpret_cast<UINT_PTR>(button);
             info.lpszText = name.data();
             ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
         }
@@ -596,276 +751,358 @@ bool ScreenshotEditor::CreateToolbarControls() {
 }
 
 HWND ScreenshotEditor::Control(int id) const {
-    if(id==2605) { return context_ ? ::GetDlgItem(::GetDlgItem(context_,2604),id):nullptr; }
-    if(const auto child=::GetDlgItem(hwnd_,id)) { return child; }
-    if(const auto child=context_ ? ::GetDlgItem(context_,id):nullptr) { return child; }
-    return brush_popup_ ? ::GetDlgItem(brush_popup_,id):nullptr;
+    if (id == 2605) { return context_ ? ::GetDlgItem(::GetDlgItem(context_, 2604), id) : nullptr; }
+    if (const auto child = ::GetDlgItem(hwnd_, id)) { return child; }
+    if (const auto child = context_ ? ::GetDlgItem(context_, id) : nullptr) { return child; }
+    return brush_popup_ ? ::GetDlgItem(brush_popup_, id) : nullptr;
 }
 ToolId ScreenshotEditor::ContextTool() const {
-    return selected_ && *selected_<document_.annotations().size() ? document_.annotations()[*selected_].tool : tool_;
+    return selected_ && *selected_ < document_.annotations().size() ? document_.annotations()[*selected_].tool : tool_;
 }
 AnnotationStyle ScreenshotEditor::ContextStyle() const {
-    return selected_ && *selected_<document_.annotations().size() ? document_.annotations()[*selected_].style : style_;
+    return selected_ && *selected_ < document_.annotations().size() ? document_.annotations()[*selected_].style : style_;
 }
 void ScreenshotEditor::Select(std::optional<size_t> index) {
-    selected_=index; if(selected_ && *selected_>=document_.annotations().size()) { selected_.reset(); }
-    ReflowToolbar(); Invalidate();
+    selected_ = index;
+    if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+    ReflowToolbar();
+    Invalidate();
 }
 void ScreenshotEditor::ChangeStyle(const AnnotationStyle& value) {
-    const auto revision=document_.revision();
-    if(selected_ && *selected_<document_.annotations().size()) {
-        const bool shared_opacity=document_.annotations()[*selected_].tool==ToolId::Spotlight && document_.annotations()[*selected_].style.opacity!=value.opacity;
-        const bool own_transaction=shared_opacity && !document_.in_transaction();
-        if(own_transaction) { document_.BeginTransaction(); }
-        if(shared_opacity) {
-            for(size_t i=0;i<document_.annotations().size();++i) if(document_.annotations()[i].tool==ToolId::Spotlight) {
-                auto region=document_.annotations()[i]; region.style.opacity=value.opacity; document_.Replace(i,std::move(region));
-            }
+    const auto revision = document_.revision();
+    if (selected_ && *selected_ < document_.annotations().size()) {
+        const bool shared_opacity = document_.annotations()[*selected_].tool == ToolId::Spotlight && document_.annotations()[*selected_].style.opacity != value.opacity;
+        const bool own_transaction = shared_opacity && !document_.in_transaction();
+        if (own_transaction) { document_.BeginTransaction(); }
+        if (shared_opacity) {
+            for (size_t i = 0; i < document_.annotations().size(); ++i)
+                if (document_.annotations()[i].tool == ToolId::Spotlight) {
+                    auto region = document_.annotations()[i];
+                    region.style.opacity = value.opacity;
+                    document_.Replace(i, std::move(region));
+                }
         }
-        auto annotation=document_.annotations()[*selected_]; annotation.style=value;
-        document_.Replace(*selected_,std::move(annotation));
-        if(own_transaction) { document_.CommitTransaction(); }
-        if(editing_text_) { pending_=document_.annotations()[*selected_]; LayoutTextEditor(); }
-    } else { style_=value; }
-    SyncContext(false); Invalidate(); NotifyMutation(revision);
+        auto annotation = document_.annotations()[*selected_];
+        annotation.style = value;
+        document_.Replace(*selected_, std::move(annotation));
+        if (own_transaction) { document_.CommitTransaction(); }
+        if (editing_text_) {
+            pending_ = document_.annotations()[*selected_];
+            LayoutTextEditor();
+        }
+    } else {
+        style_ = value;
+    }
+    SyncContext(false);
+    Invalidate();
+    NotifyMutation(revision);
 }
 void ScreenshotEditor::CreateContextControls() {
-    const auto make=[&](const wchar_t* cls,const wchar_t* name,DWORD style,int id) {
-        HWND child=::CreateWindowExW(0,cls,name,WS_CHILD|WS_TABSTOP|style,0,0,1,1,context_,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),::GetModuleHandleW(nullptr),nullptr);
-        if(child) { ::SetWindowSubclass(child,PropertyProc,1,reinterpret_cast<DWORD_PTR>(this)); }
-        if(child && ::lstrcmpW(cls,L"STATIC")==0 && !ui::StyleLabel(child)) { ::DestroyWindow(child); return static_cast<HWND>(nullptr); }
+    const auto make = [&](const wchar_t* cls, const wchar_t* name, DWORD style, int id) {
+        HWND child = ::CreateWindowExW(0, cls, name, WS_CHILD | WS_TABSTOP | style, 0, 0, 1, 1, context_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), ::GetModuleHandleW(nullptr), nullptr);
+        if (child) { ::SetWindowSubclass(child, PropertyProc, 1, reinterpret_cast<DWORD_PTR>(this)); }
+        if (child && ::lstrcmpW(cls, L"STATIC") == 0 && !ui::StyleLabel(child)) {
+            ::DestroyWindow(child);
+            return static_cast<HWND>(nullptr);
+        }
         return child;
     };
-    HWND font=make(L"COMBOBOX",strings::Get(IDS_EDITOR_FONT_SIZE_NAME),CBS_DROPDOWN|CBS_AUTOHSCROLL|CBS_OWNERDRAWFIXED|CBS_HASSTRINGS,2600);
-    if(font) {
-        for(const wchar_t* value:{L"12 pt",L"16 pt",L"24 pt",L"36 pt",L"48 pt",L"60 pt",L"72 pt",L"96 pt"}) { ::SendMessageW(font,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(value)); }
-        ::SendMessageW(font,CB_LIMITTEXT,10,0); static_cast<void>(ui::StyleInput(font));
-        ui::SetAccessibleName(font,strings::Get(IDS_EDITOR_FONT_SIZE_NAME));
+    HWND font = make(L"COMBOBOX", strings::Get(IDS_EDITOR_FONT_SIZE_NAME), CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS, 2600);
+    if (font) {
+        for (const wchar_t* value : {L"12 pt", L"16 pt", L"24 pt", L"36 pt", L"48 pt", L"60 pt", L"72 pt", L"96 pt"}) { ::SendMessageW(font, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value)); }
+        ::SendMessageW(font, CB_LIMITTEXT, 10, 0);
+        static_cast<void>(ui::StyleInput(font));
+        ui::SetAccessibleName(font, strings::Get(IDS_EDITOR_FONT_SIZE_NAME));
     }
-    for(int id:{2601,2602,2603}) {
-        HWND slider=make(TRACKBAR_CLASSW,strings::Get(id==2601 ? IDS_EDITOR_EFFECT_STRENGTH_NAME : id==2602 ? IDS_EDITOR_OPACITY_NAME : IDS_EDITOR_WATERMARK_SIZE_NAME),TBS_HORZ|TBS_NOTICKS, id);
-        ::SendMessageW(slider,TBM_SETRANGE,TRUE,MAKELPARAM(id==2603 ? 8:0,id==2603 ? 96:100));
-        ::SendMessageW(slider,TBM_SETPAGESIZE,0,10); static_cast<void>(ui::StyleSlider(slider));
+    for (int id : {2601, 2602, 2603}) {
+        HWND slider = make(TRACKBAR_CLASSW, strings::Get(id == 2601 ? IDS_EDITOR_EFFECT_STRENGTH_NAME : id == 2602 ? IDS_EDITOR_OPACITY_NAME
+                                                                                                                   : IDS_EDITOR_WATERMARK_SIZE_NAME),
+                           TBS_HORZ | TBS_NOTICKS, id);
+        ::SendMessageW(slider, TBM_SETRANGE, TRUE, MAKELPARAM(id == 2603 ? 8 : 0, id == 2603 ? 96 : 100));
+        ::SendMessageW(slider, TBM_SETPAGESIZE, 0, 10);
+        static_cast<void>(ui::StyleSlider(slider));
     }
-    HWND text=make(L"EDIT",L"",ES_AUTOHSCROLL,2604);
-    ::SendMessageW(text,EM_SETCUEBANNER,TRUE,reinterpret_cast<LPARAM>(strings::Get(IDS_EDITOR_WATERMARK_TEXT_CUE)));
-    ::SendMessageW(text,EM_SETLIMITTEXT,16,0); static_cast<void>(ui::StyleInput(text));
-    ui::SetAccessibleName(text,strings::Get(IDS_EDITOR_WATERMARK_TEXT_NAME));
-    HWND clear=make(L"BUTTON",strings::Get(IDS_EDITOR_WATERMARK_CLEAR_BUTTON),BS_PUSHBUTTON,2605);
-    ui::ButtonStyle clear_style; clear_style.icon=ui::Icon::Discard; clear_style.icon_only=true; clear_style.segmented=true;
-    clear_style.circular=true;
-    static_cast<void>(ui::StyleButton(clear,clear_style));
-    ::RemoveWindowSubclass(clear,PropertyProc,1);
-    ::SetWindowSubclass(clear,PropertyProc,1,reinterpret_cast<DWORD_PTR>(this));
-    ::SetParent(clear,text);
-    ::SetWindowLongPtrW(text,GWL_STYLE,::GetWindowLongPtrW(text,GWL_STYLE)|WS_CLIPCHILDREN);
-    for(int id:{2611,2612,2613}) { make(L"STATIC",L"",SS_CENTERIMAGE,id); }
+    HWND text = make(L"EDIT", L"", ES_AUTOHSCROLL, 2604);
+    ::SendMessageW(text, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(strings::Get(IDS_EDITOR_WATERMARK_TEXT_CUE)));
+    ::SendMessageW(text, EM_SETLIMITTEXT, 16, 0);
+    static_cast<void>(ui::StyleInput(text));
+    ui::SetAccessibleName(text, strings::Get(IDS_EDITOR_WATERMARK_TEXT_NAME));
+    HWND clear = make(L"BUTTON", strings::Get(IDS_EDITOR_WATERMARK_CLEAR_BUTTON), BS_PUSHBUTTON, 2605);
+    ui::ButtonStyle clear_style;
+    clear_style.icon = ui::Icon::Discard;
+    clear_style.icon_only = true;
+    clear_style.segmented = true;
+    clear_style.circular = true;
+    static_cast<void>(ui::StyleButton(clear, clear_style));
+    ::RemoveWindowSubclass(clear, PropertyProc, 1);
+    ::SetWindowSubclass(clear, PropertyProc, 1, reinterpret_cast<DWORD_PTR>(this));
+    ::SetParent(clear, text);
+    ::SetWindowLongPtrW(text, GWL_STYLE, ::GetWindowLongPtrW(text, GWL_STYLE) | WS_CLIPCHILDREN);
+    for (int id : {2611, 2612, 2613}) { make(L"STATIC", L"", SS_CENTERIMAGE, id); }
 }
 void ScreenshotEditor::SyncWatermarkClear() {
-    const HWND text=Control(2604),clear=Control(2605);
-    if(!text || !clear) { return; }
-    RECT field{}; ::GetWindowRect(text,&field);
-    POINT cursor{}; ::GetCursorPos(&cursor);
-    const bool over=::PtInRect(&field,cursor)!=FALSE;
-    const bool show=!modal_active_ && ContextTool()==ToolId::Watermark && ::IsWindowVisible(context_) &&
-        ::GetWindowTextLengthW(text)>0 && over;
-    const bool shown=(::GetWindowLongPtrW(clear,GWL_STYLE)&WS_VISIBLE)!=0;
-    if(shown!=show) {
-        ::ShowWindow(clear,show ? SW_SHOWNOACTIVATE:SW_HIDE);
-        if(show) { ::SetTimer(context_,0xEA63,40,nullptr); }
-        else { ::KillTimer(context_,0xEA63); }
+    const HWND text = Control(2604), clear = Control(2605);
+    if (!text || !clear) { return; }
+    RECT field{};
+    ::GetWindowRect(text, &field);
+    POINT cursor{};
+    ::GetCursorPos(&cursor);
+    const bool over = ::PtInRect(&field, cursor) != FALSE;
+    const bool show = !modal_active_ && ContextTool() == ToolId::Watermark && ::IsWindowVisible(context_) &&
+                      ::GetWindowTextLengthW(text) > 0 && over;
+    const bool shown = (::GetWindowLongPtrW(clear, GWL_STYLE) & WS_VISIBLE) != 0;
+    if (shown != show) {
+        ::ShowWindow(clear, show ? SW_SHOWNOACTIVATE : SW_HIDE);
+        if (show) {
+            ::SetTimer(context_, 0xEA63, 40, nullptr);
+        } else {
+            ::KillTimer(context_, 0xEA63);
+        }
     }
 }
-LRESULT CALLBACK ScreenshotEditor::PropertyProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM lparam,UINT_PTR id,DWORD_PTR reference) {
-    auto* self=reinterpret_cast<ScreenshotEditor*>(reference);
-    if(message==WM_NCDESTROY) { ::RemoveWindowSubclass(hwnd,PropertyProc,id); return ::DefSubclassProc(hwnd,message,wparam,lparam); }
-    const int control=::GetDlgCtrlID(hwnd);
-    if(control==2604 && message==WM_COMMAND && LOWORD(wparam)==2605) { return self->HandleMessage(self->context_,message,wparam,lparam); }
-    const bool clear_hover=(control==2604 || control==2605) &&
-        (message==WM_MOUSEMOVE || message==WM_MOUSELEAVE || message==WM_SETFOCUS || message==WM_KILLFOCUS);
-    if(clear_hover && message==WM_MOUSEMOVE) {
-        TRACKMOUSEEVENT track{sizeof(track),TME_LEAVE,hwnd,0}; ::TrackMouseEvent(&track);
+LRESULT CALLBACK ScreenshotEditor::PropertyProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR reference) {
+    auto* self = reinterpret_cast<ScreenshotEditor*>(reference);
+    if (message == WM_NCDESTROY) {
+        ::RemoveWindowSubclass(hwnd, PropertyProc, id);
+        return ::DefSubclassProc(hwnd, message, wparam, lparam);
     }
-    const bool slider=control>=2601 && control<=2603;
-    if(!self->syncing_context_ && ((slider && (message==WM_LBUTTONDOWN || message==WM_KEYDOWN)) || (!slider && message==WM_SETFOCUS))) {
+    const int control = ::GetDlgCtrlID(hwnd);
+    if (control == 2604 && message == WM_COMMAND && LOWORD(wparam) == 2605) { return self->HandleMessage(self->context_, message, wparam, lparam); }
+    const bool clear_hover = (control == 2604 || control == 2605) &&
+                             (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_SETFOCUS || message == WM_KILLFOCUS);
+    if (clear_hover && message == WM_MOUSEMOVE) {
+        TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, hwnd, 0};
+        ::TrackMouseEvent(&track);
+    }
+    const bool slider = control >= 2601 && control <= 2603;
+    if (!self->syncing_context_ && ((slider && (message == WM_LBUTTONDOWN || message == WM_KEYDOWN)) || (!slider && message == WM_SETFOCUS))) {
         // Only a transaction opened here is committed here: a text edit or a
         // transform that is already open keeps its own undo boundary.
-        if(!self->document_.in_transaction()) { self->context_owns_transaction_=true; self->document_.BeginTransaction(); }
+        if (!self->document_.in_transaction()) {
+            self->context_owns_transaction_ = true;
+            self->document_.BeginTransaction();
+        }
     }
-    if(message==WM_KEYDOWN && wparam==VK_ESCAPE) {
-        self->context_owns_transaction_=false; self->document_.CancelTransaction(); self->RequestDiscard(); return 0;
+    if (message == WM_KEYDOWN && wparam == VK_ESCAPE) {
+        self->context_owns_transaction_ = false;
+        self->document_.CancelTransaction();
+        self->RequestDiscard();
+        return 0;
     }
-    const LRESULT result=::DefSubclassProc(hwnd,message,wparam,lparam);
-    if(clear_hover) { self->SyncWatermarkClear(); }
-    if((slider && (message==WM_LBUTTONUP || message==WM_KEYUP)) || (!slider && message==WM_KILLFOCUS)) { self->CommitContextTransaction(); }
-    if(slider && message==WM_CAPTURECHANGED && ::GetKeyState(VK_LBUTTON)<0 && self->context_owns_transaction_) {
-        self->context_owns_transaction_=false; self->document_.CancelTransaction(); self->SyncContext(); self->Invalidate();
+    const LRESULT result = ::DefSubclassProc(hwnd, message, wparam, lparam);
+    if (clear_hover) { self->SyncWatermarkClear(); }
+    if ((slider && (message == WM_LBUTTONUP || message == WM_KEYUP)) || (!slider && message == WM_KILLFOCUS)) { self->CommitContextTransaction(); }
+    if (slider && message == WM_CAPTURECHANGED && ::GetKeyState(VK_LBUTTON) < 0 && self->context_owns_transaction_) {
+        self->context_owns_transaction_ = false;
+        self->document_.CancelTransaction();
+        self->SyncContext();
+        self->Invalidate();
     }
     return result;
 }
 void ScreenshotEditor::CommitContextTransaction() {
-    if(!context_owns_transaction_) { return; }
-    context_owns_transaction_=false; document_.CommitTransaction();
+    if (!context_owns_transaction_) { return; }
+    context_owns_transaction_ = false;
+    document_.CommitTransaction();
 }
 void ScreenshotEditor::SyncContext(bool layout) {
-    if(!context_ || syncing_context_) { return; }
-    syncing_context_=true;
-    const auto tool=ContextTool(); const auto style=ContextStyle();
-    const bool text=tool==ToolId::Text || tool==ToolId::Tag,watermark=tool==ToolId::Watermark;
-    const auto position=[&](int id,bool shown,float x,float y,float width,float height) {
-        HWND child=Control(id); if(!child) { return; }
-        if((::IsWindowVisible(child)!=FALSE)!=shown) { ::ShowWindow(child,shown ? SW_SHOWNA:SW_HIDE); }
-        if(shown) {
-            RECT old{}; ::GetWindowRect(child,&old); ::MapWindowPoints(nullptr,context_,reinterpret_cast<POINT*>(&old),2);
-            const RECT next{static_cast<LONG>(x*scale_),static_cast<LONG>(y*scale_),static_cast<LONG>((x+width)*scale_),static_cast<LONG>((y+height)*scale_)};
-            if(old.left!=next.left || old.top!=next.top || old.right!=next.right || (id!=2600 && old.bottom!=next.bottom)) {
-                ::SetWindowPos(child,nullptr,next.left,next.top,next.right-next.left,next.bottom-next.top,SWP_NOZORDER|SWP_NOACTIVATE);
+    if (!context_ || syncing_context_) { return; }
+    syncing_context_ = true;
+    const auto tool = ContextTool();
+    const auto style = ContextStyle();
+    const bool text = tool == ToolId::Text || tool == ToolId::Tag, watermark = tool == ToolId::Watermark;
+    const auto position = [&](int id, bool shown, float x, float y, float width, float height) {
+        HWND child = Control(id);
+        if (!child) { return; }
+        if ((::IsWindowVisible(child) != FALSE) != shown) { ::ShowWindow(child, shown ? SW_SHOWNA : SW_HIDE); }
+        if (shown) {
+            RECT old{};
+            ::GetWindowRect(child, &old);
+            ::MapWindowPoints(nullptr, context_, reinterpret_cast<POINT*>(&old), 2);
+            const RECT next{static_cast<LONG>(x * scale_), static_cast<LONG>(y * scale_), static_cast<LONG>((x + width) * scale_), static_cast<LONG>((y + height) * scale_)};
+            if (old.left != next.left || old.top != next.top || old.right != next.right || (id != 2600 && old.bottom != next.bottom)) {
+                ::SetWindowPos(child, nullptr, next.left, next.top, next.right - next.left, next.bottom - next.top, SWP_NOZORDER | SWP_NOACTIVATE);
             }
         }
-        if(reinterpret_cast<HFONT>(::SendMessageW(child,WM_GETFONT,0,0))!=toolbar_font_) { ::SendMessageW(child,WM_SETFONT,reinterpret_cast<WPARAM>(toolbar_font_),TRUE); }
+        if (reinterpret_cast<HFONT>(::SendMessageW(child, WM_GETFONT, 0, 0)) != toolbar_font_) { ::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(toolbar_font_), TRUE); }
     };
-    if(layout) for(int id:{2600,2601,2602,2603,2604,2611,2612,2613}) {
-        const auto it=std::find_if(context_fields_.begin(),context_fields_.end(),[id](const auto& field){return field.first==id;});
-        if(it==context_fields_.end()) { position(id,false,0,0,1,1); continue; }
-        const auto r=it->second;
-        position(id,true,r.left/scale_,r.top/scale_,(r.right-r.left)/scale_,id==2600 ? 280.0f:(r.bottom-r.top)/scale_);
+    if (layout)
+        for (int id : {2600, 2601, 2602, 2603, 2604, 2611, 2612, 2613}) {
+            const auto it = std::find_if(context_fields_.begin(), context_fields_.end(), [id](const auto& field) { return field.first == id; });
+            if (it == context_fields_.end()) {
+                position(id, false, 0, 0, 1, 1);
+                continue;
+            }
+            const auto r = it->second;
+            position(id, true, r.left / scale_, r.top / scale_, (r.right - r.left) / scale_, id == 2600 ? 280.0f : (r.bottom - r.top) / scale_);
+        }
+    const auto label = [&](int id, const wchar_t* value) {
+        wchar_t old[256]{};
+        ::GetWindowTextW(Control(id), old, 256);
+        if (::lstrcmpW(old, value) != 0) { ::SetWindowTextW(Control(id), value); }
+    };
+    const auto slider = [&](int id, float value) {
+        if (::SendMessageW(Control(id), TBM_GETPOS, 0, 0) != static_cast<LPARAM>(value)) { ::SendMessageW(Control(id), TBM_SETPOS, TRUE, static_cast<LPARAM>(value)); }
+    };
+    if (text && ::GetFocus() != Control(2600) && !::IsChild(Control(2600), ::GetFocus())) {
+        wchar_t value[32]{};
+        ::swprintf_s(value, L"%g pt", static_cast<double>(style.font_size));
+        label(2600, value);
     }
-    const auto label=[&](int id,const wchar_t* value) {
-        wchar_t old[256]{}; ::GetWindowTextW(Control(id),old,256);
-        if(::lstrcmpW(old,value)!=0) { ::SetWindowTextW(Control(id),value); }
-    };
-    const auto slider=[&](int id,float value) {
-        if(::SendMessageW(Control(id),TBM_GETPOS,0,0)!=static_cast<LPARAM>(value)) { ::SendMessageW(Control(id),TBM_SETPOS,TRUE,static_cast<LPARAM>(value)); }
-    };
-    if(text && ::GetFocus()!=Control(2600) && !::IsChild(Control(2600),::GetFocus())) {
-        wchar_t value[32]{}; ::swprintf_s(value,L"%g pt",static_cast<double>(style.font_size)); label(2600,value);
-    }
-    if(watermark) {
-        const auto& annotations=document_.annotations();
-        const auto found=std::find_if(annotations.begin(),annotations.end(),[](const auto& a) { return a.tool==ToolId::Watermark; });
+    if (watermark) {
+        const auto& annotations = document_.annotations();
+        const auto found = std::find_if(annotations.begin(), annotations.end(), [](const auto& a) { return a.tool == ToolId::Watermark; });
         // Undo may clear selection while the input still owns focus. Always
         // synchronize from the document; unchanged typing never resets EDIT.
-        label(2604,found!=annotations.end() ? found->text.c_str() : L"");
+        label(2604, found != annotations.end() ? found->text.c_str() : L"");
     }
-    if(watermark) {
-        RECT field{}; ::GetClientRect(Control(2604),&field);
-        const LONG size=ui::theme::Scaled(32,scale_),inset=ui::theme::Scaled(2,scale_);
-        ::SetWindowPos(Control(2605),HWND_TOP,field.right-size-inset,field.top+(field.bottom-field.top-size)/2,size,size,SWP_NOACTIVATE);
-        ::SendMessageW(Control(2604),EM_SETMARGINS,EC_RIGHTMARGIN,MAKELPARAM(0,size+inset*2));
+    if (watermark) {
+        RECT field{};
+        ::GetClientRect(Control(2604), &field);
+        const LONG size = ui::theme::Scaled(32, scale_), inset = ui::theme::Scaled(2, scale_);
+        ::SetWindowPos(Control(2605), HWND_TOP, field.right - size - inset, field.top + (field.bottom - field.top - size) / 2, size, size, SWP_NOACTIVATE);
+        ::SendMessageW(Control(2604), EM_SETMARGINS, EC_RIGHTMARGIN, MAKELPARAM(0, size + inset * 2));
     }
     SyncWatermarkClear();
-    slider(2601,style.strength);
-    slider(2602,style.opacity);
-    slider(2603,style.font_size);
-    const std::wstring strength=strings::Format(style.effect==EffectMode::Blur ? IDS_EDITOR_BLUR_INTENSITY_VALUE:IDS_EDITOR_BLOCK_SIZE_VALUE,{std::to_wstring(static_cast<int>(style.effect==EffectMode::Blur ? style.strength : 2+style.strength*0.7f))});
-    label(2611,strength.c_str());
-    label(2612,strings::Format(IDS_EDITOR_OPACITY_VALUE,{std::to_wstring(static_cast<int>(style.opacity))}).c_str());
-    label(2613,strings::Format(IDS_EDITOR_SIZE_VALUE,{std::to_wstring(static_cast<int>(style.font_size))}).c_str());
-    syncing_context_=false;
+    slider(2601, style.strength);
+    slider(2602, style.opacity);
+    slider(2603, style.font_size);
+    const std::wstring strength = strings::Format(style.effect == EffectMode::Blur ? IDS_EDITOR_BLUR_INTENSITY_VALUE : IDS_EDITOR_BLOCK_SIZE_VALUE, {std::to_wstring(static_cast<int>(style.effect == EffectMode::Blur ? style.strength : 2 + style.strength * 0.7f))});
+    label(2611, strength.c_str());
+    label(2612, strings::Format(IDS_EDITOR_OPACITY_VALUE, {std::to_wstring(static_cast<int>(style.opacity))}).c_str());
+    label(2613, strings::Format(IDS_EDITOR_SIZE_VALUE, {std::to_wstring(static_cast<int>(style.font_size))}).c_str());
+    syncing_context_ = false;
 }
 SIZE ScreenshotEditor::island_group_size() const noexcept {
     RECT main{};
-    if(!hwnd_ || !::GetWindowRect(hwnd_,&main)) { return {}; }
-    const LONG context=std::max(context_visible_ ? context_height_:0,reserved_context_height_);
-    return SIZE{main.right-main.left,main.bottom-main.top+(context>0 ? ui::theme::Scaled(8,scale_)+context:0)};
+    if (!hwnd_ || !::GetWindowRect(hwnd_, &main)) { return {}; }
+    const LONG context = std::max(context_visible_ ? context_height_ : 0, reserved_context_height_);
+    return SIZE{main.right - main.left, main.bottom - main.top + (context > 0 ? ui::theme::Scaled(8, scale_) + context : 0)};
 }
 void ScreenshotEditor::PlaceContext(bool follow_frame) {
-    if(!hwnd_ || !context_ || repositioning_ || modal_active_) { return; }
-    repositioning_=true;
-    RECT main{}; ::GetWindowRect(hwnd_,&main);
-    const auto monitor=platform::MonitorForRect(follow_frame ? region_:main);
-    const auto work=monitor.work_area;
-    const LONG gap=ui::theme::Scaled(8,scale_);
-    const LONG width=main.right-main.left;
-    const LONG height=main.bottom-main.top;
-    const LONG popup_space=brush_popup_open_ ? gap+ui::theme::Scaled(kToolbarRowHeight+6,scale_):0;
-    const LONG shown=height+(context_visible_ ? gap+context_height_:0)+popup_space;
+    if (!hwnd_ || !context_ || repositioning_ || modal_active_) { return; }
+    repositioning_ = true;
+    RECT main{};
+    ::GetWindowRect(hwnd_, &main);
+    const auto monitor = platform::MonitorForRect(follow_frame ? region_ : main);
+    const auto work = monitor.work_area;
+    const LONG gap = ui::theme::Scaled(8, scale_);
+    const LONG width = main.right - main.left;
+    const LONG height = main.bottom - main.top;
+    const LONG popup_space = brush_popup_open_ ? gap + ui::theme::Scaled(kToolbarRowHeight + 6, scale_) : 0;
+    const LONG shown = height + (context_visible_ ? gap + context_height_ : 0) + popup_space;
     // Outside the frame while anything outside has room, and never over the
     // mode island (ui/island_layout.h). An island the user moved, or one that
     // only changed its height, stays where it is unless that covers the mode
     // island.
-    const RECT keep_clear=callbacks_.keep_clear ? callbacks_.keep_clear():RECT{};
-    RECT group=platform::ClampRectToBounds({main.left,main.top,main.left+width,main.top+shown},work);
+    const RECT keep_clear = callbacks_.keep_clear ? callbacks_.keep_clear() : RECT{};
+    RECT group = platform::ClampRectToBounds({main.left, main.top, main.left + width, main.top + shown}, work);
     RECT covered{};
-    if(follow_frame || ::IntersectRect(&covered,&group,&keep_clear)) {
+    if (follow_frame || ::IntersectRect(&covered, &group, &keep_clear)) {
         // Placed around the frame with room for the tallest property island,
         // shown or not: choosing a tool must not send the islands to the other
         // side of the frame.
-        const LONG reserved=std::max(shown,island_group_size().cy+popup_space);
-        const auto frame_monitor=platform::MonitorForRect(region_);
-        group=ui::PlaceIslandForFrame(region_,frame_monitor.bounds,frame_monitor.work_area,SIZE{width,reserved},gap,keep_clear).rect;
+        const LONG reserved = std::max(shown, island_group_size().cy + popup_space);
+        const auto frame_monitor = platform::MonitorForRect(region_);
+        group = ui::PlaceIslandForFrame(region_, frame_monitor.bounds, frame_monitor.work_area, SIZE{width, reserved}, gap, keep_clear).rect;
     }
-    ::SetWindowPos(hwnd_,nullptr,group.left,group.top,width,height,SWP_NOZORDER|SWP_NOACTIVATE);
-    RECT context{group.left+(width-context_width_)/2,group.top+height+gap,0,0};
-    context.right=context.left+context_width_; context.bottom=context.top+context_height_;
-    context=platform::ClampRectToBounds(context,platform::MonitorForRect(group).work_area);
-    ::SetWindowPos(context_,HWND_TOPMOST,context.left,context.top,context_width_,std::max(1,context_height_),SWP_NOACTIVATE);
-    ui::RoundWindow(context_); ui::RoundWindow(hwnd_);
-    const bool show=visible_ && !frame_interacting_ && context_visible_;
-    if(show && !::IsWindowVisible(context_) && ui::theme::AnimationsEnabled()) {
-        context_fade_started_=::GetTickCount64(); ::SetLayeredWindowAttributes(context_,0,0,LWA_ALPHA); ::SetTimer(context_,0xEA61,15,nullptr);
+    ::SetWindowPos(hwnd_, nullptr, group.left, group.top, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+    RECT context{group.left + (width - context_width_) / 2, group.top + height + gap, 0, 0};
+    context.right = context.left + context_width_;
+    context.bottom = context.top + context_height_;
+    context = platform::ClampRectToBounds(context, platform::MonitorForRect(group).work_area);
+    ::SetWindowPos(context_, HWND_TOPMOST, context.left, context.top, context_width_, std::max(1, context_height_), SWP_NOACTIVATE);
+    ui::RoundWindow(context_);
+    ui::RoundWindow(hwnd_);
+    const bool show = visible_ && !frame_interacting_ && context_visible_;
+    if (show && !::IsWindowVisible(context_) && ui::theme::AnimationsEnabled()) {
+        context_fade_started_ = ::GetTickCount64();
+        ::SetLayeredWindowAttributes(context_, 0, 0, LWA_ALPHA);
+        ::SetTimer(context_, 0xEA61, 15, nullptr);
     }
-    if(!show) { ::KillTimer(context_,0xEA61); context_fade_started_=0; ::SetLayeredWindowAttributes(context_,0,255,LWA_ALPHA); }
-    ::ShowWindow(context_,show ? SW_SHOWNOACTIVATE:SW_HIDE);
-    if(brush_popup_open_) { ShowBrushPopup(true); }
-    repositioning_=false;
+    if (!show) {
+        ::KillTimer(context_, 0xEA61);
+        context_fade_started_ = 0;
+        ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
+    }
+    ::ShowWindow(context_, show ? SW_SHOWNOACTIVATE : SW_HIDE);
+    if (brush_popup_open_) { ShowBrushPopup(true); }
+    repositioning_ = false;
 }
 void ScreenshotEditor::ShowBrushPopup(bool show) {
-    if(!brush_popup_) { return; }
-    if(show && visible_ && !modal_active_ && ContextTool()==ToolId::Mosaic) {
-        brush_popup_open_=true;
+    if (!brush_popup_) { return; }
+    if (show && visible_ && !modal_active_ && ContextTool() == ToolId::Mosaic) {
+        brush_popup_open_ = true;
         // Reserve all three islands as one group before showing the final one.
         // At the bottom edge, move the group upward instead of covering tools.
-        if(!repositioning_) { PlaceContext(); return; }
-        RECT anchor{},context{}; ::GetWindowRect(Control(2520),&anchor); ::GetWindowRect(context_,&context);
-        const LONG width=ui::theme::Scaled(132,scale_),height=ui::theme::Scaled(kToolbarRowHeight+6,scale_),gap=ui::theme::Scaled(8,scale_);
-        const auto work=platform::MonitorForRect(anchor).work_area;
-        const LONG center=(anchor.left+anchor.right)/2,callout=ui::theme::Scaled(6,scale_);
-        const LONG top=context.bottom+gap;
-        RECT r{center-width/2,top,center+width-width/2,top+height}; r=platform::ClampRectToBounds(r,work);
-        const LONG callout_x=std::clamp(center-r.left,callout*2,width-callout*2);
-        HRGN shape=::CreateRoundRectRgn(0,callout,width+1,height+1,gap*2,gap*2);
-        POINT triangle[]={{callout_x-callout,callout},{callout_x,0},{callout_x+callout,callout}};
-        HRGN pointer=::CreatePolygonRgn(triangle,3,WINDING);
-        if(shape && pointer) { ::CombineRgn(shape,shape,pointer,RGN_OR); }
-        if(pointer) { ::DeleteObject(pointer); }
-        if(shape && !::SetWindowRgn(brush_popup_,shape,FALSE)) { ::DeleteObject(shape); }
-        for(int id=2300;id<2303;++id) {
-            const auto item=std::find_if(toolbar_.begin(),toolbar_.end(),[id](const auto& value){ return value.identifier==id; });
-            if(item!=toolbar_.end()) { ::SetWindowPos(Control(id),nullptr,static_cast<int>(item->rect.left),static_cast<int>(item->rect.top),0,0,SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE); }
+        if (!repositioning_) {
+            PlaceContext();
+            return;
         }
-        ::SetWindowPos(brush_popup_,HWND_TOPMOST,r.left,r.top,width,height,SWP_NOACTIVATE|SWP_SHOWWINDOW);
-        ::InvalidateRect(brush_popup_,nullptr,FALSE);
-        brush_leave_started_=0; ::SetTimer(context_,0xEA62,30,nullptr);
+        RECT anchor{}, context{};
+        ::GetWindowRect(Control(2520), &anchor);
+        ::GetWindowRect(context_, &context);
+        const LONG width = ui::theme::Scaled(132, scale_), height = ui::theme::Scaled(kToolbarRowHeight + 6, scale_), gap = ui::theme::Scaled(8, scale_);
+        const auto work = platform::MonitorForRect(anchor).work_area;
+        const LONG center = (anchor.left + anchor.right) / 2, callout = ui::theme::Scaled(6, scale_);
+        const LONG top = context.bottom + gap;
+        RECT r{center - width / 2, top, center + width - width / 2, top + height};
+        r = platform::ClampRectToBounds(r, work);
+        const LONG callout_x = std::clamp(center - r.left, callout * 2, width - callout * 2);
+        HRGN shape = ::CreateRoundRectRgn(0, callout, width + 1, height + 1, gap * 2, gap * 2);
+        POINT triangle[] = {{callout_x - callout, callout}, {callout_x, 0}, {callout_x + callout, callout}};
+        HRGN pointer = ::CreatePolygonRgn(triangle, 3, WINDING);
+        if (shape && pointer) { ::CombineRgn(shape, shape, pointer, RGN_OR); }
+        if (pointer) { ::DeleteObject(pointer); }
+        if (shape && !::SetWindowRgn(brush_popup_, shape, FALSE)) { ::DeleteObject(shape); }
+        for (int id = 2300; id < 2303; ++id) {
+            const auto item = std::find_if(toolbar_.begin(), toolbar_.end(), [id](const auto& value) { return value.identifier == id; });
+            if (item != toolbar_.end()) { ::SetWindowPos(Control(id), nullptr, static_cast<int>(item->rect.left), static_cast<int>(item->rect.top), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE); }
+        }
+        ::SetWindowPos(brush_popup_, HWND_TOPMOST, r.left, r.top, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        ::InvalidateRect(brush_popup_, nullptr, FALSE);
+        brush_leave_started_ = 0;
+        ::SetTimer(context_, 0xEA62, 30, nullptr);
     } else {
-        brush_popup_open_=false;
-        ::ShowWindow(brush_popup_,SW_HIDE); ::KillTimer(context_,0xEA62);
-        brush_hover_started_=brush_leave_started_=0;
+        brush_popup_open_ = false;
+        ::ShowWindow(brush_popup_, SW_HIDE);
+        ::KillTimer(context_, 0xEA62);
+        brush_hover_started_ = brush_leave_started_ = 0;
     }
 }
-void ScreenshotEditor::PaintContext(HDC dc,HWND window) const {
-    RECT client{}; ::GetClientRect(window,&client); ui::PaintBuffer buffer(dc,client); dc=buffer.dc();
-    ui::theme::DrawPanel(dc,client,scale_);
-    if(window==context_) for(const auto& r:context_separators_) { ui::DrawSeparator(dc,r,scale_); }
+void ScreenshotEditor::PaintContext(HDC dc, HWND window) const {
+    RECT client{};
+    ::GetClientRect(window, &client);
+    ui::PaintBuffer buffer(dc, client);
+    dc = buffer.dc();
+    ui::theme::DrawPanel(dc, client, scale_);
+    if (window == context_)
+        for (const auto& r : context_separators_) { ui::DrawSeparator(dc, r, scale_); }
 }
 void ScreenshotEditor::SetFrameInteracting(bool interacting) {
-    if(frame_interacting_==interacting) { return; }
-    frame_interacting_=interacting;
-    if(interacting) { ShowBrushPopup(false); ::ShowWindow(hwnd_,SW_HIDE); if(context_) { ::ShowWindow(context_,SW_HIDE); } }
-    else if(visible_) { PlaceContext(true); ::ShowWindow(hwnd_,SW_SHOWNOACTIVATE); }
+    if (frame_interacting_ == interacting) { return; }
+    frame_interacting_ = interacting;
+    if (interacting) {
+        ShowBrushPopup(false);
+        ::ShowWindow(hwnd_, SW_HIDE);
+        if (context_) { ::ShowWindow(context_, SW_HIDE); }
+    } else if (visible_) {
+        PlaceContext(true);
+        ::ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+    }
 }
 
 LRESULT CALLBACK ScreenshotEditor::ToolbarButtonProc(HWND hwnd, UINT message, WPARAM wparam,
-    LPARAM lparam, UINT_PTR identifier, DWORD_PTR reference) {
+                                                     LPARAM lparam, UINT_PTR identifier, DWORD_PTR reference) {
     auto* self = reinterpret_cast<ScreenshotEditor*>(reference);
     if (message == WM_NCDESTROY) {
         ::RemoveWindowSubclass(hwnd, ToolbarButtonProc, identifier);
         return ::DefSubclassProc(hwnd, message, wparam, lparam);
     }
     if (ui::ConsumePopupInput(message, wparam)) { return 0; }
-    if(message==WM_MOUSEMOVE && ::GetDlgCtrlID(hwnd)==2520) {
-        if(!self->brush_hover_started_) { self->brush_hover_started_=::GetTickCount64(); }
-        ::SetTimer(self->context_,0xEA62,30,nullptr);
+    if (message == WM_MOUSEMOVE && ::GetDlgCtrlID(hwnd) == 2520) {
+        if (!self->brush_hover_started_) { self->brush_hover_started_ = ::GetTickCount64(); }
+        ::SetTimer(self->context_, 0xEA62, 30, nullptr);
     }
     // Every other control fixes the screenshot on its first press. Cancel,
     // the theme switch and Scrollshot must not acquire an image.
@@ -880,17 +1117,18 @@ LRESULT CALLBACK ScreenshotEditor::ToolbarButtonProc(HWND hwnd, UINT message, WP
 
 void ScreenshotEditor::SyncToolbarControls() const {
     if (!hwnd_) { return; }
-    const auto style=ContextStyle();
+    const auto style = ContextStyle();
     for (const auto& item : toolbar_) {
         HWND button = Control(item.identifier);
         if (!button) { continue; }
-        if(((::GetWindowLongPtrW(button,GWL_STYLE)&WS_VISIBLE)!=0)!=item.shown) { ::ShowWindow(button, item.shown ? SW_SHOWNA : SW_HIDE); }
+        if (((::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE) != 0) != item.shown) { ::ShowWindow(button, item.shown ? SW_SHOWNA : SW_HIDE); }
         if (item.shown) {
             const RECT rect{static_cast<LONG>(item.rect.left), static_cast<LONG>(item.rect.top),
-                static_cast<LONG>(item.rect.right), static_cast<LONG>(item.rect.bottom)};
-            RECT old{}; ::GetWindowRect(button, &old);
+                            static_cast<LONG>(item.rect.right), static_cast<LONG>(item.rect.bottom)};
+            RECT old{};
+            ::GetWindowRect(button, &old);
             ::MapWindowPoints(nullptr, ::GetParent(button), reinterpret_cast<POINT*>(&old), 2);
-            if (!::EqualRect(&rect, &old)) { ::MoveWindow(button, rect.left, rect.top, rect.right-rect.left, rect.bottom-rect.top, TRUE); }
+            if (!::EqualRect(&rect, &old)) { ::MoveWindow(button, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, TRUE); }
         }
         if (reinterpret_cast<HFONT>(::SendMessageW(button, WM_GETFONT, 0, 0)) != toolbar_font_) {
             ::SendMessageW(button, WM_SETFONT, reinterpret_cast<WPARAM>(toolbar_font_), TRUE);
@@ -903,10 +1141,10 @@ void ScreenshotEditor::SyncToolbarControls() const {
             case ToolbarItem::Kind::Thickness: selected = item.thickness == style.thickness; break;
             case ToolbarItem::Kind::BrushSize: selected = item.brush_size == style.brush_size; break;
             case ToolbarItem::Kind::Option:
-                selected = (item.identifier>=2500 && item.identifier<=2502 && static_cast<int>(style.text_mode)==item.identifier-2500) ||
-                    (item.identifier>=2510 && item.identifier<=2511 && static_cast<int>(style.effect)==item.identifier-2510) ||
-                    (item.identifier>=2520 && item.identifier<=2521 && static_cast<int>(style.method)==item.identifier-2520) ||
-                    (item.identifier>=2530 && item.identifier<=2532 && static_cast<int>(style.shape)==item.identifier-2530);
+                selected = (item.identifier >= 2500 && item.identifier <= 2502 && static_cast<int>(style.text_mode) == item.identifier - 2500) ||
+                           (item.identifier >= 2510 && item.identifier <= 2511 && static_cast<int>(style.effect) == item.identifier - 2510) ||
+                           (item.identifier >= 2520 && item.identifier <= 2521 && static_cast<int>(style.method) == item.identifier - 2520) ||
+                           (item.identifier >= 2530 && item.identifier <= 2532 && static_cast<int>(style.shape) == item.identifier - 2530);
                 break;
             case ToolbarItem::Kind::Command:
                 if (item.command == kCommandUndo || item.command == kCommandClear) { enabled = document_.CanUndo(); }
@@ -919,7 +1157,7 @@ void ScreenshotEditor::SyncToolbarControls() const {
                         info.hwnd = hwnd_;
                         info.uId = kScrollshotDisabledTip;
                         info.rect = RECT{static_cast<LONG>(item.rect.left), static_cast<LONG>(item.rect.top),
-                            static_cast<LONG>(item.rect.right), static_cast<LONG>(item.rect.bottom)};
+                                         static_cast<LONG>(item.rect.right), static_cast<LONG>(item.rect.bottom)};
                         ::SendMessageW(tooltip_, TTM_NEWTOOLRECTW, 0, reinterpret_cast<LPARAM>(&info));
                     }
                 }
@@ -937,28 +1175,32 @@ void ScreenshotEditor::ReflowToolbar() {
     if (!hwnd_) { return; }
     BuildToolbar(static_cast<float>(client_width_));
     const int height = toolbar_rect_.bottom;
-    RECT current{}; ::GetWindowRect(hwnd_, &current);
+    RECT current{};
+    ::GetWindowRect(hwnd_, &current);
     const auto monitor = platform::MonitorForRect(current);
     current.bottom = current.top + height;
     current = platform::ClampRectToBounds(current, monitor.work_area);
-    ::SetWindowPos(hwnd_, nullptr, current.left, current.top, current.right-current.left, current.bottom-current.top,
-        SWP_NOZORDER | SWP_NOACTIVATE);
+    ::SetWindowPos(hwnd_, nullptr, current.left, current.top, current.right - current.left, current.bottom - current.top,
+                   SWP_NOZORDER | SWP_NOACTIVATE);
     SyncToolbarControls();
     SyncContext();
     PlaceContext(!island_user_positioned_);
 }
 
 bool ScreenshotEditor::ProcessDialogMessage(MSG& message) const {
-    if(!visible_) { return false; }
-    for(HWND parent:{text_host_,brush_popup_,context_,hwnd_}) {
-        if(parent && (message.hwnd==parent || ::IsChild(parent,message.hwnd))) {
-            if(parent==text_host_) { return false; } // EDIT owns multiline Return, arrows and clipboard keys.
-            if(message.message==WM_KEYDOWN && message.wParam==VK_ESCAPE) {
-                if(::SendMessageW(Control(2600),CB_GETDROPPEDSTATE,0,0)) { ::SendMessageW(Control(2600),CB_SHOWDROPDOWN,FALSE,0); }
-                else { ::SendMessageW(hwnd_,WM_KEYDOWN,VK_ESCAPE,message.lParam); }
+    if (!visible_) { return false; }
+    for (HWND parent : {text_host_, brush_popup_, context_, hwnd_}) {
+        if (parent && (message.hwnd == parent || ::IsChild(parent, message.hwnd))) {
+            if (parent == text_host_) { return false; } // EDIT owns multiline Return, arrows and clipboard keys.
+            if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
+                if (::SendMessageW(Control(2600), CB_GETDROPPEDSTATE, 0, 0)) {
+                    ::SendMessageW(Control(2600), CB_SHOWDROPDOWN, FALSE, 0);
+                } else {
+                    ::SendMessageW(hwnd_, WM_KEYDOWN, VK_ESCAPE, message.lParam);
+                }
                 return true;
             }
-            return ui::ConsumePopupInput(message.message,message.wParam) || ui::ActivateFocusedButton(message,parent) || ::IsDialogMessageW(parent,&message)!=FALSE;
+            return ui::ConsumePopupInput(message.message, message.wParam) || ui::ActivateFocusedButton(message, parent) || ::IsDialogMessageW(parent, &message) != FALSE;
         }
     }
     return false;
@@ -969,108 +1211,207 @@ bool ScreenshotEditor::ProcessDialogMessage(MSG& message) const {
 // ---------------------------------------------------------------------------
 
 void ScreenshotEditor::BuildToolbar(float available_width) {
-    toolbar_.clear(); main_separators_.clear();
-    const float s=scale_,pad=kEdgePadding*s,gap=kItemGap*s,row=kToolbarRowHeight*s;
-    const float limit=std::max(available_width-pad,pad+kToolButton*s);
-    float x=pad+kIslandGrip*s,y=0;
-    const auto place=[&](float width) {
-        if(x>pad && x+width>limit) { x=pad; y+=row; }
-        const D2D1_RECT_F r{x,y+(row-kToolButton*s)/2,x+width,y+(row+kToolButton*s)/2}; x+=width+gap; return r;
-    };
-    struct Entry { ToolId tool; UINT name; };
-    constexpr Entry tools[]={{ToolId::Pointer,IDS_EDITOR_TOOL_POINTER},{ToolId::Rectangle,IDS_EDITOR_TOOL_RECTANGLE},{ToolId::Ellipse,IDS_EDITOR_TOOL_ELLIPSE},
-        {ToolId::Line,IDS_EDITOR_TOOL_LINE},{ToolId::Arrow,IDS_EDITOR_TOOL_ARROW},{ToolId::Pen,IDS_EDITOR_TOOL_PEN},{ToolId::Text,IDS_EDITOR_TOOL_TEXT},{ToolId::Tag,IDS_EDITOR_TOOL_TAG},
-        {ToolId::Mosaic,IDS_EDITOR_TOOL_MOSAIC},{ToolId::Spotlight,IDS_EDITOR_TOOL_SPOTLIGHT},{ToolId::Watermark,IDS_EDITOR_TOOL_WATERMARK}};
-    for(const auto& entry:tools) {
-        if(entry.tool==ToolId::Mosaic) {
-            const auto split=place(8*s); main_separators_.push_back({static_cast<LONG>((split.left+split.right)/2),static_cast<LONG>(split.top+8*s),static_cast<LONG>((split.left+split.right)/2+1),static_cast<LONG>(split.bottom-8*s)});
+    toolbar_.clear();
+    main_separators_.clear();
+    const float s = scale_, pad = kEdgePadding * s, gap = kItemGap * s, row = kToolbarRowHeight * s;
+    const float limit = std::max(available_width - pad, pad + kToolButton * s);
+    float x = pad + kIslandGrip * s, y = 0;
+    const auto place = [&](float width) {
+        if (x > pad && x + width > limit) {
+            x = pad;
+            y += row;
         }
-        ToolbarItem item; item.tool=entry.tool; item.identifier=2000+static_cast<int>(entry.tool);
-        item.label=item.tooltip=strings::Get(entry.name); item.rect=place(kToolButton*s); toolbar_.push_back(item);
+        const D2D1_RECT_F r{x, y + (row - kToolButton * s) / 2, x + width, y + (row + kToolButton * s) / 2};
+        x += width + gap;
+        return r;
+    };
+    struct Entry {
+        ToolId tool;
+        UINT name;
+    };
+    constexpr Entry tools[] = {{ToolId::Pointer, IDS_EDITOR_TOOL_POINTER}, {ToolId::Rectangle, IDS_EDITOR_TOOL_RECTANGLE}, {ToolId::Ellipse, IDS_EDITOR_TOOL_ELLIPSE}, {ToolId::Line, IDS_EDITOR_TOOL_LINE}, {ToolId::Arrow, IDS_EDITOR_TOOL_ARROW}, {ToolId::Pen, IDS_EDITOR_TOOL_PEN}, {ToolId::Text, IDS_EDITOR_TOOL_TEXT}, {ToolId::Tag, IDS_EDITOR_TOOL_TAG}, {ToolId::Mosaic, IDS_EDITOR_TOOL_MOSAIC}, {ToolId::Spotlight, IDS_EDITOR_TOOL_SPOTLIGHT}, {ToolId::Watermark, IDS_EDITOR_TOOL_WATERMARK}};
+    for (const auto& entry : tools) {
+        if (entry.tool == ToolId::Mosaic) {
+            const auto split = place(8 * s);
+            main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
+        }
+        ToolbarItem item;
+        item.tool = entry.tool;
+        item.identifier = 2000 + static_cast<int>(entry.tool);
+        item.label = item.tooltip = strings::Get(entry.name);
+        item.rect = place(kToolButton * s);
+        toolbar_.push_back(item);
     }
-    { const auto split=place(kGroupGap*s); main_separators_.push_back({static_cast<LONG>((split.left+split.right)/2),static_cast<LONG>(split.top+8*s),static_cast<LONG>((split.left+split.right)/2+1),static_cast<LONG>(split.bottom-8*s)}); }
+    {
+        const auto split = place(kGroupGap * s);
+        main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
+    }
     {
         // Scrollshot is a different kind of capture, not an annotation tool or
         // an edit command, so it stands alone between the two groups.
-        ToolbarItem item; item.kind=ToolbarItem::Kind::Command; item.command=kCommandScrollshot; item.identifier=2400+kCommandScrollshot;
-        item.label=item.tooltip=strings::Get(IDS_SCROLLSHOT_TOOL); item.rect=place(kCommandButton*s); toolbar_.push_back(item);
-        const auto split=place(8*s); main_separators_.push_back({static_cast<LONG>((split.left+split.right)/2),static_cast<LONG>(split.top+8*s),static_cast<LONG>((split.left+split.right)/2+1),static_cast<LONG>(split.bottom-8*s)});
+        ToolbarItem item;
+        item.kind = ToolbarItem::Kind::Command;
+        item.command = kCommandScrollshot;
+        item.identifier = 2400 + kCommandScrollshot;
+        item.label = item.tooltip = strings::Get(IDS_SCROLLSHOT_TOOL);
+        item.rect = place(kCommandButton * s);
+        toolbar_.push_back(item);
+        const auto split = place(8 * s);
+        main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
     }
-    struct Command { int id; const wchar_t* name; };
+    struct Command {
+        int id;
+        const wchar_t* name;
+    };
     // Only Copy keeps its name from here; CreateToolbarControls names the others.
-    const Command commands[]={{kCommandUndo,L"Undo"},{kCommandRedo,L"Redo"},{kCommandClear,L"Clear annotations"},
-        {kCommandTheme,L"Switch theme"},{kCommandSave,L"Save"},{kCommandCancel,L"Discard"},{kCommandCopy,strings::Get(IDS_EDITOR_COPY_BUTTON)}};
-    for(const auto& entry:commands) {
-        ToolbarItem item; item.kind=ToolbarItem::Kind::Command; item.command=entry.id; item.identifier=2400+entry.id;
-        item.label=item.tooltip=entry.name; item.rect=place(kCommandButton*s); toolbar_.push_back(item);
+    const Command commands[] = {{kCommandUndo, L"Undo"}, {kCommandRedo, L"Redo"}, {kCommandClear, L"Clear annotations"}, {kCommandTheme, L"Switch theme"}, {kCommandSave, L"Save"}, {kCommandCancel, L"Discard"}, {kCommandCopy, strings::Get(IDS_EDITOR_COPY_BUTTON)}};
+    for (const auto& entry : commands) {
+        ToolbarItem item;
+        item.kind = ToolbarItem::Kind::Command;
+        item.command = entry.id;
+        item.identifier = 2400 + entry.id;
+        item.label = item.tooltip = entry.name;
+        item.rect = place(kCommandButton * s);
+        toolbar_.push_back(item);
     }
-    toolbar_rect_={0,0,static_cast<LONG>(available_width),static_cast<LONG>(std::ceil(y+row))};
+    toolbar_rect_ = {0, 0, static_cast<LONG>(available_width), static_cast<LONG>(std::ceil(y + row))};
     // The property island of `tool`, wrapped in the width of the tools island.
     // Returns its height (0 for the pointer, which has none) and its widest row.
-    const auto layout_context=[&](ToolId tool,std::vector<ToolbarItem>& items,std::vector<std::pair<int,RECT>>& fields,
-                                  std::vector<RECT>& separators) {
-        x=pad; y=0;
-        const bool text=tool==ToolId::Text,tag=tool==ToolId::Tag,effect=tool==ToolId::Mosaic,spot=tool==ToolId::Spotlight,watermark=tool==ToolId::Watermark;
-        float widest=0;
-        const auto field=[&](int id,float width) {
-            auto r=place(width*s); widest=std::max(widest,r.right+pad);
-            fields.push_back({id,{static_cast<LONG>(r.left),static_cast<LONG>(r.top),static_cast<LONG>(r.right),static_cast<LONG>(r.bottom)}});
+    const auto layout_context = [&](ToolId tool, std::vector<ToolbarItem>& items, std::vector<std::pair<int, RECT>>& fields,
+                                    std::vector<RECT>& separators) {
+        x = pad;
+        y = 0;
+        const bool text = tool == ToolId::Text, tag = tool == ToolId::Tag, effect = tool == ToolId::Mosaic, spot = tool == ToolId::Spotlight, watermark = tool == ToolId::Watermark;
+        float widest = 0;
+        const auto field = [&](int id, float width) {
+            auto r = place(width * s);
+            widest = std::max(widest, r.right + pad);
+            fields.push_back({id, {static_cast<LONG>(r.left), static_cast<LONG>(r.top), static_cast<LONG>(r.right), static_cast<LONG>(r.bottom)}});
         };
-        const auto separator=[&] {
-            const auto r=place(8*s);
-            separators.push_back({static_cast<LONG>((r.left+r.right)/2),static_cast<LONG>(r.top+8*s),static_cast<LONG>((r.left+r.right)/2+1),static_cast<LONG>(r.bottom-8*s)});
+        // A value label is as wide as the widest text it can show, and never
+        // narrower than its design width. A font's pixel height does not follow
+        // the scale exactly, so a fixed width that fits at 125 % cut
+        // "Boyut 96 pt" at 150 %.
+        const auto value_field = [&](int id, float minimum, std::initializer_list<std::wstring> texts) {
+            float text_width = 0;
+            for (const std::wstring& value : texts) { text_width = std::max(text_width, TextPixelWidth(toolbar_font_, value)); }
+            field(id, std::max(minimum, (text_width + 1.0f) / s));
         };
-        const auto option=[&](int id,UINT name,bool shown,float width=kToolButton) {
-            ToolbarItem item; item.kind=ToolbarItem::Kind::Option; item.identifier=id; item.label=item.tooltip=strings::Get(name); item.shown=shown;
-            if(shown) { item.rect=place(width*s); widest=std::max(widest,item.rect.right+pad); } items.push_back(item);
+        const auto separator = [&] {
+            const auto r = place(8 * s);
+            separators.push_back({static_cast<LONG>((r.left + r.right) / 2), static_cast<LONG>(r.top + 8 * s), static_cast<LONG>((r.left + r.right) / 2 + 1), static_cast<LONG>(r.bottom - 8 * s)});
         };
-        option(2500,IDS_EDITOR_OPTION_PLAIN_TEXT,text); option(2501,IDS_EDITOR_OPTION_FILLED_TEXT,text); option(2502,IDS_EDITOR_OPTION_OUTLINED_TEXT,text);
-        option(2511,IDS_EDITOR_OPTION_PIXELATE,effect); option(2510,IDS_EDITOR_OPTION_BLUR,effect);
-        if(effect) { separator(); }
-        option(2520,IDS_EDITOR_OPTION_BRUSH,effect,48); option(2521,IDS_EDITOR_OPTION_REGION,effect);
-        if(effect) { separator(); field(2611,125); field(2601,155); }
-        option(2530,IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE,spot); option(2531,IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE,spot); option(2532,IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED,spot);
-        if(spot) { separator(); field(2612,110); field(2602,155); }
-        if(text || tag) { field(2600,96); separator(); }
-        if(watermark) { field(2604,140); separator(); }
-        const bool stroke=tool!=ToolId::Pointer && !text && !tag && !effect && !spot && !watermark;
-        for(size_t i=0;i<kThicknessOptions.size();++i) {
-            ToolbarItem item; item.kind=ToolbarItem::Kind::Thickness; item.thickness=kThicknessOptions[i]; item.identifier=2200+static_cast<int>(i);
-            item.tooltip=L"Stroke width"; item.shown=stroke;
-            if(item.shown) { item.rect=place(kToolButton*s); widest=std::max(widest,item.rect.right+pad); } items.push_back(item);
+        const auto option = [&](int id, UINT name, bool shown, float width = kToolButton) {
+            ToolbarItem item;
+            item.kind = ToolbarItem::Kind::Option;
+            item.identifier = id;
+            item.label = item.tooltip = strings::Get(name);
+            item.shown = shown;
+            if (shown) {
+                item.rect = place(width * s);
+                widest = std::max(widest, item.rect.right + pad);
+            }
+            items.push_back(item);
+        };
+        option(2500, IDS_EDITOR_OPTION_PLAIN_TEXT, text);
+        option(2501, IDS_EDITOR_OPTION_FILLED_TEXT, text);
+        option(2502, IDS_EDITOR_OPTION_OUTLINED_TEXT, text);
+        option(2511, IDS_EDITOR_OPTION_PIXELATE, effect);
+        option(2510, IDS_EDITOR_OPTION_BLUR, effect);
+        if (effect) { separator(); }
+        option(2520, IDS_EDITOR_OPTION_BRUSH, effect, 48);
+        option(2521, IDS_EDITOR_OPTION_REGION, effect);
+        if (effect) {
+            separator();
+            value_field(2611, 125, {strings::Format(IDS_EDITOR_BLUR_INTENSITY_VALUE, {L"100"}), strings::Format(IDS_EDITOR_BLOCK_SIZE_VALUE, {L"72"})});
+            field(2601, 155);
         }
-        if(stroke) { separator(); }
-        for(size_t i=0;i<kPaletteColors.size();++i) {
-            ToolbarItem item; item.kind=ToolbarItem::Kind::Color; item.color=kPaletteColors[i]; item.identifier=2100+static_cast<int>(i);
-            item.tooltip=L"Annotation color"; item.shown=tool!=ToolId::Pointer && !effect && !spot;
-            if(item.shown) { item.rect=place(kSwatch*s); widest=std::max(widest,item.rect.right+pad); } items.push_back(item);
+        option(2530, IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE, spot);
+        option(2531, IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE, spot);
+        option(2532, IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED, spot);
+        if (spot) {
+            separator();
+            value_field(2612, 110, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
+            field(2602, 155);
         }
-        if(watermark) { separator(); field(2612,85); field(2602,100); separator(); field(2613,65); field(2603,100); }
-        for(size_t i=0;i<kBrushSizeOptions.size();++i) {
-            ToolbarItem item; item.kind=ToolbarItem::Kind::BrushSize; item.brush_size=kBrushSizeOptions[i]; item.identifier=2300+static_cast<int>(i);
-            item.tooltip=L"Brush size"; item.shown=true;
-            const float left=pad+static_cast<float>(i)*(kToolButton+kItemGap)*s;
-            const float callout=6*s;
-            item.rect={left,callout+(row-kToolButton*s)/2,left+kToolButton*s,callout+(row+kToolButton*s)/2}; items.push_back(item);
+        if (text || tag) {
+            field(2600, 96);
+            separator();
         }
-        return std::pair<float,float>{tool!=ToolId::Pointer ? y+row:0.0f,widest};
+        if (watermark) {
+            field(2604, 140);
+            separator();
+        }
+        const bool stroke = tool != ToolId::Pointer && !text && !tag && !effect && !spot && !watermark;
+        for (size_t i = 0; i < kThicknessOptions.size(); ++i) {
+            ToolbarItem item;
+            item.kind = ToolbarItem::Kind::Thickness;
+            item.thickness = kThicknessOptions[i];
+            item.identifier = 2200 + static_cast<int>(i);
+            item.tooltip = L"Stroke width";
+            item.shown = stroke;
+            if (item.shown) {
+                item.rect = place(kToolButton * s);
+                widest = std::max(widest, item.rect.right + pad);
+            }
+            items.push_back(item);
+        }
+        if (stroke) { separator(); }
+        for (size_t i = 0; i < kPaletteColors.size(); ++i) {
+            ToolbarItem item;
+            item.kind = ToolbarItem::Kind::Color;
+            item.color = kPaletteColors[i];
+            item.identifier = 2100 + static_cast<int>(i);
+            item.tooltip = L"Annotation color";
+            item.shown = tool != ToolId::Pointer && !effect && !spot;
+            if (item.shown) {
+                item.rect = place(kSwatch * s);
+                widest = std::max(widest, item.rect.right + pad);
+            }
+            items.push_back(item);
+        }
+        if (watermark) {
+            separator();
+            value_field(2612, 85, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
+            field(2602, 100);
+            separator();
+            value_field(2613, 65, {strings::Format(IDS_EDITOR_SIZE_VALUE, {L"96"})});
+            field(2603, 100);
+        }
+        for (size_t i = 0; i < kBrushSizeOptions.size(); ++i) {
+            ToolbarItem item;
+            item.kind = ToolbarItem::Kind::BrushSize;
+            item.brush_size = kBrushSizeOptions[i];
+            item.identifier = 2300 + static_cast<int>(i);
+            item.tooltip = L"Brush size";
+            item.shown = true;
+            const float left = pad + static_cast<float>(i) * (kToolButton + kItemGap) * s;
+            const float callout = 6 * s;
+            item.rect = {left, callout + (row - kToolButton * s) / 2, left + kToolButton * s, callout + (row + kToolButton * s) / 2};
+            items.push_back(item);
+        }
+        return std::pair<float, float>{tool != ToolId::Pointer ? y + row : 0.0f, widest};
     };
-    context_fields_.clear(); context_separators_.clear();
-    const auto tool=ContextTool();
-    const auto [context_height,widest]=layout_context(tool,toolbar_,context_fields_,context_separators_);
-    context_visible_=tool!=ToolId::Pointer;
-    context_width_=static_cast<int>(std::ceil(std::min(available_width,std::max(widest,200*s))));
-    context_height_=context_visible_ ? static_cast<int>(std::ceil(context_height)):0;
+    context_fields_.clear();
+    context_separators_.clear();
+    const auto tool = ContextTool();
+    const auto [context_height, widest] = layout_context(tool, toolbar_, context_fields_, context_separators_);
+    context_visible_ = tool != ToolId::Pointer;
+    context_width_ = static_cast<int>(std::ceil(std::min(available_width, std::max(widest, 200 * s))));
+    context_height_ = context_visible_ ? static_cast<int>(std::ceil(context_height)) : 0;
     // The islands are placed around the frame with room for the tallest
     // property island any tool shows, so choosing a tool never moves them.
-    float tallest=context_height;
-    std::vector<ToolbarItem> scratch_items; std::vector<std::pair<int,RECT>> scratch_fields; std::vector<RECT> scratch_separators;
-    for(const auto& entry:tools) {
-        scratch_items.clear(); scratch_fields.clear(); scratch_separators.clear();
-        tallest=std::max(tallest,layout_context(entry.tool,scratch_items,scratch_fields,scratch_separators).first);
+    float tallest = context_height;
+    std::vector<ToolbarItem> scratch_items;
+    std::vector<std::pair<int, RECT>> scratch_fields;
+    std::vector<RECT> scratch_separators;
+    for (const auto& entry : tools) {
+        scratch_items.clear();
+        scratch_fields.clear();
+        scratch_separators.clear();
+        tallest = std::max(tallest, layout_context(entry.tool, scratch_items, scratch_fields, scratch_separators).first);
     }
-    reserved_context_height_=static_cast<int>(std::ceil(tallest));
-
+    reserved_context_height_ = static_cast<int>(std::ceil(tallest));
 }
 
 void ScreenshotEditor::LayoutClient(int client_width, int client_height) {
@@ -1086,7 +1427,7 @@ RECT ScreenshotEditor::InitialWindowRect(const RECT& screen_region) const {
     const auto monitor = platform::MonitorForRect(screen_region);
     RECT work = monitor.work_area;
     work.top = std::max(work.top, monitor.bounds.top + ui::theme::Scaled(
-        ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, monitor.scale()));
+                                                           ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, monitor.scale()));
     const LONG width = std::min(platform::RectWidth(work), static_cast<LONG>(kIslandWidth * scale_));
     const LONG height = toolbar_rect_.bottom;
     const LONG margin = static_cast<LONG>(kCanvasGap * scale_);
@@ -1100,12 +1441,18 @@ RECT ScreenshotEditor::InitialWindowRect(const RECT& screen_region) const {
 // ---------------------------------------------------------------------------
 
 void ScreenshotEditor::ResetSession() {
-    brush_popup_open_=false;
+    brush_popup_open_ = false;
     // Undo/redo is strictly per session: nothing from a previous capture may be
     // reachable once that capture is gone.
     document_.Reset();
-    selected_.reset(); transforming_=false; frame_interacting_=false; island_user_positioned_=false;
-    if(text_host_) { ::DestroyWindow(text_host_); text_host_=text_edit_=nullptr; }
+    selected_.reset();
+    transforming_ = false;
+    frame_interacting_ = false;
+    island_user_positioned_ = false;
+    if (text_host_) {
+        ::DestroyWindow(text_host_);
+        text_host_ = text_edit_ = nullptr;
+    }
     pending_ = Annotation{};
     has_pending_ = false;
     dragging_ = false;
@@ -1120,9 +1467,9 @@ void ScreenshotEditor::CreateTextFormats() {
     HFONT font = ui::theme::CreateUiFont(13.0f, scale_, false);
     if (font) {
         if (toolbar_font_) { ::DeleteObject(toolbar_font_); }
-        toolbar_font_=font; SyncToolbarControls();
+        toolbar_font_ = font;
+        SyncToolbarControls();
     }
-
 }
 
 bool ScreenshotEditor::Open(const RECT& screen_region, app::AppSettings* settings, HWND owner) {
@@ -1190,7 +1537,7 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     }
 
     BuildToolbar(std::min(kIslandWidth * scale_,
-        static_cast<float>(platform::RectWidth(platform::MonitorForRect(screen_region).work_area))));
+                          static_cast<float>(platform::RectWidth(platform::MonitorForRect(screen_region).work_area))));
     const RECT window = InitialWindowRect(screen_region);
     hwnd_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, strings::Get(IDS_EDITOR_WINDOW_TITLE), kEditorStyle,
                               static_cast<int>(window.left), static_cast<int>(window.top),
@@ -1206,17 +1553,23 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     ::GetClientRect(hwnd_, &client);
     LayoutClient(static_cast<int>(platform::RectWidth(client)), static_cast<int>(platform::RectHeight(client)));
 
-    context_=::CreateWindowExW(kEditorExStyle|WS_EX_LAYERED,kEditorClassName,strings::Get(IDS_EDITOR_CONTEXT_TITLE),kEditorStyle,window.left,window.bottom+8,
-        static_cast<int>(window.right-window.left),48,hwnd_,nullptr,::GetModuleHandleW(nullptr),this);
+    context_ = ::CreateWindowExW(kEditorExStyle | WS_EX_LAYERED, kEditorClassName, strings::Get(IDS_EDITOR_CONTEXT_TITLE), kEditorStyle, window.left, window.bottom + 8,
+                                 static_cast<int>(window.right - window.left), 48, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
     // This title identifies the pop-up to tests (FindWindow); it is not localized.
-    brush_popup_=::CreateWindowExW(kEditorExStyle,kEditorClassName,L"Brush sizes",kEditorStyle,window.left,window.bottom,
-        static_cast<int>(132*scale_),static_cast<int>((kToolbarRowHeight+6)*scale_),hwnd_,nullptr,::GetModuleHandleW(nullptr),this);
-    if(brush_popup_) { static_cast<void>(ui::ExcludeFromCapture(brush_popup_)); }
-    if(!context_ || !brush_popup_ || !CreateToolbarControls()) { Destroy(); return false; }
+    brush_popup_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, L"Brush sizes", kEditorStyle, window.left, window.bottom,
+                                     static_cast<int>(132 * scale_), static_cast<int>((kToolbarRowHeight + 6) * scale_), hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
+    if (brush_popup_) { static_cast<void>(ui::ExcludeFromCapture(brush_popup_)); }
+    if (!context_ || !brush_popup_ || !CreateToolbarControls()) {
+        Destroy();
+        return false;
+    }
     CreateContextControls();
-    if(!Control(2600) || !Control(2601) || !Control(2604)) { Destroy(); return false; }
+    if (!Control(2600) || !Control(2601) || !Control(2604)) {
+        Destroy();
+        return false;
+    }
     // The property island is layered already: it fades in.
-    ::SetLayeredWindowAttributes(context_,0,255,LWA_ALPHA);
+    ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
     static_cast<void>(ui::ExcludeFromCapture(context_));
     static_cast<void>(ui::ExcludeFromCapture(hwnd_));
     CreateTextFormats();
@@ -1249,23 +1602,22 @@ void ScreenshotEditor::Hide() {
     visible_ = false;
     ShowBrushPopup(false);
     ::ShowWindow(hwnd_, SW_HIDE);
-    if(context_) { ::ShowWindow(context_,SW_HIDE); }
-    if(text_host_) { ::ShowWindow(text_host_,SW_HIDE); }
+    if (context_) { ::ShowWindow(context_, SW_HIDE); }
+    if (text_host_) { ::ShowWindow(text_host_, SW_HIDE); }
 }
 
 void ScreenshotEditor::SetRegion(const RECT& region, bool interacting) {
     if (has_image() || platform::IsEmptyRect(region)) { return; }
-    if(!::EqualRect(&region_,&region)) { island_user_positioned_=false; }
+    if (!::EqualRect(&region_, &region)) { island_user_positioned_ = false; }
     region_ = region;
     SetFrameInteracting(interacting);
-    if(!interacting) { PlaceContext(true); }
-
+    if (!interacting) { PlaceContext(true); }
 }
 
 bool ScreenshotEditor::EnsureImage() {
     if (has_image()) { return true; }
     if (callbacks_.on_prepare_image && callbacks_.on_prepare_image() && has_image()) { return true; }
-    ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_CAPTURE_FAILED));
+    ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_CAPTURE_FAILED));
     Invalidate();
     return false;
 }
@@ -1285,21 +1637,28 @@ void ScreenshotEditor::NotifyMutation(uint64_t previous_revision) {
 void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
     if (!visible_ || modal_active_) { return; }
     switch (message) {
-        case WM_LBUTTONDOWN: if (FeatureUsed()) { BeginStroke(point); } break;
+        case WM_LBUTTONDOWN:
+            if (FeatureUsed()) { BeginStroke(point); }
+            break;
         case WM_LBUTTONDBLCLK: {
-            if(!FeatureUsed()) { break; }
-            const auto hit=document_.HitTest(ToImagePoint(point),5.0f/zoom_);
-            if(hit && (document_.annotations()[*hit].tool==ToolId::Text || document_.annotations()[*hit].tool==ToolId::Tag)) {
-                CancelStroke(); StartTextEditing(hit,point);
-                if(text_edit_) {
-                    POINT local=point; ::ScreenToClient(text_edit_,&local);
-                    ::SendMessageW(text_edit_,WM_LBUTTONDBLCLK,MK_LBUTTON,MAKELPARAM(local.x,local.y));
+            if (!FeatureUsed()) { break; }
+            const auto hit = document_.HitTest(ToImagePoint(point), 5.0f / zoom_);
+            if (hit && (document_.annotations()[*hit].tool == ToolId::Text || document_.annotations()[*hit].tool == ToolId::Tag)) {
+                CancelStroke();
+                StartTextEditing(hit, point);
+                if (text_edit_) {
+                    POINT local = point;
+                    ::ScreenToClient(text_edit_, &local);
+                    ::SendMessageW(text_edit_, WM_LBUTTONDBLCLK, MK_LBUTTON, MAKELPARAM(local.x, local.y));
                 }
-            } else if(editing_text_) {
+            } else if (editing_text_) {
                 // A blank double-click is the continuation of the first press,
                 // not another creation request. It can only finish an edit.
-                CommitPendingText(); Select({});
-            } else if(tool_!=ToolId::Text && tool_!=ToolId::Tag) { BeginStroke(point); }
+                CommitPendingText();
+                Select({});
+            } else if (tool_ != ToolId::Text && tool_ != ToolId::Tag) {
+                BeginStroke(point);
+            }
             break;
         }
         case WM_MOUSEMOVE: UpdateStroke(point); break;
@@ -1350,13 +1709,28 @@ void ScreenshotEditor::Close(bool exported) {
 }
 
 void ScreenshotEditor::Destroy() {
-    if(brush_popup_) { ::DestroyWindow(brush_popup_); brush_popup_=nullptr; }
-    if(text_host_) { ::DestroyWindow(text_host_); text_host_=text_edit_=nullptr; }
-    if(context_) { ::DestroyWindow(context_); context_=nullptr; }
-    if(text_font_) { ::DeleteObject(text_font_); text_font_=nullptr; }
+    if (brush_popup_) {
+        ::DestroyWindow(brush_popup_);
+        brush_popup_ = nullptr;
+    }
+    if (text_host_) {
+        ::DestroyWindow(text_host_);
+        text_host_ = text_edit_ = nullptr;
+    }
+    if (context_) {
+        ::DestroyWindow(context_);
+        context_ = nullptr;
+    }
+    if (text_font_) {
+        ::DeleteObject(text_font_);
+        text_font_ = nullptr;
+    }
     ResetSession();
 
-    if (tooltip_) { ::DestroyWindow(tooltip_); tooltip_ = nullptr; }
+    if (tooltip_) {
+        ::DestroyWindow(tooltip_);
+        tooltip_ = nullptr;
+    }
     image_target_.Reset();
     image_bitmap_.Reset();
     image_brush_.Reset();
@@ -1365,7 +1739,10 @@ void ScreenshotEditor::Destroy() {
         ::DestroyWindow(hwnd_);
         hwnd_ = nullptr;
     }
-    if (toolbar_font_) { ::DeleteObject(toolbar_font_); toolbar_font_ = nullptr; }
+    if (toolbar_font_) {
+        ::DeleteObject(toolbar_font_);
+        toolbar_font_ = nullptr;
+    }
     source_image_ = platform::BgraImage{};
     document_mode_ = false;
     visible_ = false;
@@ -1435,8 +1812,11 @@ void ScreenshotEditor::Wheel(int delta, bool control, bool shift, POINT desktop_
     }
     // One wheel notch moves 96 DIP of the screen, whatever the scale.
     const float step = 96.0f * scale_ / zoom_ * (static_cast<float>(delta) / static_cast<float>(WHEEL_DELTA));
-    if (shift) { ScrollDocument(-step, 0.0f); }
-    else { ScrollDocument(0.0f, -step); }
+    if (shift) {
+        ScrollDocument(-step, 0.0f);
+    } else {
+        ScrollDocument(0.0f, -step);
+    }
 }
 
 platform::BgraImage ScreenshotEditor::TakeImage() {
@@ -1450,7 +1830,7 @@ RECT ScreenshotEditor::PendingDamage() const {
     const auto bounds = pending_.bounds();
     const float pad = std::max(pending_.style.brush_size, pending_.style.thickness * 6.0f) + 3.0f;
     return RECT{static_cast<LONG>(std::floor(bounds.left - pad)), static_cast<LONG>(std::floor(bounds.top - pad)),
-        static_cast<LONG>(std::ceil(bounds.right + pad)), static_cast<LONG>(std::ceil(bounds.bottom + pad))};
+                static_cast<LONG>(std::ceil(bounds.right + pad)), static_cast<LONG>(std::ceil(bounds.bottom + pad))};
 }
 
 // ---------------------------------------------------------------------------
@@ -1471,57 +1851,75 @@ LRESULT CALLBACK ScreenshotEditor::WindowProc(HWND hwnd, UINT message, WPARAM wp
 
 LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     if (ui::ConsumePopupInput(message, wparam)) { return 0; }
-    if(message==WM_TIMER && wparam==0xEA63) { SyncWatermarkClear(); return 0; }
-    if(message==WM_TIMER && wparam==0xEA62) {
-        POINT point{}; ::GetCursorPos(&point);
-        const auto over=[&](HWND window) { RECT r{}; ::GetWindowRect(window,&r); return ::IsWindowVisible(window) && ::PtInRect(&r,point); };
-        const auto now=::GetTickCount64();
-        const bool hand=over(Control(2520));
-        if(hand || over(brush_popup_)) {
-            brush_leave_started_=0;
-            if(hand && brush_hover_started_ && now-brush_hover_started_>=350 && !::IsWindowVisible(brush_popup_)) { ShowBrushPopup(true); }
-        } else if(!brush_leave_started_) { brush_leave_started_=now; }
-        else if(now-brush_leave_started_>=250) { ShowBrushPopup(false); }
+    if (message == WM_TIMER && wparam == 0xEA63) {
+        SyncWatermarkClear();
         return 0;
     }
-    if(message==WM_TIMER && wparam==0xEA61 && hwnd==context_) {
-        const float progress=std::clamp(static_cast<float>(::GetTickCount64()-context_fade_started_)/160.0f,0.0f,1.0f);
-        ::SetLayeredWindowAttributes(context_,0,static_cast<BYTE>(255*progress),LWA_ALPHA);
-        if(progress>=1 || !ui::theme::AnimationsEnabled()) { ::KillTimer(context_,0xEA61); ::SetLayeredWindowAttributes(context_,0,255,LWA_ALPHA); }
-        return 0;
-    }
-    const bool auxiliary=hwnd_ && hwnd!=hwnd_;
-    if(auxiliary) {
-        if(message==WM_SIZE || message==WM_DPICHANGED || message==WM_GETMINMAXINFO) { return 0; }
-        if(message==WM_NCHITTEST) { return HTCLIENT; }
-        if(message==WM_PAINT || message==WM_PRINTCLIENT) {
-            PAINTSTRUCT ps{}; HDC dc=message==WM_PAINT ? ::BeginPaint(hwnd,&ps):reinterpret_cast<HDC>(wparam);
-            if(hwnd==text_host_) { RECT bounds{}; ::GetWindowRect(hwnd,&bounds); RenderImage(dc,bounds); }
-            else { PaintContext(dc,hwnd); }
-            if(message==WM_PAINT) { ::EndPaint(hwnd,&ps); } return 0;
+    if (message == WM_TIMER && wparam == 0xEA62) {
+        POINT point{};
+        ::GetCursorPos(&point);
+        const auto over = [&](HWND window) { RECT r{}; ::GetWindowRect(window,&r); return ::IsWindowVisible(window) && ::PtInRect(&r,point); };
+        const auto now = ::GetTickCount64();
+        const bool hand = over(Control(2520));
+        if (hand || over(brush_popup_)) {
+            brush_leave_started_ = 0;
+            if (hand && brush_hover_started_ && now - brush_hover_started_ >= 350 && !::IsWindowVisible(brush_popup_)) { ShowBrushPopup(true); }
+        } else if (!brush_leave_started_) {
+            brush_leave_started_ = now;
+        } else if (now - brush_leave_started_ >= 250) {
+            ShowBrushPopup(false);
         }
-        if(message==WM_LBUTTONDOWN || message==WM_LBUTTONUP || message==WM_MOUSEMOVE || message==WM_CAPTURECHANGED) { return 0; }
+        return 0;
     }
-    if(message==WM_CTLCOLOREDIT || message==WM_CTLCOLORLISTBOX || message==WM_CTLCOLORSTATIC) {
-        if(text_edit_ && reinterpret_cast<HWND>(lparam)==text_edit_) {
+    if (message == WM_TIMER && wparam == 0xEA61 && hwnd == context_) {
+        const float progress = std::clamp(static_cast<float>(::GetTickCount64() - context_fade_started_) / 160.0f, 0.0f, 1.0f);
+        ::SetLayeredWindowAttributes(context_, 0, static_cast<BYTE>(255 * progress), LWA_ALPHA);
+        if (progress >= 1 || !ui::theme::AnimationsEnabled()) {
+            ::KillTimer(context_, 0xEA61);
+            ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
+        }
+        return 0;
+    }
+    const bool auxiliary = hwnd_ && hwnd != hwnd_;
+    if (auxiliary) {
+        if (message == WM_SIZE || message == WM_DPICHANGED || message == WM_GETMINMAXINFO) { return 0; }
+        if (message == WM_NCHITTEST) { return HTCLIENT; }
+        if (message == WM_PAINT || message == WM_PRINTCLIENT) {
+            PAINTSTRUCT ps{};
+            HDC dc = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
+            if (hwnd == text_host_) {
+                RECT bounds{};
+                ::GetWindowRect(hwnd, &bounds);
+                RenderImage(dc, bounds);
+            } else {
+                PaintContext(dc, hwnd);
+            }
+            if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
+            return 0;
+        }
+        if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_MOUSEMOVE || message == WM_CAPTURECHANGED) { return 0; }
+    }
+    if (message == WM_CTLCOLOREDIT || message == WM_CTLCOLORLISTBOX || message == WM_CTLCOLORSTATIC) {
+        if (text_edit_ && reinterpret_cast<HWND>(lparam) == text_edit_) {
             // EDIT can paint synchronously during input while WS_VISIBLE is
             // retained for its native caret. Its GDI glyphs/backing are never
             // the annotation presentation: only PaintTextEditor owns those.
             // This DC belongs to the native draw and is reset on release; the
             // custom paint pass obtains its own unrestricted client DC.
-            ::IntersectClipRect(reinterpret_cast<HDC>(wparam),0,0,0,0);
+            ::IntersectClipRect(reinterpret_cast<HDC>(wparam), 0, 0, 0, 0);
             return reinterpret_cast<LRESULT>(::GetStockObject(NULL_BRUSH));
         }
-        return ui::ControlBackground(wparam,ui::theme::Current().text);
+        return ui::ControlBackground(wparam, ui::theme::Current().text);
     }
-    if(message==WM_HSCROLL && !syncing_context_) {
-        const int id=::GetDlgCtrlID(reinterpret_cast<HWND>(lparam)); auto value=ContextStyle();
-        const float position=static_cast<float>(::SendMessageW(reinterpret_cast<HWND>(lparam),TBM_GETPOS,0,0));
-        if(id==2601) { value.strength=position; }
-        if(id==2602) { value.opacity=position; }
-        if(id==2603) { value.font_size=position; }
+    if (message == WM_HSCROLL && !syncing_context_) {
+        const int id = ::GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
+        auto value = ContextStyle();
+        const float position = static_cast<float>(::SendMessageW(reinterpret_cast<HWND>(lparam), TBM_GETPOS, 0, 0));
+        if (id == 2601) { value.strength = position; }
+        if (id == 2602) { value.opacity = position; }
+        if (id == 2603) { value.font_size = position; }
         ChangeStyle(value);
-        if(LOWORD(wparam)==TB_ENDTRACK) { CommitContextTransaction(); }
+        if (LOWORD(wparam) == TB_ENDTRACK) { CommitContextTransaction(); }
         return 0;
     }
 
@@ -1530,62 +1928,111 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             ::RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
             return 0; // No document/history/fade/placement work.
         case WM_MEASUREITEM: {
-            auto* measure=reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
-            if(measure && measure->CtlType==ODT_COMBOBOX) { measure->itemHeight=ui::theme::Scaled(32,scale_); return TRUE; } break;
+            auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
+            if (measure && measure->CtlType == ODT_COMBOBOX) {
+                measure->itemHeight = ui::theme::Scaled(32, scale_);
+                return TRUE;
+            }
+            break;
         }
         case WM_DRAWITEM: {
-            const auto* draw=reinterpret_cast<DRAWITEMSTRUCT*>(lparam);
-            if(draw && ui::DrawComboItem(*draw)) { return TRUE; } break;
+            const auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lparam);
+            if (draw && ui::DrawComboItem(*draw)) { return TRUE; }
+            break;
         }
         case WM_COMMAND: {
-            const int id=LOWORD(wparam),notification=HIWORD(wparam);
-            if(id==IDCANCEL) { RequestDiscard(); return 0; }
-            if(id==2600 && notification==CBN_DROPDOWN) {
-                COMBOBOXINFO info{sizeof(info)}; ::GetComboBoxInfo(Control(2600),&info);
-                ::SetWindowLongPtrW(info.hwndList,GWL_STYLE,::GetWindowLongPtrW(info.hwndList,GWL_STYLE)&~WS_BORDER);
-                ::SetWindowLongPtrW(info.hwndList,GWL_EXSTYLE,::GetWindowLongPtrW(info.hwndList,GWL_EXSTYLE)&~WS_EX_CLIENTEDGE);
-                ui::RoundWindow(info.hwndList); ::SetWindowDisplayAffinity(info.hwndList,0x11); return 0;
-            }
-            if(id==2700 && notification==EN_CHANGE) { UpdateTextFromControl(); return 0; }
-            if(syncing_context_) { return 0; }
-            if(id==2600 && (notification==CBN_SELCHANGE || notification==CBN_KILLFOCUS)) {
-                wchar_t text[32]{};
-                if(notification==CBN_SELCHANGE) { ::SendMessageW(Control(2600),CB_GETLBTEXT,::SendMessageW(Control(2600),CB_GETCURSEL,0,0),reinterpret_cast<LPARAM>(text)); }
-                else { ::GetWindowTextW(Control(2600),text,32); }
-                wchar_t* end=nullptr; const double size=std::wcstod(text,&end);
-                while(end && std::iswspace(*end)) { ++end; }
-                if(end && ::lstrcmpiW(end,L"pt")==0) { end+=2; }
-                if(end && *end==0 && std::isfinite(size) && size>=6 && size<=288) { auto value=ContextStyle(); value.font_size=static_cast<float>(size); ChangeStyle(value); }
-                else { ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_FONT_SIZE_RANGE)); SyncContext(); Invalidate(); }
-                if(notification==CBN_KILLFOCUS) { CommitContextTransaction(); }
+            const int id = LOWORD(wparam), notification = HIWORD(wparam);
+            if (id == IDCANCEL) {
+                RequestDiscard();
                 return 0;
             }
-            if(id==2605 && notification==BN_CLICKED) {
-                document_.BeginTransaction();
-                ::SetWindowTextW(Control(2604),L"");
-                document_.CommitTransaction();
-                ::SetFocus(Control(2604)); SyncWatermarkClear(); return 0;
+            if (id == 2600 && notification == CBN_DROPDOWN) {
+                COMBOBOXINFO info{sizeof(info)};
+                ::GetComboBoxInfo(Control(2600), &info);
+                ::SetWindowLongPtrW(info.hwndList, GWL_STYLE, ::GetWindowLongPtrW(info.hwndList, GWL_STYLE) & ~WS_BORDER);
+                ::SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE, ::GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
+                ui::RoundWindow(info.hwndList);
+                // Shown again on every drop-down: excluded as an opaque layered
+                // window, it leaves no hole in a capture.
+                static_cast<void>(ui::ExcludeFromCapture(info.hwndList));
+                return 0;
             }
-            if(id==2604 && notification==EN_CHANGE && ContextTool()==ToolId::Watermark) {
-                if(!FeatureUsed()) { return 0; }
-                const int length=::GetWindowTextLengthW(Control(2604));
-                std::wstring text(static_cast<size_t>(length)+1,L'\0'); ::GetWindowTextW(Control(2604),text.data(),length+1); text.resize(std::min(length,16));
-                if(!text.empty() && text.back()>=0xd800 && text.back()<=0xdbff) { text.pop_back(); }
-                if(text.size()!=static_cast<size_t>(length)) {
-                    syncing_context_=true; ::SetWindowTextW(Control(2604),text.c_str()); ::SendMessageW(Control(2604),EM_SETSEL,text.size(),text.size()); syncing_context_=false;
+            if (id == 2700 && notification == EN_CHANGE) {
+                UpdateTextFromControl();
+                return 0;
+            }
+            if (syncing_context_) { return 0; }
+            if (id == 2600 && (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS)) {
+                wchar_t text[32]{};
+                if (notification == CBN_SELCHANGE) {
+                    ::SendMessageW(Control(2600), CB_GETLBTEXT, ::SendMessageW(Control(2600), CB_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(text));
+                } else {
+                    ::GetWindowTextW(Control(2600), text, 32);
                 }
-                if(selected_ && *selected_>=document_.annotations().size()) { selected_.reset(); }
-                Annotation a;
-                if(selected_) { a=document_.annotations()[*selected_]; }
-                else { a.tool=ToolId::Watermark; a.style=style_; a.style.opacity=30; a.points={{0,0},{static_cast<float>(source_image_.width),static_cast<float>(source_image_.height)}}; }
-                a.text=std::move(text);
-                if(selected_) { document_.Replace(*selected_,std::move(a)); }
-                else { document_.Apply(std::move(a)); selected_=document_.annotations().size()-1; }
-                SyncContext(); Invalidate(); return 0;
+                wchar_t* end = nullptr;
+                const double size = std::wcstod(text, &end);
+                while (end && std::iswspace(*end)) { ++end; }
+                if (end && ::lstrcmpiW(end, L"pt") == 0) { end += 2; }
+                if (end && *end == 0 && std::isfinite(size) && size >= 6 && size <= 288) {
+                    auto value = ContextStyle();
+                    value.font_size = static_cast<float>(size);
+                    ChangeStyle(value);
+                } else {
+                    ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_FONT_SIZE_RANGE));
+                    SyncContext();
+                    Invalidate();
+                }
+                if (notification == CBN_KILLFOCUS) { CommitContextTransaction(); }
+                return 0;
             }
-            if(notification==BN_CLICKED) {
-                const auto found=std::find_if(toolbar_.begin(),toolbar_.end(),[id](const auto& item){ return item.identifier==id; });
-                if(found!=toolbar_.end()) { const auto item=*found; OnToolbarActivated(item); }
+            if (id == 2605 && notification == BN_CLICKED) {
+                document_.BeginTransaction();
+                ::SetWindowTextW(Control(2604), L"");
+                document_.CommitTransaction();
+                ::SetFocus(Control(2604));
+                SyncWatermarkClear();
+                return 0;
+            }
+            if (id == 2604 && notification == EN_CHANGE && ContextTool() == ToolId::Watermark) {
+                if (!FeatureUsed()) { return 0; }
+                const int length = ::GetWindowTextLengthW(Control(2604));
+                std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+                ::GetWindowTextW(Control(2604), text.data(), length + 1);
+                text.resize(std::min(length, 16));
+                if (!text.empty() && text.back() >= 0xd800 && text.back() <= 0xdbff) { text.pop_back(); }
+                if (text.size() != static_cast<size_t>(length)) {
+                    syncing_context_ = true;
+                    ::SetWindowTextW(Control(2604), text.c_str());
+                    ::SendMessageW(Control(2604), EM_SETSEL, text.size(), text.size());
+                    syncing_context_ = false;
+                }
+                if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+                Annotation a;
+                if (selected_) {
+                    a = document_.annotations()[*selected_];
+                } else {
+                    a.tool = ToolId::Watermark;
+                    a.style = style_;
+                    a.style.opacity = 30;
+                    a.points = {{0, 0}, {static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)}};
+                }
+                a.text = std::move(text);
+                if (selected_) {
+                    document_.Replace(*selected_, std::move(a));
+                } else {
+                    document_.Apply(std::move(a));
+                    selected_ = document_.annotations().size() - 1;
+                }
+                SyncContext();
+                Invalidate();
+                return 0;
+            }
+            if (notification == BN_CLICKED) {
+                const auto found = std::find_if(toolbar_.begin(), toolbar_.end(), [id](const auto& item) { return item.identifier == id; });
+                if (found != toolbar_.end()) {
+                    const auto item = *found;
+                    OnToolbarActivated(item);
+                }
             }
             return 0;
         }
@@ -1595,7 +2042,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         case WM_NCHITTEST: {
             POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
             ::ScreenToClient(hwnd, &point);
-            if(::ChildWindowFromPointEx(hwnd,point,CWP_SKIPINVISIBLE)==hwnd) { return HTCAPTION; }
+            if (::ChildWindowFromPointEx(hwnd, point, CWP_SKIPINVISIBLE) == hwnd) { return HTCAPTION; }
             return HTCLIENT;
         }
         case WM_NCLBUTTONDBLCLK:
@@ -1609,10 +2056,10 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             break;
 
         case WM_ENTERSIZEMOVE:
-            if(!auxiliary) { island_user_positioned_=true; }
+            if (!auxiliary) { island_user_positioned_ = true; }
             return 0;
         case WM_WINDOWPOSCHANGED:
-            if(!auxiliary) { PlaceContext(); }
+            if (!auxiliary) { PlaceContext(); }
             break;
         case WM_ERASEBKGND:
             return 1;
@@ -1654,7 +2101,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 const auto monitor = platform::MonitorForRect(*suggested);
                 RECT available = monitor.work_area;
                 available.top = std::max(available.top, monitor.bounds.top + ui::theme::Scaled(
-                    ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, scale_));
+                                                                                 ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, scale_));
                 const LONG width = std::min(platform::RectWidth(available), static_cast<LONG>(kIslandWidth * scale_));
                 BuildToolbar(static_cast<float>(width));
                 const LONG height = toolbar_rect_.bottom;
@@ -1676,7 +2123,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 const auto monitor = platform::MonitorForRect(*proposed);
                 RECT available = monitor.work_area;
                 available.top = std::max(available.top, monitor.bounds.top +
-                    ui::theme::Scaled(ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, monitor.scale()));
+                                                            ui::theme::Scaled(ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, monitor.scale()));
                 *proposed = platform::ClampRectToBounds(*proposed, available);
             }
             return TRUE;
@@ -1684,8 +2131,10 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
 
         case WM_MOUSEMOVE: {
             const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            if ((dragging_ || transforming_) && ::GetCapture()==hwnd) {
-                POINT desktop=pt; ::ClientToScreen(hwnd,&desktop); UpdateStroke(desktop);
+            if ((dragging_ || transforming_) && ::GetCapture() == hwnd) {
+                POINT desktop = pt;
+                ::ClientToScreen(hwnd, &desktop);
+                UpdateStroke(desktop);
             }
             return 0;
         }
@@ -1693,8 +2142,11 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         case WM_LBUTTONDOWN: {
             ::SetFocus(hwnd);
             const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            if (const ToolbarItem* item = HitTestToolbar(pt)) { OnToolbarActivated(*item); }
-            else { FeatureUsed(); } // Padding and empty toolbar space also fix the image.
+            if (const ToolbarItem* item = HitTestToolbar(pt)) {
+                OnToolbarActivated(*item);
+            } else {
+                FeatureUsed();
+            } // Padding and empty toolbar space also fix the image.
             return 0;
         }
         case WM_LBUTTONDBLCLK:
@@ -1705,7 +2157,9 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             // Finish the stroke *before* releasing capture: ReleaseCapture sends
             // WM_CAPTURECHANGED synchronously, which cancels an unfinished one.
             if (dragging_ || transforming_) {
-                POINT desktop{GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam)}; ::ClientToScreen(hwnd,&desktop); EndStroke(desktop);
+                POINT desktop{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+                ::ClientToScreen(hwnd, &desktop);
+                EndStroke(desktop);
             }
             if (::GetCapture() == hwnd) {
                 ::ReleaseCapture();
@@ -1735,21 +2189,45 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             return 0;
 
         case WM_KEYDOWN: {
-            if(editing_text_ && text_edit_) { ::SendMessageW(text_edit_,message,wparam,lparam); return 0; }
-            if(wparam==VK_ESCAPE && (transforming_ || dragging_ || document_.in_transaction())) {
+            if (editing_text_ && text_edit_) {
+                ::SendMessageW(text_edit_, message, wparam, lparam);
+                return 0;
+            }
+            if (wparam == VK_ESCAPE && (transforming_ || dragging_ || document_.in_transaction())) {
                 // The rollback can remove the selected annotation (a watermark created in this transaction).
-                CancelStroke(); document_.CancelTransaction();
-                if(selected_ && *selected_>=document_.annotations().size()) { selected_.reset(); }
-                SyncContext(); Invalidate(); return 0;
+                CancelStroke();
+                document_.CancelTransaction();
+                if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+                SyncContext();
+                Invalidate();
+                return 0;
             }
-            if(wparam==VK_ESCAPE && selected_) { Select({}); return 0; }
-            if(wparam==VK_DELETE && selected_) { document_.Remove(*selected_); Select({}); return 0; }
-            if(selected_ && *selected_<document_.annotations().size() && wparam>=VK_LEFT && wparam<=VK_DOWN) {
-                auto a=document_.annotations()[*selected_]; const float step=(::GetKeyState(VK_SHIFT)&0x8000) ? 10.0f:1.0f;
-                for(auto& p:a.points) { p.x+=wparam==VK_LEFT ? -step:wparam==VK_RIGHT ? step:0; p.y+=wparam==VK_UP ? -step:wparam==VK_DOWN ? step:0; }
-                document_.Replace(*selected_,std::move(a)); Invalidate(); return 0;
+            if (wparam == VK_ESCAPE && selected_) {
+                Select({});
+                return 0;
             }
-            if (wparam == VK_TAB) { ::SetFocus(::GetDlgItem(hwnd_, 2000)); return 0; }
+            if (wparam == VK_DELETE && selected_) {
+                document_.Remove(*selected_);
+                Select({});
+                return 0;
+            }
+            if (selected_ && *selected_ < document_.annotations().size() && wparam >= VK_LEFT && wparam <= VK_DOWN) {
+                auto a = document_.annotations()[*selected_];
+                const float step = (::GetKeyState(VK_SHIFT) & 0x8000) ? 10.0f : 1.0f;
+                for (auto& p : a.points) {
+                    p.x += wparam == VK_LEFT ? -step : wparam == VK_RIGHT ? step
+                                                                          : 0;
+                    p.y += wparam == VK_UP ? -step : wparam == VK_DOWN ? step
+                                                                       : 0;
+                }
+                document_.Replace(*selected_, std::move(a));
+                Invalidate();
+                return 0;
+            }
+            if (wparam == VK_TAB) {
+                ::SetFocus(::GetDlgItem(hwnd_, 2000));
+                return 0;
+            }
             const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
             const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
             if (document_mode_) {
@@ -1766,17 +2244,33 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                     case VK_DOWN: ScrollDocument(0.0f, 48.0f * scale_ / zoom_); return 0;
                     case VK_LEFT: ScrollDocument(-48.0f * scale_ / zoom_, 0.0f); return 0;
                     case VK_RIGHT: ScrollDocument(48.0f * scale_ / zoom_, 0.0f); return 0;
-                    case VK_OEM_PLUS: case VK_ADD:
-                        if (control) { ZoomDocument(StepZoom(zoom_, 1), centre); return 0; }
+                    case VK_OEM_PLUS:
+                    case VK_ADD:
+                        if (control) {
+                            ZoomDocument(StepZoom(zoom_, 1), centre);
+                            return 0;
+                        }
                         break;
-                    case VK_OEM_MINUS: case VK_SUBTRACT:
-                        if (control) { ZoomDocument(StepZoom(zoom_, -1), centre); return 0; }
+                    case VK_OEM_MINUS:
+                    case VK_SUBTRACT:
+                        if (control) {
+                            ZoomDocument(StepZoom(zoom_, -1), centre);
+                            return 0;
+                        }
                         break;
-                    case '0': case VK_NUMPAD0:
-                        if (control) { ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre); return 0; }
+                    case '0':
+                    case VK_NUMPAD0:
+                        if (control) {
+                            ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre);
+                            return 0;
+                        }
                         break;
-                    case '1': case VK_NUMPAD1:
-                        if (control) { ZoomDocument(1.0f, centre); return 0; }
+                    case '1':
+                    case VK_NUMPAD1:
+                        if (control) {
+                            ZoomDocument(1.0f, centre);
+                            return 0;
+                        }
                         break;
                     default:
                         break;
@@ -1865,403 +2359,610 @@ const ScreenshotEditor::ToolbarItem* ScreenshotEditor::HitTestToolbar(POINT clie
 }
 
 void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
-    if(item.kind==ToolbarItem::Kind::Command && item.command==kCommandCancel) { RequestDiscard(); return; }
-    if(item.kind==ToolbarItem::Kind::Command && item.command==kCommandScrollshot) {
-        if(!has_image() && callbacks_.on_scrollshot) { callbacks_.on_scrollshot(); }
+    if (item.kind == ToolbarItem::Kind::Command && item.command == kCommandCancel) {
+        RequestDiscard();
         return;
     }
-    if(item.kind==ToolbarItem::Kind::Command && item.command==kCommandTheme) {
-        const auto value=ui::theme::Preference()==app::AppearanceTheme::Light ? app::AppearanceTheme::Dark:app::AppearanceTheme::Light;
-        if(callbacks_.on_appearance) { callbacks_.on_appearance(value); }
-        else { ui::theme::ApplyPreference(value); ui::theme::NotifyWindows(); }
+    if (item.kind == ToolbarItem::Kind::Command && item.command == kCommandScrollshot) {
+        if (!has_image() && callbacks_.on_scrollshot) { callbacks_.on_scrollshot(); }
         return;
     }
-    if(!FeatureUsed()) { return; }
-    if(item.identifier==2520 && ContextStyle().method==EffectMethod::Brush) { ShowBrushPopup(!::IsWindowVisible(brush_popup_)); return; }
-    if(item.kind==ToolbarItem::Kind::Command && item.command==kCommandCopy) { CompleteCopy(); return; }
-    const auto revision=document_.revision();
-    if(item.kind==ToolbarItem::Kind::Tool || item.kind==ToolbarItem::Kind::Command) {
-        ShowBrushPopup(false); CommitPendingText(); document_.CommitTransaction(); CancelStroke();
+    if (item.kind == ToolbarItem::Kind::Command && item.command == kCommandTheme) {
+        const auto value = ui::theme::Preference() == app::AppearanceTheme::Light ? app::AppearanceTheme::Dark : app::AppearanceTheme::Light;
+        if (callbacks_.on_appearance) {
+            callbacks_.on_appearance(value);
+        } else {
+            ui::theme::ApplyPreference(value);
+            ui::theme::NotifyWindows();
+        }
+        return;
     }
-    if(!visible_) { return; }
-    auto style=ContextStyle();
-    switch(item.kind) {
+    if (!FeatureUsed()) { return; }
+    if (item.identifier == 2520 && ContextStyle().method == EffectMethod::Brush) {
+        ShowBrushPopup(!::IsWindowVisible(brush_popup_));
+        return;
+    }
+    if (item.kind == ToolbarItem::Kind::Command && item.command == kCommandCopy) {
+        CompleteCopy();
+        return;
+    }
+    const auto revision = document_.revision();
+    if (item.kind == ToolbarItem::Kind::Tool || item.kind == ToolbarItem::Kind::Command) {
+        ShowBrushPopup(false);
+        CommitPendingText();
+        document_.CommitTransaction();
+        CancelStroke();
+    }
+    if (!visible_) { return; }
+    auto style = ContextStyle();
+    switch (item.kind) {
         case ToolbarItem::Kind::Tool:
-            tool_=item.tool; selected_.reset();
-            if(tool_==ToolId::Watermark) {
-                const auto& items=document_.annotations();
-                for(size_t i=0;i<items.size();++i) if(items[i].tool==ToolId::Watermark) { selected_=i; break; }
+            tool_ = item.tool;
+            selected_.reset();
+            if (tool_ == ToolId::Watermark) {
+                const auto& items = document_.annotations();
+                for (size_t i = 0; i < items.size(); ++i)
+                    if (items[i].tool == ToolId::Watermark) {
+                        selected_ = i;
+                        break;
+                    }
             }
             break;
-        case ToolbarItem::Kind::Color: style.color=item.color; ChangeStyle(style); break;
-        case ToolbarItem::Kind::Thickness: style.thickness=item.thickness; ChangeStyle(style); break;
-        case ToolbarItem::Kind::BrushSize: style.brush_size=item.brush_size; ChangeStyle(style); ShowBrushPopup(false); break;
+        case ToolbarItem::Kind::Color:
+            style.color = item.color;
+            ChangeStyle(style);
+            break;
+        case ToolbarItem::Kind::Thickness:
+            style.thickness = item.thickness;
+            ChangeStyle(style);
+            break;
+        case ToolbarItem::Kind::BrushSize:
+            style.brush_size = item.brush_size;
+            ChangeStyle(style);
+            ShowBrushPopup(false);
+            break;
         case ToolbarItem::Kind::Option:
-            if(item.identifier>=2500 && item.identifier<=2502) { style.text_mode=static_cast<TextMode>(item.identifier-2500); }
-            if(item.identifier>=2510 && item.identifier<=2511) { style.effect=static_cast<EffectMode>(item.identifier-2510); }
-            if(item.identifier>=2520 && item.identifier<=2521) {
+            if (item.identifier >= 2500 && item.identifier <= 2502) { style.text_mode = static_cast<TextMode>(item.identifier - 2500); }
+            if (item.identifier >= 2510 && item.identifier <= 2511) { style.effect = static_cast<EffectMode>(item.identifier - 2510); }
+            if (item.identifier >= 2520 && item.identifier <= 2521) {
                 // Application method is a new-tool default. Existing region or
                 // brush geometry retains its transform contract.
-                if(selected_) { selected_.reset(); style=style_; }
-                tool_=ToolId::Mosaic;
-                style.method=static_cast<EffectMethod>(item.identifier-2520);
+                if (selected_) {
+                    selected_.reset();
+                    style = style_;
+                }
+                tool_ = ToolId::Mosaic;
+                style.method = static_cast<EffectMethod>(item.identifier - 2520);
             }
-            if(item.identifier>=2530 && item.identifier<=2532) { style.shape=static_cast<SpotlightShape>(item.identifier-2530); }
-            ChangeStyle(style); break;
+            if (item.identifier >= 2530 && item.identifier <= 2532) { style.shape = static_cast<SpotlightShape>(item.identifier - 2530); }
+            ChangeStyle(style);
+            break;
         case ToolbarItem::Kind::Command:
             selected_.reset();
-            if(item.command==kCommandUndo) { document_.Undo(); }
-            if(item.command==kCommandRedo) { document_.Redo(); }
-            if(item.command==kCommandClear) { document_.Clear(); }
-            if(item.command==kCommandSave && SaveToFile()) { Close(true); return; }
+            if (item.command == kCommandUndo) { document_.Undo(); }
+            if (item.command == kCommandRedo) { document_.Redo(); }
+            if (item.command == kCommandClear) { document_.Clear(); }
+            if (item.command == kCommandSave && SaveToFile()) {
+                Close(true);
+                return;
+            }
             break;
     }
-    ReflowToolbar(); Invalidate(); NotifyMutation(revision);
-    if(item.identifier==2520) { ShowBrushPopup(true); }
+    ReflowToolbar();
+    Invalidate();
+    NotifyMutation(revision);
+    if (item.identifier == 2520) { ShowBrushPopup(true); }
 }
 
 bool ScreenshotEditor::WantsPointer(POINT point) const {
-    if(editing_text_ || transforming_ || dragging_ || selected_) { return true; }
-    const auto p=ToImagePoint(point);
-    return tool_!=ToolId::Pointer || document_.HitTest(p,5.0f/zoom_).has_value();
+    if (editing_text_ || transforming_ || dragging_ || selected_) { return true; }
+    const auto p = ToImagePoint(point);
+    return tool_ != ToolId::Pointer || document_.HitTest(p, 5.0f / zoom_).has_value();
 }
 HCURSOR ScreenshotEditor::ImageCursor(POINT point) const {
-    const auto p=ToImagePoint(point);
-    if(selected_ && *selected_<document_.annotations().size()) {
-        const auto handles=document_.annotations()[*selected_].Handles();
-        for(size_t i=0;i<handles.size();++i) if(std::hypot(p.x-handles[i].x,p.y-handles[i].y)<=9*scale_/zoom_) {
-            return ::LoadCursorW(nullptr,handles.size()==2 ? IDC_CROSS : i%2==0 ? IDC_SIZENWSE:IDC_SIZENESW);
-        }
+    const auto p = ToImagePoint(point);
+    if (selected_ && *selected_ < document_.annotations().size()) {
+        const auto handles = document_.annotations()[*selected_].Handles();
+        for (size_t i = 0; i < handles.size(); ++i)
+            if (std::hypot(p.x - handles[i].x, p.y - handles[i].y) <= 9 * scale_ / zoom_) {
+                return ::LoadCursorW(nullptr, handles.size() == 2 ? IDC_CROSS : i % 2 == 0 ? IDC_SIZENWSE
+                                                                                           : IDC_SIZENESW);
+            }
     }
-    const bool movable=document_.HitTest(p,5.0f/zoom_).has_value();
-    return ::LoadCursorW(nullptr,movable ? IDC_SIZEALL : tool_==ToolId::Pointer ? IDC_ARROW : tool_==ToolId::Text || tool_==ToolId::Tag ? IDC_IBEAM:IDC_CROSS);
+    const bool movable = document_.HitTest(p, 5.0f / zoom_).has_value();
+    return ::LoadCursorW(nullptr, movable ? IDC_SIZEALL : tool_ == ToolId::Pointer                    ? IDC_ARROW
+                                                      : tool_ == ToolId::Text || tool_ == ToolId::Tag ? IDC_IBEAM
+                                                                                                      : IDC_CROSS);
 }
 void ScreenshotEditor::BeginStroke(POINT point) {
     ShowBrushPopup(false);
-    if(editing_text_) {
+    if (editing_text_) {
         // Repeated clicks on the active object keep its editing session alive.
         // Only an actual outside click commits; that click never creates text.
-        if(selected_ && document_.annotations()[*selected_].HitTest(ToImagePoint(point),5.0f/zoom_)) {
-            if(text_edit_) {
-                POINT local=point; ::ScreenToClient(text_edit_,&local);
-                ::SendMessageW(text_edit_,WM_LBUTTONDOWN,MK_LBUTTON,MAKELPARAM(local.x,local.y));
-                ::SendMessageW(text_edit_,WM_LBUTTONUP,0,MAKELPARAM(local.x,local.y));
+        if (selected_ && document_.annotations()[*selected_].HitTest(ToImagePoint(point), 5.0f / zoom_)) {
+            if (text_edit_) {
+                POINT local = point;
+                ::ScreenToClient(text_edit_, &local);
+                ::SendMessageW(text_edit_, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(local.x, local.y));
+                ::SendMessageW(text_edit_, WM_LBUTTONUP, 0, MAKELPARAM(local.x, local.y));
             }
             return;
         }
-        CommitPendingText(); Select({});
+        CommitPendingText();
+        Select({});
         // Commit can remove an empty annotation and shift later indices.
-        const auto hit=document_.HitTest(ToImagePoint(point),5.0f/zoom_);
-        if(hit && (document_.annotations()[*hit].tool==ToolId::Text || document_.annotations()[*hit].tool==ToolId::Tag)) {
-            StartTextEditing(hit,point);
+        const auto hit = document_.HitTest(ToImagePoint(point), 5.0f / zoom_);
+        if (hit && (document_.annotations()[*hit].tool == ToolId::Text || document_.annotations()[*hit].tool == ToolId::Tag)) {
+            StartTextEditing(hit, point);
         }
         return;
     }
-    if(!visible_) { return; }
-    const auto p=ToImagePoint(point);
-    transform_handle_=-1;
-    if(selected_ && *selected_<document_.annotations().size()) {
-        const auto handles=document_.annotations()[*selected_].Handles();
-        for(size_t i=0;i<handles.size();++i) if(std::hypot(p.x-handles[i].x,p.y-handles[i].y)<=9*scale_/zoom_) { transform_handle_=static_cast<int>(i); break; }
+    if (!visible_) { return; }
+    const auto p = ToImagePoint(point);
+    transform_handle_ = -1;
+    if (selected_ && *selected_ < document_.annotations().size()) {
+        const auto handles = document_.annotations()[*selected_].Handles();
+        for (size_t i = 0; i < handles.size(); ++i)
+            if (std::hypot(p.x - handles[i].x, p.y - handles[i].y) <= 9 * scale_ / zoom_) {
+                transform_handle_ = static_cast<int>(i);
+                break;
+            }
     }
     // Hover-hit objects are selectable and movable with every creation tool.
     // Handles appear only after an explicit selection click.
     std::optional<size_t> hit;
-    if(transform_handle_>=0) { hit=selected_; }
-    else { hit=document_.HitTest(p,5.0f/zoom_); }
-    if(hit) {
-        Select(hit); original_=document_.annotations()[*hit]; drag_origin_=p;
-        transforming_=true; context_owns_transaction_=false; document_.BeginTransaction(); return;
+    if (transform_handle_ >= 0) {
+        hit = selected_;
+    } else {
+        hit = document_.HitTest(p, 5.0f / zoom_);
     }
-    if(tool_==ToolId::Watermark) { return; }
-    const bool leave_text_selection=(tool_==ToolId::Text || tool_==ToolId::Tag) && selected_ &&
-        (document_.annotations()[*selected_].tool==ToolId::Text || document_.annotations()[*selected_].tool==ToolId::Tag);
+    if (hit) {
+        Select(hit);
+        original_ = document_.annotations()[*hit];
+        drag_origin_ = p;
+        transforming_ = true;
+        context_owns_transaction_ = false;
+        document_.BeginTransaction();
+        return;
+    }
+    if (tool_ == ToolId::Watermark) { return; }
+    const bool leave_text_selection = (tool_ == ToolId::Text || tool_ == ToolId::Tag) && selected_ &&
+                                      (document_.annotations()[*selected_].tool == ToolId::Text || document_.annotations()[*selected_].tool == ToolId::Tag);
     Select({});
     // A selected text object is still the current interaction target after a
     // select/drag. Its first outside press only leaves that state; a later
     // blank press with no active selection may create the next text object.
-    if(leave_text_selection) { return; }
-    if(tool_==ToolId::Pointer) { return; }
-    if(tool_==ToolId::Text || tool_==ToolId::Tag) { StartTextEditing({},point); return; }
-    pending_={}; pending_.tool=tool_; pending_.style=style_; pending_.points={p,p};
-    if(tool_==ToolId::Spotlight) for(const auto& a:document_.annotations()) if(a.tool==ToolId::Spotlight) { pending_.style.opacity=a.style.opacity; break; }
-    has_pending_=dragging_=true; InvalidateImage(PendingDamage());
+    if (leave_text_selection) { return; }
+    if (tool_ == ToolId::Pointer) { return; }
+    if (tool_ == ToolId::Text || tool_ == ToolId::Tag) {
+        StartTextEditing({}, point);
+        return;
+    }
+    pending_ = {};
+    pending_.tool = tool_;
+    pending_.style = style_;
+    pending_.points = {p, p};
+    if (tool_ == ToolId::Spotlight)
+        for (const auto& a : document_.annotations())
+            if (a.tool == ToolId::Spotlight) {
+                pending_.style.opacity = a.style.opacity;
+                break;
+            }
+    has_pending_ = dragging_ = true;
+    InvalidateImage(PendingDamage());
 }
 void ScreenshotEditor::UpdateStroke(POINT point) {
-    const auto p=ToImagePoint(point);
-    if(transforming_ && selected_) {
-        auto updated=original_;
-        if(transform_handle_<0) {
-            const float dx=p.x-drag_origin_.x;
-            const float dy=p.y-drag_origin_.y;
-            for(auto& q:updated.points) { q.x+=dx; q.y+=dy; }
+    const auto p = ToImagePoint(point);
+    if (transforming_ && selected_) {
+        auto updated = original_;
+        if (transform_handle_ < 0) {
+            const float dx = p.x - drag_origin_.x;
+            const float dy = p.y - drag_origin_.y;
+            for (auto& q : updated.points) {
+                q.x += dx;
+                q.y += dy;
+            }
         } else {
-            const auto handles=original_.Handles();
-            const D2D1_POINT_2F q{std::clamp(p.x,0.0f,static_cast<float>(source_image_.width)),std::clamp(p.y,0.0f,static_cast<float>(source_image_.height))};
-            if(handles.size()==2) { updated.points[transform_handle_==0 ? 0:updated.points.size()-1]=q; }
-            else { updated.points={handles[(static_cast<size_t>(transform_handle_)+2)%4],q}; }
+            const auto handles = original_.Handles();
+            const D2D1_POINT_2F q{std::clamp(p.x, 0.0f, static_cast<float>(source_image_.width)), std::clamp(p.y, 0.0f, static_cast<float>(source_image_.height))};
+            if (handles.size() == 2) {
+                updated.points[transform_handle_ == 0 ? 0 : updated.points.size() - 1] = q;
+            } else {
+                updated.points = {handles[(static_cast<size_t>(transform_handle_) + 2) % 4], q};
+            }
         }
-        document_.Replace(*selected_,std::move(updated)); Invalidate(); return;
+        document_.Replace(*selected_, std::move(updated));
+        Invalidate();
+        return;
     }
-    if(!has_pending_ || !dragging_) { return; }
-    const auto last=pending_.points.back(); if(p.x==last.x && p.y==last.y) { return; }
-    const bool freehand=pending_.tool==ToolId::Pen || (pending_.tool==ToolId::Mosaic && pending_.style.method==EffectMethod::Brush);
+    if (!has_pending_ || !dragging_) { return; }
+    const auto last = pending_.points.back();
+    if (p.x == last.x && p.y == last.y) { return; }
+    const bool freehand = pending_.tool == ToolId::Pen || (pending_.tool == ToolId::Mosaic && pending_.style.method == EffectMethod::Brush);
     RECT damage{};
-    if(freehand) {
-        const float pad=std::max(pending_.style.brush_size/2,pending_.style.thickness)+3;
-        damage={static_cast<LONG>(std::floor(std::min(last.x,p.x)-pad)),static_cast<LONG>(std::floor(std::min(last.y,p.y)-pad)),
-            static_cast<LONG>(std::ceil(std::max(last.x,p.x)+pad)),static_cast<LONG>(std::ceil(std::max(last.y,p.y)+pad))};
+    if (freehand) {
+        const float pad = std::max(pending_.style.brush_size / 2, pending_.style.thickness) + 3;
+        damage = {static_cast<LONG>(std::floor(std::min(last.x, p.x) - pad)), static_cast<LONG>(std::floor(std::min(last.y, p.y) - pad)),
+                  static_cast<LONG>(std::ceil(std::max(last.x, p.x) + pad)), static_cast<LONG>(std::ceil(std::max(last.y, p.y) + pad))};
         pending_.points.push_back(p);
     } else {
-        const RECT before=PendingDamage(); pending_.points.back()=p; const RECT after=PendingDamage(); ::UnionRect(&damage,&before,&after);
+        const RECT before = PendingDamage();
+        pending_.points.back() = p;
+        const RECT after = PendingDamage();
+        ::UnionRect(&damage, &before, &after);
     }
-    if(pending_.tool==ToolId::Spotlight) { Invalidate(); } else { InvalidateImage(damage); }
+    if (pending_.tool == ToolId::Spotlight) {
+        Invalidate();
+    } else {
+        InvalidateImage(damage);
+    }
 }
 void ScreenshotEditor::EndStroke(POINT point) {
-    if(transforming_) {
-        UpdateStroke(point); transforming_=false; document_.CommitTransaction();
+    if (transforming_) {
+        UpdateStroke(point);
+        transforming_ = false;
+        document_.CommitTransaction();
         // Delete or undo during the drag leaves no selected annotation to compare.
-        const bool moved=selected_ && *selected_<document_.annotations().size() && !original_.Same(document_.annotations()[*selected_]);
-        if(callbacks_.on_document_committed && moved) { callbacks_.on_document_committed(); }
-        Invalidate(); return;
+        const bool moved = selected_ && *selected_ < document_.annotations().size() && !original_.Same(document_.annotations()[*selected_]);
+        if (callbacks_.on_document_committed && moved) { callbacks_.on_document_committed(); }
+        Invalidate();
+        return;
     }
-    if(!has_pending_ || !dragging_) { return; }
-    const auto revision=document_.revision(); UpdateStroke(point); dragging_=false;
-    const bool freehand=pending_.tool==ToolId::Pen || (pending_.tool==ToolId::Mosaic && pending_.style.method==EffectMethod::Brush);
-    const auto box=NormalizedD2DRect(pending_.points.front(),pending_.points.back());
-    if(freehand || box.right-box.left>=2 || box.bottom-box.top>=2) {
+    if (!has_pending_ || !dragging_) { return; }
+    const auto revision = document_.revision();
+    UpdateStroke(point);
+    dragging_ = false;
+    const bool freehand = pending_.tool == ToolId::Pen || (pending_.tool == ToolId::Mosaic && pending_.style.method == EffectMethod::Brush);
+    const auto box = NormalizedD2DRect(pending_.points.front(), pending_.points.back());
+    if (freehand || box.right - box.left >= 2 || box.bottom - box.top >= 2) {
         document_.Apply(std::move(pending_));
         selected_.reset();
     }
-    has_pending_=false; ReflowToolbar(); Invalidate(); NotifyMutation(revision);
+    has_pending_ = false;
+    ReflowToolbar();
+    Invalidate();
+    NotifyMutation(revision);
 }
 void ScreenshotEditor::CancelStroke() {
-    if(transforming_) { document_.CancelTransaction(); transforming_=false; Invalidate(); }
-    if(!dragging_) { return; }
-    const RECT damage=PendingDamage(); dragging_=has_pending_=false; pending_={}; InvalidateImage(damage);
+    if (transforming_) {
+        document_.CancelTransaction();
+        transforming_ = false;
+        Invalidate();
+    }
+    if (!dragging_) { return; }
+    const RECT damage = PendingDamage();
+    dragging_ = has_pending_ = false;
+    pending_ = {};
+    InvalidateImage(damage);
 }
-void ScreenshotEditor::StartTextEditing(std::optional<size_t> index,POINT point) {
-    if(editing_text_ && index && index==selected_) {
-        ::SetFocus(text_edit_); return;
+void ScreenshotEditor::StartTextEditing(std::optional<size_t> index, POINT point) {
+    if (editing_text_ && index && index == selected_) {
+        ::SetFocus(text_edit_);
+        return;
     }
     // Committing an empty active box erases it, shifting later hit indices.
-    if(editing_text_ && index && selected_ && *selected_<*index &&
-       document_.annotations()[*selected_].text.empty()) { --*index; }
+    if (editing_text_ && index && selected_ && *selected_ < *index &&
+        document_.annotations()[*selected_].text.empty()) { --*index; }
     CommitPendingText();
-    context_owns_transaction_=false; document_.BeginTransaction();
-    if(!index) {
-        Annotation a; a.tool=tool_==ToolId::Tag ? ToolId::Tag:ToolId::Text; a.style=style_; a.points={ToImagePoint(point)};
-        document_.Apply(std::move(a)); index=document_.annotations().size()-1;
+    context_owns_transaction_ = false;
+    document_.BeginTransaction();
+    if (!index) {
+        Annotation a;
+        a.tool = tool_ == ToolId::Tag ? ToolId::Tag : ToolId::Text;
+        a.style = style_;
+        a.points = {ToImagePoint(point)};
+        document_.Apply(std::move(a));
+        index = document_.annotations().size() - 1;
     }
-    selected_=index; pending_=document_.annotations()[*index]; editing_text_=true; has_pending_=false;
+    selected_ = index;
+    pending_ = document_.annotations()[*index];
+    editing_text_ = true;
+    has_pending_ = false;
     // This title identifies the text host to tests (FindWindow); it is not localized.
-    text_host_=::CreateWindowExW(kEditorExStyle,kEditorClassName,L"Edit annotation text",kEditorStyle,
-        point.x,point.y,100,50,hwnd_,nullptr,::GetModuleHandleW(nullptr),this);
-    if(text_host_) {
-        text_edit_=::CreateWindowExW(0,L"EDIT",pending_.text.c_str(),WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_MULTILINE|ES_WANTRETURN|ES_AUTOVSCROLL|ES_AUTOHSCROLL|ES_NOHIDESEL,
-            0,0,100,50,text_host_,reinterpret_cast<HMENU>(2700),::GetModuleHandleW(nullptr),nullptr);
+    text_host_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, L"Edit annotation text", kEditorStyle,
+                                   point.x, point.y, 100, 50, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
+    if (text_host_) {
+        text_edit_ = ::CreateWindowExW(0, L"EDIT", pending_.text.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_MULTILINE | ES_WANTRETURN | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
+                                       0, 0, 100, 50, text_host_, reinterpret_cast<HMENU>(2700), ::GetModuleHandleW(nullptr), nullptr);
     }
-    if(!text_edit_) {
-        if(text_host_) { ::DestroyWindow(text_host_); text_host_=nullptr; }
-        document_.CancelTransaction(); editing_text_=false; selected_.reset(); ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_TEXT_EDITOR_FAILED)); Invalidate(); return;
+    if (!text_edit_) {
+        if (text_host_) {
+            ::DestroyWindow(text_host_);
+            text_host_ = nullptr;
+        }
+        document_.CancelTransaction();
+        editing_text_ = false;
+        selected_.reset();
+        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_TEXT_EDITOR_FAILED));
+        Invalidate();
+        return;
     }
-    ::SendMessageW(text_edit_,EM_SETLIMITTEXT,65535,0);
-    last_text_double_=0;
-    ui::SetAccessibleName(text_edit_,strings::Get(IDS_EDITOR_TEXT_NAME));
-    ::SetWindowSubclass(text_edit_,TextEditProc,1,reinterpret_cast<DWORD_PTR>(this));
-    ::SetWindowDisplayAffinity(text_host_,0x11); LayoutTextEditor();
-    ::ShowWindow(text_host_,SW_SHOWNORMAL); ::SetFocus(text_edit_);
-    POINT local=point; ::ScreenToClient(text_edit_,&local);
-    const auto caret=::SendMessageW(text_edit_,EM_CHARFROMPOS,0,MAKELPARAM(std::max(0L,local.x),std::max(0L,local.y)));
-    ::SendMessageW(text_edit_,EM_SETSEL,LOWORD(caret),LOWORD(caret));
-    ReflowToolbar(); Invalidate();
-}
-void ScreenshotEditor::LayoutTextEditor() {
-    if(!text_host_ || !text_edit_ || !selected_) { return; }
-    pending_=document_.annotations()[*selected_];
-    const auto box=pending_.bounds(); const float em=pending_.FontPixels();
-    // The native input follows the scale the text is shown at.
-    const float shown_em=em*zoom_;
-    if(!text_font_ || text_font_pixels_!=shown_em) {
-        HFONT next=ui::theme::CreateUiFont(shown_em,1,false);
-        if(next) { ::SendMessageW(text_edit_,WM_SETFONT,reinterpret_cast<WPARAM>(next),FALSE); if(text_font_) { ::DeleteObject(text_font_); } text_font_=next; text_font_pixels_=shown_em; }
-    }
-    if(reinterpret_cast<HFONT>(::SendMessageW(text_edit_,WM_GETFONT,0,0))!=text_font_) {
-        ::SendMessageW(text_edit_,WM_SETFONT,reinterpret_cast<WPARAM>(text_font_),FALSE);
-    }
-    const LONG pad=ui::theme::Scaled(5,scale_);
-    const LONG x=static_cast<LONG>(view_origin_.x)+static_cast<LONG>(std::floor(box.left*zoom_))-pad;
-    const LONG y=static_cast<LONG>(view_origin_.y)+static_cast<LONG>(std::floor(box.top*zoom_))-pad;
-    const LONG w=std::max(2*pad+8L,static_cast<LONG>(std::ceil((box.right-box.left)*zoom_))+2*pad);
-    const LONG h=std::max(2*pad+8L,static_cast<LONG>(std::ceil((box.bottom-box.top)*zoom_))+2*pad);
-    ::SetWindowPos(text_host_,HWND_TOPMOST,x,y,w,h,SWP_NOACTIVATE);
-    ::MoveWindow(text_edit_,0,0,w,h,FALSE);
-    // The input keeps its full layout/caret coordinates, but nothing (including
-    // its selection frame) may paint beyond the capture canvas.
-    RECT visible=platform::IntersectRects({x,y,x+w,y+h},document_mode_ ? region_ : source_bounds_);
-    ::OffsetRect(&visible,-x,-y);
-    HRGN clip=::CreateRectRgn(visible.left,visible.top,visible.right,visible.bottom);
-    if(clip && !::SetWindowRgn(text_host_,clip,FALSE)) { ::DeleteObject(clip); }
-    const float inset=pending_.tool==ToolId::Tag ? em*0.45f : pending_.style.text_mode==TextMode::Fill ? em*0.25f : pending_.style.text_mode==TextMode::Outline ? em*0.075f:0;
-    RECT format{pad+static_cast<LONG>((inset+(pending_.tool==ToolId::Tag ? em*0.9f:0))*zoom_),pad+static_cast<LONG>(inset*zoom_),32760,32760};
-    ::SendMessageW(text_edit_,EM_SETRECTNP,0,reinterpret_cast<LPARAM>(&format));
-    ::InvalidateRect(text_edit_,nullptr,FALSE);
-
-}
-void ScreenshotEditor::UpdateTextFromControl() {
-    if(!editing_text_ || !selected_ || !text_edit_) { return; }
-    const int length=::GetWindowTextLengthW(text_edit_);
-    std::wstring value(static_cast<size_t>(length)+1,L'\0'); ::GetWindowTextW(text_edit_,value.data(),length+1); value.resize(length);
-    auto a=document_.annotations()[*selected_]; a.text=std::move(value); document_.Replace(*selected_,a); pending_=std::move(a);
-    if(text_dispatch_depth_) { text_layout_pending_=true; }
-    else { LayoutTextEditor(); }
+    ::SendMessageW(text_edit_, EM_SETLIMITTEXT, 65535, 0);
+    last_text_double_ = 0;
+    ui::SetAccessibleName(text_edit_, strings::Get(IDS_EDITOR_TEXT_NAME));
+    ::SetWindowSubclass(text_edit_, TextEditProc, 1, reinterpret_cast<DWORD_PTR>(this));
+    static_cast<void>(ui::ExcludeFromCapture(text_host_));
+    LayoutTextEditor();
+    ::ShowWindow(text_host_, SW_SHOWNORMAL);
+    ::SetFocus(text_edit_);
+    POINT local = point;
+    ::ScreenToClient(text_edit_, &local);
+    const auto caret = ::SendMessageW(text_edit_, EM_CHARFROMPOS, 0, MAKELPARAM(std::max(0L, local.x), std::max(0L, local.y)));
+    ::SendMessageW(text_edit_, EM_SETSEL, LOWORD(caret), LOWORD(caret));
+    ReflowToolbar();
     Invalidate();
 }
-LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM lparam,UINT_PTR id,DWORD_PTR reference) {
-    auto* self=reinterpret_cast<ScreenshotEditor*>(reference);
-    if(message==WM_NCDESTROY) { ::RemoveWindowSubclass(hwnd,TextEditProc,id); return ::DefSubclassProc(hwnd,message,wparam,lparam); }
-    if(message==WM_SHOWWINDOW) { ui::NativeRedrawGuard::VisibilityChanged(hwnd,wparam!=0); }
-    if(message==WM_SETCURSOR || message==WM_LBUTTONDOWN) {
-        POINT point{}; ::GetCursorPos(&point); ::ScreenToClient(hwnd,&point);
-        if(message==WM_LBUTTONDOWN) { point={GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam)}; }
-        RECT client{}; ::GetClientRect(hwnd,&client); const LONG edge=ui::theme::Scaled(4,self->scale_);
-        const bool border=point.x<edge || point.y<edge || point.x>=client.right-edge || point.y>=client.bottom-edge;
-        if(border) {
-            if(message==WM_SETCURSOR) { ::SetCursor(::LoadCursorW(nullptr,IDC_SIZEALL)); return TRUE; }
-            ::ClientToScreen(hwnd,&point); self->CommitPendingText();
-            if(self->visible_ && self->selected_) {
-                self->original_=self->document_.annotations()[*self->selected_]; self->drag_origin_=self->ToImagePoint(point);
-                self->transform_handle_=-1; self->transforming_=true; self->context_owns_transaction_=false; self->document_.BeginTransaction();
-                ::SetCapture(self->hwnd_); ::SetFocus(self->hwnd_);
+void ScreenshotEditor::LayoutTextEditor() {
+    if (!text_host_ || !text_edit_ || !selected_) { return; }
+    pending_ = document_.annotations()[*selected_];
+    const auto box = pending_.bounds();
+    const float em = pending_.FontPixels();
+    // The native input follows the scale the text is shown at.
+    const float shown_em = em * zoom_;
+    if (!text_font_ || text_font_pixels_ != shown_em) {
+        HFONT next = ui::theme::CreateUiFont(shown_em, 1, false);
+        if (next) {
+            ::SendMessageW(text_edit_, WM_SETFONT, reinterpret_cast<WPARAM>(next), FALSE);
+            if (text_font_) { ::DeleteObject(text_font_); }
+            text_font_ = next;
+            text_font_pixels_ = shown_em;
+        }
+    }
+    if (reinterpret_cast<HFONT>(::SendMessageW(text_edit_, WM_GETFONT, 0, 0)) != text_font_) {
+        ::SendMessageW(text_edit_, WM_SETFONT, reinterpret_cast<WPARAM>(text_font_), FALSE);
+    }
+    const LONG pad = ui::theme::Scaled(5, scale_);
+    const LONG x = static_cast<LONG>(view_origin_.x) + static_cast<LONG>(std::floor(box.left * zoom_)) - pad;
+    const LONG y = static_cast<LONG>(view_origin_.y) + static_cast<LONG>(std::floor(box.top * zoom_)) - pad;
+    const LONG w = std::max(2 * pad + 8L, static_cast<LONG>(std::ceil((box.right - box.left) * zoom_)) + 2 * pad);
+    const LONG h = std::max(2 * pad + 8L, static_cast<LONG>(std::ceil((box.bottom - box.top) * zoom_)) + 2 * pad);
+    ::SetWindowPos(text_host_, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
+    ::MoveWindow(text_edit_, 0, 0, w, h, FALSE);
+    // The input keeps its full layout/caret coordinates, but nothing (including
+    // its selection frame) may paint beyond the capture canvas.
+    RECT visible = platform::IntersectRects({x, y, x + w, y + h}, document_mode_ ? region_ : source_bounds_);
+    ::OffsetRect(&visible, -x, -y);
+    HRGN clip = ::CreateRectRgn(visible.left, visible.top, visible.right, visible.bottom);
+    if (clip && !::SetWindowRgn(text_host_, clip, FALSE)) { ::DeleteObject(clip); }
+    const float inset = pending_.tool == ToolId::Tag ? em * 0.45f : pending_.style.text_mode == TextMode::Fill  ? em * 0.25f
+                                                                : pending_.style.text_mode == TextMode::Outline ? em * 0.075f
+                                                                                                                : 0;
+    RECT format{pad + static_cast<LONG>((inset + (pending_.tool == ToolId::Tag ? em * 0.9f : 0)) * zoom_), pad + static_cast<LONG>(inset * zoom_), 32760, 32760};
+    ::SendMessageW(text_edit_, EM_SETRECTNP, 0, reinterpret_cast<LPARAM>(&format));
+    ::InvalidateRect(text_edit_, nullptr, FALSE);
+}
+void ScreenshotEditor::UpdateTextFromControl() {
+    if (!editing_text_ || !selected_ || !text_edit_) { return; }
+    const int length = ::GetWindowTextLengthW(text_edit_);
+    std::wstring value(static_cast<size_t>(length) + 1, L'\0');
+    ::GetWindowTextW(text_edit_, value.data(), length + 1);
+    value.resize(length);
+    auto a = document_.annotations()[*selected_];
+    a.text = std::move(value);
+    document_.Replace(*selected_, a);
+    pending_ = std::move(a);
+    if (text_dispatch_depth_) {
+        text_layout_pending_ = true;
+    } else {
+        LayoutTextEditor();
+    }
+    Invalidate();
+}
+LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR reference) {
+    auto* self = reinterpret_cast<ScreenshotEditor*>(reference);
+    if (message == WM_NCDESTROY) {
+        ::RemoveWindowSubclass(hwnd, TextEditProc, id);
+        return ::DefSubclassProc(hwnd, message, wparam, lparam);
+    }
+    if (message == WM_SHOWWINDOW) { ui::NativeRedrawGuard::VisibilityChanged(hwnd, wparam != 0); }
+    if (message == WM_SETCURSOR || message == WM_LBUTTONDOWN) {
+        POINT point{};
+        ::GetCursorPos(&point);
+        ::ScreenToClient(hwnd, &point);
+        if (message == WM_LBUTTONDOWN) { point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)}; }
+        RECT client{};
+        ::GetClientRect(hwnd, &client);
+        const LONG edge = ui::theme::Scaled(4, self->scale_);
+        const bool border = point.x < edge || point.y < edge || point.x >= client.right - edge || point.y >= client.bottom - edge;
+        if (border) {
+            if (message == WM_SETCURSOR) {
+                ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL));
+                return TRUE;
+            }
+            ::ClientToScreen(hwnd, &point);
+            self->CommitPendingText();
+            if (self->visible_ && self->selected_) {
+                self->original_ = self->document_.annotations()[*self->selected_];
+                self->drag_origin_ = self->ToImagePoint(point);
+                self->transform_handle_ = -1;
+                self->transforming_ = true;
+                self->context_owns_transaction_ = false;
+                self->document_.BeginTransaction();
+                ::SetCapture(self->hwnd_);
+                ::SetFocus(self->hwnd_);
             }
             return 0;
         }
     }
-    if(message==WM_ERASEBKGND) { return 1; }
-    if(message==WM_PAINT || message==WM_PRINTCLIENT) {
-        PAINTSTRUCT ps{}; HDC dc=message==WM_PAINT ? ::BeginPaint(hwnd,&ps):reinterpret_cast<HDC>(wparam);
-        RECT client{}; ::GetClientRect(hwnd,&client);
+    if (message == WM_ERASEBKGND) { return 1; }
+    if (message == WM_PAINT || message == WM_PRINTCLIENT) {
+        PAINTSTRUCT ps{};
+        HDC dc = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
+        RECT client{};
+        ::GetClientRect(hwnd, &client);
         ::HideCaret(hwnd);
-        { ui::PaintBuffer buffer(dc,client); self->PaintTextEditor(buffer.dc()); }
+        {
+            ui::PaintBuffer buffer(dc, client);
+            self->PaintTextEditor(buffer.dc());
+        }
         ::ShowCaret(hwnd);
-        if(message==WM_PAINT) { ::EndPaint(hwnd,&ps); } return 0;
+        if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
+        return 0;
     }
-    if(message==WM_KEYDOWN && wparam==VK_ESCAPE) {
-        self->editing_text_=false; self->document_.CancelTransaction();
-        HWND host=self->text_host_; self->text_host_=self->text_edit_=nullptr; ::DestroyWindow(host);
-        self->selected_.reset(); self->ReflowToolbar(); self->Invalidate(); return 0;
+    if (message == WM_KEYDOWN && wparam == VK_ESCAPE) {
+        self->editing_text_ = false;
+        self->document_.CancelTransaction();
+        HWND host = self->text_host_;
+        self->text_host_ = self->text_edit_ = nullptr;
+        ::DestroyWindow(host);
+        self->selected_.reset();
+        self->ReflowToolbar();
+        self->Invalidate();
+        return 0;
     }
-    if(message==WM_KEYDOWN && wparam==VK_RETURN && (::GetKeyState(VK_CONTROL)&0x8000)) { self->CommitPendingText(); return 0; }
-    if(message==WM_KEYDOWN && wparam=='A' && (::GetKeyState(VK_CONTROL)&0x8000)) { ::SendMessageW(hwnd,EM_SETSEL,0,-1); return 0; }
-    if(message==WM_LBUTTONDBLCLK) { self->last_text_double_=::GetTickCount(); self->last_text_point_={GET_X_LPARAM(lparam),GET_Y_LPARAM(lparam)}; }
-    if(message==WM_LBUTTONDOWN && self->last_text_double_ && ::GetTickCount()-self->last_text_double_<=::GetDoubleClickTime() &&
-        std::abs(GET_X_LPARAM(lparam)-self->last_text_point_.x)<=::GetSystemMetrics(SM_CXDOUBLECLK) &&
-        std::abs(GET_Y_LPARAM(lparam)-self->last_text_point_.y)<=::GetSystemMetrics(SM_CYDOUBLECLK)) {
-        const size_t index=LOWORD(::SendMessageW(hwnd,EM_CHARFROMPOS,0,lparam));
-        const auto& value=self->document_.annotations()[*self->selected_].text;
-        size_t start=std::min(index,value.size()),end=start;
-        while(start>0 && value[start-1]!=L'\n') { --start; }
-        while(end<value.size() && value[end]!=L'\n') { ++end; }
-        if(end<value.size()) { ++end; }
-        ::SendMessageW(hwnd,EM_SETSEL,start,end); self->last_text_double_=0; return 0;
+    if (message == WM_KEYDOWN && wparam == VK_RETURN && (::GetKeyState(VK_CONTROL) & 0x8000)) {
+        self->CommitPendingText();
+        return 0;
     }
-    const bool changes_pixels=(message>=WM_KEYFIRST && message<=WM_KEYLAST) ||
-        (message>=WM_MOUSEFIRST && message<=WM_MOUSELAST) || message==EM_SETSEL || message==EM_REPLACESEL ||
-        message==WM_SETTEXT || message==WM_SETFOCUS || message==WM_KILLFOCUS || message==WM_SIZE ||
-        message==WM_CUT || message==WM_PASTE || message==WM_CLEAR || message==WM_UNDO || message==EM_UNDO ||
-        message==WM_IME_COMPOSITION || message==WM_IME_ENDCOMPOSITION || message==WM_TIMER || message==WM_CAPTURECHANGED;
+    if (message == WM_KEYDOWN && wparam == 'A' && (::GetKeyState(VK_CONTROL) & 0x8000)) {
+        ::SendMessageW(hwnd, EM_SETSEL, 0, -1);
+        return 0;
+    }
+    if (message == WM_LBUTTONDBLCLK) {
+        self->last_text_double_ = ::GetTickCount();
+        self->last_text_point_ = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    }
+    if (message == WM_LBUTTONDOWN && self->last_text_double_ && ::GetTickCount() - self->last_text_double_ <= ::GetDoubleClickTime() &&
+        std::abs(GET_X_LPARAM(lparam) - self->last_text_point_.x) <= ::GetSystemMetrics(SM_CXDOUBLECLK) &&
+        std::abs(GET_Y_LPARAM(lparam) - self->last_text_point_.y) <= ::GetSystemMetrics(SM_CYDOUBLECLK)) {
+        const size_t index = LOWORD(::SendMessageW(hwnd, EM_CHARFROMPOS, 0, lparam));
+        const auto& value = self->document_.annotations()[*self->selected_].text;
+        size_t start = std::min(index, value.size()), end = start;
+        while (start > 0 && value[start - 1] != L'\n') { --start; }
+        while (end < value.size() && value[end] != L'\n') { ++end; }
+        if (end < value.size()) { ++end; }
+        ::SendMessageW(hwnd, EM_SETSEL, start, end);
+        self->last_text_double_ = 0;
+        return 0;
+    }
+    const bool changes_pixels = (message >= WM_KEYFIRST && message <= WM_KEYLAST) ||
+                                (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || message == EM_SETSEL || message == EM_REPLACESEL ||
+                                message == WM_SETTEXT || message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_SIZE ||
+                                message == WM_CUT || message == WM_PASTE || message == WM_CLEAR || message == WM_UNDO || message == EM_UNDO ||
+                                message == WM_IME_COMPOSITION || message == WM_IME_ENDCOMPOSITION || message == WM_TIMER || message == WM_CAPTURECHANGED;
     // The native caret stays hidden for the whole dispatch. EDIT would show it
     // at its own GDI position first; it is placed against the rendered text
     // below, by which time the control is invalid, and Windows does not erase
     // a caret inside an update region. The first column would stay inverted
     // until the next paint.
-    const bool caret_hidden=changes_pixels && ::HideCaret(hwnd)!=FALSE;
-    const auto result=[&] {
+    const bool caret_hidden = changes_pixels && ::HideCaret(hwnd) != FALSE;
+    const auto result = [&] {
         ++self->text_dispatch_depth_;
-        ui::NativeRedrawGuard redraw(hwnd,changes_pixels);
+        ui::NativeRedrawGuard redraw(hwnd, changes_pixels);
         // EDIT needs visibility for native caret/selection updates, even while
         // its internal redraw flag suppresses synchronous GDI text painting.
-        if(changes_pixels) { ::SetWindowLongPtrW(hwnd,GWL_STYLE,::GetWindowLongPtrW(hwnd,GWL_STYLE)|WS_VISIBLE); }
-        const auto result=::DefSubclassProc(hwnd,message,wparam,lparam);
+        if (changes_pixels) { ::SetWindowLongPtrW(hwnd, GWL_STYLE, ::GetWindowLongPtrW(hwnd, GWL_STYLE) | WS_VISIBLE); }
+        const auto result = ::DefSubclassProc(hwnd, message, wparam, lparam);
         --self->text_dispatch_depth_;
         return result;
     }();
-    if(!self->text_dispatch_depth_ && self->text_layout_pending_) {
-        self->text_layout_pending_=false;
+    if (!self->text_dispatch_depth_ && self->text_layout_pending_) {
+        self->text_layout_pending_ = false;
         self->LayoutTextEditor();
     }
-    if(changes_pixels && !self->text_dispatch_depth_ && ::IsWindow(hwnd) && ::GetFocus()==hwnd && self->selected_) {
-        DWORD start{},end{};
-        ::SendMessageW(hwnd,EM_GETSEL,reinterpret_cast<WPARAM>(&start),reinterpret_cast<LPARAM>(&end));
+    if (changes_pixels && !self->text_dispatch_depth_ && ::IsWindow(hwnd) && ::GetFocus() == hwnd && self->selected_) {
+        DWORD start{}, end{};
+        ::SendMessageW(hwnd, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
         // The native caret can be parked outside the old client bounds while
         // typing grows the host. Position it against the rendered text after
         // layout; native EDIT still owns selection, navigation and caret life.
-        if(start==end) {
-            const auto& a=self->document_.annotations()[*self->selected_];
-            auto layout=TextLayout(a);
-            float x{},y{}; DWRITE_HIT_TEST_METRICS metrics{};
-            if(layout && SUCCEEDED(layout->HitTestTextPosition(start,FALSE,&x,&y,&metrics))) {
-                RECT format{}; ::SendMessageW(hwnd,EM_GETRECT,0,reinterpret_cast<LPARAM>(&format));
-                ::SetCaretPos(format.left+static_cast<int>(std::lround(x*self->zoom_)),format.top+static_cast<int>(std::lround(y*self->zoom_)));
+        if (start == end) {
+            const auto& a = self->document_.annotations()[*self->selected_];
+            auto layout = TextLayout(a);
+            float x{}, y{};
+            DWRITE_HIT_TEST_METRICS metrics{};
+            if (layout && SUCCEEDED(layout->HitTestTextPosition(start, FALSE, &x, &y, &metrics))) {
+                RECT format{};
+                ::SendMessageW(hwnd, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&format));
+                ::SetCaretPos(format.left + static_cast<int>(std::lround(x * self->zoom_)), format.top + static_cast<int>(std::lround(y * self->zoom_)));
             }
         }
     }
     // Fails harmlessly when the dispatch gave the caret away.
-    if(caret_hidden && ::IsWindow(hwnd)) { ::ShowCaret(hwnd); }
+    if (caret_hidden && ::IsWindow(hwnd)) { ::ShowCaret(hwnd); }
     return result;
 }
 void ScreenshotEditor::PaintTextEditor(HDC dc) {
-    if(!text_edit_ || !selected_) { return; }
-    RECT bounds{}; ::GetWindowRect(text_edit_,&bounds); RenderImage(dc,bounds);
-    DWORD start{},end{}; ::SendMessageW(text_edit_,EM_GETSEL,reinterpret_cast<WPARAM>(&start),reinterpret_cast<LPARAM>(&end));
-    if(start==end) { return; }
-    const auto& a=document_.annotations()[*selected_]; auto layout=TextLayout(a); if(!layout) { return; }
-    const float em=a.FontPixels(); const float inset=a.tool==ToolId::Tag ? em*0.45f : a.style.text_mode==TextMode::Fill ? em*0.25f : a.style.text_mode==TextMode::Outline ? em*0.075f:0;
+    if (!text_edit_ || !selected_) { return; }
+    RECT bounds{};
+    ::GetWindowRect(text_edit_, &bounds);
+    RenderImage(dc, bounds);
+    DWORD start{}, end{};
+    ::SendMessageW(text_edit_, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
+    if (start == end) { return; }
+    const auto& a = document_.annotations()[*selected_];
+    auto layout = TextLayout(a);
+    if (!layout) { return; }
+    const float em = a.FontPixels();
+    const float inset = a.tool == ToolId::Tag ? em * 0.45f : a.style.text_mode == TextMode::Fill  ? em * 0.25f
+                                                         : a.style.text_mode == TextMode::Outline ? em * 0.075f
+                                                                                                  : 0;
     // Layout units are image pixels; the host's pixels are scaled by the view.
-    const float x=(view_origin_.x-bounds.left)/zoom_+a.points.front().x+inset+(a.tool==ToolId::Tag ? em*0.9f:0), y=(view_origin_.y-bounds.top)/zoom_+a.points.front().y+inset;
-    UINT32 count{}; layout->HitTestTextRange(start,end-start,x,y,nullptr,0,&count);
+    const float x = (view_origin_.x - bounds.left) / zoom_ + a.points.front().x + inset + (a.tool == ToolId::Tag ? em * 0.9f : 0), y = (view_origin_.y - bounds.top) / zoom_ + a.points.front().y + inset;
+    UINT32 count{};
+    layout->HitTestTextRange(start, end - start, x, y, nullptr, 0, &count);
     std::vector<DWRITE_HIT_TEST_METRICS> ranges(count);
-    if(SUCCEEDED(layout->HitTestTextRange(start,end-start,x,y,ranges.data(),count,&count))) {
-        for(const auto& r:ranges) { RECT area{static_cast<LONG>(r.left*zoom_),static_cast<LONG>(r.top*zoom_),static_cast<LONG>(std::ceil((r.left+r.width)*zoom_)),static_cast<LONG>(std::ceil((r.top+r.height)*zoom_))}; ::InvertRect(dc,&area); }
+    if (SUCCEEDED(layout->HitTestTextRange(start, end - start, x, y, ranges.data(), count, &count))) {
+        for (const auto& r : ranges) {
+            RECT area{static_cast<LONG>(r.left * zoom_), static_cast<LONG>(r.top * zoom_), static_cast<LONG>(std::ceil((r.left + r.width) * zoom_)), static_cast<LONG>(std::ceil((r.top + r.height) * zoom_))};
+            ::InvertRect(dc, &area);
+        }
     }
 }
 void ScreenshotEditor::CommitPendingText() {
-    if(!editing_text_) { return; }
-    UpdateTextFromControl(); editing_text_=false;
-    if(selected_ && document_.annotations()[*selected_].text.empty()) { document_.Remove(*selected_); selected_.reset(); }
+    if (!editing_text_) { return; }
+    UpdateTextFromControl();
+    editing_text_ = false;
+    if (selected_ && document_.annotations()[*selected_].text.empty()) {
+        document_.Remove(*selected_);
+        selected_.reset();
+    }
     document_.CommitTransaction();
-    if(text_host_) { HWND host=text_host_; text_host_=text_edit_=nullptr; ::DestroyWindow(host); }
-    has_pending_=false;
-    if(callbacks_.on_document_committed) { callbacks_.on_document_committed(); }
+    if (text_host_) {
+        HWND host = text_host_;
+        text_host_ = text_edit_ = nullptr;
+        ::DestroyWindow(host);
+    }
+    has_pending_ = false;
+    if (callbacks_.on_document_committed) { callbacks_.on_document_committed(); }
     Invalidate();
 }
 void ScreenshotEditor::OnCharacter(wchar_t character) {
-    if(editing_text_ && text_edit_) { ::SendMessageW(text_edit_,WM_CHAR,character,0); }
+    if (editing_text_ && text_edit_) { ::SendMessageW(text_edit_, WM_CHAR, character, 0); }
 }
-void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target,ID2D1SolidColorBrush* brush) const {
-    if(!selected_ || *selected_>=document_.annotations().size()) { return; }
-    const auto& a=document_.annotations()[*selected_]; if(a.tool==ToolId::Watermark || a.points.empty()) { return; }
+void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush) const {
+    if (!selected_ || *selected_ >= document_.annotations().size()) { return; }
+    const auto& a = document_.annotations()[*selected_];
+    if (a.tool == ToolId::Watermark || a.points.empty()) { return; }
     // Frame and handles keep their size on screen at every scale of the view.
-    const float unit=scale_/zoom_;
-    brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus)); const float width=1.2f*unit;
-    const auto box=NormalizedD2DRect(a.points.front(),a.points.back());
-    if(a.tool==ToolId::Text || a.tool==ToolId::Tag) {
-        auto r=a.bounds(); const float pad=3*unit; r.left-=pad; r.top-=pad; r.right+=pad; r.bottom+=pad;
-        target->DrawRoundedRectangle(D2D1::RoundedRect(r,5*unit,5*unit),brush,width);
-    } else if(a.tool==ToolId::Ellipse || (a.tool==ToolId::Spotlight && a.style.shape==SpotlightShape::Ellipse)) {
-        target->DrawEllipse(D2D1::Ellipse({(box.left+box.right)/2,(box.top+box.bottom)/2},(box.right-box.left)/2,(box.bottom-box.top)/2),brush,width);
-    } else if(a.tool==ToolId::Pen || a.tool==ToolId::Line || a.tool==ToolId::Arrow) {
-        for(size_t i=1;i<a.points.size();++i) { target->DrawLine(a.points[i-1],a.points[i],brush,width,RoundStrokeStyle()); }
-    } else if(a.tool==ToolId::Spotlight && a.style.shape==SpotlightShape::Rounded) {
-        const float radius=std::min({(box.right-box.left)/2,(box.bottom-box.top)/2,16*a.style.image_scale});
-        target->DrawRoundedRectangle(D2D1::RoundedRect(box,radius,radius),brush,width);
+    const float unit = scale_ / zoom_;
+    brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
+    const float width = 1.2f * unit;
+    const auto box = NormalizedD2DRect(a.points.front(), a.points.back());
+    if (a.tool == ToolId::Text || a.tool == ToolId::Tag) {
+        auto r = a.bounds();
+        const float pad = 3 * unit;
+        r.left -= pad;
+        r.top -= pad;
+        r.right += pad;
+        r.bottom += pad;
+        target->DrawRoundedRectangle(D2D1::RoundedRect(r, 5 * unit, 5 * unit), brush, width);
+    } else if (a.tool == ToolId::Ellipse || (a.tool == ToolId::Spotlight && a.style.shape == SpotlightShape::Ellipse)) {
+        target->DrawEllipse(D2D1::Ellipse({(box.left + box.right) / 2, (box.top + box.bottom) / 2}, (box.right - box.left) / 2, (box.bottom - box.top) / 2), brush, width);
+    } else if (a.tool == ToolId::Pen || a.tool == ToolId::Line || a.tool == ToolId::Arrow) {
+        for (size_t i = 1; i < a.points.size(); ++i) { target->DrawLine(a.points[i - 1], a.points[i], brush, width, RoundStrokeStyle()); }
+    } else if (a.tool == ToolId::Spotlight && a.style.shape == SpotlightShape::Rounded) {
+        const float radius = std::min({(box.right - box.left) / 2, (box.bottom - box.top) / 2, 16 * a.style.image_scale});
+        target->DrawRoundedRectangle(D2D1::RoundedRect(box, radius, radius), brush, width);
     } else {
-        const auto r=a.tool==ToolId::Mosaic && a.style.method==EffectMethod::Brush ? a.bounds():box;
-        target->DrawRectangle(r,brush,width);
+        const auto r = a.tool == ToolId::Mosaic && a.style.method == EffectMethod::Brush ? a.bounds() : box;
+        target->DrawRectangle(r, brush, width);
     }
-    for(auto point:a.Handles()) {
-        brush->SetColor(D2D1::ColorF(D2D1::ColorF::White)); target->FillEllipse(D2D1::Ellipse(point,4.5f*unit,4.5f*unit),brush);
-        brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus)); target->DrawEllipse(D2D1::Ellipse(point,4.5f*unit,4.5f*unit),brush,1.5f*unit);
+    for (auto point : a.Handles()) {
+        brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+        target->FillEllipse(D2D1::Ellipse(point, 4.5f * unit, 4.5f * unit), brush);
+        brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
+        target->DrawEllipse(D2D1::Ellipse(point, 4.5f * unit, 4.5f * unit), brush, 1.5f * unit);
     }
 }
 
@@ -2270,35 +2971,46 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target,ID2D1SolidColorBr
 // ---------------------------------------------------------------------------
 
 void ScreenshotEditor::RebuildRedactedBase() {
-    const bool effect_preview=has_pending_ && (pending_.tool==ToolId::Mosaic || pending_.tool==ToolId::Spotlight);
-    if((redaction_revision_==document_.revision() && !effect_preview) || !has_image()) { return; }
+    const bool effect_preview = has_pending_ && (pending_.tool == ToolId::Mosaic || pending_.tool == ToolId::Spotlight);
+    if ((redaction_revision_ == document_.revision() && !effect_preview) || !has_image()) { return; }
     std::vector<RedactionEffect> effects;
-    const auto add=[&](const Annotation& a) {
-        if((a.tool!=ToolId::Mosaic && a.tool!=ToolId::Spotlight) || a.points.empty()) { return; }
-        RedactionEffect effect; effect.box=a.bounds(); effect.strength=a.style.strength;
-        if(a.tool==ToolId::Spotlight) {
-            effect.kind=RedactionKind::Spotlight; effect.dim=a.style.opacity/100; effect.corner_radius=16*a.style.image_scale;
-            effect.outline=a.style.shape==SpotlightShape::Ellipse ? RedactionOutline::Ellipse :
-                a.style.shape==SpotlightShape::Rounded ? RedactionOutline::Rounded : RedactionOutline::Rectangle;
+    const auto add = [&](const Annotation& a) {
+        if ((a.tool != ToolId::Mosaic && a.tool != ToolId::Spotlight) || a.points.empty()) { return; }
+        RedactionEffect effect;
+        effect.box = a.bounds();
+        effect.strength = a.style.strength;
+        if (a.tool == ToolId::Spotlight) {
+            effect.kind = RedactionKind::Spotlight;
+            effect.dim = a.style.opacity / 100;
+            effect.corner_radius = 16 * a.style.image_scale;
+            effect.outline = a.style.shape == SpotlightShape::Ellipse ? RedactionOutline::Ellipse : a.style.shape == SpotlightShape::Rounded ? RedactionOutline::Rounded
+                                                                                                                                             : RedactionOutline::Rectangle;
         } else {
-            effect.kind=a.style.effect==EffectMode::Pixelate ? RedactionKind::Pixelate : RedactionKind::Blur;
-            if(a.style.method==EffectMethod::Brush) { effect.brush=true; effect.brush_path=a.points; effect.brush_radius=a.style.brush_size/2; }
+            effect.kind = a.style.effect == EffectMode::Pixelate ? RedactionKind::Pixelate : RedactionKind::Blur;
+            if (a.style.method == EffectMethod::Brush) {
+                effect.brush = true;
+                effect.brush_path = a.points;
+                effect.brush_radius = a.style.brush_size / 2;
+            }
         }
         effects.push_back(std::move(effect));
     };
-    for(const auto& a:document_.annotations()) { add(a); }
-    if(effect_preview) { add(pending_); }
-    redaction_revision_=effect_preview ? UINT64_MAX:document_.revision();
+    for (const auto& a : document_.annotations()) { add(a); }
+    if (effect_preview) { add(pending_); }
+    redaction_revision_ = effect_preview ? UINT64_MAX : document_.revision();
     // Only the pixels an edit can influence are recomputed and uploaded.
-    const RECT changed=redaction_.Update(source_image_,std::move(effects));
-    if(::IsRectEmpty(&changed) || !image_bitmap_) { return; }
-    const auto& image=redaction_.image();
+    const RECT changed = redaction_.Update(source_image_, std::move(effects));
+    if (::IsRectEmpty(&changed) || !image_bitmap_) { return; }
+    const auto& image = redaction_.image();
     // The bitmap holds rows [band_top_, band_top_ + band_rows_): the whole
     // picture for a screenshot, the band on show for a tall document.
-    const LONG top=std::max<LONG>(changed.top,band_top_),bottom=std::min<LONG>(changed.bottom,band_top_+band_rows_);
-    if(bottom<=top) { return; }
-    const D2D1_RECT_U target{static_cast<UINT32>(changed.left),static_cast<UINT32>(top-band_top_),static_cast<UINT32>(changed.right),static_cast<UINT32>(bottom-band_top_)};
-    if(FAILED(image_bitmap_->CopyFromMemory(&target,image.row(top)+changed.left,static_cast<UINT32>(image.stride_bytes())))) { image_bitmap_.Reset(); band_rows_=0; }
+    const LONG top = std::max<LONG>(changed.top, band_top_), bottom = std::min<LONG>(changed.bottom, band_top_ + band_rows_);
+    if (bottom <= top) { return; }
+    const D2D1_RECT_U target{static_cast<UINT32>(changed.left), static_cast<UINT32>(top - band_top_), static_cast<UINT32>(changed.right), static_cast<UINT32>(bottom - band_top_)};
+    if (FAILED(image_bitmap_->CopyFromMemory(&target, image.row(top) + changed.left, static_cast<UINT32>(image.stride_bytes())))) {
+        image_bitmap_.Reset();
+        band_rows_ = 0;
+    }
 }
 
 int ScreenshotEditor::EnsureBaseRows(int first, int end) {
@@ -2348,7 +3060,7 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
     RebuildRedactedBase();
     if (!image_target_) {
         const auto properties = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.0f, 96.0f);
+                                                             D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.0f, 96.0f);
         if (FAILED(graphics.d2d_factory()->CreateDCRenderTarget(&properties, &image_target_))) { return; }
         image_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &image_brush_);
     }
@@ -2370,7 +3082,7 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
     image_target_->BeginDraw();
     const D2D1::Matrix3x2F translation = D2D1::Matrix3x2F::Translation(origin_x, origin_y);
     image_target_->SetTransform(zoom_ == 1.0f ? translation : D2D1::Matrix3x2F::Scale(zoom_, zoom_) * translation);
-    image_target_->PushAxisAlignedClip(D2D1::RectF(0,0,static_cast<float>(source_image_.width),static_cast<float>(source_image_.height)),D2D1_ANTIALIAS_MODE_ALIASED);
+    image_target_->PushAxisAlignedClip(D2D1::RectF(0, 0, static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)), D2D1_ANTIALIAS_MODE_ALIASED);
     if (band_top_ == 0 && band_rows_ == source_image_.height && zoom_ == 1.0f) {
         image_target_->DrawBitmap(image_bitmap_.Get());
     } else {
@@ -2382,21 +3094,23 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
             const int covered = EnsureBaseRows(row, end_row);
             if (covered <= 0 || !image_bitmap_) { break; }
             image_target_->DrawBitmap(image_bitmap_.Get(),
-                D2D1::RectF(0, static_cast<float>(row), width, static_cast<float>(row + covered)), 1.0f, filter,
-                D2D1::RectF(0, static_cast<float>(row - band_top_), width, static_cast<float>(row - band_top_ + covered)));
+                                      D2D1::RectF(0, static_cast<float>(row), width, static_cast<float>(row + covered)), 1.0f, filter,
+                                      D2D1::RectF(0, static_cast<float>(row - band_top_), width, static_cast<float>(row - band_top_ + covered)));
             row += covered;
         }
     }
     for (const auto& annotation : document_.annotations()) {
         DrawAnnotation(image_target_.Get(), annotation, image_brush_.Get(), false);
     }
-    if (has_pending_ && pending_.tool!=ToolId::Mosaic && pending_.tool!=ToolId::Spotlight) {
+    if (has_pending_ && pending_.tool != ToolId::Mosaic && pending_.tool != ToolId::Spotlight) {
         DrawAnnotation(image_target_.Get(), pending_, image_brush_.Get(), true);
     }
-    DrawSelection(image_target_.Get(),image_brush_.Get());
+    DrawSelection(image_target_.Get(), image_brush_.Get());
     image_target_->PopAxisAlignedClip();
     if (FAILED(image_target_->EndDraw())) {
-        image_bitmap_.Reset(); image_brush_.Reset(); image_target_.Reset();
+        image_bitmap_.Reset();
+        image_brush_.Reset();
+        image_target_.Reset();
         band_rows_ = 0;
     }
 }
@@ -2404,10 +3118,11 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
 void ScreenshotEditor::PaintToolbar(HDC dc) const {
     using namespace ui;
     RECT client{0, 0, client_width_, client_height_};
-    PaintBuffer buffer(dc,client); dc=buffer.dc();
+    PaintBuffer buffer(dc, client);
+    dc = buffer.dc();
     theme::DrawPanel(dc, client, scale_);
     theme::DrawGrip(dc, {0, 0, static_cast<LONG>(kIslandGrip * scale_), toolbar_rect_.bottom}, scale_);
-    for(const auto& split:main_separators_) { DrawSeparator(dc,split,scale_); }
+    for (const auto& split : main_separators_) { DrawSeparator(dc, split, scale_); }
 }
 
 // ---------------------------------------------------------------------------
@@ -2516,13 +3231,13 @@ bool ScreenshotEditor::CopyToClipboard() {
     completing_ = false;
     const platform::BgraImage image = Composite();
     if (image.empty()) {
-        ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_COPY));
+        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_COPY));
         Invalidate();
         return false;
     }
     if (!platform::CopyImageToClipboard(hwnd_, image)) {
         // Failure safety: the session stays open so no capture is lost.
-        ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
+        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
         Invalidate();
         return false;
     }
@@ -2536,7 +3251,7 @@ bool ScreenshotEditor::SaveToFile() {
     if (!visible_) { return false; }
     const platform::BgraImage image = Composite();
     if (image.empty()) {
-        ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_SAVE));
+        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_SAVE));
         Invalidate();
         return false;
     }
@@ -2555,22 +3270,26 @@ bool ScreenshotEditor::SaveToFile() {
     const std::wstring initial = settings_ != nullptr ? settings_->ImageStartDirectory() : std::wstring();
     // Topmost owned islands and combo lists must not cover a native file dialog.
     // Freeze their timers/placement during its nested message loop.
-    modal_active_=true;
+    modal_active_ = true;
     ShowBrushPopup(false);
-    ::KillTimer(context_,0xEA61); context_fade_started_=0;
-    ::KillTimer(context_,0xEA63);
-    ::SendMessageW(Control(2600),CB_SHOWDROPDOWN,FALSE,0);
-    if(tooltip_) { ::SendMessageW(tooltip_,TTM_POP,0,0); ::SendMessageW(tooltip_,TTM_ACTIVATE,FALSE,0); }
-    ::ShowWindow(context_,SW_HIDE);
+    ::KillTimer(context_, 0xEA61);
+    context_fade_started_ = 0;
+    ::KillTimer(context_, 0xEA63);
+    ::SendMessageW(Control(2600), CB_SHOWDROPDOWN, FALSE, 0);
+    if (tooltip_) {
+        ::SendMessageW(tooltip_, TTM_POP, 0, 0);
+        ::SendMessageW(tooltip_, TTM_ACTIVATE, FALSE, 0);
+    }
+    ::ShowWindow(context_, SW_HIDE);
     const auto destination = platform::ShowSaveImageDialog(hwnd_, suggested, initial, ui::SaveImageDialogLabels());
-    modal_active_=false;
-    if(tooltip_) { ::SendMessageW(tooltip_,TTM_ACTIVATE,TRUE,0); }
-    if(visible_) { PlaceContext(); }
+    modal_active_ = false;
+    if (tooltip_) { ::SendMessageW(tooltip_, TTM_ACTIVATE, TRUE, 0); }
+    if (visible_) { PlaceContext(); }
     if (!destination) {
         return false;  // Cancelled: keep editing.
     }
     if (!platform::SaveImage(image, *destination)) {
-        ui::ShowCaptureStatusNotice(region_,strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED));
+        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED));
         Invalidate();
         return false;
     }

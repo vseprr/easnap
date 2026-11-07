@@ -1,0 +1,20 @@
+---
+# Static analysis of apps/easnap-desktop/src, report only for now (CI job
+# "clang-tidy", continue-on-error). Turned off: checks that fire on Win32
+# idioms (HANDLE/LPARAM casts, GetProcAddress, message switches), narrowing,
+# which MSVC /W4 already reports, and enum sizes, which touch persisted values.
+Checks: >-
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-use-override,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions,
+  -bugprone-casting-through-void,
+  -bugprone-switch-missing-default-case,
+  -performance-no-int-to-ptr,
+  -performance-enum-size
+WarningsAsErrors: ''
+HeaderFilterRegex: '.*[\\/]apps[\\/]easnap-desktop[\\/]src[\\/].*'
+CheckOptions:
+  bugprone-empty-catch.AllowEmptyCatchForExceptions: 'std::bad_alloc'

@@ -9,7 +9,8 @@
 
 namespace easnap::ui {
 
-enum class ColorRepresentation { Rgb, Hex };
+enum class ColorRepresentation { Rgb,
+                                 Hex };
 
 // Top-down BGRA pixels, addressed in physical virtual-desktop coordinates.
 // DPI affects chrome only. Missing/mismatched pixels are unavailable, never

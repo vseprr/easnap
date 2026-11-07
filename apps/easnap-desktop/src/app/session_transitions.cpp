@@ -25,8 +25,8 @@ constexpr std::array<std::pair<SessionState, SessionState>, kSessionTransitionCo
     {SessionState::RecordingPaused, SessionState::RecordingActive},
     {SessionState::RecordingActive, SessionState::RecordingFinalizing},
     {SessionState::RecordingPaused, SessionState::RecordingFinalizing},
-    // The bounded UI slice safely retains the temporary MP4 and returns to
-    // Idle. The trimming branch remains available for its later slice.
+    // A recording that could not be finalized returns to Idle; a finalized one
+    // goes on to trimming (StateAfterRecordingFinalization).
     {SessionState::RecordingFinalizing, SessionState::Idle},
     {SessionState::RecordingFinalizing, SessionState::RecordingTrimming},
     {SessionState::RecordingTrimming, SessionState::Idle},

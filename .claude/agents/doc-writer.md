@@ -6,7 +6,7 @@ tools: Read, Grep, Glob, Write, Edit
 ---
 
 You write documentation. Repository text (docs, ADRs, README, comments) is
-English; `KULLANIM.md`, `build\Testing\lab-latest.md` and the Desktop menu
+English; winlab's `C:\Projects\winlab\KULLANIM.md`, `build\Testing\lab-latest.md` and the Desktop menu
 texts are Turkish, everyday language, no jargon unless unavoidable, each
 technical term explained once in plain words, complete sentences.
 

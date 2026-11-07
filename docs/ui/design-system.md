@@ -59,7 +59,7 @@ Keyboard focus uses a neutral underline except on the mode island, where the
 selected recess identifies the choice. Radio/check markers have no surrounding
 material box. Radio/check semantics stay native. Disabled controls expose native disabled state and
 retain readable labels. High contrast uses system colors and removes decorative
-depth without changing the saved Light/Dark preference.
+depth without changing the saved appearance preference.
 
 ## Material and motion
 
@@ -96,94 +96,60 @@ label damage includes the one-pixel antialias fringe.
 | Surface | Composition |
 |---|---|
 | Modes | Screenshot / Scrollshot / Record native choices with a dot grip, one width for all three from the widest label in the active language; horizontal grip/blank dragging; 500 ms retirement fade, with disabled semantics and stable visuals |
-| Main editor island | Up to 780 DIP, 48 DIP high at normal widths; 34 DIP icons, grip and contrasting group separators in both palettes; no footer |
-| Contextual island | Selected-object or tool-default properties only; icon text modes and themed pt presets, stroke/colors, compact effect/spotlight controls, or watermark input; brush sizes use a third mini island |
+| Main editor island | Up to 832 DIP, 48 DIP high at normal widths; 34 DIP icons, grip and contrasting group separators in both palettes; no footer |
+| Contextual island | Selected-object or tool-default properties only; icon text modes and a rounded themed pt preset list with pt suffixes, stroke/colors, compact effect/spotlight controls, or watermark input; brush sizes use a third mini island |
 | Recording configuration | Existing responsive 390 DIP layout, prominent Start, MP4/GIF and audio/quality/cursor controls, one-click theme button and Cancel |
 | Active / paused / finalizing | 310 x 60 DIP bar, grip, icon-only Pause/Resume and Stop; duration centered between the buttons, no vertical separators; existing recessed coral paused state and white unpressed icon remain; truthful finalization status; unused areas and labels drag the bar |
 | Trim | Shared custom caption with native side/bottom resize frame and move/minimize/maximize/close behavior, preview, recessed timeline, raised gray oval In/Out handles without caps, slender playhead with restrained coral glow, transport and neutral Save with coral ink |
 | Menus / dialogs | Native menu ownership with scoped material item drawing; application confirmations use custom rounded chrome and a native modal dialog with real default/cancel actions |
 
-The two editor islands are placed as a group by `ui/island_layout`: below the
-frame, above it, beside it on the right or left, and over the bottom of the
-frame only when nothing outside has room; never over the mode island
-([ADR-036](../decisions/ADR-036-island-placement-around-the-frame.md)).
-Full-monitor selections center the group; recording configuration follows the
-same rule. Their grip/blank-space drag never starts from an
-interactive child. Frame-resize press hides both, including the contextual
-island, and the mode island; release/capture loss restores them without
-acquisition. Trim opens
-from the recording aspect ratio and available work area with readable DPI-scaled
-controls. Manual resizing keeps a 480 x 400 client-DIP minimum, adding the
-native frame when computing outer tracking dimensions and capping to the work
-area, with no DPI shrink. The video allocation meets the custom caption; time and
-range rows stay below the timeline. Preview fits without distortion; surplus side space
-is consumed before its displayed width changes. Empty status/progress rows
-collapse; notices use measured wrapped height and export uses a recessed rounded
-progress track with coral fill. Child layout is batched before owner-thread
-painting; DWM owns supported resizable corners and exposed backing pixels use
-the theme gray. Preserve native nonclient insets and the caption-only override
-from ADR-024; do not restore whole-frame removal or top-level WVR_REDRAW.
-Preview-helper positioning remains asynchronous. Tutorial/footer text is removed from
-all capture and trim states. Operational failures use separate transient notices.
+Where the islands go around the frame, when they hide and how they are dragged
+is in [user flows](../user-flows.md#screenshot-editing) and
+[ADR-036](../decisions/ADR-036-island-placement-around-the-frame.md). How the
+trim window opens, lays out and resizes is in
+[user flows](../user-flows.md#preview-trim-and-finish-a-recording) and the
+[window guide](window-implementation-guide.md#3-compute-layout-before-painting).
+Their visual values:
 
-Export progress is a recessed track with a rounded coral fill and no sheen
-over the ends of the fill.
+- Newly exposed backing pixels of a resizing window use the theme gray; DWM
+  draws the corners of resizable windows.
+- Export progress is a recessed track with a rounded coral fill and no sheen
+  over the ends of the fill.
+- No capture or trim state shows tutorial or footer text; operational failures
+  use separate transient notices.
 
 ## Annotation content and input
 
-New non-text annotations are unselected. Hovering shape/effect outlines exposes
-the move cursor in every creation tool; click selects and drag moves immediately.
-Interiors do not intercept new drawing, including mosaic/spotlight regions. Selected
-shapes follow their real outline/path with a thin coral trace. Mosaic brush uses
-a bounding selection frame, while its hit target follows the brush contour. Selection is
-separate from creation defaults. Lines/arrows have endpoint
-handles; rectangle/ellipse, effect regions and spotlight regions have four
-corners. Pen strokes, text and tags move without resize handles. Watermark is an
-editable document-wide effect. Completed transforms and sliders are one undo
-entry; cancellation restores their prior state. Movement can go outside any
-capture edge, including oversized text. Source clipping hides both content and
-selection frames; undo restores the previous position. Selection chrome never exports.
+How the tools behave (selection, handles, text editing, effects, watermark
+input) is in [user flows](../user-flows.md#screenshot-editing). The decisions
+are [ADR-017](../decisions/ADR-017-neumorphic-editor-and-editable-annotations.md),
+[ADR-018](../decisions/ADR-018-editor-interaction-corrections.md),
+[ADR-020](../decisions/ADR-020-workspace-layering-and-outline-interaction.md)
+(Save suspension, brush-size group placement) and
+[ADR-022](../decisions/ADR-022-text-input-and-content-sized-trim.md), which owns
+how the native EDIT and the source-backed painter share a text box. The visual
+values:
 
-Native multiline EDIT supplies the real caret, word selection, paragraph
-triple-click, keyboard navigation and clipboard operations. Ctrl+Enter commits;
-Escape cancels the edit. Clicking another text/tag while editing activates it
-immediately. A blank click commits and deselects without creating another object;
-a blank click with neither an editor nor a selection starts new text. Single
-clicks select existing text for dragging, even after switching repeatedly
-between texts; a blank click clears that selection. Double-click enters editing.
-A source-backed EDIT paint pass preserves the real
-native caret and renders a hollow rounded
-coral frame during editing, selection and movement. DirectWrite measures and
-renders Plain, rounded
-Fill or glyph Outline. Fill/Outline use white glyphs, or black when the selected
-color is white. Point presets are 12/16/24/36/48/60/72/96, with validated custom
-6–288 pt input. Size always affects the whole object. Content point-to-pixel
-conversion retains capture DPI rather than changing with the UI theme/monitor.
-
-The native EDIT control stays visible for input and caret ownership, but its
-own glyph and background drawing is suppressed. Only the source-backed custom
-painter draws annotation pixels, so typing does not expose a second native
-glyph or a rectangular backing. The native caret is hidden for the duration of
-each message and shown again at the position of the rendered text.
-
-Blur and pixelation are separate effect choices, each supporting brush and
-region. Strength maps to blur radius or block size; pixel changes are rebuilt
-from the immutable capture. Spotlight regions reveal their union through one
-shared dim layer. Brush size opens on click or 350 ms hover and closes 250 ms
-after leaving, on choice, drawing or a tool switch. Watermark accepts at most
-16 UTF-16 code units (without splitting a surrogate pair); its hint disappears
-after entry. A rotated lattice anchored at the image center keeps every tile
-centered as text or size changes, clipped to source bounds.
-The hand and chevron share one control. Brush size appears in a mini island with
-a callout toward the hand and an 8 DIP island gap. All stroke presets share its
-three-dot visual language. The palette includes black and gray. Watermark has a
-small circular clear button inside the text field on hover; leaving hides it
-even after focus. Its soft lower-right drop shadow and recessed press use the
-shared material animation, and Undo restores both document and input text. Auxiliary islands,
-combo lists and tooltips suspend while a native Save picker is open.
-Opening brush size near the lower screen edge moves the three-island group up
-only as far as needed, retaining both gaps without covering the main tools.
-Tags keep a stable graphite body/white text and proportional colored dot/notch.
+- A selected shape or stroke shows a thin coral trace along its real outline
+  or path; a mosaic brush stroke shows a bounding selection frame. Text and tags
+  show a hollow rounded coral frame while edited, selected or moved. Selection
+  chrome never exports.
+- DirectWrite renders text as Plain, rounded Fill or glyph Outline. Fill and
+  Outline use white glyphs, or black when the selected color is white. Point
+  presets are 12/16/24/36/48/60/72/96, with validated custom 6–288 pt input.
+  Content point-to-pixel conversion keeps the capture DPI rather than changing
+  with the UI theme or monitor.
+- Tags keep a stable graphite body with white text and a proportional colored
+  dot and notch. The palette includes black and gray.
+- The hand and chevron share one control. Brush size opens on click or 350 ms
+  hover and closes 250 ms after leaving, on a choice, on drawing or on a tool
+  switch. It appears in a mini island with a callout toward the hand and an
+  8 DIP island gap. All stroke presets share its three-dot visual language.
+- Watermark tiles form a rotated lattice anchored at the image center; every
+  tile stays centered as text or size changes, clipped to source bounds.
+- The watermark field's clear button is a small circle inside the field. Its
+  soft lower-right drop shadow and recessed press use the shared material
+  animation.
 
 The magnifier is 152 × 166 DIP with a 25 × 25 sample at 4 DIP per source pixel, a minimal
 reticle and three compact readout rows; it has no per-pixel border grid.
@@ -195,14 +161,16 @@ sliders support keyboard changes; point-size combo boxes and text inputs retain
 native editing. Accessible names assigned through IAccPropServices are cleared
 when their HWND is destroyed. Menus keep their native command/keyboard behavior;
 file pickers remain Windows-owned. Theme buttons switch immediately and persist
-through the existing settings owner; tray choices remain explicit Light/Dark.
+through the existing settings owner; the tray's Appearance submenu, like
+Settings, offers Same as Windows, Light and Dark.
 
 The trim timeline retains three UI Automation RangeValue children: In point,
 Playback position and Out point. Tab and arrows retain their existing behavior,
 including Shift for In and Ctrl for Out. Export boundaries remain governed by
 media samples. Native preview pixels are not rendered by PrintWindow; a black
 preview in fixture evidence is not proof of failed playback or capture exclusion.
-See the validation report for the exact automated and manual coverage.
+What the tests cover is in [testing](../testing.md); the checks made for each
+release are in the [validation records](../releases/validation-history.md).
 
 The interaction corrections are specified in [ADR-018](../decisions/ADR-018-editor-interaction-corrections.md).
 Stable paint, unrestricted movement and custom chrome are specified in

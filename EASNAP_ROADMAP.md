@@ -1,19 +1,23 @@
 # Easnap delivery roadmap
 
-**Updated:** 2026-10-30
+**Updated:** 2026-11-07
 
 Read this with [project status](docs/project-status.md). This file records the
 phase boundaries; what is implemented and validated belongs in project status,
-and what each release contained in its
-[release notes](docs/releases/v1.1.0-beta.2.md).
+and what each release contained in its release notes, listed in the
+[documentation index](docs/README.md).
 
-## Current: v1.1.0-beta.2, published
+## Current: v1.1.0 prepared for publication
 
 The first beta of v1.1 was published on 2026-10-13 as a prerelease of
 [`vseprr/easnap`](https://github.com/vseprr/easnap): Scrollshot in the
 application and the work a public beta needs. The second beta, with the
-corrections from testing the first, was published on 2026-10-30. The latest
-stable version is v1.0.2, the second maintenance release on top of v1.0.0.
+corrections from testing the first, was published on 2026-10-30. The
+stabilization toward v1.1.0 ran on 2026-11-07 on the branch
+`stabilize/v1.1.0`. Its release candidate v1.1.0-rc.1 was checked by the
+owner and not published; the two problems the check found are corrected, and
+the branch now carries v1.1.0, not tagged or published yet. The latest stable
+version is v1.0.2, the second maintenance release on top of v1.0.0.
 
 | Phase | State |
 |---|---|
@@ -25,50 +29,22 @@ stable version is v1.0.2, the second maintenance release on top of v1.0.0.
 | Scrollshot | Implemented, including editing of the stitched image; released in v1.1.0-beta.1 |
 | Beta readiness | Implemented; v1.1.0-beta.1 and v1.1.0-beta.2 published as prereleases |
 | Isolated test lab | Implemented 2026-10-19: Hyper-V VM driven by winlab, direct build, capture-path reporting ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md)) |
+| v1.1.0 stable | Stabilization on `stabilize/v1.1.0` (2026-11-07): audit, documentation, formatting, static analysis, code fixes; rc.1 checked by the owner, not published; v1.1.0 prepared |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
 
-For v1.1.0-beta.1 (1 to 8) and after its publication (9 and 10), in this order:
+In this order (details in [project status](docs/project-status.md#next-slice)):
 
-1. Done: Scrollshot stitching engine, capture session, workspace integration
-   and editing of the stitched image.
-2. Done: diagnostics and data safety. Log file, crash reports, confirmation
-   before work is lost, recovery of unsaved recordings, specific recording
-   start messages, and the H.264 picture-size rule.
-3. Done: all user-visible text in English and Turkish.
-4. Done: Settings window, About, update check, launch behaviour.
-5. Done: compatibility. Easnap starts on Windows N editions and refuses to
-   start below Windows 10 build 19041. Neither was seen on such a system.
-6. Done: release and distribution. Package names and checks for the
-   prerelease version, package manifests, uninstall behaviour, symbol files,
-   release notes. Published from the tag by the Release workflow; the package
-   manager submissions are the owner's step.
-7. Done: CI and community files. CodeQL, an AddressSanitizer job, issue forms
-   and a pull-request template; skipped tests are reported as skipped. Both
-   new jobs pass on the hosted runner.
-8. Done: documentation pass and validation. Thirteen closed reports were
-   removed after their conclusions moved into the ADRs they support; on
-   2026-10-13 the Full tier passed 46 of 47 on the final binaries, the 47th
-   on its retry.
-9. Done (2026-10-19): the isolated test lab. The Standard and Full tiers run
-   in a Hyper-V VM while the PC stays in use; its first runs exposed a
-   one-frame timestamp shift of the MP4 writer on software H.264 encoders,
-   now fixed.
-10. Done (2026-10-30), released as v1.1.0-beta.2: the first beta
-    feedback. Self-sizing Copied/Saved notices, a tools island that no longer
-    jumps when a tool is chosen, right-click in a locked Scrollshot, the cause
-    of the `trim_timeline_seek_stress` instability, and the black boxes that
-    excluded islands left in screenshots and recordings (islands are now
-    layered; tooltips are excluded when shown).
+1. Publishing v1.1.0, approved by the owner: the pull request to `main`,
+   its CI run, the merge, the tag and the release, done by the agent.
+2. v1.2 on a branch of its own.
 
-Next: the owner's check of the beta.2 installer and its uninstall. Tests run
-in the lab (`scripts/lab.ps1 run`,
-[testing](docs/testing.md#lab)); the host desktop only when the owner asks,
-including the open host Full run for the writer fix. Then the checks the beta
-could not make on one PC: Windows 11, an N edition, Scrollshot on real
-applications, other scale factors, the installer. The lab can take the
-Windows 11 and N-edition images once a second `testenv.json` names them.
+Open on the owner's side: the host Full run for the writer fix, since the host
+desktop is used only when the owner asks. Not covered yet: Windows 11, an N
+edition, Scrollshot on real applications. `lab.ps1 -Variant` names further lab
+images built from `testenv.json`; the first one runs at 150 % scale. A
+Windows 11 image needs its ISO and virtual TPM support in winlab.
 
 Carried over from v1.0.2 and not part of the beta:
 
@@ -103,6 +79,11 @@ included in v1 and has no promised release date.
 
 Camera, Mouse Effects, device pickers, GPU-native recording, a single muxing
 thread for audio and video, and long-video trim optimization remain outside
-this release. Code signing is not in place; binaries are unsigned. Codec
+this release. Code signing is not in place; binaries are unsigned, and the
+owner decided on 2026-11-07 to publish v1.1.0 unsigned. v1.2 candidates from
+the 2026-11-07 audit: splitting `CaptureCoordinator` (an ADR first), shorter
+audio and editor functions, an exception boundary for the WASAPI capture
+thread, a golden corpus of recorded frames for Scrollshot, and a clang-tidy job
+that can be required. Codec
 cut-point granularity, GIF palette/timing limits and source-start decoding for
 late trims are documented implementation limits, not unimplemented v1 features.

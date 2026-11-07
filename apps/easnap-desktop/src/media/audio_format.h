@@ -42,9 +42,9 @@ struct AudioFormat {
 
 /// Discontinuity / status flags for audio packets.
 enum class AudioPacketFlags : uint32_t {
-    None          = 0,
+    None = 0,
     Discontinuity = 1u << 0,  ///< Gap detected (device glitch, queue overrun, etc.)
-    Silent        = 1u << 1,  ///< WASAPI reported AUDCLNT_BUFFERFLAGS_SILENT
+    Silent = 1u << 1,  ///< WASAPI reported AUDCLNT_BUFFERFLAGS_SILENT
     DeviceChanged = 1u << 2,  ///< Endpoint invalidation detected during capture
     TimestampError = 1u << 3, ///< WASAPI could not provide a reliable position
 };

@@ -40,13 +40,22 @@ enum class ToolId {
     Ellipse,    ///< Outlined ellipse.
     Text,       ///< Click, then type.
     Mosaic,     ///< Smooth blur or block pixelation, brush or rectangle.
-    Line, Tag, Spotlight, Watermark,
+    Line,
+    Tag,
+    Spotlight,
+    Watermark,
 };
 
-enum class TextMode { Plain, Fill, Outline };
-enum class EffectMode { Blur, Pixelate };
-enum class EffectMethod { Brush, Region };
-enum class SpotlightShape { Rectangle, Ellipse, Rounded };
+enum class TextMode { Plain,
+                      Fill,
+                      Outline };
+enum class EffectMode { Blur,
+                        Pixelate };
+enum class EffectMethod { Brush,
+                          Region };
+enum class SpotlightShape { Rectangle,
+                            Ellipse,
+                            Rounded };
 
 struct AnnotationStyle {
     D2D1_COLOR_F color{1.0f, 0.259f, 0.286f, 1.0f};  // Easnap default: signal red
@@ -75,7 +84,7 @@ struct Annotation {
     [[nodiscard]] bool HitTest(D2D1_POINT_2F point, float tolerance = 5.0f) const;
     [[nodiscard]] std::vector<D2D1_POINT_2F> Handles() const;
     [[nodiscard]] bool Same(const Annotation& other) const;
-    [[nodiscard]] float FontPixels() const { return style.font_size * (96.0f/72.0f) * style.image_scale; }
+    [[nodiscard]] float FontPixels() const { return style.font_size * (96.0f / 72.0f) * style.image_scale; }
 };
 
 /// Vector command list with undo/redo. Compositing happens only on export.
@@ -241,7 +250,7 @@ private:
     void ReflowToolbar();
     void PaintToolbar(HDC dc) const;
     static LRESULT CALLBACK ToolbarButtonProc(HWND hwnd, UINT message, WPARAM wparam,
-        LPARAM lparam, UINT_PTR identifier, DWORD_PTR reference);
+                                              LPARAM lparam, UINT_PTR identifier, DWORD_PTR reference);
     void Invalidate() const;
     void InvalidateImage(const RECT& source_bounds) const;
     [[nodiscard]] RECT PendingDamage() const;
@@ -315,7 +324,7 @@ private:
     ULONGLONG context_fade_started_{0};
     std::optional<size_t> selected_;
     std::vector<RECT> main_separators_, context_separators_;
-    std::vector<std::pair<int,RECT>> context_fields_;
+    std::vector<std::pair<int, RECT>> context_fields_;
     Annotation original_;
     D2D1_POINT_2F drag_origin_{};
     int transform_handle_{-1};

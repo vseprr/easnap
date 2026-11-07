@@ -26,22 +26,22 @@ class RecordingControls;
 class ScrollshotControls;
 class TrimWindow;
 enum class ScrollshotCommand;
-}
+}  // namespace easnap::ui
 namespace easnap::scrollshot {
 class ScrollshotSession;
-}
+}  // namespace easnap::scrollshot
 namespace easnap::editor {
 class ScreenshotEditor;
 struct ImageView;
-}
+}  // namespace easnap::editor
 namespace easnap::media {
 class ITemporarySessionStore;
 enum class AudioSource;
-}
+}  // namespace easnap::media
 namespace easnap::recording {
 class RecordingSession;
 enum class RecordingStartFailure;
-}
+}  // namespace easnap::recording
 
 namespace easnap::app {
 
@@ -61,8 +61,7 @@ inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
 /// theirs is running its own message loop any more.
 inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
 
-/// The full v1 session lifecycle. Recording states exist already so Phase 2 only
-/// adds behaviour, never new control flow.
+/// The session lifecycle; session_transitions.cpp lists the legal transitions.
 ///
 ///   Idle
 ///     -> RegionSelecting
@@ -78,7 +77,9 @@ inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
 /// True from the moment Scrollshot is chosen until its image has been handed on.
 [[nodiscard]] bool IsScrollshotState(SessionState state) noexcept;
 
-enum class CaptureMode { Screenshot, Record, Scrollshot };
+enum class CaptureMode { Screenshot,
+                         Record,
+                         Scrollshot };
 
 
 /// Owns session creation, enforces legal state transitions and wires the UI
@@ -174,7 +175,9 @@ private:
     void FinishRecordingWorkflow(bool finalized);
     void StopRecordingForShutdown();
     void BeginTrimWorkflow(const std::wstring& source_path);
-    enum class PendingTrimAction { None, Save, Copy };
+    enum class PendingTrimAction { None,
+                                   Save,
+                                   Copy };
     void OnTrimSaveRequested(media::MediaTime start, media::MediaTime end);
     void OnTrimCopyRequested(media::MediaTime start, media::MediaTime end);
     void BeginTrimAction(PendingTrimAction action, media::MediaTime start,
@@ -194,9 +197,21 @@ private:
     void FinishTrimWorkflow(bool delete_active_session);
     void StopTrimForShutdown();
 
-    enum class ScrollshotAction { Start, Help, Edit, Save, Discard, Copy };
+    enum class ScrollshotAction { Start,
+                                  Help,
+                                  Edit,
+                                  Save,
+                                  Discard,
+                                  Copy };
     /// What the island's message line reports besides the capture's own condition.
-    enum class ScrollshotNotice { None, WheelBlocked, DisplayChanged, Stopping, Copying, Saving, CopyFailed, SaveFailed };
+    enum class ScrollshotNotice { None,
+                                  WheelBlocked,
+                                  DisplayChanged,
+                                  Stopping,
+                                  Copying,
+                                  Saving,
+                                  CopyFailed,
+                                  SaveFailed };
     /// Shows `notice` on the island at once, before work that blocks this thread.
     void ShowScrollshotNotice(ScrollshotNotice notice);
     /// The visible surface a question about the current session belongs to.

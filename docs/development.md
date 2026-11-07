@@ -39,6 +39,10 @@ cmake --build build --config Release
 Exit a running Easnap before rebuilding: the linker cannot replace an
 executable that is in use.
 
+A development build and an installed copy share one settings file,
+`%LOCALAPPDATA%\Easnap\settings.ini`: what is chosen in the Settings of one,
+the language for example, is what the other reads as well.
+
 Add `-Clean` to clean the selected configuration's generated targets before
 rebuilding. The helper verifies an existing in-repository Easnap CMake tree;
 it preserves unrelated evidence and the cache. Reuse `build/` for Debug/Release.
@@ -67,9 +71,10 @@ current results and remaining visual failures are in
 The Windows CI workflow builds Debug and Release on the `windows-2022` image,
 runs the tests a hosted runner can execute (see [testing](testing.md)) uncached
 and packages the Release build. A second job builds the same tests with
-AddressSanitizer; a third workflow runs CodeQL on the application sources.
-Automated tests complement manual multi-monitor, DPI, audio-device and visual
-interaction checks.
+AddressSanitizer, and a third checks the C++ formatting; a separate workflow
+runs CodeQL on the application sources. Issue forms and a pull-request
+template are in `.github/`. Automated tests complement manual multi-monitor,
+DPI, audio-device and visual interaction checks.
 
 To run the tests under AddressSanitizer locally:
 
@@ -84,6 +89,36 @@ ctest --test-dir build-asan -C Release --label-exclude "interactive-desktop|desk
 The crash-report test is excluded: the sanitizer takes its deliberate access
 violations before the application's own handler. Sanitized binaries are never
 packaged.
+
+## Code style
+
+The C++ sources follow `.clang-format`, derived from how the code was written:
+4-space indent, attached braces, `T* p`, unindented namespaces. It keeps every
+line break the author chose and does not reorder includes or
+using-declarations, whose order matters. Format before committing:
+
+```powershell
+.\scripts\format.ps1          # format every tracked C++ file under apps/
+.\scripts\format.ps1 -Check   # change nothing; list files that are not formatted (CI runs this)
+```
+
+The script uses the clang-format 19 that Visual Studio 2022 installs with its
+C++ workload; another major version can format differently and is refused
+(`-ClangFormat <path>` names a different binary). The commit that formatted
+the whole tree is listed in `.git-blame-ignore-revs`; run
+`git config blame.ignoreRevsFile .git-blame-ignore-revs` once so that
+`git blame` skips it.
+
+Static analysis uses clang-tidy with the checks in `.clang-tidy`. The CI job
+runs it on the application sources and only reports; the findings left on
+2026-11-07 were checked one by one and are harmless. clang-tidy needs the
+compile commands of a Ninja build, which the Visual Studio generator does not
+write. From a "x64 Native Tools" prompt of Visual Studio 2022:
+
+```powershell
+cmake -S . -B build-tidy -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DEASNAP_BUILD_TESTS=ON
+clang-tidy -p build-tidy apps\easnap-desktop\src\app\session_state.cpp
+```
 
 ## Packaging
 
@@ -103,18 +138,13 @@ manifests that `scripts/package-manifests.ps1` writes.
 
 ## Source layout
 
+The application sources under `apps/easnap-desktop/src` are described area by
+area in the [module map](architecture.md#module-map) of the architecture
+document. The rest of the repository:
+
 | Path | Purpose |
 |---|---|
-| `apps/easnap-desktop/src/app` | Session coordination, settings and recording/trim workflows |
-| `apps/easnap-desktop/src/ui` | Capture workspace, native controls and trim window |
-| `apps/easnap-desktop/src/editor` | Screenshot tools, annotation history, rendering and export |
-| `apps/easnap-desktop/src/capture` | Desktop capture providers and worker |
-| `apps/easnap-desktop/src/scrollshot` | Scrollshot stitching engine and capture session |
-| `apps/easnap-desktop/src/strings` | Access to the English and Turkish string tables |
 | `apps/easnap-desktop/resources` | String tables, icons, manifests and version resources |
-| `apps/easnap-desktop/src/recording` | Recording session and active-time audio mapping |
-| `apps/easnap-desktop/src/media` | Audio, codecs, trim/export and supervised preview |
-| `apps/easnap-desktop/src/platform` | Shared Windows utilities and resource ownership |
 | `apps/easnap-desktop/tests` | Unit, integration and native regression tests |
 | `docs` | Architecture, flows, decisions and validation evidence |
 | `packaging` | Installer definition |

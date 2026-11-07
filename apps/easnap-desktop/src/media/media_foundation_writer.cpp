@@ -52,8 +52,8 @@ std::wstring DescribeHresult(const wchar_t* operation, HRESULT result) {
 
     wchar_t system_message[512]{};
     const DWORD length = ::FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-                                           nullptr, static_cast<DWORD>(result), 0, system_message,
-                                           static_cast<DWORD>(_countof(system_message)), nullptr);
+                                          nullptr, static_cast<DWORD>(result), 0, system_message,
+                                          static_cast<DWORD>(_countof(system_message)), nullptr);
     std::size_t trimmed_length = std::wcslen(system_message);
     while (trimmed_length > 0 && (system_message[trimmed_length - 1] == L'\r' ||
                                   system_message[trimmed_length - 1] == L'\n')) {
@@ -125,9 +125,9 @@ void ConvertBgraToNv12(const platform::BgraImage& image, uint8_t* destination) n
                               (c00.green + c01.green + c10.green + c11.green + 2) / 4,
                               (c00.blue + c01.blue + c10.blue + c11.blue + 2) / 4};
             uv[x] = ClampByte(128 + RoundedDivideBy256(
-                                           -26 * average.red - 87 * average.green + 112 * average.blue));
+                                        -26 * average.red - 87 * average.green + 112 * average.blue));
             uv[x + 1] = ClampByte(128 + RoundedDivideBy256(
-                                               112 * average.red - 102 * average.green - 10 * average.blue));
+                                            112 * average.red - 102 * average.green - 10 * average.blue));
         }
     }
 }
@@ -1033,11 +1033,14 @@ private:
         aac_channels_ = 0;
     }
 
-    void SetError(const wchar_t* operation, HRESULT result) {
-        const std::wstring message = DescribeHresult(operation, result);
-        {
+    void SetError(const wchar_t* operation, HRESULT result) noexcept {
+        try {
+            const std::wstring message = DescribeHresult(operation, result);
             const std::scoped_lock lock(error_mutex_);
             last_error_ = message;
+        } catch (...) {
+            // No memory to describe the failure: has_error() still reports it,
+            // and the callers fall back to their own text when it is empty.
         }
         has_error_.store(true, std::memory_order_relaxed);
     }

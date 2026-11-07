@@ -274,7 +274,8 @@ void TestRecordingFormatSettingsPersistence() {
 void TestAppearanceSettingsPersistence() {
     using easnap::app::AppearanceTheme;
     const auto path = (std::filesystem::temp_directory_path() /
-        (L"easnap_theme_" + std::to_wstring(::GetCurrentProcessId()) + L".ini")).wstring();
+                       (L"easnap_theme_" + std::to_wstring(::GetCurrentProcessId()) + L".ini"))
+                          .wstring();
     std::error_code error;
     std::filesystem::remove(path, error);
     CHECK(AppSettings::Load(path).appearance_theme == AppearanceTheme::Light);
@@ -306,7 +307,8 @@ void TestAppearanceSettingsPersistence() {
 void TestSettingsLanguageAndFolders() {
     using easnap::app::LanguageSetting;
     const auto path = (std::filesystem::temp_directory_path() /
-        (L"easnap_settings_" + std::to_wstring(::GetCurrentProcessId()) + L".ini")).wstring();
+                       (L"easnap_settings_" + std::to_wstring(::GetCurrentProcessId()) + L".ini"))
+                          .wstring();
     std::error_code error;
     std::filesystem::remove(path, error);
 
@@ -345,8 +347,9 @@ void TestSettingsLanguageAndFolders() {
     for (const wchar_t* value : {L"English", L"Turkish", L"turkish", L"", L"Deutsch"}) {
         CHECK(::WritePrivateProfileStringW(L"Easnap", L"Language", value, path.c_str()) != FALSE);
         const LanguageSetting language = AppSettings::Load(path).language;
-        CHECK(language == (::wcscmp(value, L"English") == 0 ? LanguageSetting::English
-                           : ::wcscmp(value, L"Turkish") == 0 ? LanguageSetting::Turkish : LanguageSetting::System));
+        CHECK(language == (::wcscmp(value, L"English") == 0   ? LanguageSetting::English
+                           : ::wcscmp(value, L"Turkish") == 0 ? LanguageSetting::Turkish
+                                                              : LanguageSetting::System));
     }
     chosen.language = static_cast<LanguageSetting>(7);
     CHECK(!chosen.Save(path));
@@ -467,7 +470,11 @@ void TestRecordingRegionAndElapsedFormatting() {
 void TestPendingWork() {
     using easnap::app::PendingWork;
     using easnap::app::PendingWorkFor;
-    struct Row { SessionState state; PendingWork plain; PendingWork with_edits; };
+    struct Row {
+        SessionState state;
+        PendingWork plain;
+        PendingWork with_edits;
+    };
     const Row rows[] = {
         {SessionState::Idle, PendingWork::None, PendingWork::None},
         {SessionState::RegionSelecting, PendingWork::None, PendingWork::None},

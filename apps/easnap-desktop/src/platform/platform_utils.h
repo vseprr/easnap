@@ -264,7 +264,8 @@ ComPtr<ID2D1Bitmap> CreateD2DBitmapForTarget(ID2D1RenderTarget* target, const Bg
 // Export: encoding, clipboard, file destinations
 // ---------------------------------------------------------------------------
 
-enum class ImageFormat { Png, Jpeg };
+enum class ImageFormat { Png,
+                         Jpeg };
 
 [[nodiscard]] ImageFormat FormatFromPath(const std::wstring& path);
 bool EncodeImage(const BgraImage& image, ImageFormat format, std::vector<uint8_t>& out_bytes);

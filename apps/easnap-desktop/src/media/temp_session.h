@@ -182,9 +182,9 @@ public:
 
     bool DeleteSession(const TemporarySession& session) override {
         auto owned = std::find_if(owned_.begin(), owned_.end(),
-            [&session](const OwnedSession& candidate) {
-                return candidate.directory == session.directory;
-            });
+                                  [&session](const OwnedSession& candidate) {
+                                      return candidate.directory == session.directory;
+                                  });
         if (!session.valid() || owned == owned_.end()) {
             return false;
         }
@@ -259,6 +259,8 @@ public:
                 session.id = directory.substr(directory.find_last_of(L'\\') + 1);
                 adopted.push_back(std::move(session));
             } catch (...) {
+                // Not adopted this time; it keeps its marker and is offered at the next start.
+                platform::LogMessage(L"An unsaved recording could not be adopted in this run");
                 if (!owned_.empty() && owned_.back().directory == directory) {
                     owned_.pop_back();
                 } else {
@@ -278,9 +280,9 @@ public:
         int removed = 0;
         for (const std::wstring& directory : EnumerateSessions()) {
             const bool owned = std::any_of(owned_.begin(), owned_.end(),
-                [&directory](const OwnedSession& candidate) {
-                    return candidate.directory == directory;
-                });
+                                           [&directory](const OwnedSession& candidate) {
+                                               return candidate.directory == directory;
+                                           });
             const bool protected_directory = std::any_of(
                 protected_directories.begin(), protected_directories.end(),
                 [&directory](const std::wstring& candidate) {

@@ -85,7 +85,7 @@ uint32_t TrimRangeModel::TimelineOffsetFromTime(media::MediaTime value,
     const uint64_t whole = bounded / duration * width;
     const uint64_t remainder = bounded % duration * width / duration;
     return static_cast<uint32_t>((std::min)(whole + remainder,
-                                             static_cast<uint64_t>(width)));
+                                            static_cast<uint64_t>(width)));
 }
 
 bool TrimRangeModel::valid() const noexcept {
@@ -258,14 +258,19 @@ void TrimExportController::Run(TrimExportRequest request) noexcept {
                     snapshot_.progress = (std::clamp)(progress, 0.0f, 1.0f);
                 }
                 return !cancel_requested_.load(std::memory_order_acquire);
-            }, request.replace_existing);
+            },
+            request.replace_existing);
         if (!succeeded &&
             !cancel_requested_.load(std::memory_order_acquire)) {
             failure = exporter_->LastFailure();
         }
     } catch (...) {
         failure.stage = media::TrimExportFailureStage::Unknown;
-        failure.detail = L"Unexpected exception from the trim exporter";
+        try {
+            failure.detail = L"Unexpected exception from the trim exporter";
+        } catch (...) {
+            // The stage alone still reports the failure.
+        }
         platform::LogMessage(L"[Trim] Unexpected exception from the trim exporter");
     }
 

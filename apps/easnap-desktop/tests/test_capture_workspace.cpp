@@ -18,7 +18,15 @@ namespace {
 using namespace easnap;
 using app::CaptureMode;
 int passed{}, failed{};
-#define CHECK(...) do { if (__VA_ARGS__) { ++passed; } else { ++failed; std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); } } while (false)
+#define CHECK(...)                                                         \
+    do {                                                                   \
+        if (__VA_ARGS__) {                                                 \
+            ++passed;                                                      \
+        } else {                                                           \
+            ++failed;                                                      \
+            std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); \
+        }                                                                  \
+    } while (false)
 
 class PrivateDesktop {
 public:
@@ -36,6 +44,7 @@ public:
         if (desktop_) { ::CloseDesktop(desktop_); }
         if (station_) { ::CloseWindowStation(station_); }
     }
+
 private:
     HWINSTA old_station_{}, station_{};
     HDESK old_desktop_{}, desktop_{};
@@ -61,14 +70,19 @@ void Policy() {
     CHECK(workspace.DocumentCommitted());
     CHECK(workspace.automatic_attempt_consumed() && !workspace.quick_return_armed());
     CHECK(!workspace.DocumentCommitted()); // Failure cannot repeat an attempt.
-    workspace.SetMode(CaptureMode::Record); workspace.SetMode(CaptureMode::Screenshot);
+    workspace.SetMode(CaptureMode::Record);
+    workspace.SetMode(CaptureMode::Screenshot);
     CHECK(!workspace.DocumentCommitted());
-    workspace.Reset(); workspace.EnterEditing(); workspace.EditorFeatureUsed();
-    workspace.SetMode(CaptureMode::Record); workspace.SetMode(CaptureMode::Screenshot);
+    workspace.Reset();
+    workspace.EnterEditing();
+    workspace.EditorFeatureUsed();
+    workspace.SetMode(CaptureMode::Record);
+    workspace.SetMode(CaptureMode::Screenshot);
     CHECK(!workspace.quick_return_armed() && !workspace.DocumentCommitted());
     CHECK(workspace.screenshot_fixed() && !workspace.can_adjust_selection() && !workspace.can_switch_mode());
     CHECK(workspace.mode() == CaptureMode::Screenshot);
-    workspace.Reset(); workspace.EnterEditing();
+    workspace.Reset();
+    workspace.EnterEditing();
     CHECK(!workspace.screenshot_fixed() && workspace.can_adjust_selection() && workspace.can_switch_mode());
     workspace.SetMode(CaptureMode::Record);
     CHECK(!workspace.ConsumeQuickReturn());
@@ -83,36 +97,66 @@ void PointerPolicy() {
     CHECK(metrics.double_width == ::GetSystemMetrics(SM_CXDOUBLECLK));
     const POINT a{-100, 80}, b{a.x + metrics.drag_width + 1, a.y + metrics.drag_height + 1};
     ui::WorkspacePointerSequence input;
-    input.Down(a, 10, false, Target::Content, metrics); CHECK(!input.Up(a));
+    input.Down(a, 10, false, Target::Content, metrics);
+    CHECK(!input.Up(a));
     input.Down(a, 10 + metrics.double_time, true, Target::Content, metrics);
     CHECK(input.Up(a)); // Inclusive system time boundary.
-    input.Down(a, 10, false, Target::Content, metrics); CHECK(!input.Up(a));
-    input.Down(a, 11 + metrics.double_time, true, Target::Content, metrics); CHECK(!input.Up(a));
+    input.Down(a, 10, false, Target::Content, metrics);
+    CHECK(!input.Up(a));
+    input.Down(a, 11 + metrics.double_time, true, Target::Content, metrics);
+    CHECK(!input.Up(a));
     for (Target target : {Target::Creation, Target::Handle, Target::Excluded}) {
-        input.Cancel(); input.Down(a, 10, false, target, metrics); CHECK(!input.Up(a));
-        input.Down(a, 11, true, target, metrics); CHECK(!input.Up(a));
+        input.Cancel();
+        input.Down(a, 10, false, target, metrics);
+        CHECK(!input.Up(a));
+        input.Down(a, 11, true, target, metrics);
+        CHECK(!input.Up(a));
     }
-    input.Cancel(); input.Down(a, 10, false, Target::Content, metrics); CHECK(!input.Up(a));
-    input.Down(a, 11, true, Target::Content, metrics); input.Move(b);
-    CHECK(input.dragged()); CHECK(!input.Up(a)); // Moving back cannot restore eligibility.
-    input.Cancel(); input.Down(a, 10, false, Target::Content, metrics); input.Move(b); CHECK(!input.Up(b));
-    input.Down(a, 11, true, Target::Content, metrics); CHECK(!input.Up(a));
-    input.Cancel(); input.Down(a, 10, false, Target::Content, metrics); CHECK(!input.Up(a));
+    input.Cancel();
+    input.Down(a, 10, false, Target::Content, metrics);
+    CHECK(!input.Up(a));
+    input.Down(a, 11, true, Target::Content, metrics);
+    input.Move(b);
+    CHECK(input.dragged());
+    CHECK(!input.Up(a)); // Moving back cannot restore eligibility.
+    input.Cancel();
+    input.Down(a, 10, false, Target::Content, metrics);
+    input.Move(b);
+    CHECK(!input.Up(b));
+    input.Down(a, 11, true, Target::Content, metrics);
+    CHECK(!input.Up(a));
+    input.Cancel();
+    input.Down(a, 10, false, Target::Content, metrics);
+    CHECK(!input.Up(a));
     input.Down({a.x + metrics.double_width, a.y}, 11, true, Target::Content, metrics);
     CHECK(!input.Up({a.x + metrics.double_width, a.y}));
-    input.Cancel(); input.Down(a, MAXDWORD - 10, false, Target::Content, metrics); CHECK(!input.Up(a));
-    input.Down(a, 5, true, Target::Content, metrics); CHECK(input.Up(a)); // Native timestamp wrap.
-    input.Cancel(); input.Down(a, 10, false, Target::Annotation, metrics); CHECK(!input.Up(a));
-    input.Down(a, 11, true, Target::Annotation, metrics); CHECK(input.Up(a));
-    input.Cancel(); input.Down(a, 10, false, Target::Annotation, metrics); CHECK(!input.Up(a));
-    input.Down(a, 11, true, Target::Annotation, metrics); input.Move(b); CHECK(!input.Up(a));
-    input.Cancel(); input.Down(a, 10, false, Target::Content, metrics); CHECK(!input.Up(a));
-    input.Down(a, 11, true, Target::Annotation, metrics); CHECK(!input.Up(a));
+    input.Cancel();
+    input.Down(a, MAXDWORD - 10, false, Target::Content, metrics);
+    CHECK(!input.Up(a));
+    input.Down(a, 5, true, Target::Content, metrics);
+    CHECK(input.Up(a)); // Native timestamp wrap.
+    input.Cancel();
+    input.Down(a, 10, false, Target::Annotation, metrics);
+    CHECK(!input.Up(a));
+    input.Down(a, 11, true, Target::Annotation, metrics);
+    CHECK(input.Up(a));
+    input.Cancel();
+    input.Down(a, 10, false, Target::Annotation, metrics);
+    CHECK(!input.Up(a));
+    input.Down(a, 11, true, Target::Annotation, metrics);
+    input.Move(b);
+    CHECK(!input.Up(a));
+    input.Cancel();
+    input.Down(a, 10, false, Target::Content, metrics);
+    CHECK(!input.Up(a));
+    input.Down(a, 11, true, Target::Annotation, metrics);
+    CHECK(!input.Up(a));
     CHECK(ui::ModeToolbarOpacity(0) == 255);
     BYTE previous = 255;
     for (uint64_t elapsed = 1; elapsed <= ui::kModeToolbarFadeDurationMs; ++elapsed) {
         const BYTE opacity = ui::ModeToolbarOpacity(elapsed);
-        CHECK(opacity <= previous); previous = opacity;
+        CHECK(opacity <= previous);
+        previous = opacity;
     }
     CHECK(previous == 0 && ui::ModeToolbarOpacity(UINT64_MAX) == 0);
 }
@@ -137,7 +181,7 @@ void EditorAndCompletion() {
     for (int y = 0; y < source.height; ++y) {
         for (int x = 0; x < source.width; ++x) {
             source.row(y)[x] = 0xff000000u | (static_cast<uint32_t>(x % 255) << 16) |
-                (static_cast<uint32_t>(y % 255) << 8) | static_cast<uint32_t>((x + y) % 255);
+                               (static_cast<uint32_t>(y % 255) << 8) | static_cast<uint32_t>((x + y) % 255);
         }
     }
     source.row(200)[300] = 0xffff00ffu;
@@ -154,7 +198,8 @@ void EditorAndCompletion() {
     callbacks.on_prepare_image = [&] {
         ++acquisitions;
         if (!allow_capture) { return false; }
-        RECT local = active->region(); ::OffsetRect(&local, -source_bounds.left, -source_bounds.top);
+        RECT local = active->region();
+        ::OffsetRect(&local, -source_bounds.left, -source_bounds.top);
         platform::BgraImage pixels;
         return platform::CropImage(source, local, pixels) && active->SetImage(std::move(pixels));
     };
@@ -167,23 +212,30 @@ void EditorAndCompletion() {
     editor::ScreenshotEditor editor(callbacks);
     active = &editor;
     const auto open = [&] {
-        workspace.Reset(); workspace.EnterEditing(); closed = attempts = acquisitions = 0;
+        workspace.Reset();
+        workspace.EnterEditing();
+        closed = attempts = acquisitions = 0;
         CHECK(editor.Open(region, &settings, nullptr));
         CHECK(!editor.has_image() && editor.Composite().empty());
     };
     open();
     const RECT expanded{-130, -50, 210, 190};
     editor.SetRegion(expanded);
-    const RECT provisional = editor.region(); CHECK(::EqualRect(&expanded, &provisional) != FALSE);
+    const RECT provisional = editor.region();
+    CHECK(::EqualRect(&expanded, &provisional) != FALSE);
     editor.SetRegion(region);
     ::SetWindowPos(editor.hwnd(), nullptr, 200, 250, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     ::ValidateRect(editor.hwnd(), nullptr);
-    RECT moving = region; ::OffsetRect(&moving, 5, 7);
+    RECT moving = region;
+    ::OffsetRect(&moving, 5, 7);
     editor.SetRegion(moving, true);
     CHECK(!::GetUpdateRect(editor.hwnd(), nullptr, FALSE));
-    RECT resizing = moving; resizing.right += 18; resizing.bottom += 12;
+    RECT resizing = moving;
+    resizing.right += 18;
+    resizing.bottom += 12;
     editor.SetRegion(resizing, true);
-    const RECT live_region = editor.region(); CHECK(::EqualRect(&live_region, &resizing));
+    const RECT live_region = editor.region();
+    CHECK(::EqualRect(&live_region, &resizing));
     CHECK(!::GetUpdateRect(editor.hwnd(), nullptr, FALSE) && !editor.has_image());
     editor.SetRegion(resizing, false); // Release/capture loss with unchanged coordinates.
     // This private window station has no visible compositor/update region;
@@ -194,8 +246,10 @@ void EditorAndCompletion() {
     editor.SetRegion(region);
     ::UpdateWindow(editor.hwnd());
     CHECK(acquisitions == 0 && !editor.has_image() && !workspace.screenshot_fixed());
-    workspace.SetMode(CaptureMode::Record); editor.Hide();
-    workspace.SetMode(CaptureMode::Screenshot); editor.Show();
+    workspace.SetMode(CaptureMode::Record);
+    editor.Hide();
+    workspace.SetMode(CaptureMode::Screenshot);
+    editor.Show();
     CHECK(workspace.quick_return_armed() && !editor.has_image());
     // Real native toolbar action is the first acquisition, not Editing entry.
     SelectTool(editor, editor::ToolId::Rectangle);
@@ -206,7 +260,8 @@ void EditorAndCompletion() {
     editor.SetRegion(expanded);
     CHECK(editor.Composite().pixels == expected.pixels);
 
-    platform::BgraImage rendered; rendered.Reset(320, 220);
+    platform::BgraImage rendered;
+    rendered.Reset(320, 220);
     {
         platform::GdiImageSurface surface(rendered);
         editor.RenderImage(surface.dc(), region);
@@ -219,9 +274,10 @@ void EditorAndCompletion() {
         // The suggested DPI rectangle can cross onto an adjacent monitor.
         // Verify containment in that destination, not the original monitor.
         MONITORINFO destination{sizeof(destination)};
-        CHECK(::GetMonitorInfoW(::MonitorFromRect(&proposed,MONITOR_DEFAULTTONEAREST),&destination));
+        CHECK(::GetMonitorInfoW(::MonitorFromRect(&proposed, MONITOR_DEFAULTTONEAREST), &destination));
         ::SendMessageW(editor.hwnd(), WM_DPICHANGED, MAKEWPARAM(dpi, dpi), reinterpret_cast<LPARAM>(&proposed));
-        RECT placement{}; ::GetWindowRect(editor.hwnd(), &placement);
+        RECT placement{};
+        ::GetWindowRect(editor.hwnd(), &placement);
         CHECK(placement.left >= destination.rcWork.left && placement.right <= destination.rcWork.right);
         CHECK(placement.top >= destination.rcWork.top && placement.bottom <= destination.rcWork.bottom);
         CHECK(editor.Composite().pixels == expected.pixels && acquisitions == 1);
@@ -250,9 +306,13 @@ void EditorAndCompletion() {
     CHECK(editor.revision() == 12 && attempts == 0 && closed == 0 && acquisitions == 1);
     const auto annotated = editor.Composite();
     CHECK(annotated.pixels != expected.pixels && annotated.pixels.front() == expected.pixels.front());
-    std::array<BYTE, 256> keys{}; keys[VK_CONTROL] = 0x80; ::SetKeyboardState(keys.data());
-    editor.Keyboard(WM_KEYDOWN, 'Z', 0); editor.Keyboard(WM_KEYDOWN, 'Y', 0);
-    keys.fill(0); ::SetKeyboardState(keys.data());
+    std::array<BYTE, 256> keys{};
+    keys[VK_CONTROL] = 0x80;
+    ::SetKeyboardState(keys.data());
+    editor.Keyboard(WM_KEYDOWN, 'Z', 0);
+    editor.Keyboard(WM_KEYDOWN, 'Y', 0);
+    keys.fill(0);
+    ::SetKeyboardState(keys.data());
     CHECK(editor.Composite().pixels == annotated.pixels);
     editor.SetRegion(expanded);
     CHECK(editor.Composite().pixels == annotated.pixels);
@@ -269,7 +329,8 @@ void EditorAndCompletion() {
     editor.Destroy();
 
     // Failed acquisition keeps the provisional frame editable and retryable.
-    open(); allow_capture = false;
+    open();
+    allow_capture = false;
     SelectTool(editor, editor::ToolId::Rectangle);
     CHECK(acquisitions == 1 && !editor.has_image() && !workspace.screenshot_fixed());
     allow_capture = true;
@@ -279,22 +340,27 @@ void EditorAndCompletion() {
 
     // Real clipboard contention on the isolated station consumes one attempt.
     open();
-    workspace.SetMode(CaptureMode::Record); workspace.SetMode(CaptureMode::Screenshot);
+    workspace.SetMode(CaptureMode::Record);
+    workspace.SetMode(CaptureMode::Screenshot);
     SelectTool(editor, editor::ToolId::Ellipse);
-    std::promise<bool> locked; auto locked_result = locked.get_future();
-    std::promise<void> release; auto release_signal = release.get_future();
+    std::promise<bool> locked;
+    auto locked_result = locked.get_future();
+    std::promise<void> release;
+    auto release_signal = release.get_future();
     std::thread holder([&] {
         HWND owner = ::CreateWindowExW(0, L"STATIC", L"clipboard lock", WS_POPUP, 0, 0, 1, 1,
-            nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+                                       nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
         const bool opened = ::OpenClipboard(owner) != FALSE;
-        locked.set_value(opened); release_signal.wait();
+        locked.set_value(opened);
+        release_signal.wait();
         if (opened) { ::CloseClipboard(); }
         ::DestroyWindow(owner);
     });
     CHECK(locked_result.get());
     Draw(editor, {-80, 0}, {100, 100});
     CHECK(attempts == 1 && editor.visible() && closed == 0 && editor.revision() == 1);
-    release.set_value(); holder.join();
+    release.set_value();
+    holder.join();
     Draw(editor, {-70, 10}, {110, 110});
     CHECK(attempts == 1 && editor.revision() == 2 && editor.visible());
     CHECK(editor.CompleteCopy() && closed == 1 && !editor.visible());
@@ -303,18 +369,21 @@ void EditorAndCompletion() {
     // Enter, explicit Copy and cancellation use their actual text commit rules.
     for (int completion : {0, 1, 2}) {
         open();
-        workspace.SetMode(CaptureMode::Record); workspace.SetMode(CaptureMode::Screenshot);
+        workspace.SetMode(CaptureMode::Record);
+        workspace.SetMode(CaptureMode::Screenshot);
         SelectTool(editor, editor::ToolId::Text);
         editor.ImagePointer(WM_LBUTTONDOWN, {-80, 0});
         editor.Keyboard(WM_CHAR, 'B', 0);
         CHECK(!editor.document().annotations().empty() && attempts == 0);
         if (completion == 0) {
             editor.Keyboard(WM_CHAR, '\r', 0);
-            CHECK(editor.visible() && attempts==0); // Return inserts a paragraph.
+            CHECK(editor.visible() && attempts == 0); // Return inserts a paragraph.
             CHECK(editor.CompleteCopy());
+        } else if (completion == 1) {
+            CHECK(editor.CompleteCopy());
+        } else {
+            ::SendMessageW(editor.hwnd(), WM_CLOSE, 0, 0);
         }
-        else if (completion == 1) { CHECK(editor.CompleteCopy()); }
-        else { ::SendMessageW(editor.hwnd(), WM_CLOSE, 0, 0); }
         CHECK(closed == 1 && !editor.visible() && copied == (completion != 2));
         CHECK(attempts == (completion != 2 ? 1 : 0));
         editor.Destroy();
@@ -333,7 +402,7 @@ void LockedToolCompletion() {
     snapshot.virtual_bounds = platform::VirtualScreenBounds();
     app::AppSettings settings;
     for (editor::ToolId tool : {editor::ToolId::Pointer, editor::ToolId::Pen, editor::ToolId::Arrow,
-            editor::ToolId::Rectangle, editor::ToolId::Ellipse, editor::ToolId::Text, editor::ToolId::Mosaic}) {
+                                editor::ToolId::Rectangle, editor::ToolId::Ellipse, editor::ToolId::Text, editor::ToolId::Mosaic}) {
         int attempts{}, acquisitions{};
         bool copied{};
         editor::ScreenshotEditor* active{};
@@ -342,24 +411,29 @@ void LockedToolCompletion() {
         overlay_callbacks.uses_annotation_tool = [&] { return active && active->uses_annotation_tool(); };
         overlay_callbacks.on_image_pointer = [&](UINT message, POINT pt) { active->ImagePointer(message, pt); };
         overlay_callbacks.on_screenshot_complete = [&] { ++attempts; copied = active->CompleteCopy(); };
-        ui::OverlayController overlay(overlay_callbacks); host = &overlay;
+        ui::OverlayController overlay(overlay_callbacks);
+        host = &overlay;
         editor::ScreenshotEditor::Callbacks editor_callbacks;
         editor_callbacks.on_prepare_image = [&] {
             ++acquisitions;
-            platform::BgraImage pixels; pixels.Reset(160, 120);
+            platform::BgraImage pixels;
+            pixels.Reset(160, 120);
             std::fill(pixels.pixels.begin(), pixels.pixels.end(), 0xff4080c0);
             if (!active->SetImage(std::move(pixels))) { return false; }
             host->FixScreenshot();
             return true;
         };
         editor_callbacks.on_closed = [&](bool) { overlay.Hide(); };
-        editor::ScreenshotEditor editor(editor_callbacks); active = &editor;
+        editor::ScreenshotEditor editor(editor_callbacks);
+        active = &editor;
         CHECK(overlay.Show(snapshot, point));
-        overlay.selector().SetSelection(region); overlay.EnterEditing();
+        overlay.selector().SetSelection(region);
+        overlay.EnterEditing();
         CHECK(editor.Open(region, &settings, overlay.owner_window()));
         SelectTool(editor, tool);
         CHECK(acquisitions == 1 && overlay.workspace().screenshot_fixed() && !overlay.selector().enabled());
-        POINT local = point; ::ScreenToClient(overlay.owner_window(), &local);
+        POINT local = point;
+        ::ScreenToClient(overlay.owner_window(), &local);
         const LPARAM location = MAKELPARAM(local.x, local.y);
         const HWND input = overlay.owner_window();
         ::SendMessageW(input, WM_LBUTTONDOWN, 0, location);
@@ -379,9 +453,10 @@ void LockedToolCompletion() {
         if (tool == editor::ToolId::Rectangle) {
             holder = std::thread([&] {
                 HWND owner = ::CreateWindowExW(0, L"STATIC", L"clipboard lock", WS_POPUP, 0, 0, 1, 1,
-                    nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+                                               nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
                 const bool opened = ::OpenClipboard(owner) != FALSE;
-                clipboard_locked.set_value(opened); released.wait();
+                clipboard_locked.set_value(opened);
+                released.wait();
                 if (opened) { ::CloseClipboard(); }
                 ::DestroyWindow(owner);
             });
@@ -397,7 +472,8 @@ void LockedToolCompletion() {
         if (holder.joinable()) {
             CHECK(attempts == 1 && !copied && editor.visible() && overlay.workspace().screenshot_fixed());
             CHECK(editor.Composite().pixels == expected.pixels);
-            release_clipboard.set_value(); holder.join();
+            release_clipboard.set_value();
+            holder.join();
             ::SendMessageW(input, WM_LBUTTONDOWN, 0, location);
             ::SendMessageW(input, WM_LBUTTONUP, 0, location);
             ::SendMessageW(input, WM_LBUTTONDBLCLK, 0, location);
@@ -421,8 +497,11 @@ void LockedToolCompletion() {
             }
             if (header) { ::GlobalUnlock(dib); }
             ::CloseClipboard();
-        } else { CHECK(false); }
-        editor.Destroy(); overlay.Destroy();
+        } else {
+            CHECK(false);
+        }
+        editor.Destroy();
+        overlay.Destroy();
     }
 
     // Empty toolbar/info space and the native grip fix the image. Failed
@@ -435,29 +514,35 @@ void LockedToolCompletion() {
         callbacks.on_prepare_image = [&] {
             ++acquisitions;
             if (!capture_allowed) { return false; }
-            platform::BgraImage pixels; pixels.Reset(160, 120);
+            platform::BgraImage pixels;
+            pixels.Reset(160, 120);
             return active->SetImage(std::move(pixels));
         };
-        editor::ScreenshotEditor editor(callbacks); active = &editor;
+        editor::ScreenshotEditor editor(callbacks);
+        active = &editor;
         CHECK(editor.Open(region, &settings, nullptr));
-        RECT client{}; ::GetClientRect(editor.hwnd(), &client);
+        RECT client{};
+        ::GetClientRect(editor.hwnd(), &client);
         auto press = [&] {
             ::SendMessageW(editor.hwnd(), grip ? WM_NCLBUTTONDBLCLK : WM_LBUTTONDOWN,
-                grip ? HTCAPTION : 0, MAKELPARAM(client.right - 2, client.bottom - 2));
+                           grip ? HTCAPTION : 0, MAKELPARAM(client.right - 2, client.bottom - 2));
         };
-        press(); CHECK(acquisitions == 1 && !editor.has_image());
+        press();
+        CHECK(acquisitions == 1 && !editor.has_image());
         capture_allowed = true;
-        press(); CHECK(acquisitions == 2 && editor.has_image());
-        press(); CHECK(acquisitions == 2);
+        press();
+        CHECK(acquisitions == 2 && editor.has_image());
+        press();
+        CHECK(acquisitions == 2);
         editor.Destroy();
     }
 }
 
 void SelectBrush(editor::ScreenshotEditor& editor, int index) {
     SelectTool(editor, editor::ToolId::Mosaic);
-    ::SendMessageW(::GetDlgItem(editor.context_hwnd(),2520),BM_CLICK,0,0);
-    HWND popup=::FindWindowW(L"EasnapScreenshotEditor",L"Brush sizes");
-    CHECK(popup && (::GetWindowLongPtrW(popup,GWL_STYLE)&WS_VISIBLE));
+    ::SendMessageW(::GetDlgItem(editor.context_hwnd(), 2520), BM_CLICK, 0, 0);
+    HWND popup = ::FindWindowW(L"EasnapScreenshotEditor", L"Brush sizes");
+    CHECK(popup && (::GetWindowLongPtrW(popup, GWL_STYLE) & WS_VISIBLE));
     HWND button = ::GetDlgItem(popup, 2300 + index);
     CHECK(button && (::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE));
     ::SendMessageW(button, BM_CLICK, 0, 0);
@@ -465,7 +550,8 @@ void SelectBrush(editor::ScreenshotEditor& editor, int index) {
 
 void MosaicAndDirtyRendering() {
     const RECT region{0, 0, 1920, 1080};
-    platform::BgraImage source; source.Reset(1920, 1080);
+    platform::BgraImage source;
+    source.Reset(1920, 1080);
     uint32_t noise = 17;
     for (auto& pixel : source.pixels) {
         noise = noise * 1664525u + 1013904223u;
@@ -483,8 +569,10 @@ void MosaicAndDirtyRendering() {
             active->RenderImage(live_dc, region, &damage);
         }
     };
-    editor::ScreenshotEditor editor(callbacks); active = &editor;
-    CHECK(editor.Open(region, nullptr, nullptr)); CHECK(editor.SetImage(source));
+    editor::ScreenshotEditor editor(callbacks);
+    active = &editor;
+    CHECK(editor.Open(region, nullptr, nullptr));
+    CHECK(editor.SetImage(source));
     RECT placement{0, 100, 1100, 200};
     ::SendMessageW(editor.hwnd(), WM_DPICHANGED, MAKEWPARAM(96, 96), reinterpret_cast<LPARAM>(&placement));
     // Native size choice uses real production command routing.
@@ -499,11 +587,17 @@ void MosaicAndDirtyRendering() {
     for (int y = 210; y < 315; ++y) {
         CHECK(std::equal(first.row(y) + 215, first.row(y) + 370, second.row(y) + 215));
     }
-    std::array<BYTE, 256> keys{}; keys[VK_CONTROL] = 0x80; ::SetKeyboardState(keys.data());
-    editor.Keyboard(WM_KEYDOWN, 'Z', 0); CHECK(editor.Composite().pixels == first.pixels);
-    editor.Keyboard(WM_KEYDOWN, 'Y', 0); CHECK(editor.Composite().pixels == second.pixels);
-    keys.fill(0); ::SetKeyboardState(keys.data());
-    SelectBrush(editor, 0); Draw(editor, {250, 250}, {330, 280});
+    std::array<BYTE, 256> keys{};
+    keys[VK_CONTROL] = 0x80;
+    ::SetKeyboardState(keys.data());
+    editor.Keyboard(WM_KEYDOWN, 'Z', 0);
+    CHECK(editor.Composite().pixels == first.pixels);
+    editor.Keyboard(WM_KEYDOWN, 'Y', 0);
+    CHECK(editor.Composite().pixels == second.pixels);
+    keys.fill(0);
+    ::SetKeyboardState(keys.data());
+    SelectBrush(editor, 0);
+    Draw(editor, {250, 250}, {330, 280});
     const auto overlap = editor.Composite();
     CHECK(overlap.pixels != second.pixels); // Overlap still increases redaction.
     for (int y = 60; y < 190; ++y) {
@@ -517,7 +611,8 @@ void MosaicAndDirtyRendering() {
         CHECK(std::equal(overlap.row(y) + 60, overlap.row(y) + 370, vector_edit.row(y) + 60));
     }
     SelectTool(editor, editor::ToolId::Pen);
-    platform::BgraImage incremental; incremental.Reset(1920, 1080);
+    platform::BgraImage incremental;
+    incremental.Reset(1920, 1080);
     const auto started = std::chrono::steady_clock::now();
     {
         platform::GdiImageSurface surface(incremental);
@@ -529,13 +624,17 @@ void MosaicAndDirtyRendering() {
     }
     const double elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
     CHECK(repaints > 200 && damaged_pixels < static_cast<uint64_t>(1920 * 1080) * 10);
-    platform::BgraImage full; full.Reset(1920, 1080);
-    { platform::GdiImageSurface surface(full); editor.RenderImage(surface.dc(), region); }
+    platform::BgraImage full;
+    full.Reset(1920, 1080);
+    {
+        platform::GdiImageSurface surface(full);
+        editor.RenderImage(surface.dc(), region);
+    }
     CHECK(full.pixels == incremental.pixels); // Partial repaint has no trails or stale pixels.
     editor.ImagePointer(WM_LBUTTONUP, {1140, 400});
     CHECK(editor.Composite().pixels != vector_edit.pixels);
     std::printf("Dirty render: %d updates, %.2f ms, %.1f%% of full-frame pixel work\n", repaints, elapsed_ms,
-        100.0 * damaged_pixels / (static_cast<double>(repaints) * 1920 * 1080));
+                100.0 * damaged_pixels / (static_cast<double>(repaints) * 1920 * 1080));
     // Expanding, reversing and shrinking shapes must erase their old preview,
     // including arrow heads, with the same pixels as a full repaint.
     for (int tool : {2, 3, 4}) { // Existing Arrow, Rectangle, Ellipse toolbar slots.
@@ -550,7 +649,10 @@ void MosaicAndDirtyRendering() {
             }
             live_dc = nullptr;
         }
-        { platform::GdiImageSurface surface(full); editor.RenderImage(surface.dc(), region); }
+        {
+            platform::GdiImageSurface surface(full);
+            editor.RenderImage(surface.dc(), region);
+        }
         CHECK(full.pixels == incremental.pixels);
         editor.ImagePointer(WM_LBUTTONUP, {700, 450});
     }
@@ -570,7 +672,7 @@ void RecordingRoundTrip() {
         snapshot.monitors.push_back(std::move(frame));
     }
     ui::OverlayController overlay({});
-    const RECT bounds = test::SelectedTestMonitor() ? test::SelectedTestMonitor()->bounds:monitors.front().bounds;
+    const RECT bounds = test::SelectedTestMonitor() ? test::SelectedTestMonitor()->bounds : monitors.front().bounds;
     const POINT center{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
     CHECK(overlay.Show(snapshot, center));
     overlay.SetMode(CaptureMode::Record);
@@ -589,15 +691,16 @@ void RecordingRoundTrip() {
     // Activation of either workspace surface must not raise its input/shading
     // planes above the configuration window and intercept its controls.
     const auto panel_on_top = [&] {
-        RECT start{}; ::GetWindowRect(::GetDlgItem(panel, IDOK), &start);
-        const POINT hit{(start.left+start.right)/2, (start.top+start.bottom)/2};
-        HWND target=::WindowFromPoint(hit);
-        return target==panel || ::IsChild(panel,target);
+        RECT start{};
+        ::GetWindowRect(::GetDlgItem(panel, IDOK), &start);
+        const POINT hit{(start.left + start.right) / 2, (start.top + start.bottom) / 2};
+        HWND target = ::WindowFromPoint(hit);
+        return target == panel || ::IsChild(panel, target);
     };
     CHECK(panel_on_top());
-    const HWND modes=::FindWindowW(L"EasnapCaptureModes",nullptr);
-    for(HWND activated : {modes,overlay.owner_window()}) {
-        ::SetWindowPos(activated,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+    const HWND modes = ::FindWindowW(L"EasnapCaptureModes", nullptr);
+    for (HWND activated : {modes, overlay.owner_window()}) {
+        ::SetWindowPos(activated, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         ::SetActiveWindow(activated);
         CHECK(panel_on_top());
     }
@@ -606,8 +709,9 @@ void RecordingRoundTrip() {
     const HWND focus = ::GetFocus();
     const HWND surface = overlay.owner_window();
     CHECK(::SendMessageW(surface, WM_MOUSEACTIVATE, reinterpret_cast<WPARAM>(panel),
-        MAKELPARAM(HTCLIENT, WM_LBUTTONDOWN)) == MA_NOACTIVATE);
-    POINT local = center; ::ScreenToClient(surface, &local);
+                         MAKELPARAM(HTCLIENT, WM_LBUTTONDOWN)) == MA_NOACTIVATE);
+    POINT local = center;
+    ::ScreenToClient(surface, &local);
     for (UINT message : {WM_LBUTTONDOWN, WM_LBUTTONUP, WM_LBUTTONDBLCLK, WM_LBUTTONUP}) {
         ::SendMessageW(surface, message, 0, MAKELPARAM(local.x, local.y));
         CHECK(::GetActiveWindow() == panel && ::GetFocus() == focus);
@@ -628,7 +732,7 @@ void RecordingRoundTrip() {
     CHECK(::IsWindowVisible(::GetDlgItem(panel, 111)) && ::IsWindowVisible(::GetDlgItem(panel, 112)));
     // Two real toggles must represent every backend route, retaining it through GIF.
     for (const auto expected : {media::AudioSource::Microphone, media::AudioSource::None,
-                               media::AudioSource::SystemAudio, media::AudioSource::Both}) {
+                                media::AudioSource::SystemAudio, media::AudioSource::Both}) {
         const int toggle = expected == media::AudioSource::Microphone || expected == media::AudioSource::SystemAudio ? 111 : 112;
         ::SendMessageW(::GetDlgItem(panel, toggle), BM_CLICK, 0, 0);
         CHECK(controls.configuration().mp4_audio == expected);
@@ -638,11 +742,11 @@ void RecordingRoundTrip() {
         ::SendMessageW(::GetDlgItem(panel, 105), BM_CLICK, 0, 0);
         CHECK(controls.configuration().mp4_audio == expected);
     }
-    RECT panel_before{}, panel_after{}; ::GetWindowRect(panel, &panel_before);
+    RECT panel_before{}, panel_after{};
+    ::GetWindowRect(panel, &panel_before);
     ::ValidateRect(panel, nullptr);
     ::EnumChildWindows(panel, [](HWND child, LPARAM) -> BOOL {
-        ::ValidateRect(child, nullptr); return TRUE;
-    }, 0);
+        ::ValidateRect(child, nullptr); return TRUE; }, 0);
     const RECT moved_region{60, 120, 530, 470};
     // While the frame is dragged the panel neither moves nor repaints.
     for (int i = 0; i < 40; ++i) { controls.SetRegion(i % 2 ? moved_region : region, true); }
@@ -652,8 +756,7 @@ void RecordingRoundTrip() {
         bool damage{};
         ::EnumChildWindows(panel, [](HWND child, LPARAM context) -> BOOL {
             if (::GetUpdateRect(child, nullptr, FALSE)) { *reinterpret_cast<bool*>(context) = true; }
-            return TRUE;
-        }, reinterpret_cast<LPARAM>(&damage));
+            return TRUE; }, reinterpret_cast<LPARAM>(&damage));
         return damage;
     };
     CHECK(!child_damaged());
@@ -677,8 +780,7 @@ void RecordingRoundTrip() {
             if (std::wstring_view(name) == L"EasnapRecordingBoundary" && ::IsWindowVisible(window)) {
                 ++*reinterpret_cast<int*>(context);
             }
-            return TRUE;
-        }, reinterpret_cast<LPARAM>(&count));
+            return TRUE; }, reinterpret_cast<LPARAM>(&count));
         return count;
     };
     CHECK(visible_boundaries() == 0); // Workspace owns configuration selection chrome.
@@ -705,7 +807,7 @@ void FramePerformance() {
         frame.image.Reset(platform::RectWidth(monitor.bounds), platform::RectHeight(monitor.bounds));
         snapshot.monitors.push_back(std::move(frame));
     }
-    const RECT bounds = test::SelectedTestMonitor() ? test::SelectedTestMonitor()->bounds:monitors.front().bounds;
+    const RECT bounds = test::SelectedTestMonitor() ? test::SelectedTestMonitor()->bounds : monitors.front().bounds;
     const LONG width = platform::RectWidth(bounds), height = platform::RectHeight(bounds);
     const RECT initial{bounds.left + width / 4, bounds.top + height / 3,
                        bounds.left + width * 3 / 4, bounds.top + height * 2 / 3};
@@ -723,7 +825,8 @@ void FramePerformance() {
         const auto started = std::chrono::steady_clock::now();
         CHECK(editor.Open(region, &settings, active_overlay->owner_window()));
         first_editor_open_ms = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - started).count();
+                                   std::chrono::steady_clock::now() - started)
+                                   .count();
         first_open = false;
     };
     callbacks.on_region_changed = [&](const RECT& region) {
@@ -737,7 +840,8 @@ void FramePerformance() {
     const auto show_started = std::chrono::steady_clock::now();
     CHECK(overlay.Show(snapshot, center));
     const double first_overlay_show_ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - show_started).count();
+                                             std::chrono::steady_clock::now() - show_started)
+                                             .count();
     std::vector<HWND> planes;
     ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM context) -> BOOL {
         wchar_t name[80]{}; ::GetClassNameW(window, name, 80);
@@ -745,8 +849,7 @@ void FramePerformance() {
             std::wstring_view(name) == L"EasnapOverlayChrome") {
             reinterpret_cast<std::vector<HWND>*>(context)->push_back(window);
         }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&planes));
+        return TRUE; }, reinterpret_cast<LPARAM>(&planes));
     auto paint = [&] {
         for (HWND plane : planes) {
             if (::GetUpdateRect(plane, nullptr, FALSE)) { ::SendMessageW(plane, WM_PAINT, 0, 0); }
@@ -767,29 +870,34 @@ void FramePerformance() {
     send(WM_MOUSEMOVE, {initial.right, initial.bottom}, MK_LBUTTON);
     paint();
     const double first_drag_ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - drag_started).count();
+                                     std::chrono::steady_clock::now() - drag_started)
+                                     .count();
     const auto release_started = std::chrono::steady_clock::now();
     send(WM_LBUTTONUP, {initial.right, initial.bottom});
     paint();
     ::RedrawWindow(editor.hwnd(), nullptr, nullptr, RDW_UPDATENOW | RDW_ALLCHILDREN);
     ::GdiFlush();
     const double first_release_ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - release_started).count();
+                                        std::chrono::steady_clock::now() - release_started)
+                                        .count();
     CHECK(!first_open && editor.visible() && overlay.workspace().screenshot_visible());
     const RECT first_region = overlay.selector().selection();
     CHECK(::EqualRect(&first_region, &initial));
     std::printf("First native selection: overlay %.2f ms, first drag+paint %.2f ms, "
-        "release+editor+paint %.2f ms (editor.Open %.2f ms)\n",
-        first_overlay_show_ms, first_drag_ms, first_release_ms, first_editor_open_ms);
+                "release+editor+paint %.2f ms (editor.Open %.2f ms)\n",
+                first_overlay_show_ms, first_drag_ms, first_release_ms, first_editor_open_ms);
     paint();
     const DWORD resources = ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS);
     for (bool record : {false, true}) {
         if (record) {
-            editor.Hide(); overlay.SetMode(CaptureMode::Record);
+            editor.Hide();
+            overlay.SetMode(CaptureMode::Record);
             CHECK(controls.ShowConfiguring(initial, {}, true));
         }
         for (bool resize : {false, true}) {
-            overlay.selector().SetSelection(initial); overlay.RegionChanged(); paint();
+            overlay.selector().SetSelection(initial);
+            overlay.RegionChanged();
+            paint();
             const POINT start = resize ? POINT{initial.right, initial.bottom} : center;
             send(WM_LBUTTONDOWN, start);
             std::vector<double> timings;
@@ -813,7 +921,7 @@ void FramePerformance() {
                             const auto* rects = reinterpret_cast<const RECT*>(data->Buffer);
                             for (DWORD n = 0; n < data->rdh.nCount; ++n) {
                                 dirty_pixels += static_cast<uint64_t>(rects[n].right - rects[n].left) *
-                                    static_cast<uint64_t>(rects[n].bottom - rects[n].top);
+                                                static_cast<uint64_t>(rects[n].bottom - rects[n].top);
                             }
                         }
                     }
@@ -824,7 +932,8 @@ void FramePerformance() {
                 const auto end = std::chrono::steady_clock::now();
                 const double input_time = std::chrono::duration<double, std::milli>(input_end - begin).count();
                 const double paint_time = std::chrono::duration<double, std::milli>(end - paint_begin).count();
-                input_ms += input_time; paint_ms += paint_time;
+                input_ms += input_time;
+                paint_ms += paint_time;
                 timings.push_back(input_time + paint_time);
             }
             if (!record) { CHECK(!::GetUpdateRect(editor.hwnd(), nullptr, FALSE)); }
@@ -833,40 +942,54 @@ void FramePerformance() {
             CHECK(region_changes == before_changes + 160); // 159 distinct positions + gesture completion.
             paint();
             RECT expected = initial;
-            if (resize) { expected.right += 12; expected.bottom += 6; }
-            else { ::OffsetRect(&expected, 12, 6); }
+            if (resize) {
+                expected.right += 12;
+                expected.bottom += 6;
+            } else {
+                ::OffsetRect(&expected, 12, 6);
+            }
             const RECT actual = overlay.selector().selection();
             CHECK(::EqualRect(&expected, &actual));
             CHECK(!overlay.selector().interacting() && !editor.has_image());
             std::sort(timings.begin(), timings.end());
             std::printf("Frame %s %s: %ldx%ld, 160 updates, input %.2f ms, paint %.2f ms, "
-                "median %.3f ms, p95 %.3f ms, dirty %llu pixels, callbacks %d\n",
-                record ? "Record" : "Screenshot", resize ? "resize" : "move", width, height,
-                input_ms, paint_ms, timings[80], timings[152],
-                static_cast<unsigned long long>(dirty_pixels), region_changes - before_changes);
+                        "median %.3f ms, p95 %.3f ms, dirty %llu pixels, callbacks %d\n",
+                        record ? "Record" : "Screenshot", resize ? "resize" : "move", width, height,
+                        input_ms, paint_ms, timings[80], timings[152],
+                        static_cast<unsigned long long>(dirty_pixels), region_changes - before_changes);
         }
     }
     // Release coordinates must be applied even without a final WM_MOUSEMOVE.
     // Capture loss must also finish the gesture and flush the duplicate readout.
-    controls.Hide(); overlay.SetMode(CaptureMode::Screenshot); editor.Show();
+    controls.Hide();
+    overlay.SetMode(CaptureMode::Screenshot);
+    editor.Show();
     for (bool cancel : {false, true}) {
-        overlay.selector().SetSelection(initial); overlay.RegionChanged(); paint();
+        overlay.selector().SetSelection(initial);
+        overlay.RegionChanged();
+        paint();
         const POINT start{initial.right, initial.bottom};
         send(WM_LBUTTONDOWN, start);
         send(WM_MOUSEMOVE, {start.x + 20, start.y + 10}, MK_LBUTTON);
         CHECK(!::GetUpdateRect(editor.hwnd(), nullptr, FALSE));
-        if (cancel) { ::ReleaseCapture(); }
-        else { send(WM_LBUTTONUP, {start.x + 23, start.y + 13}); }
+        if (cancel) {
+            ::ReleaseCapture();
+        } else {
+            send(WM_LBUTTONUP, {start.x + 23, start.y + 13});
+        }
         RECT expected = initial;
-        expected.right += cancel ? 20 : 23; expected.bottom += cancel ? 10 : 13;
+        expected.right += cancel ? 20 : 23;
+        expected.bottom += cancel ? 10 : 13;
         const RECT actual = overlay.selector().selection(), editor_region = editor.region();
         CHECK(::EqualRect(&expected, &actual) && ::EqualRect(&actual, &editor_region));
         CHECK(!overlay.selector().interacting() && ::GetUpdateRect(editor.hwnd(), nullptr, FALSE));
         paint();
     }
     std::printf("Frame GDI objects: warm %lu, final %lu\n", resources,
-        ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS));
-    controls.Destroy(); editor.Destroy(); overlay.Destroy();
+                ::GetGuiResources(::GetCurrentProcess(), GR_GDIOBJECTS));
+    controls.Destroy();
+    editor.Destroy();
+    overlay.Destroy();
 }
 // --- Islands around the frame ----------------------------------------------------------
 //
@@ -962,7 +1085,7 @@ void IslandPlacement() {
     /// Where production geometry puts an island of this size for this frame.
     const auto expected = [&](const RECT& frame, const RECT& island, const RECT& area, LONG margin, const RECT& keep_clear) {
         return ui::PlaceIslandForFrame(frame, bounds, area,
-            SIZE{platform::RectWidth(island), platform::RectHeight(island)}, margin, keep_clear);
+                                       SIZE{platform::RectWidth(island), platform::RectHeight(island)}, margin, keep_clear);
     };
     const auto set_frame = [&](const RECT& frame) { overlay.selector().SetSelection(frame); overlay.RegionChanged(); };
 
@@ -1151,7 +1274,9 @@ int main(int argc, char** argv) {
         std::printf("Frame performance: %d passed, %d failed\n", passed, failed);
         return failed ? 1 : 0;
     }
-    Policy(); PointerPolicy(); RecordingRoundTrip();
+    Policy();
+    PointerPolicy();
+    RecordingRoundTrip();
     std::thread clipboard_tests([] {
         PrivateDesktop desktop;
         if (!desktop.Open()) {
@@ -1160,18 +1285,18 @@ int main(int argc, char** argv) {
             return;
         }
         ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        EditorAndCompletion(); LockedToolCompletion(); MosaicAndDirtyRendering();
+        EditorAndCompletion();
+        LockedToolCompletion();
+        MosaicAndDirtyRendering();
         platform::GraphicsEnvironment::Get().Shutdown();
         ::CoUninitialize();
         ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM) -> BOOL {
             wchar_t name[64]{};
             ::GetClassNameW(window, name, 64);
             if (std::wstring_view(name) == L"EasnapCaptureCopiedNotice") { ::DestroyWindow(window); }
-            return TRUE;
-        }, 0);
+            return TRUE; }, 0);
     });
     clipboard_tests.join();
     std::printf("Capture workspace: %d passed, %d failed\n", passed, failed);
     return failed ? 1 : 0;
 }
-

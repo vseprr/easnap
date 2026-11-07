@@ -32,7 +32,8 @@ namespace {
     const bool after_fits = after + (horizontal ? size.cx : size.cy) <= (horizontal ? area.right : area.bottom);
     if (!before_fits && !after_fits) { return false; }
     const LONG chosen = before_fits && (!after_fits || std::abs(before - current) <= std::abs(after - current))
-                            ? before : after;
+                            ? before
+                            : after;
     rect = horizontal ? At(chosen, rect.top, size) : At(rect.left, chosen, size);
     return true;
 }
@@ -109,7 +110,8 @@ RECT PlaceModeIsland(const RECT& home, const RECT& frame, LONG left_limit, LONG 
     const bool right_fits = right + width <= right_limit;
     if (!left_fits && !right_fits) { return home; }
     const LONG chosen = left_fits && (!right_fits || std::abs(left - home.left) <= std::abs(right - home.left))
-                            ? left : right;
+                            ? left
+                            : right;
     return RECT{chosen, home.top, chosen + width, home.bottom};
 }
 

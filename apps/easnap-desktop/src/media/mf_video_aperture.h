@@ -22,7 +22,8 @@ inline bool ResolveExpectedAperture(IMFMediaType* type, UINT32 buffer_width,
         MFVideoArea aperture{};
         UINT32 bytes = 0;
         if (FAILED(type->GetBlob(*attribute, reinterpret_cast<UINT8*>(&aperture),
-                                 sizeof(aperture), &bytes)) || bytes != sizeof(aperture) ||
+                                 sizeof(aperture), &bytes)) ||
+            bytes != sizeof(aperture) ||
             aperture.OffsetX.fract || aperture.OffsetY.fract ||
             aperture.OffsetX.value < 0 || aperture.OffsetY.value < 0 ||
             aperture.Area.cx != static_cast<LONG>(expected_width) ||

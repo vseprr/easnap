@@ -129,9 +129,9 @@ public:
 
         const auto audio = owner_.configuration_.mp4_audio;
         ::SendMessageW(audio_system_, BM_SETCHECK,
-            audio == media::AudioSource::SystemAudio || audio == media::AudioSource::Both ? BST_CHECKED : BST_UNCHECKED, 0);
+                       audio == media::AudioSource::SystemAudio || audio == media::AudioSource::Both ? BST_CHECKED : BST_UNCHECKED, 0);
         ::SendMessageW(audio_microphone_, BM_SETCHECK,
-            audio == media::AudioSource::Microphone || audio == media::AudioSource::Both ? BST_CHECKED : BST_UNCHECKED, 0);
+                       audio == media::AudioSource::Microphone || audio == media::AudioSource::Both ? BST_CHECKED : BST_UNCHECKED, 0);
         ::SendMessageW(owner_.configuration_.format == media::RecordingFormat::Gif
                            ? format_gif_
                            : format_mp4_,
@@ -158,7 +158,10 @@ public:
     }
 
     void Destroy() noexcept {
-        if (tooltip_ != nullptr) { ::DestroyWindow(tooltip_); tooltip_ = nullptr; }
+        if (tooltip_ != nullptr) {
+            ::DestroyWindow(tooltip_);
+            tooltip_ = nullptr;
+        }
         if (panel_ != nullptr) {
             ::KillTimer(panel_, kStatusTimerId);
             ::DestroyWindow(panel_);
@@ -236,8 +239,8 @@ public:
         ::EnableWindow(pause_resume_, policy.can_pause || policy.can_resume);
         ::EnableWindow(stop_, policy.can_stop);
         UpdateButtonStyle(pause_resume_, {policy.can_resume ? Icon::Play : Icon::Pause, ButtonRole::Standard, true});
-        ::SendMessageW(pause_resume_,BM_SETCHECK,policy.can_resume ? BST_CHECKED:BST_UNCHECKED,0);
-        ::InvalidateRect(elapsed_,nullptr,FALSE);
+        ::SendMessageW(pause_resume_, BM_SETCHECK, policy.can_resume ? BST_CHECKED : BST_UNCHECKED, 0);
+        ::InvalidateRect(elapsed_, nullptr, FALSE);
 
         ::KillTimer(panel_, kStatusTimerId);
         if (owner_.state_ == app::SessionState::RecordingActive ||
@@ -287,7 +290,7 @@ public:
         RECT available = monitor.work_area;
         if (owner_.workspace_hosted_) {
             available.top = (std::max)(available.top,
-                monitor.bounds.top + theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, scale));
+                                       monitor.bounds.top + theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, scale));
         }
         const bool configuring = owner_.state_ == app::SessionState::RecordingConfiguring;
         const bool active = owner_.state_ == app::SessionState::RecordingActive ||
@@ -313,7 +316,8 @@ public:
             // outside has room, else over its bottom (ui/island_layout.h). The
             // strip of the mode island is not part of `available`.
             const RECT placed = PlaceIslandForFrame(owner_.region_, monitor.bounds, available,
-                                                    SIZE{outer_width, outer_height}, margin, RECT{}).rect;
+                                                    SIZE{outer_width, outer_height}, margin, RECT{})
+                                    .rect;
             x = placed.left;
             y = placed.top;
             user_positioned_ = false;
@@ -356,10 +360,11 @@ public:
         const platform::MonitorInfo monitor = platform::MonitorForRect(owner_.region_);
         RECT available = monitor.work_area;
         available.top = (std::max)(available.top, monitor.bounds.top +
-            theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
+                                                      theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
         const RECT placed = PlaceIslandForFrame(
-            owner_.region_, monitor.bounds, available,
-            SIZE{platform::RectWidth(current), platform::RectHeight(current)}, ScaleDip(12, monitor.scale()), RECT{}).rect;
+                                owner_.region_, monitor.bounds, available,
+                                SIZE{platform::RectWidth(current), platform::RectHeight(current)}, ScaleDip(12, monitor.scale()), RECT{})
+                                .rect;
         if (placed.left != current.left || placed.top != current.top) {
             ::SetWindowPos(panel_, nullptr, placed.left, placed.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         }
@@ -435,7 +440,7 @@ private:
     }
 
     [[nodiscard]] static Window* FromHandle(HWND hwnd, UINT message,
-                                             LPARAM lparam) noexcept {
+                                            LPARAM lparam) noexcept {
         if (message == WM_NCCREATE) {
             const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
             auto* self = static_cast<Window*>(create->lpCreateParams);
@@ -448,7 +453,7 @@ private:
     }
 
     static LRESULT CALLBACK PanelWindowProc(HWND hwnd, UINT message,
-                                             WPARAM wparam, LPARAM lparam) {
+                                            WPARAM wparam, LPARAM lparam) {
         if (Window* self = FromHandle(hwnd, message, lparam); self != nullptr) {
             return self->HandlePanelMessage(hwnd, message, wparam, lparam);
         }
@@ -456,7 +461,7 @@ private:
     }
 
     static LRESULT CALLBACK BoundaryWindowProc(HWND hwnd, UINT message,
-                                                WPARAM wparam, LPARAM lparam) {
+                                               WPARAM wparam, LPARAM lparam) {
         if (Window* self = FromHandle(hwnd, message, lparam); self != nullptr) {
             return self->HandleBoundaryMessage(hwnd, message, wparam, lparam);
         }
@@ -474,12 +479,13 @@ private:
                 panel_ = nullptr;
                 owner_.visible_ = false;
                 for (HWND* control : {&title_, &elapsed_, &status_, &format_label_,
-                     &format_mp4_, &format_gif_, &gif_quality_label_, &gif_high_quality_,
-                     &gif_low_size_, &audio_label_, &appearance_, &tooltip_, &audio_system_,
-                     &audio_microphone_, &include_cursor_, &start_, &cancel_, &pause_resume_, &stop_}) {
+                                      &format_mp4_, &format_gif_, &gif_quality_label_, &gif_high_quality_,
+                                      &gif_low_size_, &audio_label_, &appearance_, &tooltip_, &audio_system_,
+                                      &audio_microphone_, &include_cursor_, &start_, &cancel_, &pause_resume_, &stop_}) {
                     *control = nullptr;
                 }
-                for (HWND boundary : boundaries_) if (boundary) { ::ShowWindow(boundary, SW_HIDE); }
+                for (HWND boundary : boundaries_)
+                    if (boundary) { ::ShowWindow(boundary, SW_HIDE); }
                 ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
                 break;
             case theme::kChangedMessage:
@@ -489,25 +495,30 @@ private:
             case WM_ERASEBKGND: return 1;
             case WM_PAINT:
             case WM_PRINTCLIENT: {
-                PAINTSTRUCT ps{}; HDC dc=message==WM_PAINT ? ::BeginPaint(hwnd,&ps):reinterpret_cast<HDC>(wparam);
-                RECT client{}; ::GetClientRect(hwnd,&client); const float scale=::GetDpiForWindow(hwnd)/96.0f;
-                PaintBuffer buffer(dc,client); dc=buffer.dc();
-                theme::DrawPanel(dc,client,scale);
-                if(owner_.state_!=app::SessionState::RecordingConfiguring) {
-                    theme::DrawGrip(dc,{0,0,theme::Scaled(28,scale),client.bottom},scale);
+                PAINTSTRUCT ps{};
+                HDC dc = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
+                RECT client{};
+                ::GetClientRect(hwnd, &client);
+                const float scale = ::GetDpiForWindow(hwnd) / 96.0f;
+                PaintBuffer buffer(dc, client);
+                dc = buffer.dc();
+                theme::DrawPanel(dc, client, scale);
+                if (owner_.state_ != app::SessionState::RecordingConfiguring) {
+                    theme::DrawGrip(dc, {0, 0, theme::Scaled(28, scale), client.bottom}, scale);
                 }
                 buffer.Present();
-                if(message==WM_PAINT) { ::EndPaint(hwnd,&ps); } return 0;
+                if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
+                return 0;
             }
             case WM_NCHITTEST: {
                 POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
                 ::ScreenToClient(hwnd, &point);
-                const HWND child=::ChildWindowFromPointEx(hwnd,point,CWP_SKIPINVISIBLE|CWP_SKIPDISABLED|CWP_SKIPTRANSPARENT);
+                const HWND child = ::ChildWindowFromPointEx(hwnd, point, CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT);
                 // Informational labels and every unused part of an island can
                 // drag it. Only actual input controls reserve their hit area.
                 wchar_t class_name[32]{};
-                if(child && child!=hwnd) { ::GetClassNameW(child,class_name,ARRAYSIZE(class_name)); }
-                return child && child!=hwnd && ::lstrcmpiW(class_name,L"STATIC")!=0 ? HTCLIENT:HTCAPTION;
+                if (child && child != hwnd) { ::GetClassNameW(child, class_name, ARRAYSIZE(class_name)); }
+                return child && child != hwnd && ::lstrcmpiW(class_name, L"STATIC") != 0 ? HTCLIENT : HTCAPTION;
             }
             case WM_NCLBUTTONDBLCLK: return 0;
             case WM_COMMAND:
@@ -531,7 +542,7 @@ private:
                     const auto monitor = platform::MonitorForRect(*proposed);
                     RECT available = monitor.work_area;
                     available.top = std::max(available.top, monitor.bounds.top +
-                        theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
+                                                                theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
                     *proposed = platform::ClampRectToBounds(*proposed, available);
                     return TRUE;
                 }
@@ -551,8 +562,8 @@ private:
                 return 0;
             case WM_CTLCOLORSTATIC: {
                 const COLORREF text = reinterpret_cast<HWND>(lparam) == elapsed_
-                    ? (owner_.state_ == app::SessionState::RecordingPaused ? theme::Current().paused : theme::Current().text)
-                    : (reinterpret_cast<HWND>(lparam) == status_ && !error_.empty() ? theme::Current().error : theme::Current().muted_text);
+                                          ? (owner_.state_ == app::SessionState::RecordingPaused ? theme::Current().paused : theme::Current().text)
+                                          : (reinterpret_cast<HWND>(lparam) == status_ && !error_.empty() ? theme::Current().error : theme::Current().muted_text);
                 return ControlBackground(wparam, text);
             }
             default:
@@ -605,8 +616,8 @@ private:
         pause_resume_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_PAUSE), WS_TABSTOP | BS_CHECKBOX | BS_PUSHLIKE, kIdPauseResume);
         stop_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_STOP), WS_TABSTOP | BS_PUSHBUTTON, kIdStop);
         for (HWND control : {title_, start_, appearance_, format_label_, format_mp4_, format_gif_, audio_label_,
-             audio_system_, audio_microphone_, gif_quality_label_, gif_high_quality_, gif_low_size_, include_cursor_,
-             cancel_, elapsed_, status_, pause_resume_, stop_}) {
+                             audio_system_, audio_microphone_, gif_quality_label_, gif_high_quality_, gif_low_size_, include_cursor_,
+                             cancel_, elapsed_, status_, pause_resume_, stop_}) {
             if (!control) { return false; }
         }
         UpdateButtonStyle(start_, {Icon::Record, ButtonRole::Primary});
@@ -617,7 +628,7 @@ private:
         UpdateButtonStyle(pause_resume_, {Icon::Pause, ButtonRole::Standard, true});
         UpdateButtonStyle(stop_, {Icon::Stop, ButtonRole::Destructive});
         tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
-            WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0,0,0,0, panel_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+                                     WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, panel_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
         if (tooltip_) {
             TOOLINFOW info{sizeof(info)};
             info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
@@ -641,7 +652,10 @@ private:
             ::DestroyWindow(control);
             return nullptr;
         }
-        if(control && ::lstrcmpW(class_name,L"STATIC")==0 && !StyleLabel(control)) { ::DestroyWindow(control); return nullptr; }
+        if (control && ::lstrcmpW(class_name, L"STATIC") == 0 && !StyleLabel(control)) {
+            ::DestroyWindow(control);
+            return nullptr;
+        }
         return control;
     }
 
@@ -656,7 +670,8 @@ private:
             case kAppearanceDark:
                 if (owner_.callbacks_.on_appearance) {
                     owner_.callbacks_.on_appearance(id == kAppearanceDark
-                        ? app::AppearanceTheme::Dark : app::AppearanceTheme::Light);
+                                                        ? app::AppearanceTheme::Dark
+                                                        : app::AppearanceTheme::Light);
                 }
                 break;
             case kIdAudioSystem:
@@ -741,7 +756,7 @@ private:
         const bool narrow = width < 340;
         const auto move = [scale](HWND control, int x, int y, int w, int h) {
             ::MoveWindow(control, static_cast<int>(x * scale), static_cast<int>(y * scale),
-                ScaleDip(w, scale), ScaleDip(h, scale), TRUE);
+                         ScaleDip(w, scale), ScaleDip(h, scale), TRUE);
         };
         if (owner_.state_ == app::SessionState::RecordingConfiguring) {
             const int content = width - 32;
@@ -999,4 +1014,3 @@ HWND RecordingControls::hwnd() const noexcept {
 }
 
 }  // namespace easnap::ui
-

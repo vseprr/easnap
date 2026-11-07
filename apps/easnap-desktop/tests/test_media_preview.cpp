@@ -40,7 +40,7 @@ bool Check(bool value, const char* label) {
     return value;
 }
 
-template<class Predicate>
+template <class Predicate>
 bool Wait(Predicate predicate) {
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::seconds(5);
@@ -58,24 +58,24 @@ bool Wait(Predicate predicate) {
 
 bool CapturePresentedFrame(easnap::capture::IRegionCaptureProvider& capture,
                            IMediaPreview& preview, const RECT& bounds,
-                           VideoFrame& frame, int* status=nullptr) {
-    const auto result=capture.CaptureRegionFrame(bounds,false,MediaTime::zero(),
-                                                 MediaTime{333'333},frame);
-    if (status) *status=static_cast<int>(result.status);
-    if (result.status==easnap::capture::RegionCaptureStatus::FrameAcquired)
-        return frame.image && frame.image->width==bounds.right-bounds.left &&
-            frame.image->height==bounds.bottom-bounds.top;
-    const auto state=preview.snapshot();
-    if (result.status!=easnap::capture::RegionCaptureStatus::NoNewFrame ||
+                           VideoFrame& frame, int* status = nullptr) {
+    const auto result = capture.CaptureRegionFrame(bounds, false, MediaTime::zero(),
+                                                   MediaTime{333'333}, frame);
+    if (status) *status = static_cast<int>(result.status);
+    if (result.status == easnap::capture::RegionCaptureStatus::FrameAcquired)
+        return frame.image && frame.image->width == bounds.right - bounds.left &&
+               frame.image->height == bounds.bottom - bounds.top;
+    const auto state = preview.snapshot();
+    if (result.status != easnap::capture::RegionCaptureStatus::NoNewFrame ||
         state.play_requested || state.native_playing) return false;
     // An unchanged desktop need not produce another duplication frame. Read
     // the actual desktop again through the production screenshot path, whose
     // GDI fallback handles that case; never accept a previously cached image.
-    auto current=std::make_shared<easnap::platform::BgraImage>();
-    if (!capture.CaptureRegion(bounds,false,*current) ||
-        current->width!=bounds.right-bounds.left || current->height!=bounds.bottom-bounds.top) return false;
-    frame.image=std::move(current);
-    if (status) *status=3; // Fresh one-shot desktop capture after NoNewFrame.
+    auto current = std::make_shared<easnap::platform::BgraImage>();
+    if (!capture.CaptureRegion(bounds, false, *current) ||
+        current->width != bounds.right - bounds.left || current->height != bounds.bottom - bounds.top) return false;
+    frame.image = std::move(current);
+    if (status) *status = 3; // Fresh one-shot desktop capture after NoNewFrame.
     return true;
 }
 
@@ -104,28 +104,28 @@ bool MakeSource(const std::wstring& path) {
 bool MakeOpeningSource(const std::wstring& path, int frame_count) {
     auto writer = CreateMediaFoundationWriter();
     RecordingOptions options;
-    options.region = RECT{0,0,160,96};
+    options.region = RECT{0, 0, 160, 96};
     options.target_frame_rate = 15;
     options.audio = AudioSource::None;
-    if (!writer || !writer->Open(path,options,nullptr)) return false;
-    for (int index=0;index<frame_count;++index) {
-        auto image=std::make_shared<easnap::platform::BgraImage>();
-        image->Reset(160,96);
+    if (!writer || !writer->Open(path, options, nullptr)) return false;
+    for (int index = 0; index < frame_count; ++index) {
+        auto image = std::make_shared<easnap::platform::BgraImage>();
+        image->Reset(160, 96);
         // The first frame is green and every later frame blue, so a paused
         // picture at an arbitrary nonzero position cannot satisfy this test.
-        std::fill(image->pixels.begin(),image->pixels.end(),
-                  index==0 ? 0xff25d05au : 0xff2835d0u);
-        if (index==0) {
+        std::fill(image->pixels.begin(), image->pixels.end(),
+                  index == 0 ? 0xff25d05au : 0xff2835d0u);
+        if (index == 0) {
             // Asymmetric edge bands also detect inverted RGB32 scanlines in
             // the single-frame still surface. The sampled center stays green.
-            for (int y=0;y<8;++y) {
-                std::fill_n(image->row(y),image->width,0xffd03428u);
-                std::fill_n(image->row(image->height-1-y),image->width,0xff2835d0u);
+            for (int y = 0; y < 8; ++y) {
+                std::fill_n(image->row(y), image->width, 0xffd03428u);
+                std::fill_n(image->row(image->height - 1 - y), image->width, 0xff2835d0u);
             }
         }
-        const MediaTime start{index*kSecond/15};
-        const MediaTime end{(index+1)*kSecond/15};
-        if (!writer->WriteVideoFrame({image,start,end-start})) return false;
+        const MediaTime start{index * kSecond / 15};
+        const MediaTime end{(index + 1) * kSecond / 15};
+        if (!writer->WriteVideoFrame({image, start, end - start})) return false;
     }
     std::wstring finalized;
     return writer->Finalize(finalized);
@@ -133,401 +133,431 @@ bool MakeOpeningSource(const std::wstring& path, int frame_count) {
 
 void ExerciseInitialFrame(const std::filesystem::path& directory, HWND window) {
     std::puts("Preview startup: real first frame, paused at zero, including one-frame recording");
-    const RECT placement=easnap::test::OnTestMonitor({120,120,440,312});
-    if (!Check(::SetWindowPos(window,HWND_TOPMOST,placement.left,placement.top,320,192,SWP_NOACTIVATE|SWP_SHOWWINDOW)!=FALSE,
+    const RECT placement = easnap::test::OnTestMonitor({120, 120, 440, 312});
+    if (!Check(::SetWindowPos(window, HWND_TOPMOST, placement.left, placement.top, 320, 192, SWP_NOACTIVATE | SWP_SHOWWINDOW) != FALSE,
                "show owned preview test surface")) return;
-    const auto bring_forward=[&] { return easnap::test::DesktopTestWindow::Present(window); };
+    const auto bring_forward = [&] { return easnap::test::DesktopTestWindow::Present(window); };
     // A real, test-owned occluder verifies z-order recovery without bringing
     // the user's browser forward or taking their keyboard focus.
-    const HWND occluder=::CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_TOPMOST,
-        L"STATIC",L"Easnap occlusion probe",WS_POPUP|WS_VISIBLE|SS_NOTIFY|SS_BLACKRECT,placement.left,placement.top,320,192,
-        nullptr,nullptr,::GetModuleHandleW(nullptr),nullptr);
-    Check(occluder!=nullptr,"independent occluding window created");
+    const HWND occluder = ::CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+                                            L"STATIC", L"Easnap occlusion probe", WS_POPUP | WS_VISIBLE | SS_NOTIFY | SS_BLACKRECT, placement.left, placement.top, 320, 192,
+                                            nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+    Check(occluder != nullptr, "independent occluding window created");
     if (occluder) {
-        ::SetWindowPos(occluder,HWND_TOPMOST,placement.left,placement.top,320,192,SWP_NOACTIVATE|SWP_SHOWWINDOW);
-        Check(::WindowFromPoint(POINT{placement.left+80,placement.top+60})==occluder,"test surface actually occluded");
-        Check(bring_forward() && ::GetAncestor(::WindowFromPoint(POINT{placement.left+80,placement.top+60}),GA_ROOT)==window,
+        ::SetWindowPos(occluder, HWND_TOPMOST, placement.left, placement.top, 320, 192, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        Check(::WindowFromPoint(POINT{placement.left + 80, placement.top + 60}) == occluder, "test surface actually occluded");
+        Check(bring_forward() && ::GetAncestor(::WindowFromPoint(POINT{placement.left + 80, placement.top + 60}), GA_ROOT) == window,
               "standalone test surface regains topmost ownership without activation");
         ::DestroyWindow(occluder);
     }
-    for (const int frames:{1,6}) {
-        const auto source=directory/(L"opening-"+std::to_wstring(frames)+L".mp4");
-        if (!Check(MakeOpeningSource(source.wstring(),frames),"opening frame fixture")) continue;
-        for (int cycle=0;cycle<4;++cycle) {
-            auto preview=CreateMfPlayPreview();
-            if (!Check(preview && preview->Open(source.wstring(),window,window,WM_APP+7),
+    for (const int frames : {1, 6}) {
+        const auto source = directory / (L"opening-" + std::to_wstring(frames) + L".mp4");
+        if (!Check(MakeOpeningSource(source.wstring(), frames), "opening frame fixture")) continue;
+        for (int cycle = 0; cycle < 4; ++cycle) {
+            auto preview = CreateMfPlayPreview();
+            if (!Check(preview && preview->Open(source.wstring(), window, window, WM_APP + 7),
                        "open without user Play")) continue;
-            const bool ready=Wait([&] {
-                const auto current=preview->snapshot();
-                return current.state==MediaPreviewState::Ready || current.state==MediaPreviewState::Failed;
+            const bool ready = Wait([&] {
+                const auto current = preview->snapshot();
+                return current.state == MediaPreviewState::Ready || current.state == MediaPreviewState::Failed;
             });
-            const auto current=preview->snapshot();
-            if (!Check(ready && current.state==MediaPreviewState::Ready,"opening prepares paused first frame")) {
-                std::fwprintf(stderr,L"%ls\n",preview->diagnostics().c_str());
+            const auto current = preview->snapshot();
+            if (!Check(ready && current.state == MediaPreviewState::Ready, "opening prepares paused first frame")) {
+                std::fwprintf(stderr, L"%ls\n", preview->diagnostics().c_str());
                 preview->Close();
                 continue;
             }
             Check(!current.play_requested && !current.native_playing && !current.command_pending &&
-                  !current.position_pending && current.position==MediaTime::zero(),
+                      !current.position_pending && current.position == MediaTime::zero(),
                   "ready is genuinely settled and paused at zero");
-            Check(bring_forward(),"position ready preview surface in front");
-            HWND sampled_child=nullptr;
-            DWORD sampled_process=0;
+            Check(bring_forward(), "position ready preview surface in front");
+            HWND sampled_child = nullptr;
+            DWORD sampled_process = 0;
             RECT sampled_client{};
             COLORREF sampled_pixels[11]{};
-            auto capture=easnap::capture::CreateRegionCaptureProvider();
-            int capture_status=-1;
-            auto display_generation=easnap::test::DesktopTestWindow::display_generation();
+            auto capture = easnap::capture::CreateRegionCaptureProvider();
+            int capture_status = -1;
+            auto display_generation = easnap::test::DesktopTestWindow::display_generation();
             RECT sampled_screen{};
             std::shared_ptr<const easnap::platform::BgraImage> last_presented;
-            HWND sampled_obscurer=nullptr;
-            DWORD sampled_cloaked=0;
-            const auto first_frame_visible=[&] {
+            HWND sampled_obscurer = nullptr;
+            DWORD sampled_cloaked = 0;
+            const auto first_frame_visible = [&] {
                 bring_forward();
                 preview->UpdateVideo();
                 if (display_generation != easnap::test::DesktopTestWindow::display_generation()) {
-                    capture=easnap::capture::CreateRegionCaptureProvider();
-                    display_generation=easnap::test::DesktopTestWindow::display_generation();
+                    capture = easnap::capture::CreateRegionCaptureProvider();
+                    display_generation = easnap::test::DesktopTestWindow::display_generation();
                 }
-                const HWND child=::GetWindow(window,GW_CHILD);
-                DWORD process=0; ::GetWindowThreadProcessId(child,&process);
-                sampled_child=child;
-                sampled_process=process;
-                sampled_client={};
-                sampled_obscurer=nullptr;
-                sampled_cloaked=0;
-                for (auto& pixel:sampled_pixels) pixel=CLR_INVALID;
-                if (!child || process!=preview->snapshot().backend_process_id || !::IsWindowVisible(child)) return false;
-                RECT client{}; ::GetClientRect(child,&client);
-                sampled_client=client;
-                RECT target{}; ::GetClientRect(window,&target);
-                if (client.right!=target.right || client.bottom!=target.bottom) return false;
-                RECT screen=client;
-                ::MapWindowPoints(child,nullptr,reinterpret_cast<POINT*>(&screen),2);
-                sampled_screen=screen;
-                const HRESULT cloak_result=::DwmGetWindowAttribute(window,DWMWA_CLOAKED,
-                    &sampled_cloaked,sizeof(sampled_cloaked));
-                bool owned=::IsWindowVisible(window) && SUCCEEDED(cloak_result) && !sampled_cloaked;
-                const auto owns_point=[&](int x,int y) {
-                    const HWND hit=::WindowFromPoint(POINT{screen.left+x,screen.top+y});
-                    const bool ours=hit && ::GetAncestor(hit,GA_ROOT)==window;
-                    if (!ours && !sampled_obscurer) sampled_obscurer=hit;
+                const HWND child = ::GetWindow(window, GW_CHILD);
+                DWORD process = 0;
+                ::GetWindowThreadProcessId(child, &process);
+                sampled_child = child;
+                sampled_process = process;
+                sampled_client = {};
+                sampled_obscurer = nullptr;
+                sampled_cloaked = 0;
+                for (auto& pixel : sampled_pixels) pixel = CLR_INVALID;
+                if (!child || process != preview->snapshot().backend_process_id || !::IsWindowVisible(child)) return false;
+                RECT client{};
+                ::GetClientRect(child, &client);
+                sampled_client = client;
+                RECT target{};
+                ::GetClientRect(window, &target);
+                if (client.right != target.right || client.bottom != target.bottom) return false;
+                RECT screen = client;
+                ::MapWindowPoints(child, nullptr, reinterpret_cast<POINT*>(&screen), 2);
+                sampled_screen = screen;
+                const HRESULT cloak_result = ::DwmGetWindowAttribute(window, DWMWA_CLOAKED,
+                                                                     &sampled_cloaked, sizeof(sampled_cloaked));
+                bool owned = ::IsWindowVisible(window) && SUCCEEDED(cloak_result) && !sampled_cloaked;
+                const auto owns_point = [&](int x, int y) {
+                    const HWND hit = ::WindowFromPoint(POINT{screen.left + x, screen.top + y});
+                    const bool ours = hit && ::GetAncestor(hit, GA_ROOT) == window;
+                    if (!ours && !sampled_obscurer) sampled_obscurer = hit;
                     return ours;
                 };
-                if (!owned || !owns_point(client.right/2,client.bottom/2)) {
+                if (!owned || !owns_point(client.right / 2, client.bottom / 2)) {
                     bring_forward();
                     return false;
                 }
                 VideoFrame presented;
-                if (!CapturePresentedFrame(*capture,*preview,screen,presented,&capture_status)) return false;
-                last_presented=presented.image;
-                bool green=true;
-                int index=0;
-                for (int y:{client.bottom/3,client.bottom/2,2*client.bottom/3}) {
-                    for (int x:{client.right/3,client.right/2,2*client.right/3}) {
-                        owned=owns_point(x,y) && owned;
-                        const auto bgra=presented.image->row(y)[x];
-                        const COLORREF pixel=RGB((bgra>>16)&0xff,(bgra>>8)&0xff,bgra&0xff);
-                        sampled_pixels[index++]=pixel;
-                        green=green && pixel!=CLR_INVALID && GetGValue(pixel)>150 &&
-                            GetRValue(pixel)<90 && GetBValue(pixel)<130;
+                if (!CapturePresentedFrame(*capture, *preview, screen, presented, &capture_status)) return false;
+                last_presented = presented.image;
+                bool green = true;
+                int index = 0;
+                for (int y : {client.bottom / 3, client.bottom / 2, 2 * client.bottom / 3}) {
+                    for (int x : {client.right / 3, client.right / 2, 2 * client.right / 3}) {
+                        owned = owns_point(x, y) && owned;
+                        const auto bgra = presented.image->row(y)[x];
+                        const COLORREF pixel = RGB((bgra >> 16) & 0xff, (bgra >> 8) & 0xff, bgra & 0xff);
+                        sampled_pixels[index++] = pixel;
+                        green = green && pixel != CLR_INVALID && GetGValue(pixel) > 150 &&
+                                GetRValue(pixel) < 90 && GetBValue(pixel) < 130;
                     }
                 }
-                const auto top=presented.image->row(client.bottom/24)[client.right/2];
-                const auto bottom=presented.image->row(client.bottom-1-client.bottom/24)[client.right/2];
-                sampled_pixels[9]=RGB((top>>16)&0xff,(top>>8)&0xff,top&0xff);
-                sampled_pixels[10]=RGB((bottom>>16)&0xff,(bottom>>8)&0xff,bottom&0xff);
-                owned=owns_point(client.right/2,client.bottom/24) && owned;
-                owned=owns_point(client.right/2,client.bottom-1-client.bottom/24) && owned;
-                green=green && GetRValue(sampled_pixels[9])>150 && GetGValue(sampled_pixels[9])<100 &&
-                    GetBValue(sampled_pixels[9])<130 && GetBValue(sampled_pixels[10])>150 &&
-                    GetRValue(sampled_pixels[10])<100 && GetGValue(sampled_pixels[10])<130;
+                const auto top = presented.image->row(client.bottom / 24)[client.right / 2];
+                const auto bottom = presented.image->row(client.bottom - 1 - client.bottom / 24)[client.right / 2];
+                sampled_pixels[9] = RGB((top >> 16) & 0xff, (top >> 8) & 0xff, top & 0xff);
+                sampled_pixels[10] = RGB((bottom >> 16) & 0xff, (bottom >> 8) & 0xff, bottom & 0xff);
+                owned = owns_point(client.right / 2, client.bottom / 24) && owned;
+                owned = owns_point(client.right / 2, client.bottom - 1 - client.bottom / 24) && owned;
+                green = green && GetRValue(sampled_pixels[9]) > 150 && GetGValue(sampled_pixels[9]) < 100 &&
+                        GetBValue(sampled_pixels[9]) < 130 && GetBValue(sampled_pixels[10]) > 150 &&
+                        GetRValue(sampled_pixels[10]) < 100 && GetGValue(sampled_pixels[10]) < 130;
                 return green && owned;
             };
-            const bool first_visible=Wait(first_frame_visible);
+            const bool first_visible = Wait(first_frame_visible);
             if (!Check(first_visible, sampled_obscurer
-                    ? "ENVIRONMENT BLOCKED: another window covers the desktop sample"
-                    : "first decoded green frame is actually presented")) {
-                const auto failed=preview->snapshot();
-                HDC child_dc=sampled_child?::GetDC(sampled_child):nullptr;
-                const COLORREF child_dc_pixel=child_dc?::GetPixel(child_dc,
-                    sampled_client.right/2,sampled_client.bottom/2):CLR_INVALID;
-                if (child_dc) ::ReleaseDC(sampled_child,child_dc);
+                                          ? "ENVIRONMENT BLOCKED: another window covers the desktop sample"
+                                          : "first decoded green frame is actually presented")) {
+                const auto failed = preview->snapshot();
+                HDC child_dc = sampled_child ? ::GetDC(sampled_child) : nullptr;
+                const COLORREF child_dc_pixel = child_dc ? ::GetPixel(child_dc,
+                                                                      sampled_client.right / 2, sampled_client.bottom / 2)
+                                                         : CLR_INVALID;
+                if (child_dc) ::ReleaseDC(sampled_child, child_dc);
                 std::printf("Startup pixels: frames=%d cycle=%d child=%p process=%lu expected=%lu visible=%d client=%ldx%ld native_playing=%d logical_ms=%lld native_ms=%lld\n",
-                    frames,cycle,static_cast<void*>(sampled_child),sampled_process,static_cast<unsigned long>(failed.backend_process_id),
-                    ::IsWindowVisible(sampled_child),sampled_client.right,sampled_client.bottom,
-                    failed.native_playing,static_cast<long long>(failed.position.count()),
-                    static_cast<long long>(failed.native_position.count()));
-                for (const auto pixel:sampled_pixels) std::printf(" %08lx",pixel);
-                std::printf(" child_dc=%08lx capture_status=%d\n",child_dc_pixel,capture_status);
-                DWORD obscuring_process=0;
-                ::GetWindowThreadProcessId(sampled_obscurer,&obscuring_process);
+                            frames, cycle, static_cast<void*>(sampled_child), sampled_process, static_cast<unsigned long>(failed.backend_process_id),
+                            ::IsWindowVisible(sampled_child), sampled_client.right, sampled_client.bottom,
+                            failed.native_playing, static_cast<long long>(failed.position.count()),
+                            static_cast<long long>(failed.native_position.count()));
+                for (const auto pixel : sampled_pixels) std::printf(" %08lx", pixel);
+                std::printf(" child_dc=%08lx capture_status=%d\n", child_dc_pixel, capture_status);
+                DWORD obscuring_process = 0;
+                ::GetWindowThreadProcessId(sampled_obscurer, &obscuring_process);
                 wchar_t obscuring_class[128]{};
-                ::GetClassNameW(sampled_obscurer,obscuring_class,128);
+                ::GetClassNameW(sampled_obscurer, obscuring_class, 128);
                 std::printf("Startup visibility: foreground=%p obscurer=%p root=%p pid=%lu cloak=%lu topmost=%d\n",
-                    static_cast<void*>(::GetForegroundWindow()),static_cast<void*>(sampled_obscurer),
-                    static_cast<void*>(::GetAncestor(sampled_obscurer,GA_ROOT)),obscuring_process,
-                    sampled_cloaked,(::GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0);
-                std::wprintf(L"Startup obscuring window class: %ls\n",obscuring_class);
-                const HWND still=::GetWindow(sampled_child,GW_CHILD);
-                RECT still_rect{}; ::GetWindowRect(still,&still_rect);
-                HDC still_dc=still?::GetDC(still):nullptr;
-                const COLORREF still_center=still_dc?::GetPixel(still_dc,
-                    (still_rect.right-still_rect.left)/2,(still_rect.bottom-still_rect.top)/2):CLR_INVALID;
-                if (still_dc) ::ReleaseDC(still,still_dc);
-                HDC desktop=::GetDC(nullptr);
-                const COLORREF desktop_center=desktop?::GetPixel(desktop,
-                    (sampled_screen.left+sampled_screen.right)/2,
-                    (sampled_screen.top+sampled_screen.bottom)/2):CLR_INVALID;
+                            static_cast<void*>(::GetForegroundWindow()), static_cast<void*>(sampled_obscurer),
+                            static_cast<void*>(::GetAncestor(sampled_obscurer, GA_ROOT)), obscuring_process,
+                            sampled_cloaked, (::GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
+                std::wprintf(L"Startup obscuring window class: %ls\n", obscuring_class);
+                const HWND still = ::GetWindow(sampled_child, GW_CHILD);
+                RECT still_rect{};
+                ::GetWindowRect(still, &still_rect);
+                HDC still_dc = still ? ::GetDC(still) : nullptr;
+                const COLORREF still_center = still_dc ? ::GetPixel(still_dc,
+                                                                    (still_rect.right - still_rect.left) / 2, (still_rect.bottom - still_rect.top) / 2)
+                                                       : CLR_INVALID;
+                if (still_dc) ::ReleaseDC(still, still_dc);
+                HDC desktop = ::GetDC(nullptr);
+                const COLORREF desktop_center = desktop ? ::GetPixel(desktop,
+                                                                     (sampled_screen.left + sampled_screen.right) / 2,
+                                                                     (sampled_screen.top + sampled_screen.bottom) / 2)
+                                                        : CLR_INVALID;
                 std::printf("Startup capture: parent_dpi=%u child_dpi=%u screen=(%ld,%ld)-(%ld,%ld) still=%p visible=%d rect=(%ld,%ld)-(%ld,%ld) still_center=%08lx desktop_center=%08lx\n",
-                    ::GetDpiForWindow(window),::GetDpiForWindow(sampled_child),sampled_screen.left,sampled_screen.top,
-                    sampled_screen.right,sampled_screen.bottom,static_cast<void*>(still),::IsWindowVisible(still),
-                    still_rect.left,still_rect.top,still_rect.right,still_rect.bottom,still_center,desktop_center);
-                const auto evidence=directory.parent_path()/(directory.filename().wstring()+L"-evidence");
+                            ::GetDpiForWindow(window), ::GetDpiForWindow(sampled_child), sampled_screen.left, sampled_screen.top,
+                            sampled_screen.right, sampled_screen.bottom, static_cast<void*>(still), ::IsWindowVisible(still),
+                            still_rect.left, still_rect.top, still_rect.right, still_rect.bottom, still_center, desktop_center);
+                const auto evidence = directory.parent_path() / (directory.filename().wstring() + L"-evidence");
                 std::error_code evidence_error;
-                std::filesystem::create_directory(evidence,evidence_error);
-                const auto prefix=L"frames-"+std::to_wstring(frames)+L"-cycle-"+std::to_wstring(cycle);
+                std::filesystem::create_directory(evidence, evidence_error);
+                const auto prefix = L"frames-" + std::to_wstring(frames) + L"-cycle-" + std::to_wstring(cycle);
                 if (!evidence_error && last_presented) {
-                    easnap::platform::SaveImage(*last_presented,(evidence/(prefix+L"-provider.png")).wstring());
+                    easnap::platform::SaveImage(*last_presented, (evidence / (prefix + L"-provider.png")).wstring());
                     easnap::platform::BgraImage gdi;
-                    gdi.Reset(last_presented->width,last_presented->height);
+                    gdi.Reset(last_presented->width, last_presented->height);
                     {
                         easnap::platform::GdiImageSurface surface(gdi);
                         if (desktop && surface.valid()) {
-                            ::BitBlt(surface.dc(),0,0,gdi.width,gdi.height,desktop,
-                                     sampled_screen.left,sampled_screen.top,SRCCOPY|CAPTUREBLT);
+                            ::BitBlt(surface.dc(), 0, 0, gdi.width, gdi.height, desktop,
+                                     sampled_screen.left, sampled_screen.top, SRCCOPY | CAPTUREBLT);
                         }
                     }
                     gdi.MakeOpaque();
-                    easnap::platform::SaveImage(gdi,(evidence/(prefix+L"-desktop-gdi.png")).wstring());
+                    easnap::platform::SaveImage(gdi, (evidence / (prefix + L"-desktop-gdi.png")).wstring());
                     // stdout mixes printf and wprintf here; a write in the other
                     // orientation is dropped, so follow the orientation it has.
-                    if (std::fwide(stdout,0)>0) std::wprintf(L"Startup actual-screen evidence: %ls, provider=%ls\n",evidence.c_str(),capture->name());
-                    else std::printf("Startup actual-screen evidence: %ls, provider=%ls\n",evidence.c_str(),capture->name());
+                    if (std::fwide(stdout, 0) > 0)
+                        std::wprintf(L"Startup actual-screen evidence: %ls, provider=%ls\n", evidence.c_str(), capture->name());
+                    else
+                        std::printf("Startup actual-screen evidence: %ls, provider=%ls\n", evidence.c_str(), capture->name());
                 }
-                if (desktop) ::ReleaseDC(nullptr,desktop);
-                std::fwprintf(stderr,L"%ls\n",preview->diagnostics().c_str());
+                if (desktop) ::ReleaseDC(nullptr, desktop);
+                std::fwprintf(stderr, L"%ls\n", preview->diagnostics().c_str());
             }
             if (!first_visible && sampled_obscurer) {
                 preview->Close();
                 std::error_code cleanup;
-                std::filesystem::remove(source,cleanup);
+                std::filesystem::remove(source, cleanup);
                 return; // report the real visibility failure, not accumulated 60 s waits
             }
-            const auto until=::GetTickCount64()+350;
-            Wait([&] { return ::GetTickCount64()>=until; });
-            const auto settled=preview->snapshot();
-            Check(settled.state==MediaPreviewState::Ready && !settled.native_playing &&
-                  !settled.play_requested && settled.position==MediaTime::zero(),
+            const auto until = ::GetTickCount64() + 350;
+            Wait([&] { return ::GetTickCount64() >= until; });
+            const auto settled = preview->snapshot();
+            Check(settled.state == MediaPreviewState::Ready && !settled.native_playing &&
+                      !settled.play_requested && settled.position == MediaTime::zero(),
                   "startup stays paused at zero without autoplay");
             // A paused desktop may have no newly captured frame on this poll,
             // or another foreground window may temporarily obscure the test.
             // Wait for an actual visible sample while requiring the transport
             // to remain paused at zero on every poll; never accept cached pixels.
-            bool remained_paused=true;
-            const bool visible_again=Wait([&] {
-                const auto state=preview->snapshot();
-                remained_paused=state.state==MediaPreviewState::Ready && !state.native_playing &&
-                    !state.play_requested && state.position==MediaTime::zero();
+            bool remained_paused = true;
+            const bool visible_again = Wait([&] {
+                const auto state = preview->snapshot();
+                remained_paused = state.state == MediaPreviewState::Ready && !state.native_playing &&
+                                  !state.play_requested && state.position == MediaTime::zero();
                 return !remained_paused || first_frame_visible();
             });
-            if(!Check(visible_again && remained_paused,"paused first frame remains presented")) {
+            if (!Check(visible_again && remained_paused, "paused first frame remains presented")) {
                 std::printf("Startup repeat sample: frames=%d cycle=%d paused=%d capture_status=%d obscurer=%p\n",
-                    frames,cycle,remained_paused,capture_status,static_cast<void*>(sampled_obscurer));
-                std::fwprintf(stderr,L"%ls\n",preview->diagnostics().c_str());
+                            frames, cycle, remained_paused, capture_status, static_cast<void*>(sampled_obscurer));
+                std::fwprintf(stderr, L"%ls\n", preview->diagnostics().c_str());
             }
-            if (frames==1 && cycle==0) {
-                ::SetWindowPos(window,nullptr,0,0,400,240,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+            if (frames == 1 && cycle == 0) {
+                ::SetWindowPos(window, nullptr, 0, 0, 400, 240, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
                 preview->UpdateVideo();
-                Check(Wait(first_frame_visible),"single-frame picture resizes with upright edge bands");
-                Check(preview->PauseAt(current.duration),"single-frame endpoint seek accepted");
+                Check(Wait(first_frame_visible), "single-frame picture resizes with upright edge bands");
+                Check(preview->PauseAt(current.duration), "single-frame endpoint seek accepted");
                 Check(Wait([&] {
-                    const auto at_end=preview->snapshot();
-                    return at_end.state!=MediaPreviewState::Failed && !at_end.command_pending &&
-                        !at_end.position_pending && at_end.position==current.duration;
-                }) && first_frame_visible(),"single-frame endpoint preserves its actual picture");
-                ::SetWindowPos(window,nullptr,0,0,320,192,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+                          const auto at_end = preview->snapshot();
+                          return at_end.state != MediaPreviewState::Failed && !at_end.command_pending &&
+                                 !at_end.position_pending && at_end.position == current.duration;
+                      }) &&
+                          first_frame_visible(),
+                      "single-frame endpoint preserves its actual picture");
+                ::SetWindowPos(window, nullptr, 0, 0, 320, 192, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
                 preview->UpdateVideo();
             }
             preview->Close();
         }
-        std::error_code error; std::filesystem::remove(source,error);
-        Check(!error,"opening fixture released");
+        std::error_code error;
+        std::filesystem::remove(source, error);
+        Check(!error, "opening fixture released");
     }
-    ::ShowWindow(window,SW_HIDE);
-    ::SetWindowPos(window,HWND_NOTOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+    ::ShowWindow(window, SW_HIDE);
+    ::SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
 
 bool MakeEndpointSource(const std::wstring& path, int frames, int rate, int width, int height) {
-    auto writer=CreateMediaFoundationWriter();
+    auto writer = CreateMediaFoundationWriter();
     RecordingOptions options;
-    options.region=RECT{0,0,width,height}; options.target_frame_rate=rate; options.audio=AudioSource::None;
-    if (!writer || !writer->Open(path,options,nullptr)) return false;
-    constexpr uint32_t colors[]{0xffd03028,0xff25d05a,0xffd0cf28,0xff28cfd0,0xffd028c0,0xff2835d0};
-    for (int index=0;index<frames;++index) {
-        auto frame=std::make_shared<easnap::platform::BgraImage>(); frame->Reset(width,height);
+    options.region = RECT{0, 0, width, height};
+    options.target_frame_rate = rate;
+    options.audio = AudioSource::None;
+    if (!writer || !writer->Open(path, options, nullptr)) return false;
+    constexpr uint32_t colors[]{0xffd03028, 0xff25d05a, 0xffd0cf28, 0xff28cfd0, 0xffd028c0, 0xff2835d0};
+    for (int index = 0; index < frames; ++index) {
+        auto frame = std::make_shared<easnap::platform::BgraImage>();
+        frame->Reset(width, height);
         // A desktop observer can legitimately miss a single 16.7 ms frame.
         // At 60 fps make the initial red scene uniquely identifiable for 100 ms
         // (it never recurs), while keeping the final blue sample one frame long.
         const uint32_t color = rate == 60
-            ? (index < 6 ? colors[0] : index == frames-1 ? colors[5] : colors[1+(index-6)%5])
-            : colors[index%6];
-        std::fill(frame->pixels.begin(),frame->pixels.end(),color);
-        const MediaTime start{index*kSecond/rate},end{(index+1)*kSecond/rate};
-        if (!writer->WriteVideoFrame({frame,start,end-start})) return false;
+                                   ? (index < 6 ? colors[0] : index == frames - 1 ? colors[5]
+                                                                                  : colors[1 + (index - 6) % 5])
+                                   : colors[index % 6];
+        std::fill(frame->pixels.begin(), frame->pixels.end(), color);
+        const MediaTime start{index * kSecond / rate}, end{(index + 1) * kSecond / rate};
+        if (!writer->WriteVideoFrame({frame, start, end - start})) return false;
     }
-    std::wstring finalized; return writer->Finalize(finalized);
+    std::wstring finalized;
+    return writer->Finalize(finalized);
 }
 
 void ExerciseRetainedEndpoints(const std::filesystem::path& directory, HWND window) {
     std::puts("Retained endpoints: real desktop pixels, natural EOS, half-open Out and replay from In");
-    Check(easnap::test::DesktopTestWindow::Present(window),"standalone endpoint test surface");
-    struct Fixture { int frames, rate, width, height; };
-    for (const auto [frames,rate,width,height]:{Fixture{1,5,160,96},Fixture{6,5,160,96},
-            Fixture{18,60,160,96},Fixture{6,5,1920,1080},Fixture{6,5,364,490}}) {
-        const auto path=directory/(L"endpoint-"+std::to_wstring(frames)+L".mp4");
-        if (!Check(MakeEndpointSource(path.wstring(),frames,rate,width,height),"colored endpoint fixture")) return;
-        auto preview=CreateMfPlayPreview();
-        if (!Check(preview && preview->Open(path.wstring(),window,window,WM_APP+7),"endpoint source opens")) return;
-        if (!Check(Wait([&] { return preview->snapshot().state==MediaPreviewState::Ready; }),"endpoint source ready")) return;
-        auto capture=easnap::capture::CreateRegionCaptureProvider();
-        auto display=easnap::test::DesktopTestWindow::display_generation();
-        bool black_observed=false;
-        unsigned colored_samples=0;
-        const auto picture=[&](COLORREF expected, bool image_edges=false) {
-            easnap::test::DesktopTestWindow::Present(window); preview->UpdateVideo();
-            if (display!=easnap::test::DesktopTestWindow::display_generation()) {
-                capture=easnap::capture::CreateRegionCaptureProvider();
-                display=easnap::test::DesktopTestWindow::display_generation();
+    Check(easnap::test::DesktopTestWindow::Present(window), "standalone endpoint test surface");
+    struct Fixture {
+        int frames, rate, width, height;
+    };
+    for (const auto [frames, rate, width, height] : {Fixture{1, 5, 160, 96}, Fixture{6, 5, 160, 96},
+                                                     Fixture{18, 60, 160, 96}, Fixture{6, 5, 1920, 1080}, Fixture{6, 5, 364, 490}}) {
+        const auto path = directory / (L"endpoint-" + std::to_wstring(frames) + L".mp4");
+        if (!Check(MakeEndpointSource(path.wstring(), frames, rate, width, height), "colored endpoint fixture")) return;
+        auto preview = CreateMfPlayPreview();
+        if (!Check(preview && preview->Open(path.wstring(), window, window, WM_APP + 7), "endpoint source opens")) return;
+        if (!Check(Wait([&] { return preview->snapshot().state == MediaPreviewState::Ready; }), "endpoint source ready")) return;
+        auto capture = easnap::capture::CreateRegionCaptureProvider();
+        auto display = easnap::test::DesktopTestWindow::display_generation();
+        bool black_observed = false;
+        unsigned colored_samples = 0;
+        const auto picture = [&](COLORREF expected, bool image_edges = false) {
+            easnap::test::DesktopTestWindow::Present(window);
+            preview->UpdateVideo();
+            if (display != easnap::test::DesktopTestWindow::display_generation()) {
+                capture = easnap::capture::CreateRegionCaptureProvider();
+                display = easnap::test::DesktopTestWindow::display_generation();
             }
-            RECT bounds{}; ::GetClientRect(window,&bounds);
-            ::MapWindowPoints(window,nullptr,reinterpret_cast<POINT*>(&bounds),2);
-            const HWND hit=::WindowFromPoint(POINT{(bounds.left+bounds.right)/2,(bounds.top+bounds.bottom)/2});
-            if (!hit || ::GetAncestor(hit,GA_ROOT)!=window) return false;
+            RECT bounds{};
+            ::GetClientRect(window, &bounds);
+            ::MapWindowPoints(window, nullptr, reinterpret_cast<POINT*>(&bounds), 2);
+            const HWND hit = ::WindowFromPoint(POINT{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2});
+            if (!hit || ::GetAncestor(hit, GA_ROOT) != window) return false;
             VideoFrame frame;
-            if (!CapturePresentedFrame(*capture,*preview,bounds,frame)) return false;
-            RECT current_bounds{}; ::GetClientRect(window,&current_bounds);
-            ::MapWindowPoints(window,nullptr,reinterpret_cast<POINT*>(&current_bounds),2);
-            const HWND current_hit=::WindowFromPoint(POINT{(bounds.left+bounds.right)/2,(bounds.top+bounds.bottom)/2});
-            if (!::EqualRect(&bounds,&current_bounds) || !current_hit ||
-                ::GetAncestor(current_hit,GA_ROOT)!=window) return false;
-            const double scale=(std::min)(static_cast<double>(frame.image->width)/width,
-                                           static_cast<double>(frame.image->height)/height);
-            const int shown_width=static_cast<int>(width*scale),shown_height=static_cast<int>(height*scale);
-            const int left=(frame.image->width-shown_width)/2,top=(frame.image->height-shown_height)/2;
+            if (!CapturePresentedFrame(*capture, *preview, bounds, frame)) return false;
+            RECT current_bounds{};
+            ::GetClientRect(window, &current_bounds);
+            ::MapWindowPoints(window, nullptr, reinterpret_cast<POINT*>(&current_bounds), 2);
+            const HWND current_hit = ::WindowFromPoint(POINT{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2});
+            if (!::EqualRect(&bounds, &current_bounds) || !current_hit ||
+                ::GetAncestor(current_hit, GA_ROOT) != window) return false;
+            const double scale = (std::min)(static_cast<double>(frame.image->width) / width,
+                                            static_cast<double>(frame.image->height) / height);
+            const int shown_width = static_cast<int>(width * scale), shown_height = static_cast<int>(height * scale);
+            const int left = (frame.image->width - shown_width) / 2, top = (frame.image->height - shown_height) / 2;
             // Include the last visible image rows, where H.264 alignment padding
             // leaked into 1080p and other non-macroblock-aligned stills.
             // Held stills have exact integer destination bounds. Check their
             // first/last visible pixels: even one leaked padding row matters.
             // Native video can round a fractional letterbox boundary differently.
-            const int first=image_edges?0:2, last=image_edges?1:3;
-            for (int y:{top+first,top+shown_height/2,top+shown_height-last}) {
-                for (int x:{left+first,left+shown_width/2,left+shown_width-last}) {
-                    const auto pixel=frame.image->row(y)[x];
-                    if (expected==CLR_INVALID) {
-                        if (((pixel>>16)&255)+((pixel>>8)&255)+(pixel&255)<60) {
+            const int first = image_edges ? 0 : 2, last = image_edges ? 1 : 3;
+            for (int y : {top + first, top + shown_height / 2, top + shown_height - last}) {
+                for (int x : {left + first, left + shown_width / 2, left + shown_width - last}) {
+                    const auto pixel = frame.image->row(y)[x];
+                    if (expected == CLR_INVALID) {
+                        if (((pixel >> 16) & 255) + ((pixel >> 8) & 255) + (pixel & 255) < 60) {
                             if (!black_observed) {
-                                const auto state=preview->snapshot();
+                                const auto state = preview->snapshot();
                                 std::printf("Black transition: ms=%llu frames=%d size=%dx%d state=%d logical=%lld native=%lld pending=%d playing=%d\n",
-                                    ::GetTickCount64(),frames,width,height,static_cast<int>(state.state),state.position.count(),state.native_position.count(),
-                                    state.command_pending,state.native_playing);
-                                const auto evidence=directory.parent_path()/(directory.filename().wstring()+L"-evidence");
+                                            ::GetTickCount64(), frames, width, height, static_cast<int>(state.state), state.position.count(), state.native_position.count(),
+                                            state.command_pending, state.native_playing);
+                                const auto evidence = directory.parent_path() / (directory.filename().wstring() + L"-evidence");
                                 std::filesystem::create_directories(evidence);
-                                const auto file=evidence/(L"black-"+std::to_wstring(frames)+L".png");
-                                easnap::platform::SaveImage(*frame.image,file.wstring());
-                                std::wprintf(L"Black transition desktop capture: %ls\n",file.c_str());
-                                const HWND host=::GetWindow(window,GW_CHILD);
-                                for (HWND child=::GetWindow(host,GW_CHILD);child;child=::GetWindow(child,GW_HWNDNEXT)) {
-                                    wchar_t name[128]{}; ::GetClassNameW(child,name,128);
-                                    HDC dc=::GetDC(child); RECT size{}; ::GetClientRect(child,&size);
-                                    const auto native_pixel=::GetPixel(dc,size.right/2,size.bottom/2); ::ReleaseDC(child,dc);
-                                    std::wprintf(L"Child %p class=%ls visible=%d pixel=%08lx\n",static_cast<void*>(child),name,::IsWindowVisible(child),native_pixel);
+                                const auto file = evidence / (L"black-" + std::to_wstring(frames) + L".png");
+                                easnap::platform::SaveImage(*frame.image, file.wstring());
+                                std::wprintf(L"Black transition desktop capture: %ls\n", file.c_str());
+                                const HWND host = ::GetWindow(window, GW_CHILD);
+                                for (HWND child = ::GetWindow(host, GW_CHILD); child; child = ::GetWindow(child, GW_HWNDNEXT)) {
+                                    wchar_t name[128]{};
+                                    ::GetClassNameW(child, name, 128);
+                                    HDC dc = ::GetDC(child);
+                                    RECT size{};
+                                    ::GetClientRect(child, &size);
+                                    const auto native_pixel = ::GetPixel(dc, size.right / 2, size.bottom / 2);
+                                    ::ReleaseDC(child, dc);
+                                    std::wprintf(L"Child %p class=%ls visible=%d pixel=%08lx\n", static_cast<void*>(child), name, ::IsWindowVisible(child), native_pixel);
                                 }
                             }
-                            black_observed=true;
-                        }
-                        else ++colored_samples;
+                            black_observed = true;
+                        } else
+                            ++colored_samples;
                         continue;
                     }
-                    if (std::abs(static_cast<int>((pixel>>16)&255)-GetRValue(expected))>45 ||
-                        std::abs(static_cast<int>((pixel>>8)&255)-GetGValue(expected))>45 ||
-                        std::abs(static_cast<int>(pixel&255)-GetBValue(expected))>45) return false;
+                    if (std::abs(static_cast<int>((pixel >> 16) & 255) - GetRValue(expected)) > 45 ||
+                        std::abs(static_cast<int>((pixel >> 8) & 255) - GetGValue(expected)) > 45 ||
+                        std::abs(static_cast<int>(pixel & 255) - GetBValue(expected)) > 45) return false;
                 }
             }
             return true;
         };
-        const auto held=[&](MediaTime position,COLORREF expected) {
-            bool correct=Check(Wait([&] {
-                const auto state=preview->snapshot();
-                return !state.play_requested && !state.native_playing && !state.command_pending &&
-                    state.position==position;
-            }),"endpoint keeps logical cursor and stopped transport");
-            correct=Check(Wait([&] { return picture(expected,true); }),"actual selected last frame visible") && correct;
-            const auto until=::GetTickCount64()+350;
-            bool stable=true;
+        const auto held = [&](MediaTime position, COLORREF expected) {
+            bool correct = Check(Wait([&] {
+                                     const auto state = preview->snapshot();
+                                     return !state.play_requested && !state.native_playing && !state.command_pending &&
+                                            state.position == position;
+                                 }),
+                                 "endpoint keeps logical cursor and stopped transport");
+            correct = Check(Wait([&] { return picture(expected, true); }), "actual selected last frame visible") && correct;
+            const auto until = ::GetTickCount64() + 350;
+            bool stable = true;
             Wait([&] {
-                const auto state=preview->snapshot();
-                stable=stable && !state.play_requested && !state.native_playing && state.position==position;
-                return ::GetTickCount64()>=until;
+                const auto state = preview->snapshot();
+                stable = stable && !state.play_requested && !state.native_playing && state.position == position;
+                return ::GetTickCount64() >= until;
             });
-            correct=Check(stable && Wait([&] { return picture(expected,true); }),"last frame and cursor persist until user input") && correct;
+            correct = Check(stable && Wait([&] { return picture(expected, true); }), "last frame and cursor persist until user input") && correct;
             return correct;
         };
-        const auto duration=preview->snapshot().duration;
-        Check(Wait([&] { return picture(RGB(208,48,40)); }),"natural playback starts with first picture presented");
-        Check(preview->Play(),"natural playback starts");
+        const auto duration = preview->snapshot().duration;
+        Check(Wait([&] { return picture(RGB(208, 48, 40)); }), "natural playback starts with first picture presented");
+        Check(preview->Play(), "natural playback starts");
         Check(Wait([&] {
-            picture(CLR_INVALID);
-            return preview->snapshot().state==MediaPreviewState::Ended;
-        }),"natural playback reaches EOS");
-        Check(colored_samples>0 && !black_observed,"actual content stays visible through natural completion");
-        held(duration,frames==1?RGB(208,48,40):RGB(40,53,208));
-        ::SetWindowPos(window,nullptr,0,0,300,240,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+                  picture(CLR_INVALID);
+                  return preview->snapshot().state == MediaPreviewState::Ended;
+              }),
+              "natural playback reaches EOS");
+        Check(colored_samples > 0 && !black_observed, "actual content stays visible through natural completion");
+        held(duration, frames == 1 ? RGB(208, 48, 40) : RGB(40, 53, 208));
+        ::SetWindowPos(window, nullptr, 0, 0, 300, 240, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         preview->UpdateVideo();
-        Check(Wait([&] { return picture(frames==1?RGB(208,48,40):RGB(40,53,208),true); }),
+        Check(Wait([&] { return picture(frames == 1 ? RGB(208, 48, 40) : RGB(40, 53, 208), true); }),
               "retained final frame survives aspect-ratio resize");
-        ::SetWindowPos(window,nullptr,0,0,320,192,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
+        ::SetWindowPos(window, nullptr, 0, 0, 320, 192, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         preview->UpdateVideo();
-        Check(Wait([&] { return picture(frames==1?RGB(208,48,40):RGB(40,53,208),true); }),
+        Check(Wait([&] { return picture(frames == 1 ? RGB(208, 48, 40) : RGB(40, 53, 208), true); }),
               "restored viewport is presented before replay observation");
-        const auto prior_command=preview->snapshot().command_sequence;
-        Check(preview->Play(),"replay accepted from held EOS");
-        Check(Wait([&] { return picture(RGB(208,48,40)); }),"replay shows first source frame");
-        Check(Wait([&] { return preview->snapshot().command_sequence>prior_command; }),"replay issues real native transport");
-        Check(preview->Pause(),"pause replay");
-        Check(Wait([&] { const auto state=preview->snapshot(); return !state.command_pending && !state.native_playing; }),"replay pauses");
-        if (frames==6 && width==160) {
-            for (bool aligned:{true,false}) {
-                const MediaTime in{aligned?2*kSecond/10:45*kSecond/100};
-                const MediaTime out{aligned?6*kSecond/10:65*kSecond/100};
-                const COLORREF first=aligned?RGB(37,208,90):RGB(208,207,40);
-                const COLORREF last=aligned?RGB(208,207,40):RGB(40,207,208);
-                Check(preview->PlayFrom(in),"selected range starts at In");
-                Check(Wait([&] { return picture(first); }),"first frame covers selected In");
+        const auto prior_command = preview->snapshot().command_sequence;
+        Check(preview->Play(), "replay accepted from held EOS");
+        Check(Wait([&] { return picture(RGB(208, 48, 40)); }), "replay shows first source frame");
+        Check(Wait([&] { return preview->snapshot().command_sequence > prior_command; }), "replay issues real native transport");
+        Check(preview->Pause(), "pause replay");
+        Check(Wait([&] { const auto state=preview->snapshot(); return !state.command_pending && !state.native_playing; }), "replay pauses");
+        if (frames == 6 && width == 160) {
+            for (bool aligned : {true, false}) {
+                const MediaTime in{aligned ? 2 * kSecond / 10 : 45 * kSecond / 100};
+                const MediaTime out{aligned ? 6 * kSecond / 10 : 65 * kSecond / 100};
+                const COLORREF first = aligned ? RGB(37, 208, 90) : RGB(208, 207, 40);
+                const COLORREF last = aligned ? RGB(208, 207, 40) : RGB(40, 207, 208);
+                Check(preview->PlayFrom(in), "selected range starts at In");
+                Check(Wait([&] { return picture(first); }), "first frame covers selected In");
                 Check(Wait([&] {
-                    const auto state=preview->snapshot();
-                    const auto decision=easnap::app::PlanTrimPlaybackProgress(
-                        (state.play_requested || state.state==MediaPreviewState::Ended) && !state.position_pending,
-                        state.position,out);
-                    if (decision.action==easnap::app::TrimPlaybackAction::PauseAt)
-                        Check(preview->PauseAt(decision.position),"production Out decision accepted");
-                    return !state.command_pending && !state.play_requested && state.position==out;
-                }),"selected playback settles exactly at Out");
-                held(out,last);
-                const auto state=preview->snapshot();
-                const auto replay=easnap::app::PlanTrimPlaybackToggle(state.play_requested,
-                    state.state==MediaPreviewState::Ended,state.position,in,out);
-                Check(replay.action==easnap::app::TrimPlaybackAction::SeekThenPlay && replay.position==in,
-                    "selected replay plans In seek then Play");
-                Check(preview->PlayFrom(replay.position),"selected replay accepted");
-                Check(Wait([&] { return picture(first); }),"selected replay starts with correct first frame");
+                          const auto state = preview->snapshot();
+                          const auto decision = easnap::app::PlanTrimPlaybackProgress(
+                              (state.play_requested || state.state == MediaPreviewState::Ended) && !state.position_pending,
+                              state.position, out);
+                          if (decision.action == easnap::app::TrimPlaybackAction::PauseAt)
+                              Check(preview->PauseAt(decision.position), "production Out decision accepted");
+                          return !state.command_pending && !state.play_requested && state.position == out;
+                      }),
+                      "selected playback settles exactly at Out");
+                held(out, last);
+                const auto state = preview->snapshot();
+                const auto replay = easnap::app::PlanTrimPlaybackToggle(state.play_requested,
+                                                                        state.state == MediaPreviewState::Ended, state.position, in, out);
+                Check(replay.action == easnap::app::TrimPlaybackAction::SeekThenPlay && replay.position == in,
+                      "selected replay plans In seek then Play");
+                Check(preview->PlayFrom(replay.position), "selected replay accepted");
+                Check(Wait([&] { return picture(first); }), "selected replay starts with correct first frame");
                 preview->Pause();
-                Check(Wait([&] { return !preview->snapshot().command_pending; }),"selected replay pause settles");
+                Check(Wait([&] { return !preview->snapshot().command_pending; }), "selected replay pause settles");
             }
         }
-        if (failures) std::fwprintf(stderr,L"%ls\n",preview->diagnostics().c_str());
-        preview->Close(); std::filesystem::remove(path);
+        if (failures) std::fwprintf(stderr, L"%ls\n", preview->diagnostics().c_str());
+        preview->Close();
+        std::filesystem::remove(path);
     }
 }
 
@@ -561,6 +591,7 @@ public:
     }
     std::atomic<unsigned> events[13]{};
     std::atomic<HRESULT> results[13]{};
+
 private:
     std::atomic<ULONG> references_{1};
 };
@@ -570,23 +601,31 @@ void ProbeNative(const std::wstring& path, HWND window, bool audio_fixture = fal
     callback.Attach(new NativeProbe());
     Microsoft::WRL::ComPtr<IMFPMediaPlayer> player;
     if (!Check(SUCCEEDED(::MFPCreateMediaPlayer(path.c_str(), FALSE,
-            MFP_OPTION_FREE_THREADED_CALLBACK, callback.Get(), window,
-            &player)), "native open")) return;
+                                                MFP_OPTION_FREE_THREADED_CALLBACK, callback.Get(), window,
+                                                &player)),
+               "native open")) return;
     Check(Wait([&] { return callback->events[MFP_EVENT_TYPE_MEDIAITEM_SET] > 0; }),
           "native ready");
     Microsoft::WRL::ComPtr<IMFPMediaItem> item;
     PROPVARIANT duration{};
     if (!Check(SUCCEEDED(player->GetMediaItem(&item)) && item &&
                    SUCCEEDED(item->GetDuration(MFP_POSITIONTYPE_100NS, &duration)),
-               "native presentation duration")) { player->Shutdown(); return; }
+               "native presentation duration")) {
+        player->Shutdown();
+        return;
+    }
     const MediaTime presentation_duration{duration.vt == VT_UI8
-        ? static_cast<int64_t>(duration.uhVal.QuadPart) : duration.hVal.QuadPart};
+                                              ? static_cast<int64_t>(duration.uhVal.QuadPart)
+                                              : duration.hVal.QuadPart};
     ::PropVariantClear(&duration);
     PreviewVideoEndpoint endpoint;
     if (!Check(SUCCEEDED(ReadPreviewVideoEndpoint(path, presentation_duration, endpoint)),
-               "read exact final video sample metadata")) { player->Shutdown(); return; }
+               "read exact final video sample metadata")) {
+        player->Shutdown();
+        return;
+    }
     Check(endpoint.last_frame_position == MediaTime{
-              audio_fixture ? 359 * kSecond / 30 : 179 * kSecond / 15},
+                                              audio_fixture ? 359 * kSecond / 30 : 179 * kSecond / 15},
           "last video PTS matches generated fixture timestamps");
     Check(endpoint.video_end >= MediaTime{12 * kSecond - 1} &&
               endpoint.video_end <= MediaTime{12 * kSecond},
@@ -599,7 +638,7 @@ void ProbeNative(const std::wstring& path, HWND window, bool audio_fixture = fal
     std::printf("native Pause while stopped returns %08X\n",
                 static_cast<unsigned>(player->Pause()));
     Check(Wait([&] { return callback->events[MFP_EVENT_TYPE_PAUSE] > 0 ||
-                           callback->events[MFP_EVENT_TYPE_ERROR] > 0; }),
+                            callback->events[MFP_EVENT_TYPE_ERROR] > 0; }),
           "stopped pause result");
     Check(callback->results[MFP_EVENT_TYPE_PAUSE] == MF_E_SESSION_PAUSEWHILESTOPPED,
           "stopped Pause uses the exact asynchronous HRESULT");
@@ -621,7 +660,10 @@ void ProbeNative(const std::wstring& path, HWND window, bool audio_fixture = fal
         ::PropVariantClear(&current);
         return true;
     };
-    if (!seek(6 * kSecond)) { player->Shutdown(); return; }
+    if (!seek(6 * kSecond)) {
+        player->Shutdown();
+        return;
+    }
     player->Play();
     Check(Wait([&] { return callback->events[MFP_EVENT_TYPE_PLAY] > 0; }), "native play");
     const unsigned prior_play = callback->events[MFP_EVENT_TYPE_PLAY];
@@ -654,10 +696,7 @@ void ExercisePreview(const std::wstring& path, HWND window) {
             const auto state = preview->snapshot();
             return state.state == MediaPreviewState::Failed ||
                    (!state.command_pending && state.play_requested == playing &&
-                    (playing ? state.state == MediaPreviewState::Playing :
-                               (state.state == MediaPreviewState::Paused ||
-                                (state.state == MediaPreviewState::Ended &&
-                                 state.position == state.duration))));
+                    (playing ? state.state == MediaPreviewState::Playing : (state.state == MediaPreviewState::Paused || (state.state == MediaPreviewState::Ended && state.position == state.duration))));
         });
         const auto state = preview->snapshot();
         if (!done || state.state == MediaPreviewState::Failed) {
@@ -713,22 +752,24 @@ void ExercisePreview(const std::wstring& path, HWND window) {
         Check(preview->PlayFrom(selected_out - MediaTime{kSecond / 10}),
               "play toward selected Out");
         if (!Check(Wait([&] {
-            tick();
-            const auto state = preview->snapshot();
-            return !state.play_requested && !state.command_pending &&
-                   state.position == selected_out;
-        }), "selected Out pause settles at Out")) return;
+                       tick();
+                       const auto state = preview->snapshot();
+                       return !state.play_requested && !state.command_pending &&
+                              state.position == selected_out;
+                   }),
+                   "selected Out pause settles at Out")) return;
         Check(preview->PlayFrom(MediaTime{kSecond}), "restart from selected Out");
         tick(); // old native Out must not overwrite this newer In seek
         Check(preview->Pause(), "double-toggle selected restart");
         Check(preview->Play(), "last selected intent is Play");
         if (!Check(Wait([&] {
-            tick();
-            const auto state = preview->snapshot();
-            return state.play_requested && !state.command_pending &&
-                   state.state == MediaPreviewState::Playing &&
-                   state.position < selected_out;
-        }), "selected Out restart converges")) return;
+                       tick();
+                       const auto state = preview->snapshot();
+                       return state.play_requested && !state.command_pending &&
+                              state.state == MediaPreviewState::Playing &&
+                              state.position < selected_out;
+                   }),
+                   "selected Out restart converges")) return;
     }
     Check(preview->PauseAt(MediaTime{5 * kSecond}), "range Out moved behind playhead");
     Check(settled(false), "range Out edit settles");
@@ -768,10 +809,10 @@ public:
         // process or an unrelated thread supplied from outside the preview.
         if (!process_id || !thread_id || process_id == ::GetCurrentProcessId()) return false;
         process_ = ::OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-                                FALSE, process_id);
+                                 FALSE, process_id);
         thread_ = ::OpenThread(THREAD_SUSPEND_RESUME | THREAD_QUERY_LIMITED_INFORMATION |
-                                  SYNCHRONIZE,
-                              FALSE, thread_id);
+                                   SYNCHRONIZE,
+                               FALSE, thread_id);
         if (!process_ || !thread_ || ::GetProcessIdOfThread(thread_) != process_id) return false;
         resume_cancel_ = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (!resume_cancel_) return false;
@@ -851,15 +892,16 @@ public:
             PROCESS_MEMORY_COUNTERS_EX memory{};
             memory.cb = sizeof(memory);
             const bool measured = ::GetProcessHandleCount(process, &sample.handles) &&
-                ::K32GetProcessMemoryInfo(process,
-                    reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory));
+                                  ::K32GetProcessMemoryInfo(process,
+                                                            reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory), sizeof(memory));
             sample.private_bytes = memory.PrivateUsage;
             sample.gdi = ::GetGuiResources(process, GR_GDIOBJECTS);
             sample.user = ::GetGuiResources(process, GR_USEROBJECTS);
             ::CloseHandle(process);
             if (!measured) return Fail("measure owned helper handles and private memory");
             std::printf("Continuous MFPlay seed=%08X resources: handles=%lu private=%llu "
-                        "GDI=%lu USER=%lu\n", seed_, sample.handles,
+                        "GDI=%lu USER=%lu\n",
+                        seed_, sample.handles,
                         static_cast<unsigned long long>(sample.private_bytes),
                         sample.gdi, sample.user);
             return true;
@@ -879,7 +921,8 @@ public:
             // targets deliberately reset the playing clock many times without
             // giving an old high-water mark time to be reached again.
             const MediaTime target{static_cast<int64_t>(200 + Next() %
-                static_cast<uint32_t>(maximum_ms - 199)) * 10'000};
+                                                                  static_cast<uint32_t>(maximum_ms - 199)) *
+                                   10'000};
             if (target < previous_target) ++backward_targets;
             previous_target = target;
             if (!Seek(target)) return false;
@@ -1018,7 +1061,9 @@ public:
                                state.backend_process_id != 0 &&
                                state.backend_process_id != original.backend_process_id &&
                                stalled.Retired();
-                    }, "watchdog retires the stalled host before replacement") || !Advancing())
+                    },
+                           "watchdog retires the stalled host before replacement") ||
+                    !Advancing())
                     return false;
                 const auto recovered = preview_.snapshot();
                 if (!recovered.play_requested || recovered.position < MediaTime{2 * kSecond} ||
@@ -1028,7 +1073,8 @@ public:
                 if (!Until([&] {
                         return OwnedVideoHasSize(window, recovered.backend_process_id,
                                                  resize_width + 48, resize_height + 27);
-                    }, "replacement child applies the latest coalesced parent dimensions"))
+                    },
+                           "replacement child applies the latest coalesced parent dimensions"))
                     return false;
                 std::printf("MFPlay watchdog retired owned process=%u and replaced it with process=%u\n",
                             original.backend_process_id, recovered.backend_process_id);
@@ -1052,7 +1098,8 @@ public:
         // and the same preview object available for a deliberate new Open.
         if (!Issue(preview_.Open(path, window, window, WM_APP + 7), "reopen-after-recovery-limit") ||
             !Until([&] { return preview_.snapshot().state == MediaPreviewState::Ready; },
-                   "reopen after explicit recovery failure") || !ConvergeAndReuse()) return false;
+                   "reopen after explicit recovery failure") ||
+            !ConvergeAndReuse()) return false;
         const auto before_close = preview_.snapshot();
         SuspendedPreviewHost stalled_at_close;
         if (!stalled_at_close.Suspend(before_close.backend_process_id, before_close.backend_thread_id))
@@ -1066,7 +1113,8 @@ public:
             return Fail("Close retires a suspended native host within 1500 ms");
         if (!Issue(preview_.Open(path, window, window, WM_APP + 7), "reopen-after-forced-close") ||
             !Until([&] { return preview_.snapshot().state == MediaPreviewState::Ready; },
-                   "reopen after bounded forced Close") || !ConvergeAndReuse()) return false;
+                   "reopen after bounded forced Close") ||
+            !ConvergeAndReuse()) return false;
         const DWORD healthy_process = preview_.snapshot().backend_process_id;
         for (unsigned index = 0; index < 16; ++index) {
             const int width = index % 2 ? 640 : 400;
@@ -1078,7 +1126,8 @@ public:
         }
         if (!Until([&] {
                 return OwnedVideoHasSize(window, healthy_process, 640, 360);
-            }, "healthy child applies the newest coalesced resize")) return false;
+            },
+                   "healthy child applies the newest coalesced resize")) return false;
         if (preview_.snapshot().backend_process_id != healthy_process)
             return Fail("healthy resize converges without replacing the host");
         policy_enabled_ = true;
@@ -1093,7 +1142,8 @@ public:
         selected_out_ = preview_.snapshot().duration;
         const uint64_t initial_generation = preview_.snapshot().player_generation;
         if (!Issue(preview_.PlayFrom(MediaTime{6 * kSecond}),
-                   "endpoint-regression-healthy-play") || !Advancing()) return false;
+                   "endpoint-regression-healthy-play") ||
+            !Advancing()) return false;
         if (!Issue(preview_.PauseAt(selected_out_), "endpoint-regression-stationary-Out") ||
             !Paused()) return false;
         const auto endpoint = preview_.snapshot();
@@ -1102,7 +1152,8 @@ public:
             endpoint.player_generation != initial_generation)
             return Fail("exclusive logical Out displays the exact last native frame without recovery");
         if (!Issue(preview_.PlayFrom(MediaTime{6 * kSecond}),
-                   "endpoint-regression-replay-middle") || !Advancing()) return false;
+                   "endpoint-regression-replay-middle") ||
+            !Advancing()) return false;
         // Captured failure: the Pause callback dispatches SetPosition(duration)
         // on an H264/AAC source, which native MFPlay accepts without POSITION_SET.
         // Newer PlayFrom(In), Pause, Play must never remain behind that ownership.
@@ -1128,12 +1179,13 @@ public:
             region_ = cycle;
             // Include the UI's default full range and near-natural-end Out:
             // endpoint notification and automatic PauseAt may coincide here.
-            const int64_t tail_ms = cycle % 4 == 0 ? 4'000 :
-                cycle % 4 == 1 ? 0 : cycle % 4 == 2 ? 10 : 100;
+            const int64_t tail_ms = cycle % 4 == 0 ? 4'000 : cycle % 4 == 1 ? 0
+                                                         : cycle % 4 == 2   ? 10
+                                                                            : 100;
             selected_out_ = preview_.snapshot().duration - MediaTime{tail_ms * 10'000};
             policy_enabled_ = true;
             const MediaTime start = std::min(preview_.snapshot().duration,
-                selected_out_ - MediaTime{offsets_ms[cycle % std::size(offsets_ms)] * 10'000});
+                                             selected_out_ - MediaTime{offsets_ms[cycle % std::size(offsets_ms)] * 10'000});
             if (!Issue(preview_.PauseAt(start), "focus-place") || !Paused() || !Play())
                 return false;
             for (unsigned action = 0; action < 16; ++action) {
@@ -1141,20 +1193,23 @@ public:
                 if (!Toggle()) return false;
                 if (action % 4 == 3) {
                     if (!Seek(selected_out_ - MediaTime{
-                            static_cast<int64_t>(10 + Next() % 91) * 10'000}) || !Play())
+                                                  static_cast<int64_t>(10 + Next() % 91) * 10'000}) ||
+                        !Play())
                         return false;
                 }
             }
             if (!Issue(preview_.PlayFrom(selected_out_ - MediaTime{kSecond / 10}),
                        "focus-final-Out-approach") ||
                 !Until([&] { return !preview_.snapshot().play_requested; },
-                       "focus endpoint/automatic Out intent") || !Play()) return false;
+                       "focus endpoint/automatic Out intent") ||
+                !Play()) return false;
             Delay(10 + Next() % 41);
             if (!Issue(preview_.Pause(), "focus-restart-reverse")) return false;
             Delay(10 + Next() % 41);
             if (!Play() || !Advancing() || !ConvergeAndReuse()) return false;
             std::printf("Focused MFPlay seed=%08X cycle=%u/%u tail-ms=%lld passed "
-                        "automatic-Out=%u pending-input=%u replacements=%llu\n", seed_, cycle + 1,
+                        "automatic-Out=%u pending-input=%u replacements=%llu\n",
+                        seed_, cycle + 1,
                         cycles, tail_ms, automatic_out_count_, pending_input_count_,
                         preview_.snapshot().player_generation - initial_generation);
         }
@@ -1173,8 +1228,9 @@ public:
             policy_enabled_ = true;
             Record("region-begin");
             if (!Issue(preview_.PauseAt(selected_out_ -
-                           MediaTime{before_out_ms[region] * 10'000}),
-                       "place-region") || !Paused()) return false;
+                                        MediaTime{before_out_ms[region] * 10'000}),
+                       "place-region") ||
+                !Paused()) return false;
 
             // The first action uses the real restart-at-Out planner. During the
             // remaining actions a native callback may complete before or after
@@ -1183,15 +1239,20 @@ public:
             for (unsigned action = 0; action < 18; ++action) {
                 Delay(10 + Next() % 291);
                 switch (action % 9) {
-                    case 0: case 2: case 4: case 6: case 8:
+                    case 0:
+                    case 2:
+                    case 4:
+                    case 6:
+                    case 8:
                         if (!Toggle()) return false;
                         break;
-                    case 1: case 5:
+                    case 1:
+                    case 5:
                         if (!Play()) return false;
                         break;
                     case 3:
                         if (!Seek(selected_out_ - MediaTime{
-                                static_cast<int64_t>(20 + Next() % 501) * 10'000}))
+                                                      static_cast<int64_t>(20 + Next() % 501) * 10'000}))
                             return false;
                         break;
                     case 7:
@@ -1210,7 +1271,8 @@ public:
             if (!Issue(preview_.PlayFrom(selected_out_ - MediaTime{kSecond / 10}),
                        "approach-Out-for-pending-reversal") ||
                 !Until([&] { return !preview_.snapshot().play_requested; },
-                       "automatic Out intent submitted") || !Play()) return false;
+                       "automatic Out intent submitted") ||
+                !Play()) return false;
             Delay(10 + Next() % 31);
             if (!Issue(preview_.Pause(), "automatic-Out-restart-pause")) return false;
             Delay(10 + Next() % 31);
@@ -1240,7 +1302,8 @@ public:
                        "natural-end-final-approach")) return false;
             if (!Until([&] {
                     return preview_.snapshot().state == MediaPreviewState::Ended;
-                }, "natural end event")) return false;
+                },
+                       "natural end event")) return false;
             if (!Play()) return false;
             Delay(10 + Next() % 41);
             if (!Issue(preview_.Pause(), "restart-reverse-pause")) return false;
@@ -1345,7 +1408,10 @@ private:
     bool Seek(MediaTime position) {
         const auto selected = easnap::app::PlanTrimTimelineSeek(
             preview_.snapshot().play_requested, position, selected_in_, selected_out_);
-        if (!selected) { Record("timeline-seek-ignored-by-policy"); return true; }
+        if (!selected) {
+            Record("timeline-seek-ignored-by-policy");
+            return true;
+        }
         Input();
         return Issue(preview_.Seek(*selected), "user-seek");
     }
@@ -1395,7 +1461,7 @@ private:
         do { Pump(); } while (::GetTickCount64() < deadline);
     }
 
-    template<class Predicate>
+    template <class Predicate>
     bool Until(Predicate predicate, const char* label) {
         const ULONGLONG deadline = ::GetTickCount64() + 5'000;
         do {
@@ -1413,8 +1479,10 @@ private:
                 return !state.play_requested && !state.command_pending &&
                        (state.state == MediaPreviewState::Paused ||
                         (state.state == MediaPreviewState::Ended &&
-                         state.position == state.duration)) && !state.native_playing;
-            }, "final Pause converges coherently")) return false;
+                         state.position == state.duration)) &&
+                       !state.native_playing;
+            },
+                   "final Pause converges coherently")) return false;
         const auto before = preview_.snapshot();
         Delay(100);
         const auto after = preview_.snapshot();
@@ -1429,7 +1497,8 @@ private:
                 return state.play_requested && !state.command_pending &&
                        state.state == MediaPreviewState::Playing && state.native_playing &&
                        state.native_position_valid;
-            }, "final Play becomes actively playing")) return false;
+            },
+                   "final Play becomes actively playing")) return false;
         const auto before = preview_.snapshot();
         return Until([&] {
             const auto state = preview_.snapshot();
@@ -1437,7 +1506,8 @@ private:
                    state.native_playing && state.native_position_valid &&
                    state.position >= before.position + MediaTime{kSecond / 5} &&
                    state.native_position >= before.native_position + MediaTime{kSecond / 5};
-        }, "final Play advances logical and native clocks by 200 ms");
+        },
+                     "final Play advances logical and native clocks by 200 ms");
     }
 
     bool ConvergeAndReuse() {
@@ -1492,27 +1562,26 @@ void ExerciseHumanStress(const std::wstring& path, HWND window,
                          uint32_t focused_seed = 0, unsigned focused_cycles = 0,
                          bool endpoint_regression = false, bool recovery_only = false, int seed_index = -1) {
     constexpr uint32_t seeds[]{0x6d2b79f5u, 0x13579bdfu, 0xc001d00du};
-    for (int index=0;index<3;++index) {
-        if (seed_index>=0 && index!=seed_index) continue;
-        const auto seed=seeds[index];
+    for (int index = 0; index < 3; ++index) {
+        if (seed_index >= 0 && index != seed_index) continue;
+        const auto seed = seeds[index];
         auto preview = CreateMfPlayPreview();
         if (!Check(preview && preview->Open(path, window, window, WM_APP + 7),
                    "human stress preview opens")) return;
         if (!Check(Wait([&] { return preview->snapshot().state == MediaPreviewState::Ready; }),
                    "human stress preview ready")) return;
         HumanTransportStress stress(*preview, focused_cycles ? focused_seed : seed);
-        const bool passed = recovery_only ? stress.RunDelayedCompletionRecovery(path, window) :
-            (!endpoint_regression || stress.RunEndpointRegression()) &&
-            ((seed != seeds[0] && !focused_cycles) || stress.RunReopen(path, window)) &&
-            ((seed != seeds[0] && !focused_cycles) || stress.RunDelayedCompletionRecovery(path, window)) &&
-            (focused_cycles ? stress.RunFocused(focused_cycles) : stress.Run());
+        const bool passed = recovery_only ? stress.RunDelayedCompletionRecovery(path, window) : (!endpoint_regression || stress.RunEndpointRegression()) && ((seed != seeds[0] && !focused_cycles) || stress.RunReopen(path, window)) && ((seed != seeds[0] && !focused_cycles) || stress.RunDelayedCompletionRecovery(path, window)) && (focused_cycles ? stress.RunFocused(focused_cycles) : stress.Run());
         preview->Close();
         if (!passed || focused_cycles || recovery_only) return;
     }
 }
 
 void ExerciseGenuineFailure(const std::filesystem::path& path, HWND window) {
-    { std::ofstream file(path, std::ios::binary); file << "not a media container"; }
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "not a media container";
+    }
     PreviewVideoEndpoint endpoint{MediaTime{kSecond}, MediaTime{2 * kSecond}, 7};
     Check(FAILED(ReadPreviewVideoEndpoint(path.wstring(), MediaTime{12 * kSecond}, endpoint)),
           "invalid media fails endpoint discovery explicitly");
@@ -1577,8 +1646,7 @@ int TraceChild(int argc, wchar_t** argv) {
                 if (output.fUnicode) {
                     std::vector<wchar_t> text(output.nDebugStringLength + 1, 0);
                     if (::ReadProcessMemory(process.hProcess, output.lpDebugStringData,
-                                            text.data(), output.nDebugStringLength *
-                                            sizeof(wchar_t), nullptr) &&
+                                            text.data(), output.nDebugStringLength * sizeof(wchar_t), nullptr) &&
                         std::wstring(text.data()).find(L"[Preview]") != std::wstring::npos)
                         std::wprintf(L"%ls", text.data());
                 }
@@ -1615,10 +1683,10 @@ int wmain(int argc, wchar_t** argv) {
     const bool stress_seed = argc > 1 && std::wstring(argv[1]) == L"--stress-seed";
     const bool continuous_seek = argc > 1 && std::wstring(argv[1]) == L"--continuous-seek";
     unsigned continuous_seconds = 30;
-    int seed_index=-1;
+    int seed_index = -1;
     if (stress_seed) {
-        if (argc!=3 || std::wcslen(argv[2])!=1 || argv[2][0]<L'0' || argv[2][0]>L'2') return 2;
-        seed_index=argv[2][0]-L'0';
+        if (argc != 3 || std::wcslen(argv[2]) != 1 || argv[2][0] < L'0' || argv[2][0] > L'2') return 2;
+        seed_index = argv[2][0] - L'0';
     }
     if (continuous_seek) {
         if (argc > 4) return 2;
@@ -1634,9 +1702,9 @@ int wmain(int argc, wchar_t** argv) {
     }
     const bool recovery_only = argc > 1 && std::wstring(argv[1]) == L"--recovery-audio";
     const bool audio_fixture = continuous_seek || recovery_only ||
-        (argc > 1 && std::wstring(argv[1]) == L"--focus-audio");
+                               (argc > 1 && std::wstring(argv[1]) == L"--focus-audio");
     const bool focused = (!continuous_seek && audio_fixture) ||
-        (argc > 1 && std::wstring(argv[1]) == L"--focus");
+                         (argc > 1 && std::wstring(argv[1]) == L"--focus");
     uint32_t focused_seed = 0x6d2b79f5u;
     unsigned focused_cycles = 30;
     if (focused && argc > 2) {
@@ -1651,30 +1719,29 @@ int wmain(int argc, wchar_t** argv) {
     }
     const HRESULT com = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(com)) return 1;
-    if (FAILED(::MFStartup(MF_VERSION))) { ::CoUninitialize(); return 1; }
+    if (FAILED(::MFStartup(MF_VERSION))) {
+        ::CoUninitialize();
+        return 1;
+    }
     const auto directory = std::filesystem::temp_directory_path() /
-        (L"easnap-preview-test-" + std::to_wstring(::GetCurrentProcessId()) +
-         L"-" + std::to_wstring(::GetTickCount64()));
+                           (L"easnap-preview-test-" + std::to_wstring(::GetCurrentProcessId()) +
+                            L"-" + std::to_wstring(::GetTickCount64()));
     std::filesystem::create_directory(directory);
     const auto path = directory / L"preview.mp4";
-    const RECT placement=easnap::test::OnTestMonitor({0,0,320,192});
-    HWND window = startup_only ? easnap::test::DesktopTestWindow::Create() :
-        ::CreateWindowExW(0, L"STATIC", L"Preview test", WS_POPUP|WS_CLIPCHILDREN,
-                                    placement.left, placement.top, 320, 192, nullptr, nullptr,
-                                    ::GetModuleHandleW(nullptr), nullptr);
-    std::printf("Preview test DPI: parent=%u awareness=%d\n",::GetDpiForWindow(window),
-        static_cast<int>(::GetAwarenessFromDpiAwarenessContext(::GetWindowDpiAwarenessContext(window))));
-    if (startup_only && Check(window != nullptr,"startup video window")) {
-        ExerciseInitialFrame(directory,window);
-        if (!failures) ExerciseRetainedEndpoints(directory,window);
+    const RECT placement = easnap::test::OnTestMonitor({0, 0, 320, 192});
+    HWND window = startup_only ? easnap::test::DesktopTestWindow::Create() : ::CreateWindowExW(0, L"STATIC", L"Preview test", WS_POPUP | WS_CLIPCHILDREN, placement.left, placement.top, 320, 192, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+    std::printf("Preview test DPI: parent=%u awareness=%d\n", ::GetDpiForWindow(window),
+                static_cast<int>(::GetAwarenessFromDpiAwarenessContext(::GetWindowDpiAwarenessContext(window))));
+    if (startup_only && Check(window != nullptr, "startup video window")) {
+        ExerciseInitialFrame(directory, window);
+        if (!failures) ExerciseRetainedEndpoints(directory, window);
     } else if (Check(window != nullptr &&
-                  (audio_fixture
-                       ? easnap::test::CreatePreviewSource(path.wstring(), true,
-                                                           continuous_seek ? 8u : 12u)
-                       : MakeSource(path.wstring())),
-              continuous_seek ? "8 second 640x360 H264/AAC fixture" :
-              audio_fixture ? "12 second 640x360 H264/AAC fixture"
-                            : "12 second fixture")) {
+                         (audio_fixture
+                              ? easnap::test::CreatePreviewSource(path.wstring(), true,
+                                                                  continuous_seek ? 8u : 12u)
+                              : MakeSource(path.wstring())),
+                     continuous_seek ? "8 second 640x360 H264/AAC fixture" : audio_fixture ? "12 second 640x360 H264/AAC fixture"
+                                                                                           : "12 second fixture")) {
         if (continuous_seek) {
             ExerciseContinuousSeek(path.wstring(), window, seed_index, continuous_seconds);
         } else if (argc <= 1 || std::wstring(argv[1]) != L"--native") {
@@ -1684,8 +1751,8 @@ int wmain(int argc, wchar_t** argv) {
             if (!focused && !stress_seed && (argc <= 1 || std::wstring(argv[1]) != L"--stress"))
                 ExercisePreview(path.wstring(), window);
             if (!transport_only) ExerciseHumanStress(path.wstring(), window,
-                                focused ? focused_seed : 0, focused ? focused_cycles : 0,
-                                audio_fixture, recovery_only, seed_index);
+                                                     focused ? focused_seed : 0, focused ? focused_cycles : 0,
+                                                     audio_fixture, recovery_only, seed_index);
             if (!stress_seed) ExerciseGenuineFailure(directory / L"invalid.mp4", window);
         } else {
             ProbeNative(path.wstring(), window, audio_fixture);

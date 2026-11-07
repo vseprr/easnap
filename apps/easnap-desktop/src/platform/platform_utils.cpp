@@ -1063,8 +1063,8 @@ bool RemoveDirectoryTree(const std::wstring& path) {
     for (std::size_t end = root.size(); end != std::wstring::npos;
          end = target.find(L'\\', end + 1)) {
         UniqueHandle handle(::CreateFileW(target.substr(0, end).c_str(),
-            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+                                          FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                          FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
         BY_HANDLE_FILE_INFORMATION info{};
         if (handle.get() == INVALID_HANDLE_VALUE ||
             !::GetFileInformationByHandle(handle.get(), &info) ||
@@ -1107,9 +1107,9 @@ bool RemoveDirectoryTree(const std::wstring& path) {
                                   const auto& self, const std::wstring& entry_path,
                                   const std::wstring& parent_final, bool require_directory) -> bool {
         UniqueHandle handle(::CreateFileW(entry_path.c_str(),
-            DELETE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ,
-            nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            nullptr));
+                                          DELETE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ,
+                                          nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                                          nullptr));
         BY_HANDLE_FILE_INFORMATION info{};
         if (handle.get() == INVALID_HANDLE_VALUE ||
             !::GetFileInformationByHandle(handle.get(), &info) ||
@@ -1125,7 +1125,7 @@ bool RemoveDirectoryTree(const std::wstring& path) {
         if ((info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
             WIN32_FIND_DATAW entry{};
             const HANDLE find = ::FindFirstFileExW((entry_path + L"\\*").c_str(), FindExInfoBasic,
-                &entry, FindExSearchNameMatch, nullptr, 0);
+                                                   &entry, FindExSearchNameMatch, nullptr, 0);
             if (find == INVALID_HANDLE_VALUE) {
                 if (::GetLastError() != ERROR_FILE_NOT_FOUND) {
                     return false;

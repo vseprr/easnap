@@ -43,7 +43,15 @@ using easnap_test::synthetic::Image;
 using easnap_test::synthetic::MakeArticle;
 
 int passed{}, failed{};
-#define CHECK(...) do { if (__VA_ARGS__) { ++passed; } else { ++failed; std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); } } while (false)
+#define CHECK(...)                                                         \
+    do {                                                                   \
+        if (__VA_ARGS__) {                                                 \
+            ++passed;                                                      \
+        } else {                                                           \
+            ++failed;                                                      \
+            std::fprintf(stderr, "FAIL %d: %s\n", __LINE__, #__VA_ARGS__); \
+        }                                                                  \
+    } while (false)
 
 /// CTest reports this exit code as "skipped" (SKIP_RETURN_CODE).
 constexpr int kSkipped = 77;
@@ -78,44 +86,44 @@ void ScrollPage(HWND window, Page& page, int rows) {
 LRESULT CALLBACK PageProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     auto* page = reinterpret_cast<Page*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
     switch (message) {
-    case WM_NCCREATE:
-        ::SetWindowLongPtrW(window, GWLP_USERDATA,
-                            reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams));
-        break;
-    case WM_ERASEBKGND:
-        return 1;
-    case WM_PAINT: {
-        PAINTSTRUCT paint{};
-        HDC dc = ::BeginPaint(window, &paint);
-        if (page != nullptr) {
-            BITMAPINFO info{};
-            info.bmiHeader.biSize = sizeof(info.bmiHeader);
-            info.bmiHeader.biWidth = page->document.width;
-            info.bmiHeader.biHeight = -page->client_height;  // Top-down.
-            info.bmiHeader.biPlanes = 1;
-            info.bmiHeader.biBitCount = 32;
-            info.bmiHeader.biCompression = BI_RGB;
-            ::SetDIBitsToDevice(dc, 0, 0, static_cast<DWORD>(page->document.width), static_cast<DWORD>(page->client_height),
-                                0, 0, 0, static_cast<UINT>(page->client_height), page->document.Row(page->offset), &info,
-                                DIB_RGB_COLORS);
-            ::SetPropW(window, kOffsetProperty, reinterpret_cast<HANDLE>(static_cast<INT_PTR>(page->offset + 1)));
+        case WM_NCCREATE:
+            ::SetWindowLongPtrW(window, GWLP_USERDATA,
+                                reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams));
+            break;
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_PAINT: {
+            PAINTSTRUCT paint{};
+            HDC dc = ::BeginPaint(window, &paint);
+            if (page != nullptr) {
+                BITMAPINFO info{};
+                info.bmiHeader.biSize = sizeof(info.bmiHeader);
+                info.bmiHeader.biWidth = page->document.width;
+                info.bmiHeader.biHeight = -page->client_height;  // Top-down.
+                info.bmiHeader.biPlanes = 1;
+                info.bmiHeader.biBitCount = 32;
+                info.bmiHeader.biCompression = BI_RGB;
+                ::SetDIBitsToDevice(dc, 0, 0, static_cast<DWORD>(page->document.width), static_cast<DWORD>(page->client_height),
+                                    0, 0, 0, static_cast<UINT>(page->client_height), page->document.Row(page->offset), &info,
+                                    DIB_RGB_COLORS);
+                ::SetPropW(window, kOffsetProperty, reinterpret_cast<HANDLE>(static_cast<INT_PTR>(page->offset + 1)));
+            }
+            ::EndPaint(window, &paint);
+            return 0;
         }
-        ::EndPaint(window, &paint);
-        return 0;
-    }
-    case WM_MOUSEWHEEL:
-        if (page != nullptr) { ScrollPage(window, *page, -GET_WHEEL_DELTA_WPARAM(wparam) * kWheelRows / WHEEL_DELTA); }
-        return 0;
-    case WM_KEYDOWN:
-        if (page != nullptr && wparam == VK_NEXT) { ScrollPage(window, *page, kPageRows); }
-        return 0;
-    case WM_DESTROY:
-        ::RemovePropW(window, kOffsetProperty);
-        ::RemovePropW(window, kInputProperty);
-        ::PostQuitMessage(0);
-        return 0;
-    default:
-        break;
+        case WM_MOUSEWHEEL:
+            if (page != nullptr) { ScrollPage(window, *page, -GET_WHEEL_DELTA_WPARAM(wparam) * kWheelRows / WHEEL_DELTA); }
+            return 0;
+        case WM_KEYDOWN:
+            if (page != nullptr && wparam == VK_NEXT) { ScrollPage(window, *page, kPageRows); }
+            return 0;
+        case WM_DESTROY:
+            ::RemovePropW(window, kOffsetProperty);
+            ::RemovePropW(window, kInputProperty);
+            ::PostQuitMessage(0);
+            return 0;
+        default:
+            break;
     }
     return ::DefWindowProcW(window, message, wparam, lparam);
 }
@@ -219,7 +227,10 @@ int DifferingRows(const platform::BgraImage& image, const Image& document, int l
             for (int shift = 0; shift < 24; shift += 8) {
                 largest = std::max(largest, std::abs(static_cast<int>((got >> shift) & 0xff) - static_cast<int>((want >> shift) & 0xff)));
             }
-            if (largest > 1) { equal = false; break; }
+            if (largest > 1) {
+                equal = false;
+                break;
+            }
             if (shifted != nullptr) { ++*shifted; }
         }
         if (!equal) {
@@ -282,9 +293,14 @@ int RunTest() {
         return kSkipped;
     }
     const auto monitors = platform::EnumerateMonitors();
-    if (monitors.empty()) { std::fprintf(stderr, "No monitor\n"); return 1; }
+    if (monitors.empty()) {
+        std::fprintf(stderr, "No monitor\n");
+        return 1;
+    }
     platform::MonitorInfo monitor = monitors.front();
-    for (const auto& candidate : monitors) { if (candidate.primary) { monitor = candidate; } }
+    for (const auto& candidate : monitors) {
+        if (candidate.primary) { monitor = candidate; }
+    }
     if (const auto* selected = test::SelectedTestMonitor()) { monitor = *selected; }
 
     // The page, with room around the frame for the border, the island and the
@@ -393,7 +409,8 @@ int RunTest() {
             }
             frame_shifted = 0;
             return DifferingRows(inner, document, kSideMargin, kVerticalMargin, nullptr, &frame_shifted) == 0;
-        }, 3s);
+        },
+                                     3s);
         if (!clean) { std::fprintf(stderr, "  %d rows around the frame differ, first %d\n", around_differing, around_first); }
         CHECK(clean);
         CHECK(frame_shifted == 0);
@@ -406,7 +423,8 @@ int RunTest() {
             const bool reached = PumpUntil([&] {
                 return PageValue(page, kOffsetProperty) == expected + 1 &&
                        session.progress().height >= static_cast<int>(frame_height) + expected;
-            }, 4s);
+            },
+                                           4s);
             if (!reached) {
                 std::fprintf(stderr, "  expected offset %d: page at %d, %d rows stitched, last outcome %ls\n", expected,
                              PageValue(page, kOffsetProperty) - 1, session.progress().height,
@@ -418,7 +436,10 @@ int RunTest() {
         };
         const auto wheel = [&](int notches) {
             // Never turn the wheel over a window that is not the test page.
-            if (!following || ::WindowFromPoint(centre) != page) { following = false; return; }
+            if (!following || ::WindowFromPoint(centre) != page) {
+                following = false;
+                return;
+            }
             const int expected = std::min(offset + notches * kWheelRows, kScrollRange);
             SendWheel(-notches);
             following = scrolled_to(expected);
@@ -459,7 +480,10 @@ int RunTest() {
             const RECT selection = overlay.selector().selection();
             CHECK(::EqualRect(&selection, &frame) && cancels == 0 && overlay.workspace().scrollshot_capturing());
             for (int i = 0; i < 2 && focused && following; ++i) {
-                if (::GetForegroundWindow() != page) { following = false; break; }  // Keys only to the page.
+                if (::GetForegroundWindow() != page) {
+                    following = false;
+                    break;
+                }  // Keys only to the page.
                 const int expected = std::min(offset + kPageRows, kScrollRange);
                 SendKey(VK_NEXT);
                 following = scrolled_to(expected);
@@ -504,7 +528,8 @@ int RunTest() {
                 const int differing = DifferingRows(result, document, kSideMargin, kVerticalMargin, &first, &shifted);
                 if (differing != 0) { std::fprintf(stderr, "  %d of %d rows differ, first %d\n", differing, result.height, first); }
                 std::printf("Stitched image against the document: %d rows differ, %d of %zu pixels one level off "
-                            "(%d under the shading around the frame)\n", differing, shifted, result.pixels.size(), around_shifted);
+                            "(%d under the shading around the frame)\n",
+                            differing, shifted, result.pixels.size(), around_shifted);
                 CHECK(shifted == 0);  // Exactly the pixels the other application drew.
                 CHECK(differing == 0);
             }

@@ -11,7 +11,9 @@
 namespace easnap::app {
 
 /// The interface language: what Windows uses, or a fixed choice.
-enum class LanguageSetting { System, English, Turkish };
+enum class LanguageSetting { System,
+                             English,
+                             Turkish };
 
 [[nodiscard]] constexpr bool IsValidLanguageSetting(LanguageSetting language) noexcept {
     return language == LanguageSetting::System || language == LanguageSetting::English ||

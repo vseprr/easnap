@@ -1,0 +1,6 @@
+# Formatting-only commits, skipped by `git blame` when configured with
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub's blame view reads this file by itself.
+
+# Format the C++ sources with clang-format (2026-11-07)
+250b455e84762e75a37e5b55383aa28e94bd6a43

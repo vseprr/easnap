@@ -15,10 +15,16 @@ namespace easnap::ui {
 
 class ScrollshotControls final {
 public:
-    enum class Action { Start, Help, Edit, Save, Discard, Copy };
+    enum class Action { Start,
+                        Help,
+                        Edit,
+                        Save,
+                        Discard,
+                        Copy };
     /// `Start` offers Start Scrollshot and help beside an adjustable frame.
     /// `Capture` offers exactly Edit, Save, Discard and Copy, with a status.
-    enum class View { Start, Capture };
+    enum class View { Start,
+                      Capture };
 
     struct Callbacks {
         std::function<void(Action)> on_action;
@@ -63,7 +69,9 @@ public:
 private:
     class Window;
 
-    void Dispatch(Action action) const { if (callbacks_.on_action) { callbacks_.on_action(action); } }
+    void Dispatch(Action action) const {
+        if (callbacks_.on_action) { callbacks_.on_action(action); }
+    }
 
     Callbacks callbacks_;
     std::unique_ptr<Window> window_;

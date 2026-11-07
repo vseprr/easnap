@@ -29,7 +29,10 @@ void CaptureWorkspace::EditScrollshot() noexcept {
     automatic_attempt_consumed_ = true;
 }
 void CaptureWorkspace::EditorFeatureUsed() noexcept {
-    if (screenshot_visible()) { editor_feature_used_ = true; FixScreenshot(); }
+    if (screenshot_visible()) {
+        editor_feature_used_ = true;
+        FixScreenshot();
+    }
 }
 bool CaptureWorkspace::DocumentCommitted() noexcept {
     EditorFeatureUsed();
@@ -43,7 +46,7 @@ bool CaptureWorkspace::ConsumeQuickReturn() noexcept {
 }
 WorkspacePointerMetrics WorkspacePointerMetrics::Native() noexcept {
     return {::GetSystemMetrics(SM_CXDRAG), ::GetSystemMetrics(SM_CYDRAG),
-        ::GetSystemMetrics(SM_CXDOUBLECLK), ::GetSystemMetrics(SM_CYDOUBLECLK), ::GetDoubleClickTime()};
+            ::GetSystemMetrics(SM_CXDOUBLECLK), ::GetSystemMetrics(SM_CYDOUBLECLK), ::GetDoubleClickTime()};
 }
 namespace {
 bool InsideThreshold(POINT point, POINT origin, LONG width, LONG height) noexcept {
@@ -73,14 +76,18 @@ SIZE MeasureNoticeText(const std::wstring& text, float scale, LONG wrap_width) {
     return SIZE{box.right, box.bottom};
 }
 LRESULT CALLBACK NoticeProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-    if(message==WM_ERASEBKGND) { return 1; }
-    if (message == theme::kChangedMessage) { ::InvalidateRect(hwnd, nullptr, FALSE); return 0; }
+    if (message == WM_ERASEBKGND) { return 1; }
+    if (message == theme::kChangedMessage) {
+        ::InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
     if (message == WM_PAINT) {
         PAINTSTRUCT paint{};
         HDC dc = ::BeginPaint(hwnd, &paint);
         RECT client{};
         ::GetClientRect(hwnd, &client);
-        PaintBuffer buffer(dc,client); dc=buffer.dc();
+        PaintBuffer buffer(dc, client);
+        dc = buffer.dc();
         theme::FillSolid(dc, client, theme::Current().panel);
         RECT placement{};
         ::GetWindowRect(hwnd, &placement);
@@ -93,23 +100,26 @@ LRESULT CALLBACK NoticeProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         const LONG text_height = MeasureNoticeText(text, scale, std::max<LONG>(1, box.right - box.left)).cy;
         box.top = std::max(box.top, client.top + (client.bottom - client.top - text_height) / 2);
         HFONT font = CreateNoticeFont(scale);
-        theme::DrawLabel(dc, box, text.c_str(), ::GetWindowLongPtrW(hwnd,GWLP_USERDATA) ? theme::Current().text:theme::Current().success, font,
+        theme::DrawLabel(dc, box, text.c_str(), ::GetWindowLongPtrW(hwnd, GWLP_USERDATA) ? theme::Current().text : theme::Current().success, font,
                          kNoticeTextFormat);
         ::DeleteObject(font);
         buffer.Present();
         ::EndPaint(hwnd, &paint);
         return 0;
     }
-    if (message == WM_TIMER) { ::DestroyWindow(hwnd); return 0; }
+    if (message == WM_TIMER) {
+        ::DestroyWindow(hwnd);
+        return 0;
+    }
     if (message == WM_NCHITTEST) { return HTTRANSPARENT; }
     return ::DefWindowProcW(hwnd, message, wparam, lparam);
 }
 } // namespace
 void WorkspacePointerSequence::Down(POINT point, DWORD time, bool native_double_click,
-    WorkspacePointerTarget target, WorkspacePointerMetrics metrics) noexcept {
+                                    WorkspacePointerTarget target, WorkspacePointerMetrics metrics) noexcept {
     second_click_ = native_double_click && previous_click_ && target == previous_target_ &&
-        time - previous_time_ <= metrics.double_time &&
-        InsideThreshold(point, previous_origin_, metrics.double_width, metrics.double_height);
+                    time - previous_time_ <= metrics.double_time &&
+                    InsideThreshold(point, previous_origin_, metrics.double_width, metrics.double_height);
     metrics_ = metrics;
     target_ = target;
     origin_ = point;
@@ -127,7 +137,7 @@ void WorkspacePointerSequence::Move(POINT point) noexcept {
 bool WorkspacePointerSequence::Up(POINT point) noexcept {
     Move(point);
     const bool content_click = active_ && !dragged_ &&
-        (target_ == WorkspacePointerTarget::Content || target_ == WorkspacePointerTarget::Annotation);
+                               (target_ == WorkspacePointerTarget::Content || target_ == WorkspacePointerTarget::Annotation);
     const bool complete = content_click && second_click_;
     previous_click_ = content_click && !complete;
     previous_origin_ = origin_;
@@ -142,7 +152,7 @@ BYTE ModeToolbarOpacity(uint64_t elapsed_ms) noexcept {
     return static_cast<BYTE>(255.0 * (1.0 - t * t * (3.0 - 2.0 * t)) + 0.5);
 }
 namespace {
-void ShowCaptureNotice(const RECT& region,const std::wstring& text,bool status) {
+void ShowCaptureNotice(const RECT& region, const std::wstring& text, bool status) {
     static const bool registered = [] {
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(wc);
@@ -163,19 +173,23 @@ void ShowCaptureNotice(const RECT& region,const std::wstring& text,bool status) 
     const LONG wrapped = MeasureNoticeText(text, scale, std::max<LONG>(1, width - 2 * padding.cx)).cy + 2 * padding.cy;
     const LONG height = std::max<LONG>(wrapped, theme::Scaled(status ? 64.0f : 44.0f, scale));
     HWND notice = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-        L"EasnapCaptureCopiedNotice", text.c_str(), WS_POPUP,
-        monitor.work_area.left + (platform::RectWidth(monitor.work_area) - width) / 2,
-        monitor.work_area.bottom - height - theme::Scaled(24.0f, monitor.scale()),
-        width, height, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+                                    L"EasnapCaptureCopiedNotice", text.c_str(), WS_POPUP,
+                                    monitor.work_area.left + (platform::RectWidth(monitor.work_area) - width) / 2,
+                                    monitor.work_area.bottom - height - theme::Scaled(24.0f, monitor.scale()),
+                                    width, height, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
     if (notice) {
-        static_cast<void>(ExcludeFromCapture(notice)); RoundWindow(notice);
-        ::SetWindowLongPtrW(notice,GWLP_USERDATA,status);
-        if (::SetTimer(notice, 1, status ? 4000:1400, nullptr)) { ::ShowWindow(notice, SW_SHOWNOACTIVATE); }
-        else { ::DestroyWindow(notice); }
+        static_cast<void>(ExcludeFromCapture(notice));
+        RoundWindow(notice);
+        ::SetWindowLongPtrW(notice, GWLP_USERDATA, status);
+        if (::SetTimer(notice, 1, status ? 4000 : 1400, nullptr)) {
+            ::ShowWindow(notice, SW_SHOWNOACTIVATE);
+        } else {
+            ::DestroyWindow(notice);
+        }
     }
 }
 } // namespace
-void ShowCaptureCopiedNotice(const RECT& region) { ShowCaptureNotice(region,strings::Get(IDS_NOTICE_COPIED),false); }
-void ShowCaptureSavedNotice(const RECT& region) { ShowCaptureNotice(region,strings::Get(IDS_NOTICE_SAVED),false); }
-void ShowCaptureStatusNotice(const RECT& region,const std::wstring& text) { ShowCaptureNotice(region,text,true); }
+void ShowCaptureCopiedNotice(const RECT& region) { ShowCaptureNotice(region, strings::Get(IDS_NOTICE_COPIED), false); }
+void ShowCaptureSavedNotice(const RECT& region) { ShowCaptureNotice(region, strings::Get(IDS_NOTICE_SAVED), false); }
+void ShowCaptureStatusNotice(const RECT& region, const std::wstring& text) { ShowCaptureNotice(region, text, true); }
 } // namespace easnap::ui

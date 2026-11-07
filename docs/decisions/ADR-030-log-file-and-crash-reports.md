@@ -2,6 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-10-13
+**Amended:** 2026-11-07 — a report never replaces another
 
 ## Context
 
@@ -57,6 +58,14 @@ process with the failure's code.
 - At most three reports are kept. Older ones are deleted at the next start.
 - A line with the failure's code goes to the log when the log is not locked by
   the failing thread.
+- A report never replaces another (amended 2026-11-07). The name carries the
+  time to the millisecond, the file is created only if it does not exist, and
+  a name that exists gets a counter (`-2` to `-9`). Before, the name had
+  one-second resolution and an existing file was overwritten. On GitHub's
+  hosted runner `diagnostics_log_and_crash_reports` failed in 2 of 40 jobs
+  with every later report missing; the likely cause is that Windows reused
+  the process ID within the same second, so a report got the name of the
+  previous one and could not replace it.
 
 The next start tells the user once: Easnap closed unexpectedly, a report was
 saved on this computer, nothing has been sent, here is the folder. The report

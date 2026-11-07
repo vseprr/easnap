@@ -182,7 +182,7 @@ const DualAudioMixer::SourceBuffer& DualAudioMixer::Buffer(
 }
 
 DualAudioMixerPushResult DualAudioMixer::Push(DualAudioInput input,
-                                               const AudioPacket& packet) noexcept {
+                                              const AudioPacket& packet) noexcept {
     if (!valid() || !packet.consistent() || packet.frame_count == 0 ||
         !SameFormat(packet.format)) {
         diagnostics_.invalid_packets =

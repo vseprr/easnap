@@ -85,8 +85,11 @@ struct TrimPlaybackDecision final {
                                    media::MediaTime end,
                                    media::MediaTime source_duration) noexcept;
 
-enum class TrimTerminalAction { Save, Copy };
-enum class TrimMediaPreparation { ReuseFinalizedSource, ReuseTrimArtifact, Export };
+enum class TrimTerminalAction { Save,
+                                Copy };
+enum class TrimMediaPreparation { ReuseFinalizedSource,
+                                  ReuseTrimArtifact,
+                                  Export };
 
 /// Shared Save/Copy path policy. Exact full-range actions reuse the finalized
 /// source; exact cached trims are reused; all other ranges require one export.
@@ -96,7 +99,11 @@ enum class TrimMediaPreparation { ReuseFinalizedSource, ReuseTrimArtifact, Expor
     bool matching_trim_available,
     media::RecordingFormat final_format = media::RecordingFormat::Mp4) noexcept;
 
-enum class TrimExportStatus { Idle, Running, Succeeded, Cancelled, Failed };
+enum class TrimExportStatus { Idle,
+                              Running,
+                              Succeeded,
+                              Cancelled,
+                              Failed };
 
 struct TrimExportRequest final {
     std::wstring source_path;

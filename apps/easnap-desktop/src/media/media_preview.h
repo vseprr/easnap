@@ -10,7 +10,13 @@
 
 namespace easnap::media {
 
-enum class MediaPreviewState { Closed, Opening, Ready, Playing, Paused, Ended, Failed };
+enum class MediaPreviewState { Closed,
+                               Opening,
+                               Ready,
+                               Playing,
+                               Paused,
+                               Ended,
+                               Failed };
 
 enum class MediaPreviewOperation {
     None,

@@ -21,7 +21,7 @@ namespace {
 std::wstring PreviewHostPath() {
     std::array<wchar_t, 32'768> executable{};
     const DWORD length = ::GetModuleFileNameW(nullptr, executable.data(),
-                                            static_cast<DWORD>(executable.size()));
+                                              static_cast<DWORD>(executable.size()));
     if (length == 0 || length >= executable.size()) { return {}; }
     std::wstring path(executable.data(), length);
     const auto separator = path.find_last_of(L"\\/");
@@ -45,6 +45,7 @@ public:
         }
         handle_ = handle;
     }
+
 private:
     HANDLE handle_{nullptr};
 };
@@ -62,12 +63,13 @@ public:
         initialized_ = true;
         handles_ = {input, output};
         return ::UpdateProcThreadAttribute(get(), 0,
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles_.data(),
-            sizeof(handles_), nullptr, nullptr) != FALSE;
+                                           PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles_.data(),
+                                           sizeof(handles_), nullptr, nullptr) != FALSE;
     }
     LPPROC_THREAD_ATTRIBUTE_LIST get() noexcept {
         return reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage_.data());
     }
+
 private:
     std::vector<unsigned char> storage_;
     std::array<HANDLE, 2> handles_{};
@@ -218,7 +220,7 @@ public:
         }
         if (sent_intent_ > acknowledged_intent_) {
             result.command_age_ms = (std::max)(result.command_age_ms,
-                ::GetTickCount64() - sent_at_ms_);
+                                               ::GetTickCount64() - sent_at_ms_);
         }
         return result;
     }
@@ -282,7 +284,7 @@ private:
     };
 
     static LRESULT CALLBACK OwnerProcedure(HWND window, UINT message,
-                                          WPARAM wparam, LPARAM lparam) noexcept {
+                                           WPARAM wparam, LPARAM lparam) noexcept {
         auto* owner = reinterpret_cast<ProcessMediaPreview*>(
             ::GetWindowLongPtrW(window, GWLP_USERDATA));
         if (message == WM_NCCREATE) {
@@ -311,7 +313,7 @@ private:
             return false;
         }
         owner_window_ = ::CreateWindowExW(0, definition.lpszClassName, L"", 0,
-            0, 0, 0, 0, HWND_MESSAGE, nullptr, definition.hInstance, this);
+                                          0, 0, 0, 0, HWND_MESSAGE, nullptr, definition.hInstance, this);
         if (owner_window_ == nullptr) return false;
         return ::SetTimer(owner_window_, kPollTimer, 100, nullptr) != 0;
     }
@@ -354,7 +356,7 @@ private:
         HANDLE child_input_raw = nullptr;
         HANDLE parent_output_raw = nullptr;
         if (!::CreatePipe(&child_input_raw, &parent_output_raw, &security,
-                         2 * preview_host::kMaximumPacketSize)) {
+                          2 * preview_host::kMaximumPacketSize)) {
             Fail(HRESULT_FROM_WIN32(::GetLastError()), MediaPreviewOperation::Open);
             return false;
         }
@@ -363,7 +365,7 @@ private:
         HANDLE parent_input_raw = nullptr;
         HANDLE child_output_raw = nullptr;
         if (!::CreatePipe(&parent_input_raw, &child_output_raw, &security,
-                         2 * preview_host::kMaximumPacketSize)) {
+                          2 * preview_host::kMaximumPacketSize)) {
             Fail(HRESULT_FROM_WIN32(::GetLastError()), MediaPreviewOperation::Open);
             return false;
         }
@@ -383,7 +385,7 @@ private:
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
         if (job_.get() == nullptr || !::SetInformationJobObject(job_.get(),
-                JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
+                                                                JobObjectExtendedLimitInformation, &limits, sizeof(limits))) {
             Fail(HRESULT_FROM_WIN32(::GetLastError()), MediaPreviewOperation::Open);
             return false;
         }
@@ -398,8 +400,8 @@ private:
         startup.lpAttributeList = attributes.get();
         PROCESS_INFORMATION information{};
         if (!::CreateProcessW(path.c_str(), command_line.data(), nullptr, nullptr,
-                TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,
-                nullptr, nullptr, &startup.StartupInfo, &information)) {
+                              TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,
+                              nullptr, nullptr, &startup.StartupInfo, &information)) {
             Fail(HRESULT_FROM_WIN32(::GetLastError()), MediaPreviewOperation::Open);
             return false;
         }
@@ -621,9 +623,9 @@ private:
         // Keep a bounded response window across polls, ending on a snapshot
         // sent after credit was returned. Never extend it for another old packet.
         const bool waiting_for_refresh = snapshot_refresh_started_ms_ != 0 &&
-            now - snapshot_refresh_started_ms_ < kHeartbeatTimeoutMs;
+                                         now - snapshot_refresh_started_ms_ < kHeartbeatTimeoutMs;
         if (!waiting_for_refresh && ((opening && now - opened_at_ms_ >= kOpenTimeoutMs) ||
-            (!opening && now - heartbeat_ms_ >= kHeartbeatTimeoutMs))) {
+                                     (!opening && now - heartbeat_ms_ >= kHeartbeatTimeoutMs))) {
             Recover(opening ? L"open-timeout" : L"heartbeat-timeout");
             return;
         }
@@ -681,7 +683,8 @@ private:
                  (current_.state == MediaPreviewState::Opening ||
                   (current_.recovery_requested &&
                    current_.failed_operation == MediaPreviewOperation::Open))
-                     ? MediaPreviewOperation::Open : MediaPreviewOperation::Playback);
+                     ? MediaPreviewOperation::Open
+                     : MediaPreviewOperation::Playback);
             return;
         }
         // Native liveness failure preserves diagnostic state, but the parent

@@ -11,10 +11,14 @@ namespace easnap::media {
 
 /// Palette mapping policy. Sharp avoids dithering for pixel/UI content;
 /// Balanced uses stable canvas-anchored ordered dithering for gradients.
-enum class GifQuantizationPolicy { Sharp, Balanced, Rgb332Ordered };
+enum class GifQuantizationPolicy { Sharp,
+                                   Balanced,
+                                   Rgb332Ordered };
 
 /// Palette construction remains an encoder detail behind the product preset.
-enum class GifPalettePolicy { AdaptiveMedianCut, FixedRgb332, FixedWebSafe };
+enum class GifPalettePolicy { AdaptiveMedianCut,
+                              FixedRgb332,
+                              FixedWebSafe };
 
 struct GifEncodeOptions final {
     /// Zero preserves the source dimension. If exactly one dimension is zero,
@@ -37,7 +41,9 @@ struct GifEncodeOptions final {
     uint16_t loop_count{0};
 };
 
-enum class GifFrameReadResult { Frame, End, Error };
+enum class GifFrameReadResult { Frame,
+                                End,
+                                Error };
 
 /// Rewindable, sequential canonical-video source. Implementations retain only
 /// a fixed number of BGRA frames; Reset starts the next deterministic pass.

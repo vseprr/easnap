@@ -477,7 +477,7 @@ void TestRealH264AacMp4Writer() {
 
     WIN32_FILE_ATTRIBUTE_DATA file_data{};
     const bool file_exists = ::GetFileAttributesExW(output_path.c_str(), GetFileExInfoStandard,
-                                                     &file_data) != FALSE;
+                                                    &file_data) != FALSE;
     CHECK(file_exists);
     const uint64_t file_size = (static_cast<uint64_t>(file_data.nFileSizeHigh) << 32) |
                                file_data.nFileSizeLow;
@@ -487,9 +487,9 @@ void TestRealH264AacMp4Writer() {
         easnap::capture::MediaTimestampForFrame(kFrameCount, kFrameRate).count();
     uint64_t reported_duration = 0;
     const bool metadata_valid = ValidateMp4Metadata(output_path, kWidth, kHeight,
-                                                     expected_duration,
-                                                     kAudioStart100ns,
-                                                     reported_duration);
+                                                    expected_duration,
+                                                    kAudioStart100ns,
+                                                    reported_duration);
     CHECK(metadata_valid);
 
     std::wprintf(L"MP4_VALIDATION path=%ls bytes=%llu codec=H264+AAC dimensions=%ux%u "

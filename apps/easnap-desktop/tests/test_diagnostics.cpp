@@ -162,7 +162,10 @@ std::vector<std::string> Lines(const std::string& content) {
     size_t begin = 0;
     while (begin < content.size()) {
         const size_t end = content.find("\r\n", begin);
-        if (end == std::string::npos) { lines.push_back(content.substr(begin) + "<unterminated>"); break; }
+        if (end == std::string::npos) {
+            lines.push_back(content.substr(begin) + "<unterminated>");
+            break;
+        }
         lines.push_back(content.substr(begin, end - begin));
         begin = end + 2;
     }
@@ -209,7 +212,8 @@ void TestLog(const std::wstring& directory) {
         CHECK(WellFormed(lines[0], &text) && text == "first 1");
         CHECK(lines[0].find("[" + std::to_string(::GetCurrentThreadId()) + "]") != std::string::npos);
         CHECK(WellFormed(lines[1], &text) &&
-              text == "T\xC3\xBCrk\xC3\xA7" "e \xC4\x9F\xC4\xB1\xC5\x9F\xC4\xB0 \xF0\x9F\x98\x80 \xE2\x9C\x93");
+              text == "T\xC3\xBCrk\xC3\xA7"
+                      "e \xC4\x9F\xC4\xB1\xC5\x9F\xC4\xB0 \xF0\x9F\x98\x80 \xE2\x9C\x93");
         CHECK(WellFormed(lines[2], &text) && text.size() == 1023 && text.find_first_not_of('x') == std::string::npos);
         CHECK(WellFormed(lines[3], &text) && text == "Operation failed (hr=0x80070005)");
     }
@@ -314,7 +318,11 @@ void TestCrashReports(const std::wstring& directory) {
 
         // One more report; the starting process keeps at most three older ones.
         expected_reports = std::min<size_t>(expected_reports, 3) + 1;
-        CHECK(Files(directory, L"test-*.dmp").size() == expected_reports);
+        const std::vector<std::wstring> reports = Files(directory, L"test-*.dmp");
+        if (reports.size() != expected_reports) {
+            for (const std::wstring& name : reports) { std::fprintf(stderr, "  report %ls\n", name.c_str()); }
+        }
+        CHECK(reports.size() == expected_reports);
         const auto report = diagnostics::PendingCrashReport(directory);
         CHECK(report.has_value());
         if (!report) { continue; }

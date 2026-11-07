@@ -142,11 +142,21 @@ DWORD WINAPI ReportThread(void*) noexcept {
     if (::WaitForSingleObject(state.request, INFINITE) != WAIT_OBJECT_0) { return 0; }
     SYSTEMTIME now{};
     ::GetSystemTime(&now);
+    // Windows reuses process IDs quickly, so two reports can share the second
+    // and the ID. A report never replaces another: the name carries
+    // milliseconds, and a name that exists already gets a counter.
     wchar_t path[MAX_PATH + 96]{};
-    ::swprintf(path, ARRAYSIZE(path), L"%s\\%s-%04u%02u%02u-%02u%02u%02u-%lu.dmp", state.directory, state.name,
-               now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond, ::GetCurrentProcessId());
     bool written = false;
-    HANDLE file = ::CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE file = INVALID_HANDLE_VALUE;
+    for (unsigned attempt = 1; attempt <= 9 && file == INVALID_HANDLE_VALUE; ++attempt) {
+        wchar_t counter[8]{};
+        if (attempt > 1) { ::swprintf(counter, ARRAYSIZE(counter), L"-%u", attempt); }
+        ::swprintf(path, ARRAYSIZE(path), L"%s\\%s-%04u%02u%02u-%02u%02u%02u-%03u-%lu%s.dmp", state.directory,
+                   state.name, now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
+                   now.wMilliseconds, ::GetCurrentProcessId(), counter);
+        file = ::CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE && ::GetLastError() != ERROR_FILE_EXISTS) { break; }
+    }
     if (file != INVALID_HANDLE_VALUE) {
         MINIDUMP_EXCEPTION_INFORMATION exception{};
         exception.ThreadId = state.thread_id;
@@ -165,7 +175,8 @@ DWORD WINAPI ReportThread(void*) noexcept {
     if (::TryAcquireSRWLockExclusive(&log.lock) != FALSE) {
         if (log.file != INVALID_HANDLE_VALUE) {
             const DWORD code = state.pointers != nullptr && state.pointers->ExceptionRecord != nullptr
-                                   ? state.pointers->ExceptionRecord->ExceptionCode : 0;
+                                   ? state.pointers->ExceptionRecord->ExceptionCode
+                                   : 0;
             wchar_t text[160]{};
             ::swprintf(text, ARRAYSIZE(text), L"Fatal error 0x%08lX on thread %lu; crash report %s", code,
                        state.thread_id, written ? L"written" : L"could not be written");
@@ -193,7 +204,8 @@ LONG WINAPI Filter(EXCEPTION_POINTERS* pointers) noexcept {
         ::WaitForSingleObject(state.done, 20000);
     }
     const DWORD code = pointers != nullptr && pointers->ExceptionRecord != nullptr
-                           ? pointers->ExceptionRecord->ExceptionCode : kTerminateCode;
+                           ? pointers->ExceptionRecord->ExceptionCode
+                           : kTerminateCode;
     ::TerminateProcess(::GetCurrentProcess(), code);
     return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -315,7 +327,8 @@ void InstallCrashHandler(const std::wstring& directory, const wchar_t* name, int
     state.request = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
     state.done = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
     HANDLE thread = state.request != nullptr && state.done != nullptr
-                        ? ::CreateThread(nullptr, 256 * 1024, ReportThread, nullptr, 0, nullptr) : nullptr;
+                        ? ::CreateThread(nullptr, 256 * 1024, ReportThread, nullptr, 0, nullptr)
+                        : nullptr;
     if (thread == nullptr) {
         return;  // Windows Error Reporting keeps its default behaviour.
     }

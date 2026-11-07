@@ -447,7 +447,7 @@ void TestCaptureFailureDiagnosticsRemainBounded() {
     options.target_frame_rate = easnap::capture::kMaximumTargetFrameRate;
 
     easnap::capture::RecordingCaptureWorker worker(std::move(provider), options,
-                                                    queue);
+                                                   queue);
     constexpr std::size_t kRequestedFailures =
         easnap::capture::kCaptureFailureDiagnosticCapacity + 3;
     CHECK(worker.Start());

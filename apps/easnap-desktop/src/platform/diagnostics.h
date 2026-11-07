@@ -36,8 +36,9 @@ void StopLog() noexcept;
 
 /// From now on an unhandled exception, `std::terminate`, `abort`, a pure
 /// virtual call or an invalid CRT parameter on any thread writes
-/// `<directory>\<name>-<UTC time>-<pid>.dmp` and ends the process with the
-/// failure's code. At most `kept_reports` reports stay in the directory.
+/// `<directory>\<name>-<UTC time to the millisecond>-<pid>.dmp` (with a
+/// counter when that name exists; a report never replaces another) and ends
+/// the process with the failure's code. At most `kept_reports` reports stay in the directory.
 /// Call once, as early as possible.
 void InstallCrashHandler(const std::wstring& directory, const wchar_t* name, int kept_reports = 3) noexcept;
 

@@ -56,19 +56,19 @@ void SetControlVisible(HWND control, bool visible) {
 }
 
 int MeasureTextHeight(HDC dc, const std::wstring& value, int width, UINT flags) {
-    RECT measured{0,0,std::max(1,width),0};
-    if(dc) { ::DrawTextW(dc,value.c_str(),static_cast<int>(value.size()),&measured,
-        DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX|flags); }
+    RECT measured{0, 0, std::max(1, width), 0};
+    if (dc) { ::DrawTextW(dc, value.c_str(), static_cast<int>(value.size()), &measured,
+                          DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | flags); }
     return measured.bottom;
 }
 
 TrimTextMetrics MeasureTrimReadouts(HDC dc, const std::wstring& time,
-                                  const std::wstring& range, int width) {
+                                    const std::wstring& range, int width) {
     TrimTextMetrics result{};
     TEXTMETRICW metrics{};
-    if(dc && ::GetTextMetricsW(dc,&metrics)) { result.line_height=metrics.tmHeight; }
-    result.time_height=MeasureTextHeight(dc,time,width,DT_RIGHT);
-    result.range_height=MeasureTextHeight(dc,range,width,DT_LEFT);
+    if (dc && ::GetTextMetricsW(dc, &metrics)) { result.line_height = metrics.tmHeight; }
+    result.time_height = MeasureTextHeight(dc, time, width, DT_RIGHT);
+    result.range_height = MeasureTextHeight(dc, range, width, DT_LEFT);
     return result;
 }
 
@@ -145,10 +145,10 @@ bool TrimWindow::Open(const std::wstring& source_path,
     const platform::MonitorInfo monitor = platform::MonitorForRect(source_region_);
     scale_ = monitor.scale();
 
-    const auto initial=InitialTrimWindowSize(
-        platform::RectWidth(monitor.work_area),platform::RectHeight(monitor.work_area),
-        scale_,platform::RectWidth(source_region_),platform::RectHeight(source_region_));
-    const LONG width=initial.width,height=initial.height;
+    const auto initial = InitialTrimWindowSize(
+        platform::RectWidth(monitor.work_area), platform::RectHeight(monitor.work_area),
+        scale_, platform::RectWidth(source_region_), platform::RectHeight(source_region_));
+    const LONG width = initial.width, height = initial.height;
     const LONG x = monitor.work_area.left +
                    (platform::RectWidth(monitor.work_area) - width) / 2;
     const LONG y = monitor.work_area.top +
@@ -160,7 +160,7 @@ bool TrimWindow::Open(const std::wstring& source_path,
         static_cast<int>(x), static_cast<int>(y), static_cast<int>(width),
         static_cast<int>(height), nullptr, nullptr, ::GetModuleHandleW(nullptr),
         this);
-    if (hwnd_ == nullptr || !StyleWindowChrome(hwnd_,true) || !CreateControls()) {
+    if (hwnd_ == nullptr || !StyleWindowChrome(hwnd_, true) || !CreateControls()) {
         platform::LogMessage(L"CreateWindowEx(trim view) failed (error %lu)",
                              ::GetLastError());
         Destroy();
@@ -207,9 +207,10 @@ void TrimWindow::SetExporting(bool exporting, bool cancelling) {
     if (exporting_ && preview_ != nullptr) {
         static_cast<void>(preview_->Pause());
     }
-    if(exporting_) {
-        status_message_.clear(); status_error_=false;
-        SetAccessibleName(progress_,strings::Get(cancelling_ ? IDS_TRIM_PROGRESS_CANCELLING_NAME : IDS_TRIM_PROGRESS_NAME));
+    if (exporting_) {
+        status_message_.clear();
+        status_error_ = false;
+        SetAccessibleName(progress_, strings::Get(cancelling_ ? IDS_TRIM_PROGRESS_CANCELLING_NAME : IDS_TRIM_PROGRESS_NAME));
     }
     UpdateStatusLayout();
     UpdateEnabledState();
@@ -223,7 +224,7 @@ void TrimWindow::SetExportProgress(float progress) {
         ::SendMessageW(progress_, PBM_SETPOS, static_cast<WPARAM>(value), 0);
         if (exporting_ &&
             ::GetTickCount64() >= export_indicator_due_ms_) {
-            if(!::IsWindowVisible(progress_)) { UpdateStatusLayout(); }
+            if (!::IsWindowVisible(progress_)) { UpdateStatusLayout(); }
         }
     }
 }
@@ -350,8 +351,11 @@ void TrimWindow::Destroy() {
     exporting_ = false;
     cancelling_ = false;
     export_indicator_due_ms_ = 0;
-    status_message_.clear(); status_error_=false;
-    time_text_.clear(); range_text_.clear(); layout_ = {};
+    status_message_.clear();
+    status_error_ = false;
+    time_text_.clear();
+    range_text_.clear();
+    layout_ = {};
     visible_ = false;
     preview_error_reported_ = false;
 }
@@ -414,25 +418,28 @@ LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
         case WM_ERASEBKGND: {
             // During native sizing Windows can expose pixels before WM_PAINT.
             // Paint the clipped backing area in the theme color immediately.
-            RECT client{}; ::GetClientRect(hwnd,&client);
-            theme::FillSolid(reinterpret_cast<HDC>(wparam),client,theme::Current().panel);
+            RECT client{};
+            ::GetClientRect(hwnd, &client);
+            theme::FillSolid(reinterpret_cast<HDC>(wparam), client, theme::Current().panel);
             return 1;
         }
         case WM_GETMINMAXINFO: {
-            auto* limits=reinterpret_cast<MINMAXINFO*>(lparam);
-            RECT bounds{}; ::GetWindowRect(hwnd,&bounds);
-            const auto monitor=platform::MonitorForRect(bounds);
-            const UINT dpi=::GetDpiForWindow(hwnd);
-            const int padding=::GetSystemMetricsForDpi(SM_CXPADDEDBORDER,dpi);
-            const int frame_x=::GetSystemMetricsForDpi(SM_CXSIZEFRAME,dpi)+padding;
-            const int frame_y=::GetSystemMetricsForDpi(SM_CYSIZEFRAME,dpi)+padding;
-            limits->ptMinTrackSize.x=std::min(ScaleDip(kTrimMinClientWidthDip,scale_)+2*frame_x,static_cast<int>(platform::RectWidth(monitor.work_area)));
-            limits->ptMinTrackSize.y=std::min(ScaleDip(kTrimMinClientHeightDip,scale_)+frame_y,static_cast<int>(platform::RectHeight(monitor.work_area)));
+            auto* limits = reinterpret_cast<MINMAXINFO*>(lparam);
+            RECT bounds{};
+            ::GetWindowRect(hwnd, &bounds);
+            const auto monitor = platform::MonitorForRect(bounds);
+            const UINT dpi = ::GetDpiForWindow(hwnd);
+            const int padding = ::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+            const int frame_x = ::GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + padding;
+            const int frame_y = ::GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + padding;
+            limits->ptMinTrackSize.x = std::min(ScaleDip(kTrimMinClientWidthDip, scale_) + 2 * frame_x, static_cast<int>(platform::RectWidth(monitor.work_area)));
+            limits->ptMinTrackSize.y = std::min(ScaleDip(kTrimMinClientHeightDip, scale_) + frame_y, static_cast<int>(platform::RectHeight(monitor.work_area)));
             return 0;
         }
         case WM_PAINT: PaintNativePanel(hwnd, scale_); return 0;
         case WM_PRINTCLIENT: {
-            RECT client{}; ::GetClientRect(hwnd, &client);
+            RECT client{};
+            ::GetClientRect(hwnd, &client);
             theme::DrawPanel(reinterpret_cast<HDC>(wparam), client, scale_);
             return 0;
         }
@@ -444,7 +451,7 @@ LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
             return 0;
         case WM_TIMER:
             if (wparam == kStatusTimerId && !closing_) {
-                if(exporting_ && !::IsWindowVisible(progress_) && ::GetTickCount64()>=export_indicator_due_ms_) { UpdateStatusLayout(); }
+                if (exporting_ && !::IsWindowVisible(progress_) && ::GetTickCount64() >= export_indicator_due_ms_) { UpdateStatusLayout(); }
                 UpdatePosition();
                 if (!closing_ && callbacks_.on_status_tick) {
                     callbacks_.on_status_tick();
@@ -465,7 +472,7 @@ LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
             return 0;
         case WM_DPICHANGED: {
             if (closing_) { return 0; }
-            scale_=static_cast<float>(HIWORD(wparam))/96.0f;
+            scale_ = static_cast<float>(HIWORD(wparam)) / 96.0f;
             RebuildFonts();
             const auto* suggested = reinterpret_cast<const RECT*>(lparam);
             if (suggested != nullptr) {
@@ -479,7 +486,8 @@ LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
         }
         case WM_CTLCOLORSTATIC: {
             return ControlBackground(wparam, reinterpret_cast<HWND>(lparam) == status_ && status_error_
-                ? theme::Current().error : theme::Current().text);
+                                                 ? theme::Current().error
+                                                 : theme::Current().text);
         }
         default:
             break;
@@ -489,9 +497,9 @@ LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
 
 LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
                                           WPARAM wparam, LPARAM lparam) {
-    if (closing_ && ((message>=WM_MOUSEFIRST && message<=WM_MOUSELAST) ||
-        (message>=WM_KEYFIRST && message<=WM_KEYLAST) || message==WM_SETFOCUS ||
-        message==WM_GETDLGCODE || message==theme::kChangedMessage)) {
+    if (closing_ && ((message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) ||
+                     (message >= WM_KEYFIRST && message <= WM_KEYLAST) || message == WM_SETFOCUS ||
+                     message == WM_GETDLGCODE || message == theme::kChangedMessage)) {
         return 0;
     }
     switch (message) {
@@ -501,7 +509,8 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
             }
             break;
         case theme::kChangedMessage:
-            ::InvalidateRect(hwnd, nullptr, FALSE); return 0;
+            ::InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
         case WM_GETDLGCODE: {
             const bool backwards = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
             const bool internal_tab = backwards ? timeline_focus_ > 0 : timeline_focus_ < 2;
@@ -521,11 +530,11 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
             const int left = TimelineTrackLeft(hwnd);
             const int width = TimelineTrackWidth(hwnd);
             const int in_x = left + static_cast<int>(
-                range_.TimelineOffsetFromTime(range_.in(),
-                                              static_cast<uint32_t>(width)));
+                                        range_.TimelineOffsetFromTime(range_.in(),
+                                                                      static_cast<uint32_t>(width)));
             const int out_x = left + static_cast<int>(
-                range_.TimelineOffsetFromTime(range_.out(),
-                                              static_cast<uint32_t>(width)));
+                                         range_.TimelineOffsetFromTime(range_.out(),
+                                                                       static_cast<uint32_t>(width)));
             const int tolerance = ScaleDip(12, scale_);
             if (std::abs(x - in_x) <= tolerance &&
                 std::abs(x - in_x) <= std::abs(x - out_x)) {
@@ -535,7 +544,8 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
             } else {
                 timeline_drag_ = TimelineDrag::Seek;
             }
-            timeline_focus_ = timeline_drag_ == TimelineDrag::In ? 0 : timeline_drag_ == TimelineDrag::Out ? 2 : 1;
+            timeline_focus_ = timeline_drag_ == TimelineDrag::In ? 0 : timeline_drag_ == TimelineDrag::Out ? 2
+                                                                                                           : 1;
             if (timeline_accessibility_) { timeline_accessibility_->NotifyChanged(); }
             timeline_seek_position_.reset();
             ::SetCapture(hwnd);
@@ -567,9 +577,10 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
             if (!range_.valid() || exporting_) {
                 return 0;
             }
-            const int editing = (::GetKeyState(VK_SHIFT) & 0x8000) != 0 ? 0 :
-                (::GetKeyState(VK_CONTROL) & 0x8000) != 0 ? 2 : timeline_focus_;
-            media::MediaTime candidate = editing == 0 ? range_.in() : editing == 2 ? range_.out() : range_.current();
+            const int editing = (::GetKeyState(VK_SHIFT) & 0x8000) != 0 ? 0 : (::GetKeyState(VK_CONTROL) & 0x8000) != 0 ? 2
+                                                                                                                        : timeline_focus_;
+            media::MediaTime candidate = editing == 0 ? range_.in() : editing == 2 ? range_.out()
+                                                                                   : range_.current();
             if (wparam == VK_HOME) {
                 candidate = media::MediaTime::zero();
             } else if (wparam == VK_END) {
@@ -581,7 +592,7 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
                 break;
             }
             candidate = (std::clamp)(candidate, media::MediaTime::zero(),
-                                      range_.source_duration());
+                                     range_.source_duration());
             if (editing == 0) {
                 if (range_.SetIn(candidate)) {
                     ReconcileRangeEdit();
@@ -618,7 +629,7 @@ LRESULT TrimWindow::HandleVideoMessage(HWND hwnd, UINT message, WPARAM wparam,
         case WM_PAINT: {
             PAINTSTRUCT paint{};
             HDC dc = ::BeginPaint(hwnd, &paint);
-            theme::FillSolid(dc,paint.rcPaint,theme::Current().panel);
+            theme::FillSolid(dc, paint.rcPaint, theme::Current().panel);
             if (!closing_ && preview_ != nullptr) {
                 preview_->UpdateVideo();
             }
@@ -631,8 +642,9 @@ LRESULT TrimWindow::HandleVideoMessage(HWND hwnd, UINT message, WPARAM wparam,
             }
             return 0;
         case WM_ERASEBKGND: {
-            RECT client{}; ::GetClientRect(hwnd,&client);
-            theme::FillSolid(reinterpret_cast<HDC>(wparam),client,theme::Current().panel);
+            RECT client{};
+            ::GetClientRect(hwnd, &client);
+            theme::FillSolid(reinterpret_cast<HDC>(wparam), client, theme::Current().panel);
             return 1;
         }
         default:
@@ -689,11 +701,11 @@ bool TrimWindow::CreateControls() {
     // VideoProc dispatches through GWLP_USERDATA just like TimelineProc. The
     // generic control factory supplies no owner, leaving paint/resize handlers
     // unreachable and exposing stale pixels around the asynchronous presenter.
-    video_ = ::CreateWindowExW(0,kVideoClassName,L"",
-        WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN|WS_CLIPSIBLINGS,
-        0,0,1,1,hwnd_,nullptr,::GetModuleHandleW(nullptr),this);
+    video_ = ::CreateWindowExW(0, kVideoClassName, L"",
+                               WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+                               0, 0, 1, 1, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
     time_label_ = CreateControl(L"STATIC", L"00:00:00.000 / 00:00:00.000",
-                               SS_RIGHT, -1);
+                                SS_RIGHT, -1);
     range_label_ = CreateControl(L"STATIC", strings::Get(IDS_TRIM_RANGE_PLACEHOLDER),
                                  SS_LEFT, -1);
     status_ = ::CreateWindowExW(
@@ -701,7 +713,7 @@ bool TrimWindow::CreateControls() {
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL |
             ES_READONLY,
         0, 0, 1, 1, hwnd_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-    if(status_ && !StyleLabel(status_)) { return false; }
+    if (status_ && !StyleLabel(status_)) { return false; }
     timeline_ = ::CreateWindowExW(
         0, kTimelineClassName, strings::Get(IDS_TRIM_TIMELINE_NAME),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 1, 1, hwnd_, nullptr,
@@ -723,15 +735,12 @@ bool TrimWindow::CreateControls() {
     discard_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_DISCARD_BUTTON),
                              WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
     progress_ = CreateControl(PROGRESS_CLASSW, L"", PBS_SMOOTH, -1);
-    if(progress_ && !StyleProgress(progress_)) { return false; }
+    if (progress_ && !StyleProgress(progress_)) { return false; }
     if (progress_ != nullptr) {
         ::SendMessageW(progress_, PBM_SETRANGE32, 0, 1000);
     }
     if (timeline_) {
-        timeline_accessibility_ = std::make_unique<TimelineAccessibility>(timeline_,
-            [this] { return AccessibleTimeline(); },
-            [this](int index, double value) { return SetAccessibleTimelineValue(index, value); },
-            [this](int index) { FocusTimeline(index); });
+        timeline_accessibility_ = std::make_unique<TimelineAccessibility>(timeline_, [this] { return AccessibleTimeline(); }, [this](int index, double value) { return SetAccessibleTimelineValue(index, value); }, [this](int index) { FocusTimeline(index); });
     }
     UpdateButtonStyle(play_pause_, {Icon::Play});
     UpdateButtonStyle(save_, {Icon::Save, ButtonRole::Primary});
@@ -742,9 +751,9 @@ bool TrimWindow::CreateControls() {
     return video_ != nullptr && time_label_ != nullptr &&
            range_label_ != nullptr && status_ != nullptr &&
            timeline_ != nullptr && play_pause_ != nullptr && set_in_ != nullptr &&
-            set_out_ != nullptr && save_ != nullptr && copy_ != nullptr &&
-            cancel_export_ != nullptr && discard_ != nullptr &&
-            progress_ != nullptr;
+           set_out_ != nullptr && save_ != nullptr && copy_ != nullptr &&
+           cancel_export_ != nullptr && discard_ != nullptr &&
+           progress_ != nullptr;
 }
 
 HWND TrimWindow::CreateControl(const wchar_t* class_name, const wchar_t* text,
@@ -756,9 +765,13 @@ HWND TrimWindow::CreateControl(const wchar_t* class_name, const wchar_t* text,
             : reinterpret_cast<HMENU>(static_cast<INT_PTR>(identifier)),
         ::GetModuleHandleW(nullptr), nullptr);
     if (control && ::lstrcmpW(class_name, L"BUTTON") == 0 && !StyleButton(control)) {
-        ::DestroyWindow(control); return nullptr;
+        ::DestroyWindow(control);
+        return nullptr;
     }
-    if(control && ::lstrcmpW(class_name,L"STATIC")==0 && !StyleLabel(control)) { ::DestroyWindow(control); return nullptr; }
+    if (control && ::lstrcmpW(class_name, L"STATIC") == 0 && !StyleLabel(control)) {
+        ::DestroyWindow(control);
+        return nullptr;
+    }
     return control;
 }
 
@@ -766,95 +779,106 @@ void TrimWindow::LayoutControls(int client_width, int client_height) {
     if (hwnd_ == nullptr || closing_ || client_width <= 0 || client_height <= 0) {
         return;
     }
-    const bool show_progress=exporting_ && (cancelling_ || ::GetTickCount64()>=export_indicator_due_ms_);
-    const bool show_status=!status_message_.empty() && (!exporting_ || status_error_);
-    const int content_width=std::max(1,client_width-2*ScaleDip(12,scale_));
-    int message_height=0;
-    HDC dc=::CreateCompatibleDC(nullptr);
-    const auto previous=dc && ui_font_ ? ::SelectObject(dc,ui_font_) : nullptr;
-    const auto measure=[&](const std::wstring& value,int width,UINT flags) {
-        return MeasureTextHeight(dc,value,width,flags);
+    const bool show_progress = exporting_ && (cancelling_ || ::GetTickCount64() >= export_indicator_due_ms_);
+    const bool show_status = !status_message_.empty() && (!exporting_ || status_error_);
+    const int content_width = std::max(1, client_width - 2 * ScaleDip(12, scale_));
+    int message_height = 0;
+    HDC dc = ::CreateCompatibleDC(nullptr);
+    const auto previous = dc && ui_font_ ? ::SelectObject(dc, ui_font_) : nullptr;
+    const auto measure = [&](const std::wstring& value, int width, UINT flags) {
+        return MeasureTextHeight(dc, value, width, flags);
     };
-    const auto text=MeasureTrimReadouts(dc,time_text_,range_text_,content_width);
-    int status_width=content_width;
-    if(show_status && status_) {
-        const auto margins=::SendMessageW(status_,EM_GETMARGINS,0,0);
-        status_width-=LOWORD(margins)+HIWORD(margins);
-        message_height=measure(status_message_,status_width,DT_EDITCONTROL)+ScaleDip(4,scale_);
+    const auto text = MeasureTrimReadouts(dc, time_text_, range_text_, content_width);
+    int status_width = content_width;
+    if (show_status && status_) {
+        const auto margins = ::SendMessageW(status_, EM_GETMARGINS, 0, 0);
+        status_width -= LOWORD(margins) + HIWORD(margins);
+        message_height = measure(status_message_, status_width, DT_EDITCONTROL) + ScaleDip(4, scale_);
     }
-    auto layout=CalculateTrimWindowLayout(client_width,client_height,scale_,message_height,show_progress,text);
-    const bool scroll_status=show_status && message_height>layout.status.height;
-    if(scroll_status) {
+    auto layout = CalculateTrimWindowLayout(client_width, client_height, scale_, message_height, show_progress, text);
+    const bool scroll_status = show_status && message_height > layout.status.height;
+    if (scroll_status) {
         // Wrapping changes when a scrollbar is needed. Re-measure with its
         // actual width, while the central layout retains the same row budget.
-        message_height=measure(status_message_,status_width-::GetSystemMetricsForDpi(SM_CXVSCROLL,
-            static_cast<UINT>(std::lround(scale_*96))),DT_EDITCONTROL)+ScaleDip(4,scale_);
-        layout=CalculateTrimWindowLayout(client_width,client_height,scale_,message_height,show_progress,text);
+        message_height = measure(status_message_, status_width - ::GetSystemMetricsForDpi(SM_CXVSCROLL, static_cast<UINT>(std::lround(scale_ * 96))), DT_EDITCONTROL) + ScaleDip(4, scale_);
+        layout = CalculateTrimWindowLayout(client_width, client_height, scale_, message_height, show_progress, text);
     }
-    if(dc) {
-        if(previous) { ::SelectObject(dc,previous); }
+    if (dc) {
+        if (previous) { ::SelectObject(dc, previous); }
         ::DeleteDC(dc);
     }
-    if(status_) {
-        const auto style=::GetWindowLongPtrW(status_,GWL_STYLE);
-        const auto desired=scroll_status ? style|WS_TABSTOP : style&~WS_TABSTOP;
-        if(style!=desired) { ::SetWindowLongPtrW(status_,GWL_STYLE,desired); }
-        ::ShowScrollBar(status_,SB_VERT,scroll_status);
-        if(!scroll_status) {
+    if (status_) {
+        const auto style = ::GetWindowLongPtrW(status_, GWL_STYLE);
+        const auto desired = scroll_status ? style | WS_TABSTOP : style & ~WS_TABSTOP;
+        if (style != desired) { ::SetWindowLongPtrW(status_, GWL_STYLE, desired); }
+        ::ShowScrollBar(status_, SB_VERT, scroll_status);
+        if (!scroll_status) {
             // Preserve full visibility after a previously scrollable notice
             // becomes short enough, including after a wider native resize.
-            ::SendMessageW(status_,EM_LINESCROLL,0,-::SendMessageW(status_,EM_GETFIRSTVISIBLELINE,0,0));
+            ::SendMessageW(status_, EM_LINESCROLL, 0, -::SendMessageW(status_, EM_GETFIRSTVISIBLELINE, 0, 0));
         }
     }
-    layout_=layout;
-    struct ControlLayout { HWND hwnd; TrimLayoutRect rect; bool visible; };
-    const std::array<ControlLayout,13> controls{{
-        {time_label_,layout.time_label,true},
-        {video_,FitTrimVideo(layout.video,platform::RectWidth(source_region_),platform::RectHeight(source_region_)),true},
-        {range_label_,layout.range_label,true},{timeline_,layout.timeline,true},
-        {status_,layout.status,show_status},{progress_,layout.progress,show_progress},
-        {play_pause_,layout.play_pause,true},{set_in_,layout.set_in,true},{set_out_,layout.set_out,true},
-        {save_,layout.save_or_cancel,!exporting_},{cancel_export_,layout.save_or_cancel,exporting_},
-        {copy_,layout.copy,true},{discard_,layout.discard,true}
-    }};
-    HDWP batch=::BeginDeferWindowPos(static_cast<int>(controls.size()));
+    layout_ = layout;
+    struct ControlLayout {
+        HWND hwnd;
+        TrimLayoutRect rect;
+        bool visible;
+    };
+    const std::array<ControlLayout, 13> controls{{{time_label_, layout.time_label, true},
+                                                  {video_, FitTrimVideo(layout.video, platform::RectWidth(source_region_), platform::RectHeight(source_region_)), true},
+                                                  {range_label_, layout.range_label, true},
+                                                  {timeline_, layout.timeline, true},
+                                                  {status_, layout.status, show_status},
+                                                  {progress_, layout.progress, show_progress},
+                                                  {play_pause_, layout.play_pause, true},
+                                                  {set_in_, layout.set_in, true},
+                                                  {set_out_, layout.set_out, true},
+                                                  {save_, layout.save_or_cancel, !exporting_},
+                                                  {cancel_export_, layout.save_or_cancel, exporting_},
+                                                  {copy_, layout.copy, true},
+                                                  {discard_, layout.discard, true}}};
+    HDWP batch = ::BeginDeferWindowPos(static_cast<int>(controls.size()));
     // Publish geometry as a batch before any child paints. Painting during
     // EndDeferWindowPos can expose the parent's backing under controls that
     // have not reached their final position yet, particularly while shrinking.
-    constexpr UINT flags=SWP_NOACTIVATE|SWP_NOZORDER|SWP_NOCOPYBITS|SWP_NOREDRAW;
-    for(const auto& [control,rect,visible]:controls) {
-        if(!control || !batch) { continue; }
-        RECT old{}; ::GetWindowRect(control,&old); ::MapWindowPoints(nullptr,hwnd_,reinterpret_cast<POINT*>(&old),2);
-        const bool was_visible=(::GetWindowLongPtrW(control,GWL_STYLE)&WS_VISIBLE)!=0;
-        if(old.left==rect.x && old.top==rect.y && old.right-old.left==rect.width && old.bottom-old.top==rect.height && visible==was_visible) { continue; }
-        batch=::DeferWindowPos(batch,control,nullptr,rect.x,rect.y,rect.width,rect.height,
-            flags|(visible ? SWP_SHOWWINDOW:SWP_HIDEWINDOW));
+    constexpr UINT flags = SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW;
+    for (const auto& [control, rect, visible] : controls) {
+        if (!control || !batch) { continue; }
+        RECT old{};
+        ::GetWindowRect(control, &old);
+        ::MapWindowPoints(nullptr, hwnd_, reinterpret_cast<POINT*>(&old), 2);
+        const bool was_visible = (::GetWindowLongPtrW(control, GWL_STYLE) & WS_VISIBLE) != 0;
+        if (old.left == rect.x && old.top == rect.y && old.right - old.left == rect.width && old.bottom - old.top == rect.height && visible == was_visible) { continue; }
+        batch = ::DeferWindowPos(batch, control, nullptr, rect.x, rect.y, rect.width, rect.height,
+                                 flags | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
     }
-    if(!batch || !::EndDeferWindowPos(batch)) {
-        for(const auto& [control,rect,visible]:controls) if(control) {
-            ::SetWindowPos(control,nullptr,rect.x,rect.y,rect.width,rect.height,
-                flags|(visible ? SWP_SHOWWINDOW:SWP_HIDEWINDOW));
-        }
+    if (!batch || !::EndDeferWindowPos(batch)) {
+        for (const auto& [control, rect, visible] : controls)
+            if (control) {
+                ::SetWindowPos(control, nullptr, rect.x, rect.y, rect.width, rect.height,
+                               flags | (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+            }
     }
-    for(const auto& [control,rect,visible]:controls) {
+    for (const auto& [control, rect, visible] : controls) {
         (void)rect;
-        if(control && visible) { ::InvalidateRect(control,nullptr,FALSE); }
+        if (control && visible) { ::InvalidateRect(control, nullptr, FALSE); }
     }
-    ::InvalidateRect(hwnd_,nullptr,FALSE);
+    ::InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void TrimWindow::UpdateStatusLayout() {
-    if(!hwnd_) { return; }
-    RECT client{}; ::GetClientRect(hwnd_,&client);
-    LayoutControls(client.right,client.bottom);
+    if (!hwnd_) { return; }
+    RECT client{};
+    ::GetClientRect(hwnd_, &client);
+    LayoutControls(client.right, client.bottom);
 }
 
 void TrimWindow::RebuildFonts() {
     HFONT new_ui = theme::CreateUiFont(12.5f, scale_, false);
-    if(new_ui==nullptr) { return; }
+    if (new_ui == nullptr) { return; }
     for (HWND control : {time_label_, range_label_, status_, help_, play_pause_,
-                          set_in_, set_out_, save_, copy_, cancel_export_,
-                          discard_}) {
+                         set_in_, set_out_, save_, copy_, cancel_export_,
+                         discard_}) {
         SetControlFont(control, new_ui);
     }
     if (ui_font_ != nullptr) {
@@ -899,8 +923,9 @@ void TrimWindow::UpdatePosition() {
     media::MediaTime current = snapshot.position;
     const app::TrimPlaybackDecision decision =
         app::PlanTrimPlaybackProgress((snapshot.play_requested ||
-                                          snapshot.state == media::MediaPreviewState::Ended) &&
-                                          !snapshot.position_pending, current,
+                                       snapshot.state == media::MediaPreviewState::Ended) &&
+                                          !snapshot.position_pending,
+                                      current,
                                       range_.out());
     if (decision.action != app::TrimPlaybackAction::None) {
         ApplyPlaybackDecision(decision);
@@ -925,19 +950,28 @@ void TrimWindow::UpdateLabels() {
         IDS_TRIM_RANGE_READOUT,
         {FormatTime(range_.in()), FormatTime(range_.out()),
          FormatTime(range_.out() - range_.in())});
-    const bool changed=range_text_!=selected || time_text_!=time;
-    if(time_text_!=time) { time_text_=time; ::SetWindowTextW(time_label_,time.c_str()); }
-    if(range_text_!=selected) { range_text_=selected; ::SetWindowTextW(range_label_,selected.c_str()); }
-    if(changed) {
+    const bool changed = range_text_ != selected || time_text_ != time;
+    if (time_text_ != time) {
+        time_text_ = time;
+        ::SetWindowTextW(time_label_, time.c_str());
+    }
+    if (range_text_ != selected) {
+        range_text_ = selected;
+        ::SetWindowTextW(range_label_, selected.c_str());
+    }
+    if (changed) {
         // Measurement must not acquire/release a composited window DC: that
         // is a presentation boundary even though no pixels are drawn here.
         // Match LayoutControls' memory-DC measurement with the actual UI font.
-        HDC dc=::CreateCompatibleDC(nullptr);
-        const auto previous=dc && ui_font_ ? ::SelectObject(dc,ui_font_) : nullptr;
-        const auto text=MeasureTrimReadouts(dc,time_text_,range_text_,layout_.time_label.width);
-        if(dc) { if(previous) { ::SelectObject(dc,previous); } ::DeleteDC(dc); }
-        if(std::max(ScaleDip(22,scale_),text.time_height)!=layout_.time_label.height ||
-           std::max(ScaleDip(22,scale_),text.range_height)!=layout_.range_label.height) {
+        HDC dc = ::CreateCompatibleDC(nullptr);
+        const auto previous = dc && ui_font_ ? ::SelectObject(dc, ui_font_) : nullptr;
+        const auto text = MeasureTrimReadouts(dc, time_text_, range_text_, layout_.time_label.width);
+        if (dc) {
+            if (previous) { ::SelectObject(dc, previous); }
+            ::DeleteDC(dc);
+        }
+        if (std::max(ScaleDip(22, scale_), text.time_height) != layout_.time_label.height ||
+            std::max(ScaleDip(22, scale_), text.range_height) != layout_.range_label.height) {
             UpdateStatusLayout();
         }
     }
@@ -1096,9 +1130,13 @@ void TrimWindow::PaintTimeline(HWND hwnd, HDC print_dc) {
     HDC dc = print_dc ? print_dc : ::BeginPaint(hwnd, &paint);
     RECT client{};
     ::GetClientRect(hwnd, &client);
-    HDC destination=dc,buffer=::CreateCompatibleDC(dc);
-    HBITMAP bitmap=::CreateCompatibleBitmap(dc,client.right,client.bottom); HGDIOBJ previous_bitmap=nullptr;
-    if(buffer && bitmap) { previous_bitmap=::SelectObject(buffer,bitmap); dc=buffer; }
+    HDC destination = dc, buffer = ::CreateCompatibleDC(dc);
+    HBITMAP bitmap = ::CreateCompatibleBitmap(dc, client.right, client.bottom);
+    HGDIOBJ previous_bitmap = nullptr;
+    if (buffer && bitmap) {
+        previous_bitmap = ::SelectObject(buffer, bitmap);
+        dc = buffer;
+    }
     theme::FillSolid(dc, client, theme::Current().panel);
 
     const int left = TimelineTrackLeft(hwnd);
@@ -1106,7 +1144,7 @@ void TrimWindow::PaintTimeline(HWND hwnd, HDC print_dc) {
     const int center = layout_.timeline_track_center;
     const int track_half = ScaleDip(7, scale_);
     RECT track{left, center - track_half, left + width, center + track_half};
-    theme::DrawMaterial(dc,track,7,scale_,theme::Current().timeline_track,-1);
+    theme::DrawMaterial(dc, track, 7, scale_, theme::Current().timeline_track, -1);
 
     if (range_.valid() && width > 0) {
         const int in_x = left + static_cast<int>(range_.TimelineOffsetFromTime(
@@ -1117,16 +1155,16 @@ void TrimWindow::PaintTimeline(HWND hwnd, HDC print_dc) {
             left + static_cast<int>(range_.TimelineOffsetFromTime(
                        range_.current(), static_cast<uint32_t>(width)));
         RECT selected{in_x, track.top, (std::max)(in_x + 1, out_x), track.bottom};
-        theme::FillRounded(dc,selected,ScaleDip(7,scale_),theme::Current().timeline_selection);
+        theme::FillRounded(dc, selected, ScaleDip(7, scale_), theme::Current().timeline_selection);
         const int handle_half = ScaleDip(5, scale_);
         const int handle_height = ScaleDip(14, scale_);
         RECT in_handle{in_x - handle_half, center - handle_height,
                        in_x + handle_half, center + handle_height};
         RECT out_handle{out_x - handle_half, center - handle_height,
                         out_x + handle_half, center + handle_height};
-        const bool focused=::GetFocus()==hwnd && !(::SendMessageW(hwnd,WM_QUERYUISTATE,0,0)&UISF_HIDEFOCUS);
-        theme::DrawMaterial(dc,in_handle,5,scale_,theme::Current().raised,focused && timeline_focus_==0 ? 1.35f:1.0f);
-        theme::DrawMaterial(dc,out_handle,5,scale_,theme::Current().raised,focused && timeline_focus_==2 ? 1.35f:1.0f);
+        const bool focused = ::GetFocus() == hwnd && !(::SendMessageW(hwnd, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS);
+        theme::DrawMaterial(dc, in_handle, 5, scale_, theme::Current().raised, focused && timeline_focus_ == 0 ? 1.35f : 1.0f);
+        theme::DrawMaterial(dc, out_handle, 5, scale_, theme::Current().raised, focused && timeline_focus_ == 2 ? 1.35f : 1.0f);
         const auto& palette = theme::Current();
         const LONG marker_top = center - ScaleDip(15, scale_);
         const LONG marker_bottom = center + ScaleDip(14, scale_);
@@ -1143,15 +1181,13 @@ void TrimWindow::PaintTimeline(HWND hwnd, HDC print_dc) {
                 const float amount = (7 - radius) * 0.08f;
                 const COLORREF glow = theme::Mix(palette.panel, palette.accent, amount);
                 const int extent = ScaleDip(radius, scale_);
-                theme::FillRounded(dc, {current_x - extent, marker_top - extent,
-                    current_x + extent, marker_top + extent}, extent, glow);
+                theme::FillRounded(dc, {current_x - extent, marker_top - extent, current_x + extent, marker_top + extent}, extent, glow);
             }
         }
         const int head = ScaleDip(3, scale_);
-        theme::FillRoundedBordered(dc, {current_x - head, marker_top - head,
-            current_x + head, marker_top + head}, head,
-            palette.high_contrast ? palette.playhead : palette.accent,
-            palette.playhead, ScaleDip(1, scale_));
+        theme::FillRoundedBordered(dc, {current_x - head, marker_top - head, current_x + head, marker_top + head}, head,
+                                   palette.high_contrast ? palette.playhead : palette.accent,
+                                   palette.playhead, ScaleDip(1, scale_));
         ::SetBkMode(dc, TRANSPARENT);
         ::SetTextColor(dc, theme::Current().text);
         const auto previous_font = ui_font_ ? ::SelectObject(dc, ui_font_) : nullptr;
@@ -1161,15 +1197,19 @@ void TrimWindow::PaintTimeline(HWND hwnd, HDC print_dc) {
                       out_x + ScaleDip(18, scale_), layout_.timeline_label_height};
         ::DrawTextW(dc, strings::Get(IDS_TRIM_MARKER_IN), -1, &in_text, DT_CENTER | DT_BOTTOM | DT_SINGLELINE);
         ::DrawTextW(dc, strings::Get(IDS_TRIM_MARKER_OUT), -1, &out_text, DT_CENTER | DT_BOTTOM | DT_SINGLELINE);
-        if(previous_font) { ::SelectObject(dc,previous_font); }
+        if (previous_font) { ::SelectObject(dc, previous_font); }
     }
-    if(timeline_focus_==1 && ::GetFocus()==hwnd && !(::SendMessageW(hwnd,WM_QUERYUISTATE,0,0)&UISF_HIDEFOCUS) && range_.valid()) {
-        RECT thumb=AccessibleTimeline().values[timeline_focus_].bounds;
-        ::MapWindowPoints(nullptr,hwnd,reinterpret_cast<POINT*>(&thumb),2);
-        theme::DrawSolidLine(dc,{thumb.left,thumb.bottom},{thumb.right,thumb.bottom},theme::Current().text,ScaleDip(1,scale_));
+    if (timeline_focus_ == 1 && ::GetFocus() == hwnd && !(::SendMessageW(hwnd, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) && range_.valid()) {
+        RECT thumb = AccessibleTimeline().values[timeline_focus_].bounds;
+        ::MapWindowPoints(nullptr, hwnd, reinterpret_cast<POINT*>(&thumb), 2);
+        theme::DrawSolidLine(dc, {thumb.left, thumb.bottom}, {thumb.right, thumb.bottom}, theme::Current().text, ScaleDip(1, scale_));
     }
-    if(previous_bitmap) { ::BitBlt(destination,0,0,client.right,client.bottom,buffer,0,0,SRCCOPY); ::SelectObject(buffer,previous_bitmap); }
-    if(bitmap) { ::DeleteObject(bitmap); } if(buffer) { ::DeleteDC(buffer); }
+    if (previous_bitmap) {
+        ::BitBlt(destination, 0, 0, client.right, client.bottom, buffer, 0, 0, SRCCOPY);
+        ::SelectObject(buffer, previous_bitmap);
+    }
+    if (bitmap) { ::DeleteObject(bitmap); }
+    if (buffer) { ::DeleteDC(buffer); }
     if (!print_dc) { ::EndPaint(hwnd, &paint); }
 }
 
@@ -1227,7 +1267,7 @@ int TrimWindow::TimelineTrackWidth(HWND hwnd) const noexcept {
         return 1;
     }
     return (std::max)(1, static_cast<int>(platform::RectWidth(client)) -
-                            ScaleDip(36, scale_));
+                             ScaleDip(36, scale_));
 }
 
 }  // namespace easnap::ui
@@ -1238,17 +1278,18 @@ AccessibleTimelineSnapshot TrimWindow::AccessibleTimeline() const {
     result.focus = timeline_focus_;
     result.enabled = !closing_ && range_.valid() && !exporting_ && ::IsWindowEnabled(timeline_);
     if (!timeline_ || !range_.valid()) { return result; }
-    RECT client{}; ::GetClientRect(timeline_, &client);
+    RECT client{};
+    ::GetClientRect(timeline_, &client);
     const int left = TimelineTrackLeft(timeline_);
     const int width = TimelineTrackWidth(timeline_);
     const auto seconds = [](media::MediaTime time) { return static_cast<double>(time.count()) / 10'000'000.0; };
     const media::MediaTime values[]{range_.in(), range_.current(), range_.out()};
     for (int i = 0; i != 3; ++i) {
         const int x = left + static_cast<int>(range_.TimelineOffsetFromTime(values[i], static_cast<uint32_t>(width)));
-        RECT bounds{x-ScaleDip(12, scale_), 0, x+ScaleDip(12, scale_), client.bottom};
+        RECT bounds{x - ScaleDip(12, scale_), 0, x + ScaleDip(12, scale_), client.bottom};
         ::MapWindowPoints(timeline_, nullptr, reinterpret_cast<POINT*>(&bounds), 2);
         result.values[i] = {seconds(values[i]), i == 2 ? seconds(range_.in() + media::MediaTime{1}) : 0,
-            i == 0 ? seconds(range_.out() - media::MediaTime{1}) : seconds(range_.source_duration()), bounds};
+                            i == 0 ? seconds(range_.out() - media::MediaTime{1}) : seconds(range_.source_duration()), bounds};
     }
     return result;
 }
@@ -1260,15 +1301,15 @@ bool TrimWindow::SetAccessibleTimelineValue(int index, double seconds) {
     const media::MediaTime value{ticks};
     if (index == 1) {
         if (!app::PlanTrimTimelineSeek(preview_->snapshot().play_requested,
-                                      value, range_.in(), range_.out())) { return false; }
+                                       value, range_.in(), range_.out())) { return false; }
         SeekTo(value);
-    }
-    else {
+    } else {
         const bool changed = index == 0 ? range_.SetIn(value) : range_.SetOut(value);
         if (!changed) { return value == (index == 0 ? range_.in() : range_.out()); }
         ReconcileRangeEdit();
     }
-    UpdateLabels(); ::InvalidateRect(timeline_, nullptr, FALSE);
+    UpdateLabels();
+    ::InvalidateRect(timeline_, nullptr, FALSE);
     return true;
 }
 void TrimWindow::FocusTimeline(int index) {
@@ -1278,4 +1319,4 @@ void TrimWindow::FocusTimeline(int index) {
     if (timeline_accessibility_) { timeline_accessibility_->NotifyChanged(); }
     ::InvalidateRect(timeline_, nullptr, FALSE);
 }
-}
+}  // namespace easnap::ui
