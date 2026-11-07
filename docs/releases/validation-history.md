@@ -451,3 +451,10 @@ display and no GPU: the one of beta.2 at 125 % and a second at 150 %
     Close first, in both appearances: no pixel of the Close button differed
     from Easnap's painting in any of the seven cases. The white button was not
     reproduced.
+  - On the development PC, at the owner's request, the same test: every drag
+    left 845 pixels of the Close button (dark) or 520 (light) that Easnap had
+    not painted, a classic caption. Windows sent the dialog
+    `WM_NCUAHDRAWCAPTION` four times on the press; in the lab VM it sent none.
+    With the chrome swallowing that message and `WM_NCUAHDRAWFRAME`, the test
+    passed there with 225 of 225 checks
+    ([ADR-008](../decisions/ADR-008-recording-ui-and-safe-finalization.md)).

@@ -280,3 +280,9 @@ mechanism held the cursor back is not established.
   capture observer, so "capture path unknown" is the honest reading.
 - Windows 11, N editions and scale factors other than 125 and 150 % remain
   unmeasured; both images are Windows 10 22H2.
+- A press on a dialog's caption: on the development PC Windows sent the
+  dialog `WM_NCUAHDRAWCAPTION` and painted its own caption over a layered
+  dialog; in the 125 % image it sent nothing, so `island_capture_exclusion`
+  passed there on sources that failed on the host (2026-11-07,
+  [ADR-008](ADR-008-recording-ui-and-safe-finalization.md)). Why the image
+  differs is not known.

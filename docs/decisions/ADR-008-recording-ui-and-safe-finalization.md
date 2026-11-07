@@ -140,13 +140,28 @@ are shown. Not measured: whether any of these left a hole before; the test
 covers the islands only.
 
 **Dragged dialogs** (2026-11-07). A layered window gets no frame from the
-compositor, so Windows could paint parts of a caption into such a dialog
-itself. While checking v1.1.0-rc.1 on the development PC, the owner saw a
-white button over the Close button of Settings after moving it, gone once the
-pointer passed over it. `island_capture_exclusion` now drags the Exit
-question and Settings by their header with real input: while active, after
-another window was active and with the pointer resting on Close first, in
-both appearances. It compares the Close button as the user sees it, with the
-exclusion lifted for the read, with Easnap's own painting of it. In the lab
-at 125 % no pixel differed, before or after the drag, in any of the seven
-cases. What the owner saw is not explained yet.
+compositor, and Windows paints parts of a caption into it itself. While
+checking v1.1.0-rc.1 on the development PC, the owner saw a white button over
+the Close button of Settings after every move, gone once the pointer passed
+over it. `island_capture_exclusion` now drags the Exit question and Settings
+by their header with real input: while active, after another window was
+active and with the pointer resting on Close first, in both appearances. It
+compares the Close button as the user sees it, with the exclusion lifted for
+the read, with Easnap's own painting of it.
+
+- In the lab VM at 125 % no pixel differed in any of the seven cases.
+- On the development PC, run at the owner's request, every case differed
+  after the drag: 845 pixels of the 43 by 43 button in the dark appearance,
+  520 in the light one, starting with 0xb9d1ea, the colour of a classic
+  active caption. Before the drag none differed.
+- There, the press on the header made Windows send the dialog the
+  undocumented `WM_NCUAHDRAWCAPTION` (0xAE) four times, between
+  `WM_NCLBUTTONDOWN` and the move loop; the lab VM sent none. Swallowing it,
+  or removing `WS_SYSMENU` or `WS_CAPTION` from the dialog, left no pixel
+  differing.
+
+**Decision.** The chrome of a fixed window answers `WM_NCUAHDRAWCAPTION`
+and `WM_NCUAHDRAWFRAME` (0xAF) without passing them on, as it already does
+`WM_NCPAINT`: such a window has no non-client area to paint. Its window
+styles do not change. Resizable windows keep the native frame (ADR-024) and are not changed. With
+the change, all 225 checks of the test passed on the development PC.

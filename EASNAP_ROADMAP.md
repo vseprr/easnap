@@ -36,9 +36,9 @@ on top of v1.0.0.
 
 In this order (details in [project status](docs/project-status.md#next-slice)):
 
-1. The owner's findings on rc.1: the tray menu's second submenu arrow
-   (corrected) and a white button over the Close button of Settings after
-   moving it (not reproduced in the lab yet).
+1. The owner's findings on rc.1, both corrected: the tray menu's second
+   submenu arrow, and the caption Windows painted over Settings and the
+   message dialogs when they were moved.
 2. The owner checks a new rc.1 package. Then the pull request, the merge and
    the publication: on the owner's approval the agent does these steps.
 3. v1.1.0: an empty prerelease label, release notes for everything since

@@ -30,9 +30,10 @@ and the individual runs in the [validation records](releases/validation-history.
   second lab image at 150 % (`lab.ps1 -Variant Scale150`), whose first runs
   led to the 150 % text-fit correction and to two visible-desktop tests that
   no longer assume 125 %. From the owner's check of rc.1: the tray menu's
-  submenu arrow is no longer drawn twice, and `island_capture_exclusion` also
-  drags the Exit question and Settings and reads the themed menu as the user
-  sees them.
+  submenu arrow is no longer drawn twice; Windows no longer paints its own
+  caption over Settings and the message dialogs when they are moved; and
+  `island_capture_exclusion` drags those dialogs and reads the themed menu as
+  the user sees them.
 
 ## Validated
 
@@ -55,6 +56,8 @@ and the individual runs in the [validation records](releases/validation-history.
   the lab only.
 - **On the host:** a Full run, including the MP4 writer change for software
   H.264 encoders, and the Soak tier, which ran only in the lab (2026-11-07).
+  Of the visible-desktop tests only `island_capture_exclusion` ran there, at
+  the owner's request (2026-11-07).
   Locally, Debug was built and run only for the stitching engine and the
   diagnostics test (beta.1).
 - **Other systems:** a Windows N edition, any Windows 11, any build other than
@@ -108,10 +111,6 @@ and the individual runs in the [validation records](releases/validation-history.
   Settings dialog can be open then, and it closes.
 - The mode island's home now starts below a taskbar docked at the top
   (2026-11-07); this was not seen with a top taskbar.
-- After moving Settings, the owner saw a white button over its Close button
-  on the development PC (rc.1, 2026-11-07), gone once the pointer passed over
-  it. The lab did not reproduce it in seven drag scenarios; the cause is not
-  known ([ADR-008](decisions/ADR-008-recording-ui-and-safe-finalization.md)).
 - The log gets one line per audio packet for the first packets of every
   recording; these lines are diagnostic and carry no content.
 - On the host, tests share the user's clipboard: `capture_workspace_production`
@@ -194,9 +193,7 @@ post-v1 without a promised date.
 
 ## Next slice
 
-The white button over the Close button of Settings, which the owner saw and
-the lab did not reproduce, is to be understood and corrected. The owner then
-checks a new rc.1 package by hand. On the owner's approval the agent pushes
+The owner checks a new rc.1 package by hand. On the owner's approval the agent pushes
 the branch and opens a pull request to `main`, whose CI run shows whether the
 hosted runner's two failures are gone and whether the new Format and
 clang-tidy jobs work there, merges it, and tags and publishes rc.1. Each

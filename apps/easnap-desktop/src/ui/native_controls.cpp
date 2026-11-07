@@ -1228,6 +1228,13 @@ LRESULT CALLBACK ChromeParentProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
     }
     if (message == WM_NCPAINT && !data->resizable) { return 0; }
     if (message == WM_NCACTIVATE && !data->resizable) { return TRUE; }
+    // WM_NCUAHDRAWCAPTION and WM_NCUAHDRAWFRAME, undocumented: with visual
+    // styles, a press on the caption makes Windows send them to paint its own
+    // caption and frame, over the client area when the window is layered for
+    // its capture exclusion (ADR-008). Like WM_NCPAINT, a fixed window with
+    // this chrome has none to paint.
+    constexpr UINT kDrawThemedCaption = 0x00AE, kDrawThemedFrame = 0x00AF;
+    if ((message == kDrawThemedCaption || message == kDrawThemedFrame) && !data->resizable) { return 0; }
     if (message == WM_NCHITTEST && data->resizable && !::IsZoomed(hwnd)) {
         RECT r{};
         ::GetWindowRect(hwnd, &r);

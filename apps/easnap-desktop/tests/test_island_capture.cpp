@@ -913,6 +913,31 @@ int Run() {
                                    backdrop_class.hInstance, nullptr);
     CHECK(thief != nullptr);
     Paint(thief, kColours[1]);
+    // The dialogs open in front, as Settings does after a click in the tray
+    // menu: a click on a window of the test makes this the foreground process.
+    if (thief) {
+        ::SetWindowPos(thief, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        Pump(std::chrono::milliseconds(100));
+        RECT rect{};
+        ::GetClientRect(thief, &rect);
+        POINT centre{rect.right / 2, rect.bottom / 2};
+        ::ClientToScreen(thief, &centre);
+        CHECK(::SetCursorPos(centre.x, centre.y) != FALSE);
+        Pump(std::chrono::milliseconds(50));
+        if (::WindowFromPoint(centre) == thief) {
+            INPUT click[2]{};
+            click[0].type = click[1].type = INPUT_MOUSE;
+            click[0].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+            click[1].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+            CHECK(::SendInput(2, click, sizeof(INPUT)) == 2);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (::GetForegroundWindow() != thief && std::chrono::steady_clock::now() < deadline) {
+                Pump(std::chrono::milliseconds(20));
+            }
+        }
+        CHECK(::GetForegroundWindow() == thief);
+        ::SetWindowPos(thief, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
     struct Scenario {
         const char* name;
         bool settings, deactivated, hover_close;
