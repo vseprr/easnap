@@ -323,6 +323,14 @@ PowerShell 5.1. Design and measured results are in
 forwarded to winlab, whose README (`C:\Projects\winlab\README.md`) describes
 them.
 
+**A second image.** `-Variant Scale150` drives a second VM, `easnap-lab-150`,
+built from the same `testenv.json` with the display scale at 150 %: only its
+name, storage folder, computer name, scale and report folder differ
+(`build\Testing\lab-scale150\verdict.json`,
+`build\Testing\lab-scale150-latest.md`). `lab.ps1` writes the derived spec to
+`build\Testing\lab-specs\` on every call. `build.ps1 -Trust Lab` reads only the
+verdict of the default lab.
+
 A change to the guest's provisioning (`guest/provision.ps1` in winlab) reaches
 the tests only through a new golden checkpoint: `lab.ps1 restore`, then
 `provision` (winlab's `-SkipWindowsUpdate` skips the update rounds), then
