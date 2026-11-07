@@ -1,6 +1,6 @@
 # Project status
 
-**Updated:** 2026-11-07
+**Updated:** 2026-11-08
 
 The current state of the implementation: what is built, what was actually
 validated, what is open and the next slice. Read it with the
@@ -11,18 +11,19 @@ and the individual runs in the [validation records](releases/validation-history.
 
 ## Baseline
 
-- Latest stable release: v1.0.2. Latest prerelease:
-  [v1.1.0-beta.2](https://github.com/vseprr/easnap/releases/tag/v1.1.0-beta.2),
-  published on 2026-10-30 from `main`, tag on the merge of pull request #13
-  ([release notes](releases/v1.1.0-beta.2.md)).
+- Latest stable release:
+  [v1.1.0](https://github.com/vseprr/easnap/releases/tag/v1.1.0), published on
+  2026-11-08 from `main`, tag on the merge of pull request #17
+  ([release notes](releases/v1.1.0.md)). The latest prerelease before it was
+  v1.1.0-beta.2 (2026-10-30).
 - The Release workflow built, tested and attested its packages on the hosted
-  runner; the draft was verified before publication.
+  runner. Before publication the draft's three packages matched their SHA-256
+  files, the installer's and the ZIP's attestations verified, and both
+  executables and the installer reported 1.1.0.
 - Stabilization toward v1.1.0 ran on the branch `stabilize/v1.1.0`, created
-  on 2026-11-07 from `main` at `42b3efa`. Its release candidate rc.1 was
-  checked by the owner and not published
-  ([record](releases/v1.1.0-rc.1.md)); the branch now carries v1.1.0 with an
-  empty prerelease label ([release notes](releases/v1.1.0.md)). It is not
-  merged, tagged or published yet.
+  on 2026-11-07 from `main` at `42b3efa` and merged by pull request #17. Its
+  release candidate rc.1 was checked by the owner and not published
+  ([record](releases/v1.1.0-rc.1.md)).
 - Since beta.2 (all on that branch): the 2026-11-07 audit's code findings
   (recovery messages that promised too much, dialogs and lists excluded from
   capture the way the islands are, crash reports that could replace each
@@ -140,8 +141,10 @@ and the individual runs in the [validation records](releases/validation-history.
   did not fail, so the cause is still unknown. The crash-report test failed in
   2 of 40 jobs, most likely because a report could replace an earlier one with
   the same name; report names are now unique
-  ([ADR-030](decisions/ADR-030-log-file-and-crash-reports.md)). Neither fix has
-  run on the hosted runner yet.
+  ([ADR-030](decisions/ADR-030-log-file-and-crash-reports.md)). With both
+  changes, the two tests passed in the Release, Debug and AddressSanitizer
+  jobs of the run for pull request #17 and of the release run of v1.1.0; two
+  runs do not show that the failures are gone.
 - For beta.1 the CodeQL workflow and the AddressSanitizer job passed on the
   hosted runner, where `wasapi_audio_capture` is reported as skipped. In one
   AddressSanitizer run `incremental_test_selection` (5 to 7 s there) hit its
@@ -204,11 +207,7 @@ post-v1 without a promised date.
 
 ## Next slice
 
-Publishing v1.1.0, which the owner approved on 2026-11-07 without a public
-release candidate: the agent pushes the branch and opens a pull request to
-`main`, whose CI run shows whether the hosted runner's two failures are gone
-and whether the new Format and clang-tidy jobs work there, merges it, tags
-`v1.1.0` and publishes the release the workflow drafts. A problem found there
-gets its own fix and lab run first. The package-manager submissions remain
-the owner's step ([distribution](distribution.md)). Then v1.2 on a branch of
-its own.
+v1.2, on a branch of its own: the slices deferred from the stabilization are
+listed in the [roadmap](../EASNAP_ROADMAP.md). The package-manager
+submissions for v1.1.0 remain the owner's step
+([distribution](distribution.md)).
