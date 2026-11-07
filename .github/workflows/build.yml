@@ -190,6 +190,43 @@ jobs:
         shell: pwsh
         run: ./scripts/format.ps1 -Check
 
+  # Static analysis with the checks in .clang-tidy. Report only for now: the
+  # findings that remain were triaged as harmless (2026-11-07); make the job
+  # required once they are gone. clang-tidy reads the compile commands of a
+  # Ninja configure; nothing is built.
+  tidy:
+    name: clang-tidy (windows-2022, report only)
+    runs-on: windows-2022
+    continue-on-error: true
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Analyse the application sources
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
+          $ninja = & $vswhere -latest -products * -find 'Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe' | Select-Object -First 1
+          $tidy = Join-Path $vs 'VC\Tools\Llvm\x64\bin\clang-tidy.exe'
+          if (-not $ninja -or -not (Test-Path $tidy)) { throw 'Ninja or clang-tidy was not found in Visual Studio.' }
+          & $tidy --version
+          cmd /c "`"$vcvars`" >nul && cmake -S . -B build-tidy -G Ninja `"-DCMAKE_MAKE_PROGRAM=$ninja`" -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DEASNAP_BUILD_TESTS=ON"
+          if ($LASTEXITCODE -ne 0) { throw "Configure failed (exit code $LASTEXITCODE)." }
+          $files = @(git ls-files 'apps/easnap-desktop/src/*.cpp')
+          $output = $files | ForEach-Object -ThrottleLimit 4 -Parallel {
+            & $using:tidy -p build-tidy --quiet $_ 2>$null
+          }
+          $warnings = @($output | Select-String -Pattern 'warning:')
+          $warnings | ForEach-Object { Write-Host $_.Line }
+          Write-Host "$($warnings.Count) warnings in $($files.Count) files."
+          if ($warnings.Count -gt 0) { exit 1 }
+
   hygiene:
     name: Repository hygiene
     runs-on: ubuntu-latest

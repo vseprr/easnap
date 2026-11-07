@@ -109,6 +109,17 @@ the whole tree is listed in `.git-blame-ignore-revs`; run
 `git config blame.ignoreRevsFile .git-blame-ignore-revs` once so that
 `git blame` skips it.
 
+Static analysis uses clang-tidy with the checks in `.clang-tidy`. The CI job
+runs it on the application sources and only reports; the findings left on
+2026-11-07 were checked one by one and are harmless. clang-tidy needs the
+compile commands of a Ninja build, which the Visual Studio generator does not
+write. From a "x64 Native Tools" prompt of Visual Studio 2022:
+
+```powershell
+cmake -S . -B build-tidy -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DEASNAP_BUILD_TESTS=ON
+clang-tidy -p build-tidy apps\easnap-desktop\src\app\session_state.cpp
+```
+
 ## Packaging
 
 ```powershell
