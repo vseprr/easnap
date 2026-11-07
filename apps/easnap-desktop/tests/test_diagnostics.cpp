@@ -318,7 +318,11 @@ void TestCrashReports(const std::wstring& directory) {
 
         // One more report; the starting process keeps at most three older ones.
         expected_reports = std::min<size_t>(expected_reports, 3) + 1;
-        CHECK(Files(directory, L"test-*.dmp").size() == expected_reports);
+        const std::vector<std::wstring> reports = Files(directory, L"test-*.dmp");
+        if (reports.size() != expected_reports) {
+            for (const std::wstring& name : reports) { std::fprintf(stderr, "  report %ls\n", name.c_str()); }
+        }
+        CHECK(reports.size() == expected_reports);
         const auto report = diagnostics::PendingCrashReport(directory);
         CHECK(report.has_value());
         if (!report) { continue; }

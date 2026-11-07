@@ -142,11 +142,21 @@ DWORD WINAPI ReportThread(void*) noexcept {
     if (::WaitForSingleObject(state.request, INFINITE) != WAIT_OBJECT_0) { return 0; }
     SYSTEMTIME now{};
     ::GetSystemTime(&now);
+    // Windows reuses process IDs quickly, so two reports can share the second
+    // and the ID. A report never replaces another: the name carries
+    // milliseconds, and a name that exists already gets a counter.
     wchar_t path[MAX_PATH + 96]{};
-    ::swprintf(path, ARRAYSIZE(path), L"%s\\%s-%04u%02u%02u-%02u%02u%02u-%lu.dmp", state.directory, state.name,
-               now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond, ::GetCurrentProcessId());
     bool written = false;
-    HANDLE file = ::CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE file = INVALID_HANDLE_VALUE;
+    for (unsigned attempt = 1; attempt <= 9 && file == INVALID_HANDLE_VALUE; ++attempt) {
+        wchar_t counter[8]{};
+        if (attempt > 1) { ::swprintf(counter, ARRAYSIZE(counter), L"-%u", attempt); }
+        ::swprintf(path, ARRAYSIZE(path), L"%s\\%s-%04u%02u%02u-%02u%02u%02u-%03u-%lu%s.dmp", state.directory,
+                   state.name, now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
+                   now.wMilliseconds, ::GetCurrentProcessId(), counter);
+        file = ::CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE && ::GetLastError() != ERROR_FILE_EXISTS) { break; }
+    }
     if (file != INVALID_HANDLE_VALUE) {
         MINIDUMP_EXCEPTION_INFORMATION exception{};
         exception.ThreadId = state.thread_id;
