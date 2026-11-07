@@ -18,9 +18,11 @@ and the individual runs in the [validation records](releases/validation-history.
 - The Release workflow built, tested and attested its packages on the hosted
   runner; the draft was verified before publication.
 - Stabilization toward v1.1.0 ran on the branch `stabilize/v1.1.0`, created
-  on 2026-11-07 from `main` at `42b3efa`, and ends with the version label
-  `rc.1` ([release notes](releases/v1.1.0-rc.1.md)). It is not merged, tagged
-  or published yet.
+  on 2026-11-07 from `main` at `42b3efa`. Its release candidate rc.1 was
+  checked by the owner and not published
+  ([record](releases/v1.1.0-rc.1.md)); the branch now carries v1.1.0 with an
+  empty prerelease label ([release notes](releases/v1.1.0.md)). It is not
+  merged, tagged or published yet.
 - Since beta.2 (all on that branch): the 2026-11-07 audit's code findings
   (recovery messages that promised too much, dialogs and lists excluded from
   capture the way the islands are, crash reports that could replace each
@@ -46,8 +48,14 @@ and the individual runs in the [validation records](releases/validation-history.
   Full 48 of 48 in the image at 150 %, no retry, the same GDI fallback in
   both. A silent upgrade from v1.0.2 in the lab left one Easnap entry at
   1.1.0-rc.1 and the settings file unchanged.
+- v1.1.0, final sources (2026-11-07, lab): Soak 54 of 54 at 125 % on the
+  second run (the first failed one timing check of
+  `recording_worker_foundations`) and Full 48 of 48 at 150 %, no retry. The
+  owner checked the release candidate by hand; its two problems are
+  corrected, and the drag test passed on the development PC with the
+  correction.
 - The runs, including the ones that failed, and those of earlier versions are
-  in the [validation records](releases/validation-history.md#validation-of-v110-rc1).
+  in the [validation records](releases/validation-history.md#validation-of-v110).
 
 ## Not validated
 
@@ -117,6 +125,9 @@ and the individual runs in the [validation records](releases/validation-history.
   and `annotation_editing_native` replace its content.
 - `mfplay_preview_audio_transport` can miss its 1500 ms limit for retiring a
   suspended native host when the machine is under load.
+- `recording_worker_foundations` expects the capture thread never to wake
+  after a frame's due time; it failed once in 17 lab runs, during a Soak run
+  with tests in parallel (2026-11-07).
 - On the hosted runner the Build workflow failed on `main` on 2026-10-30, at
   `a5293c8` in `diagnostics_log_and_crash_reports` (Debug and AddressSanitizer
   jobs) and at `42b3efa` in `mp4_trim_export_backend` (Release job, an export
@@ -193,11 +204,11 @@ post-v1 without a promised date.
 
 ## Next slice
 
-The owner checks a new rc.1 package by hand. On the owner's approval the agent pushes
-the branch and opens a pull request to `main`, whose CI run shows whether the
-hosted runner's two failures are gone and whether the new Format and
-clang-tidy jobs work there, merges it, and tags and publishes rc.1. Each
-problem found gets its own fix and lab run. Then v1.1.0: an empty prerelease
-label, release notes for everything since v1.0.2, and the README and
-`SECURITY.md` naming it the latest stable version. The package-manager
-submissions remain the owner's step ([distribution](distribution.md)).
+Publishing v1.1.0, which the owner approved on 2026-11-07 without a public
+release candidate: the agent pushes the branch and opens a pull request to
+`main`, whose CI run shows whether the hosted runner's two failures are gone
+and whether the new Format and clang-tidy jobs work there, merges it, tags
+`v1.1.0` and publishes the release the workflow drafts. A problem found there
+gets its own fix and lab run first. The package-manager submissions remain
+the owner's step ([distribution](distribution.md)). Then v1.2 on a branch of
+its own.

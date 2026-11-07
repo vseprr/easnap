@@ -11,7 +11,7 @@ impact. Do not include private captures, credentials or personal file paths.
 Do not post exploitable vulnerabilities in public issues. Reports are handled
 by the maintainer; no fixed response-time guarantee is offered.
 
-The latest 1.x release receives fixes. Older releases are not maintained as
+The latest 1.x release, currently v1.1.0, receives fixes. Older releases are not maintained as
 separate security branches.
 
 ## Data and execution

@@ -284,5 +284,9 @@ mechanism held the cursor back is not established.
   dialog `WM_NCUAHDRAWCAPTION` and painted its own caption over a layered
   dialog; in the 125 % image it sent nothing, so `island_capture_exclusion`
   passed there on sources that failed on the host (2026-11-07,
-  [ADR-008](ADR-008-recording-ui-and-safe-finalization.md)). Why the image
-  differs is not known.
+  [ADR-008](ADR-008-recording-ui-and-safe-finalization.md)). Both have
+  visual styles on (Aero), and the dialog's non-client area is not drawn by
+  the compositor in either. Dark mode for apps, on at the host, is not the
+  difference: with it turned on in the image the press still sent nothing
+  (probe `20261107-225106`). What remains is the graphics adapter and the
+  update revision; which of them, or what else, is not known.

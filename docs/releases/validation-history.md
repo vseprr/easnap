@@ -379,6 +379,41 @@ changes), in the lab VM, by then at Windows 10 build 19045.6466:
   passed on the GDI fallback and the verdict marked it `VM-ok-but-fallback`,
   the provider's documented behaviour on a still desktop.
 
+## Validation of v1.1.0
+
+The stable release, prepared on the branch `stabilize/v1.1.0` on 2026-11-07
+from the release candidate below with the two corrections from the owner's
+check and an empty prerelease label; the [release notes](v1.1.0.md)
+summarize it.
+
+- **Final sources** (tree `c8de8c4297a3`, the code of `5a5490c` with the
+  label emptied):
+  - **Soak at 125 %: 54 of 54 with no retry** (run `20261107-232024-soak`,
+    14 min 45 s).
+  - The Soak run before it on the same tree (`20261107-225336-soak`,
+    15 min 13 s) passed 53 of 54: `recording_worker_foundations` failed one
+    check, `worker.pacing_slots_missed() == 0`; its capture thread woke after
+    a frame's due time once while tests ran in parallel. The test had passed
+    in all 15 earlier lab runs that included it. Neither the test nor the
+    worker changed since v1.0.0.
+  - **Full at 150 %: 48 of 48 with no retry** (run `20261107-230849-full`,
+    10 min 9 s).
+  - In each, `real_desktop_recording_session` passed on the GDI fallback
+    (`VM-ok-but-fallback`).
+- **The two corrections** (`4392b5e`, `eaa65f8`): Full at 125 % 48 of 48 on
+  each (`20261107-222006-full`, `20261107-223026-full`) and Full at 150 %
+  48 of 48 on `eaa65f8` (`20261107-224047-full`). The probes and the runs on
+  the development PC are listed under the release candidate.
+- **Why the lab missed the caption:** both the development PC and the 125 %
+  image run visual styles (Aero), and DWM draws the non-client area of the
+  layered dialog in neither. With dark mode for apps turned on in the image,
+  as on the development PC, the press on the header still sent no
+  `WM_NCUAHDRAWCAPTION` (probe `20261107-225106`, guest setting set back
+  afterwards). The graphics adapter and the update revision remain as
+  differences ([ADR-037](../decisions/ADR-037-isolated-test-lab.md#not-validated)).
+- **Hosted runner:** the pull request's CI run is the first on the hosted
+  runner for this branch.
+
 ## Validation of v1.1.0-rc.1
 
 This section records the release candidate prepared on the branch

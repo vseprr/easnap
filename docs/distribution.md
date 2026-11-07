@@ -11,7 +11,7 @@ The version lives in the root `CMakeLists.txt`, for example:
 
 ```cmake
 project(Easnap VERSION 1.1.0 ...)
-set(EASNAP_VERSION_PRERELEASE "rc.1")   # "beta.N", "rc.N", or "" for a stable release
+set(EASNAP_VERSION_PRERELEASE "")   # "beta.N", "rc.N", or "" for a stable release
 ```
 
 Together they give the version users see (`1.1.0-rc.1`): About, the product
