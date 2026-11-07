@@ -577,6 +577,16 @@ int Run() {
 
     ::DestroyWindow(backdrop);
     ::UnregisterClassW(backdrop_class.lpszClassName, backdrop_class.hInstance);
+    // The lab reads the capture path from this line: Desktop Duplication is
+    // the path the production provider uses; a run that only reached the GDI
+    // reads proves less, and the verdict says so.
+    const char* path = "Unknown";
+    if (reached.duplication) {
+        path = "Duplication";
+    } else if (reached.gdi || reached.blit) {
+        path = "GDI";
+    }
+    std::printf("EASNAP_CAPTURE_PATH=%s\n", path);
     std::printf("island capture: %d passed, %d failed (screen blit %s, GDI fallback %s, Desktop Duplication %s)\n",
                 passed, failed, reached.blit ? "checked" : "not reached", reached.gdi ? "checked" : "not reached",
                 reached.duplication ? "checked" : "not reached");

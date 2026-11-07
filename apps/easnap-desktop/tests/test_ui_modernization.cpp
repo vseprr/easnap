@@ -731,8 +731,9 @@ void InteractionCorrections() {
     CHECK(WaitFor([&] { return ::IsWindowVisible(popup) != FALSE; }));
     const auto work = platform::MonitorForRect(hand_bounds).work_area;
     ::SetCursorPos(work.right - 2, work.bottom - 2);
-    Pump(320);
-    CHECK(!::IsWindowVisible(popup));
+    // Hidden once the pointer has been outside for 250 ms, checked by a timer;
+    // the pointer position can arrive late, so wait for the result.
+    CHECK(WaitFor([&] { return !::IsWindowVisible(popup); }));
     ::SetCursorPos(saved_cursor.x, saved_cursor.y);
     Click(editor.context_hwnd(), 2520);
     Shot(popup, L"brush-mini-island.png");
@@ -937,8 +938,7 @@ void EditorFollowupInteractions() {
     ::SetFocus(clear);
     CHECK(::SetCursorPos(field.right + 30, field.top));
     ::SendMessageW(clear, WM_MOUSELEAVE, 0, 0);
-    Pump(100);
-    CHECK(!::IsWindowVisible(clear));
+    CHECK(WaitFor([&] { return !::IsWindowVisible(clear); }));
     field = Bounds(watermark);
     CHECK(::SetCursorPos(field.left + 20, field.top + 10));
     CHECK(::GetCursorPos(&actual) && ::PtInRect(&field, actual));
