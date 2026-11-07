@@ -411,8 +411,16 @@ summarize it.
   `WM_NCUAHDRAWCAPTION` (probe `20261107-225106`, guest setting set back
   afterwards). The graphics adapter and the update revision remain as
   differences ([ADR-037](../decisions/ADR-037-isolated-test-lab.md#not-validated)).
-- **Hosted runner:** the pull request's CI run is the first on the hosted
-  runner for this branch.
+- **Hosted runner:** the Build run of pull request #17 (run `42411860509`)
+  and the Release run of the tag (`42413078058`) succeeded. In both, Release,
+  Debug, AddressSanitizer, Format and repository hygiene passed, and so did
+  `mp4_trim_export_backend` and `diagnostics_log_and_crash_reports`, which had
+  failed there before. clang-tidy, report only, again left 47 findings. CodeQL
+  passed on the pull request.
+- **The draft** before publication: the setup, the ZIP and the symbols ZIP
+  matched their SHA-256 files, `gh attestation verify` accepted the setup and
+  the ZIP, and `Easnap.exe`, `EasnapPreviewHost.exe` and the setup reported
+  1.1.0. Published on 2026-11-08 as the latest release.
 
 ## Validation of v1.1.0-rc.1
 
