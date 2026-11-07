@@ -7,14 +7,15 @@ phase boundaries; what is implemented and validated belongs in project status,
 and what each release contained in its release notes, listed in the
 [documentation index](docs/README.md).
 
-## Current: v1.1.0-beta.2 published, stabilization toward v1.1.0 under way
+## Current: v1.1.0-rc.1 prepared, waiting for the owner's checks
 
 The first beta of v1.1 was published on 2026-10-13 as a prerelease of
 [`vseprr/easnap`](https://github.com/vseprr/easnap): Scrollshot in the
 application and the work a public beta needs. The second beta, with the
 corrections from testing the first, was published on 2026-10-30. The
-stabilization toward v1.1.0 started on 2026-11-07 on the branch
-`stabilize/v1.1.0`. The latest stable version is v1.0.2, the second
+stabilization toward v1.1.0 ran on 2026-11-07 on the branch
+`stabilize/v1.1.0` and ends with the release candidate v1.1.0-rc.1, which is
+not tagged or published yet. The latest stable version is v1.0.2, the second
 maintenance release on top of v1.0.0.
 
 | Phase | State |
@@ -27,26 +28,25 @@ maintenance release on top of v1.0.0.
 | Scrollshot | Implemented, including editing of the stitched image; released in v1.1.0-beta.1 |
 | Beta readiness | Implemented; v1.1.0-beta.1 and v1.1.0-beta.2 published as prereleases |
 | Isolated test lab | Implemented 2026-10-19: Hyper-V VM driven by winlab, direct build, capture-path reporting ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md)) |
-| v1.1.0 stable | Stabilization on `stabilize/v1.1.0` (2026-11-07): audit, documentation, formatting, code fixes; then rc.1 |
+| v1.1.0 stable | Stabilization on `stabilize/v1.1.0` (2026-11-07): audit, documentation, formatting, static analysis, code fixes; v1.1.0-rc.1 prepared |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
 
-On `stabilize/v1.1.0`, in this order (details in
-[project status](docs/project-status.md#next-slice)):
+In this order (details in [project status](docs/project-status.md#next-slice)):
 
-1. Documentation pass.
-2. Formatting and static analysis.
-3. Code fixes from the 2026-11-07 audit, and the hosted-runner Build failures.
-4. v1.1.0-rc.1: version label, release notes, Full and Soak runs in the lab,
-   the owner's manual checklist.
-5. The owner's results with rc.1, then v1.1.0.
+1. The owner's checks of v1.1.0-rc.1 by hand, then its tag and publication by
+   the owner.
+2. A fix for each problem those checks find, each with its own lab run.
+3. v1.1.0: an empty prerelease label, release notes for everything since
+   v1.0.2, and the README and `SECURITY.md` naming v1.1.0 as the latest
+   stable version. The owner tags and publishes.
 
 Open on the owner's side: the host Full run for the writer fix, since the host
-desktop is used only when the owner asks. The checks the betas could not make
-on one PC remain: Windows 11, an N edition, Scrollshot on real applications,
-other scale factors, the installer. The lab can take Windows 11 and N-edition
-images once a second `testenv.json` names them.
+desktop is used only when the owner asks. Not covered yet: Windows 11, an N
+edition, Scrollshot on real applications. `lab.ps1 -Variant` names further lab
+images built from `testenv.json`; the first one runs at 150 % scale. A
+Windows 11 image needs its ISO and virtual TPM support in winlab.
 
 Carried over from v1.0.2 and not part of the beta:
 
@@ -81,6 +81,11 @@ included in v1 and has no promised release date.
 
 Camera, Mouse Effects, device pickers, GPU-native recording, a single muxing
 thread for audio and video, and long-video trim optimization remain outside
-this release. Code signing is not in place; binaries are unsigned. Codec
+this release. Code signing is not in place; binaries are unsigned, and the
+owner decided on 2026-11-07 to publish v1.1.0 unsigned. v1.2 candidates from
+the 2026-11-07 audit: splitting `CaptureCoordinator` (an ADR first), shorter
+audio and editor functions, an exception boundary for the WASAPI capture
+thread, a golden corpus of recorded frames for Scrollshot, and a clang-tidy job
+that can be required. Codec
 cut-point granularity, GIF palette/timing limits and source-start decoding for
 late trims are documented implementation limits, not unimplemented v1 features.

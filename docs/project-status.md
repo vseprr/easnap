@@ -17,8 +17,19 @@ and the individual runs in the [validation records](releases/validation-history.
   ([release notes](releases/v1.1.0-beta.2.md)).
 - The Release workflow built, tested and attested its packages on the hosted
   runner; the draft was verified before publication.
-- Stabilization toward v1.1.0 runs on the branch `stabilize/v1.1.0`, created
-  on 2026-11-07 from `main` at `42b3efa`; it is not merged yet.
+- Stabilization toward v1.1.0 ran on the branch `stabilize/v1.1.0`, created
+  on 2026-11-07 from `main` at `42b3efa`, and ends with the version label
+  `rc.1` ([release notes](releases/v1.1.0-rc.1.md)). It is not merged, tagged
+  or published yet.
+- Since beta.2 (all on that branch): the 2026-11-07 audit's code findings
+  (recovery messages that promised too much, dialogs and lists excluded from
+  capture the way the islands are, crash reports that could replace each
+  other, the mode island under a top taskbar, failure paths that could end
+  Easnap when memory ran out, stale comments), the C++ sources formatted with
+  `.clang-format` and checked in CI, a report-only clang-tidy job, and a
+  second lab image at 150 % (`lab.ps1 -Variant Scale150`), whose first runs
+  led to the 150 % text-fit correction and to two visible-desktop tests that
+  no longer assume 125 %.
 
 ## Validated
 
@@ -27,8 +38,12 @@ and the individual runs in the [validation records](releases/validation-history.
 - Stabilization baseline on the beta.2 sources (2026-11-07, lab): Standard 39
   of 39 and Soak 54 of 54, no retry; `real_desktop_recording_session` passed
   on the GDI fallback (`VM-ok-but-fallback`).
+- v1.1.0-rc.1, final sources (2026-11-07, lab): Soak 54 of 54 at 125 % and
+  Full 48 of 48 in the image at 150 %, no retry, the same GDI fallback in
+  both. A silent upgrade from v1.0.2 in the lab left one Easnap entry at
+  1.1.0-rc.1 and the settings file unchanged.
 - The runs, including the ones that failed, and those of earlier versions are
-  in the [validation records](releases/validation-history.md#validation-of-v110-beta2).
+  in the [validation records](releases/validation-history.md#validation-of-v110-rc1).
 
 ## Not validated
 
@@ -43,7 +58,7 @@ and the individual runs in the [validation records](releases/validation-history.
   19045. The refusal below build 19041 and the Record message on an N edition
   were not seen on such a system.
 - **Scrollshot** on real applications (browsers, editors, lists that load as
-  they scroll), at a scale other than 125 %, on mixed-DPI or portrait monitors,
+  they scroll), at a scale other than the lab's 125 and 150 %, on mixed-DPI or portrait monitors,
   on a second GPU, with wheel routing by focus, and through a display change
   during capture. Such content is covered by synthetic documents only.
 - **In the running application:** "Start with Windows" (ticking it writes the
@@ -57,8 +72,9 @@ and the individual runs in the [validation records](releases/validation-history.
   installing would replace the owner's copy. The owner installed beta.1 with
   the English pages and used it (reported 2026-10-30), and installed and
   removed the published beta.2 by hand, the uninstaller removing the settings
-  as chosen (reported 2026-11-07). Not seen: the removal of the sign-in entry,
-  and an upgrade over v1.0.2.
+  as chosen (reported 2026-11-07). An upgrade over v1.0.2 ran silently in the
+  lab only. Not seen: the removal of the sign-in entry, an upgrade over beta.2
+  and a return to v1.0.2.
 - **The published packages:** for beta.1 the Release workflow checked their
   SHA-256 files, attested them and created the draft, but nobody downloaded
   or ran them before publication. For beta.2 the draft's checksums and the
@@ -103,9 +119,12 @@ and the individual runs in the [validation records](releases/validation-history.
   Triage (2026-11-07): the trim export with audio failed in 2 of 10 Release
   runs since the MP4 writer change of 2026-10-19 and in none of 26 before, on
   the runner's software encoder; the exporter's reason is not visible because
-  the test shows no log. The crash-report test failed in 2 of 40 jobs: a report
-  name has one-second resolution and the process ID, so a reused ID within the
-  same second overwrites a report.
+  the test showed no log; it now prints it, and 50 repeated runs in the lab VM
+  did not fail, so the cause is still unknown. The crash-report test failed in
+  2 of 40 jobs, most likely because a report could replace an earlier one with
+  the same name; report names are now unique
+  ([ADR-030](decisions/ADR-030-log-file-and-crash-reports.md)). Neither fix has
+  run on the hosted runner yet.
 - For beta.1 the CodeQL workflow and the AddressSanitizer job passed on the
   hosted runner, where `wasapi_audio_capture` is reported as skipped. In one
   AddressSanitizer run `incremental_test_selection` (5 to 7 s there) hit its
@@ -168,12 +187,12 @@ post-v1 without a promised date.
 
 ## Next slice
 
-Stabilization toward v1.1.0 on `stabilize/v1.1.0`, in this order: the
-documentation pass; a formatting and static-analysis pass; the code findings
-of the 2026-11-07 audit (a recovery promise that can be false when marking the
-recording fails, a save-failure message that promises a later offer, capture
-exclusion of dialogs and drop-down lists through `ui::ExcludeFromCapture`,
-stale planning comments) and the hosted-runner Build failures above. Then
-v1.1.0-rc.1, with Full and Soak runs in the lab and the owner's manual checks,
-and v1.1.0 after the owner's results with rc.1. The package-manager
-submissions remain the owner's step ([distribution](distribution.md)).
+The owner checks v1.1.0-rc.1 by hand where the lab cannot (the installer's
+pages and an upgrade over beta.2, Start with Windows and its removal on
+uninstall, Scrollshot on real applications, the Turkish text), opens a pull request from the branch to `main`, whose CI
+run shows whether the hosted runner's two failures are gone and whether the
+new Format and clang-tidy jobs work there, and tags and publishes rc.1. Each problem found
+gets its own fix and lab run. Then v1.1.0: an empty prerelease label, release
+notes for everything since v1.0.2, and the README and `SECURITY.md` naming it
+the latest stable version. The package-manager submissions remain the owner's
+step ([distribution](distribution.md)).

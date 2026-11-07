@@ -9,7 +9,9 @@ later, not to v1.0.2.
 **Windows warns about an unknown publisher.** The binaries and the installer
 are unsigned. Compare the SHA-256 value of your download with the `.sha256`
 file of the same release, or run
-`gh attestation verify <file> --repo vseprr/easnap`.
+`gh attestation verify <file> --repo vseprr/easnap`. On Windows 11 with Smart
+App Control turned on, Windows can block unsigned programs that it does not
+know yet; Easnap has not been tested on Windows 11.
 
 **Nothing appears after starting Easnap.** It has no main window. Its icon is
 in the notification area, possibly among the hidden icons behind the arrow.

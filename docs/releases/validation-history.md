@@ -378,3 +378,60 @@ changes), in the lab VM, by then at Windows 10 build 19045.6466:
   41 s), the first Soak run since v1.0.1. `real_desktop_recording_session`
   passed on the GDI fallback and the verdict marked it `VM-ok-but-fallback`,
   the provider's documented behaviour on a still desktop.
+
+## Validation of v1.1.0-rc.1
+
+This section records the release candidate prepared on the branch
+`stabilize/v1.1.0` on 2026-11-07; the [release notes](v1.1.0-rc.1.md)
+summarize it. What is still not validated is listed in
+[project status](../project-status.md#not-validated).
+
+The lab now has two images, both Windows 10 Pro 22H2 with one 1920x1080
+display and no GPU: the one of beta.2 at 125 % and a second at 150 %
+(`easnap-lab-150`, built on 2026-11-07 at build 19045.6456; see
+[testing](../testing.md#lab)).
+
+- **Final sources** (`60d6ab4` with the version label `rc.1`, the release
+  notes and the two test corrections below; tree `a05d93dccc65`):
+  - **Soak at 125 %: 54 of 54 with no retry** (run `20261107-193138-soak`,
+    14 min 46 s).
+  - **Full at 150 %: 48 of 48 with no retry** (run `20261107-193830-full`,
+    10 min 7 s).
+  - In both, `real_desktop_recording_session` passed on the GDI fallback
+    (`VM-ok-but-fallback`), the provider's documented behaviour on a still
+    desktop.
+  - Three probes of the two corrected tests at 150 % (`20261107-193133`,
+    `20261107-194926`, `20261107-195231`, each running them twice) passed.
+    Over these six executions and the Full run, `trim_timeline_seek_stress`
+    made 925 pointer moves: one landed late (30 ms), none had to be issued
+    again and none was lost.
+- **Runs on the way:**
+  - Before the text-fit correction, at 125 %: Full 48 of 48
+    (`20261107-163328-full`) and Soak 54 of 54 (`20261107-164346-soak`).
+  - The first Standard run at 150 % (`20261107-163347-standard`): 38 of 39.
+    `text_fits_in_every_language` failed 22 of 416 checks, the Scrollshot
+    status message and the editor's value labels; corrected
+    ([ADR-032](../decisions/ADR-032-interface-text-in-string-tables.md#text-has-to-fit)).
+  - With that correction: Soak at 125 % 54 of 54 (`20261107-184830-soak`).
+    The first Full run at 150 % (`20261107-190243-full`) passed 46 of 48:
+    `annotation_editing_native` and `trim_timeline_seek_stress` failed on the
+    first try and on the retry. Both failures came from assumptions in the
+    tests, not from Easnap, and the tests were corrected
+    ([ADR-037](../decisions/ADR-037-isolated-test-lab.md#the-image-at-150--2026-11-07)).
+- **Upgrade from v1.0.2**, in the 125 % lab VM restored from its golden
+  checkpoint, through PowerShell Direct: the v1.0.2 installer and then the
+  rc.1 installer ran silently and both exited with 0. Afterwards Windows
+  listed one Easnap entry (the same installer AppId) at version 1.1.0-rc.1,
+  `Easnap.exe` and `EasnapPreviewHost.exe` reported 1.1.0-rc.1, a settings
+  file written between the two installs had the same SHA-256, and the Start
+  menu held one Easnap shortcut. The installer's pages, an upgrade from
+  beta.2 and a return to v1.0.2 were not run there.
+- **Packages,** built locally from the final sources with
+  `package-release.ps1`: the portable ZIP, the symbols ZIP and the installer,
+  each with a SHA-256 file. `package-manifests.ps1` wrote the winget
+  manifests (identifier `vseprr.Easnap.Beta`, schema 1.28.0), which pass
+  `winget validate`, and the Scoop manifest; nothing was submitted.
+- **Static checks:** all 150 C++ files pass `scripts/format.ps1 -Check`.
+  clang-tidy, report only, left 47 findings at `74b75d7`.
+- **Hosted runner:** the branch has not been run there; that happens when
+  the pull request is opened.
