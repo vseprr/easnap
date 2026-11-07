@@ -14,6 +14,7 @@ different phases: the gate disables DWM transitions and captures four
 maximize/restore transitions, the endpoint check maximizes and restores before
 its observation period. An endpoint pass does not establish a pass for
 maximize-transition presentation or for the whole resize matrix.
+
 ## 1. Choose the existing window path
 
 | Surface | Reuse | Boundary to preserve |
@@ -128,10 +129,10 @@ do not hide controls or add transparency/layered-window hacks to conceal damage.
 - Keep real native input, focus, keyboard and accessibility semantics. Use the
   existing targeted redraw guard for styled controls; blanket `WM_SETREDRAW`
   around input or an entire resize can change visibility and break behavior.
-- Annotation EDIT has a separate accepted contract: its visible HWND owns the
-  caret/input/selection/clipboard, its synchronous native glyph/background DC
-  is clipped, and the source-backed custom painter owns visible annotation
-  pixels. Reuse that contract; do not hide/recreate EDIT while typing.
+- Annotation EDIT has a separate accepted contract, owned by
+  [ADR-022](../decisions/ADR-022-text-input-and-content-sized-trim.md): the
+  visible HWND keeps input, the source-backed painter owns the pixels. Reuse
+  it; do not hide/recreate EDIT while typing.
 - Reuse `theme::DrawMaterial`: bounded per-thread geometry and colored-raster
   caches, complete rounded ends and a stretched constant center. Keep palette,
   dimensions and animated depth in cache identity. Do not recompute Gaussian
@@ -142,7 +143,8 @@ do not hide controls or add transparency/layered-window hacks to conceal damage.
 ## 5. Keep media work and shutdown out of the resize loop
 
 The reference is `ProcessMediaPreview` in `src/media/preview_process.cpp`,
-`TrimWindow` and [ADR-010](../decisions/ADR-010-trim-view-ownership-and-orchestration.md).
+`TrimWindow` and [ADR-010](../decisions/ADR-010-trim-view-ownership-and-orchestration.md),
+whose decision 4 states the mechanism behind each rule below.
 
 - Preserve the asynchronous, coalesced preview pipe: at most one unacknowledged
   resize request; newer dimensions replace local pending state. The helper owns
@@ -158,39 +160,27 @@ The reference is `ProcessMediaPreview` in `src/media/preview_process.cpp`,
 - Never synchronously call foreign `SetWindowPos`, `UpdateWindow`, recursive
   `RedrawWindow` or native playback from the parent UI thread. Do not add sleeps,
   busy waits or encoder/decoder shutdown to resize/paint callbacks.
-- Keep acknowledgement, heartbeat, opening and recovery deadlines bounded.
-  After delayed owner polling returns snapshot credit, the existing refresh
-  grace spans polls until a fresh reply or three seconds; another old packet
-  cannot extend it. Preserve explicit failure and generation checks.
-- Keep timeline pointer requests scoped to one gesture. Identical down/move/up
-  targets must not seek twice just because playback advanced while pressed.
-  `timeline_seek_position_` records the requested target, rather than the live
-  playback cursor; clear it on each new press, release, capture loss, Hide and
-  Destroy. Different drag targets and later clicks at the same point still
-  seek. Keyboard and UIA requests use their existing direct path.
-- Preserve the distinction between accepted input and issued native commands.
-  A completed seek can move the native clock backwards between two health
-  samples. `PreviewLiveness::Observe` resets its playback baseline when the
-  actual command sequence changes, even if neither sample saw a command in
-  flight. Input alone cannot extend the existing two-second pending-command
-  deadline; the same sequence with no native progress must still fail. Keep
-  the deterministic tests in `test_trim_workflow.cpp` and real helper stress
-  together when changing this boundary. This is a health-check correction,
-  not permission to hide a decoder stall or widen the recovery timeout.
+- Keep acknowledgement, heartbeat, opening and recovery deadlines bounded,
+  including the three-second refresh grace after delayed owner polling.
+  Preserve explicit failure and generation checks.
+- Scope timeline pointer requests to one gesture: `timeline_seek_position_`
+  records the requested target, not the live playback cursor, and is cleared on
+  each new press, release, capture loss, Hide and Destroy. Keyboard and UIA
+  requests keep their direct path.
+- Keep accepted input and issued native commands apart in
+  `PreviewLiveness::Observe`. Change that boundary only together with the
+  deterministic tests in `test_trim_workflow.cpp` and the real helper stress;
+  it is not permission to hide a decoder stall or widen the recovery timeout.
 - Preview opening must present the first decoded frame paused at zero,
   including a one-frame source. Retain the dedicated startup test.
 - At completion, retain the final frame and logical Out until the next action;
-  replay starts at In. Exclusive Out selects the preceding video sample. Keep
-  real desktop pixel checks for the transition, held picture and replay.
-- The helper's retained still uses an opaque layered child surface and shared
-  PaintBuffer. Submit its complete bitmap before hiding native video, and
-  resubmit it on WM_SIZE; WM_PAINT alone cannot initialize the layered surface.
-  Preserve the helper's Windows 10 compatibility manifest and sibling clipping.
-  This isolates the bitmap from stale parent/control backing pixels. Do not
-  extend this flag to the top-level trim, dialogs or other controls. See ADR-010.
-- Ordinary playback and paused images stay on the native video path. The still
-  is hidden after replay's actual first-sample interval; do not paint a future
-  endpoint into ordinary native preview images.
+  replay starts at In. Keep real desktop pixel checks for the transition, held
+  picture and replay.
+- Keep the retained still on the helper's opaque layered child, submitted
+  complete before native video hides and again on WM_SIZE, with the helper's
+  Windows 10 manifest and sibling clipping. Do not extend layered presentation
+  to the top-level trim, dialogs or other controls. Ordinary playback and
+  paused images stay native; do not paint a future endpoint into them.
 - Hide/retire UI callbacks before deferred teardown. Close/cancel must preserve
   source media and must not destroy an owner while its callback is executing.
 
@@ -206,10 +196,9 @@ is destroyed ([Microsoft ownership contract](https://learn.microsoft.com/en-us/w
 the corresponding C++ view must clear panel/control handles in
 `WM_NCDESTROY` and recreate them before reuse.
 `test_ui_modernization --window-lifetime`, part of `ui_modernization_native`,
-destroys a real owner and reopens the island twelve times. On 2026-09-29 that
-run kept the GDI and USER object counts at 13 and 8 through all twelve cycles;
-that establishes this bounded case, not that every window lifetime is free of
-leaks.
+destroys a real owner and reopens the island twelve times; its measured object
+counts, and what they do not establish, are in
+[ADR-010](../decisions/ADR-010-trim-view-ownership-and-orchestration.md#measured).
 
 ## 6. Validate the new surface before handoff
 
@@ -257,75 +246,26 @@ input, align the physical pointer with the message coordinates and authenticate
 foreground ownership before capture. Confirm actual capture ownership within
 the existing bounded wait; injected input alone is not proof of a received click.
 
-For a requested physical display, `scripts/test.ps1 -Monitor` sets
-`EASNAP_TEST_MONITOR` to its active Windows device name (for example
-`\\.\DISPLAY2`); set it by hand only when running a test executable directly.
-Record the display's identity, physical bounds and DPI. `tests/native_test_monitor.h` provides the shared opt-in placement;
-screen-coordinate fixtures and injected points must use the same translation.
-Do not translate bitmap/client coordinates or drag deltas. Enable PMv2 before
-the first HWND, as the application does; DPI-virtualized fixture coordinates do
-not establish a real 125% pass. Capture overlays still cover all active monitors.
-
-The dedicated preview pixel check uses a nonactivating, always-on-top tool window
-without a taskbar button. It reasserts its own z-order, adapts to work-area/display
-changes, and recreates capture after display reconfiguration. It still verifies
-actual visible ownership and pixels; an obscured surface fails explicitly. Tests
-that intentionally use the real pointer/focus/capture remain `RUN_SERIAL` and
-need a controlled desktop. Daily runs defer these as pending and the Full tier
-runs them, in the [lab](../testing.md#lab). Hosted CI runs none of them: it has no real display or input queue.
+How a requested physical display reaches a test (`scripts/test.ps1 -Monitor`,
+`EASNAP_TEST_MONITOR`, `tests/native_test_monitor.h`) is in
+[testing](../testing.md#keeping-tests-away-from-your-work); the per-monitor v2
+rule for fixtures and the tool window of the preview pixel check are under
+[writing tests](../testing.md#writing-tests). The visible-desktop tests are
+pending in daily runs and run in the Full tier in the
+[lab](../testing.md#lab); hosted CI runs none of them.
 
 Useful existing checks in `apps/easnap-desktop/tests`:
 
 - `ui_modernization_native`: shared controls, production trim, DPI/layout and
   rapid native resizing while playing/exporting.
-- `test_ui_modernization --resize-edges <evidence-directory>`: opt-in real drags
-  from eight directions, caption movement and maximize/restore, with independent
-  monitor frames, on the native paused image, retained endpoint and native
-  playback. Repeat with `EASNAP_TEST_RESIZE_SLOW=1` for the slower trajectory.
-  Both modes explicitly reach and check the native tracking minimum.
-  `--resize-controls <evidence-directory> [edge]` applies the same directional
-  observer to a visible status notice and to visible export progress/Cancel.
-  It exercises the production view's public state transitions; export encoding
-  and cancellation correctness remain separate integration checks.
-  An optional final edge name selects a diagnostic subset; that is **not** a
-  full-gate pass. `--resize-layout <evidence-directory> [edge]` releases the real
-  preview to isolate owner/layout behavior and cannot replace media coverage.
-  `--resize-paused <evidence-directory> [edge]` restricts diagnostics to native
-  paused video. `--trim-observe` holds a real paused Trim for 60 seconds without
-  an internal capture/comparator/probe, for external recording. The separate
-  `--resize-external [edge]` diagnostic retains the gate's native drags, backdrop,
-  DWM attributes and timing probes but delegates recording to another process;
-  it returns 77 when its nonvisual checks succeed, never a visual pass. These
-  diagnostic commands must not replace the unchanged `--resize-edges` gate.
-  The observer preserves strict comparison thresholds and separately names
-  paused/endpoint references and failure frames, with geometry JSON.
-  Before selecting a reference, it authenticates captured title pixels against
-  `RenderControl(chrome)` from the real owned caption painter. Current HWND
-  ownership alone cannot prove that an asynchronously captured frame contains
-  that HWND. This preparation is bounded and occurs before observed motion;
-  it never prints foreign video and never replaces desktop evidence. An absent
-  or obscured reference still fails preparation.
-  Sixteen patch slots follow the painter's actual text/glyph anchors, including
-  all caption buttons, timeline In/Out labels and visible status/progress.
-  Hidden status/progress slots are inactive. An icon
-  button's left-aligned label must not be sampled at its variable center.
-  Minimum measurement waits for the actual native clamp, with a one-second
-  deadline, while continuing visual observation. This is a test-input wait,
-  never a production delay or permission for visual defects. A missed clamp
-  still fails; the remaining intermittent misses are not classified as a
-  production minimum-size defect. Release the pointer on the actual resize frame after minimum clamping so a
-  legitimate hover is not misclassified. This does not relax the pixel gate.
-  PNG review remains necessary; sampled patches alone do not establish that
-  every pixel/control or the foreign video presentation is correct.
-  Keep observer-free physical review separate: the left, top and top-right
-  defects of the open resize limitation were also seen with recorder and
-  comparator disabled, so the observer does not explain them. An isolated
-  standard Win32/GDI reference also clips in captured fast top-left motion;
-  that is diagnostic evidence, not a rendering workaround or a demonstrated
-  OS or driver cause.
-  Foreground activation uses an actual caption click only after confirming the
-  point belongs to the test window. The drag must enter and remain in the native
-  sizing loop for its full trajectory; a cancelled/unstarted drag is a failure.
+- `test_ui_modernization --resize-edges <evidence-directory>`: the opt-in
+  strict resize gate, with real drags from eight directions, caption movement
+  and maximize/restore observed in independent monitor frames;
+  `--resize-controls` applies it to visible status, progress and Cancel. Their
+  slow variant, the diagnostic subsets and how the observer judges a frame are
+  in [testing](../testing.md#diagnostics-that-are-not-registered-tests). A
+  subset or diagnostic never replaces the unchanged `--resize-edges` gate, and
+  PNG review remains necessary.
 - `test_ui_modernization --window-lifetime`: real recording-owner destruction,
   stale-handle checks, reopening and repeated explicit destruction. Also included
   in the default native UI test.
@@ -336,15 +276,9 @@ Useful existing checks in `apps/easnap-desktop/tests`:
 - `trim_timeline_seek_stress`: registered serial desktop check with 24 clicks
   per case; `trim_timeline_seek_soak` repeats it with 72 in the Soak tier. Also
   available as `test_ui_modernization --seek-stress <evidence-directory>
-  [click-count]`.
-  CTest selects the existing DXGI desktop-duplication observer with
-  `EASNAP_TEST_CAPTURE=duplication`. Set that environment variable when directly
-  reproducing this stress command: the raw executable still defaults to WGC.
-  The DXGI observer is selected because a long run with the WGC observer
-  faulted during WGC's asynchronous shutdown, at an address in the unloaded
-  `GraphicsCapture.dll`. The selection is test-only; it does not pin a DLL, add
-  a teardown sleep or change picture thresholds. Standard endpoint and resize checks continue to
-  cover WGC; do not silently switch every visual test.
+  [click-count]`; CTest runs it with the DXGI observer
+  (`EASNAP_TEST_CAPTURE=duplication`), so set that variable when running the
+  command directly ([testing](../testing.md#writing-tests) says why).
   It exercises 6 s/10 s media in both themes, held clicks, identical move/release
   coordinates, new clicks at the same point and changed drag targets. Continuous
   random native clicks keep Play requested without a test-inserted pause or

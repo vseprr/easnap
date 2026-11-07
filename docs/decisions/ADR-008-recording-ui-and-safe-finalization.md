@@ -2,7 +2,8 @@
 
 **Status:** Accepted  
 **Date:** 2026-08-28  
-**Amended:** 2026-09-13 — current workspace and terminal completion
+**Amended:** 2026-09-13 — current workspace and terminal completion  
+**Amended:** 2026-10-30 — capture exclusion of the islands
 
 ## Context
 
@@ -117,6 +118,12 @@ after showing, and the tooltip appeared in pictures with its own colour
 showing begins (`WM_WINDOWPOSCHANGING` with `SWP_SHOWWINDOW`); it then reads
 0x11 and leaves nothing in the picture in all three rounds.
 
-**Not validated.** The changed build on the development PC (the owner's
-manual check and a host run of the test); message dialogs and menus, which
-are created anew for each showing, are not covered by the test.
+**Checked by hand** (2026-10-30). On the development PC the owner reproduced
+the black box after moving the frame under the tools island with the first
+beta; with the changed build it is gone.
+
+**Not validated.** A host run of the test as it is now, with nothing under
+the islands drawn again: on the development PC only its first version ran,
+which repainted the backdrop (68 checks); the current version ran only in the
+lab VM (108 checks). Message dialogs and menus, which are created anew for
+each showing, are not covered by the test.

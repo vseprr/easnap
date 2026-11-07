@@ -117,6 +117,16 @@ still fail them, because the input queue and focus are shared. Not every
 desktop test honours the chosen display yet; `recording_pause_stop_stress`
 captures a small region at the origin of the virtual screen.
 
+`test.ps1` hands the chosen display to the tests as `EASNAP_TEST_MONITOR`, set
+to its active Windows device name (for example `\\.\DISPLAY2`); set it by hand
+only when running a test executable directly. `tests/native_test_monitor.h`
+provides the shared opt-in placement (`OnTestMonitor`, `OnTestPoint`): it
+prints the display's device name, bounds and DPI, and fails when the named
+display is not active. Screen-coordinate fixtures and injected points use the
+same translation; bitmap or client coordinates and drag deltas are not
+translated. Record the display's identity, physical bounds and DPI with the
+result. Capture overlays still cover all active monitors.
+
 On the host, audio and the clipboard are not isolated either.
 `wasapi_audio_capture` plays a short test tone through the default output
 device and records it back. `capture_workspace_production` (Standard tier)
@@ -155,8 +165,27 @@ is time-based.
   desktop: wrap the command in `easnap_isolated_desktop` and add the
   `isolated-desktop` label.
 - Use the visible desktop only for what cannot be observed otherwise, add the
-  test to `interactive_desktop_tests`, and place windows with `OnTestMonitor`
-  so they follow the chosen display.
+  test to `interactive_desktop_tests` (which makes it `RUN_SERIAL`), and place
+  windows with `OnTestMonitor` so they follow the chosen display.
+- Enable per-monitor v2 DPI awareness before the first window, as the
+  application does. DPI-virtualized fixture coordinates do not establish a
+  real 125 % pass.
+- The dedicated preview pixel check shows the preview in a nonactivating,
+  always-on-top tool window without a taskbar button (`DesktopTestWindow`,
+  `tests/desktop_test_window.h`). It reasserts its own z-order, adapts to
+  work-area and display changes, and recreates capture after a display
+  reconfiguration. It still verifies actual visible ownership and pixels; an
+  obscured surface fails explicitly.
+- The presented-desktop observer (`tests/presented_desktop_capture.h`) uses
+  Windows.Graphics.Capture (WGC) unless `EASNAP_TEST_CAPTURE=duplication`
+  selects the DXGI Desktop Duplication observer. CTest sets that variable for
+  `trim_timeline_seek_stress` and `trim_timeline_seek_soak`, because a long
+  run with the WGC observer faulted during WGC's asynchronous shutdown, at an
+  address in the unloaded `GraphicsCapture.dll`. Set it by hand when running
+  `test_ui_modernization --seek-stress` directly; the executable alone uses
+  WGC. The choice is test-only: it pins no DLL, adds no teardown sleep and
+  changes no picture threshold. The other endpoint and resize checks keep
+  covering WGC; do not silently switch every visual test.
 - A simulated gesture has to end the way the real one does. A double-click
   that is sent without the button release leaves a native control holding the
   mouse, and every movement of the real pointer then changes its state.
@@ -200,14 +229,72 @@ resized and maximized, `--trim-checks`, `--text-checks` and
 [project status](project-status.md); a green run of the registered suite does
 not close it.
 
-The resize gates print three counts per case. `mixed_geometry` counts captured
-frames in which the observed control patches do not all match their reference
-pixels at one recent window geometry; a one-pixel offset is allowed. `holes`
+**The resize gates.** `--resize-edges <evidence-directory>` makes real pointer
+drags from all eight directions, moves the window by its caption and maximizes
+and restores it, observed in independent monitor frames, on the native paused
+image, the retained endpoint and native playback. Repeat it with
+`EASNAP_TEST_RESIZE_SLOW=1` for the slower trajectory: each resize case then
+uses one 3,200 ms shrink/grow cycle instead of four 400 ms cycles. Both modes
+reach and check the native tracking minimum.
+`--resize-controls <evidence-directory> [edge]` applies the same directional
+observer to a visible status notice and to visible export progress and Cancel.
+It drives the production view's public state transitions; export encoding and
+cancellation correctness remain separate integration checks.
+
+**Diagnostic variants.** They help to find a cause and never replace the
+unchanged `--resize-edges` gate:
+
+- an optional final edge name selects a subset; that is not a full-gate pass;
+- `--resize-layout <evidence-directory> [edge]` releases the real preview to
+  isolate owner and layout behaviour, so it cannot replace media coverage;
+- `--resize-paused <evidence-directory> [edge]` restricts the run to native
+  paused video;
+- `--trim-observe` holds a real paused trim window for 60 seconds, without an
+  internal capture, comparator or probe, for an external recording;
+- `--resize-external [edge]` keeps the gate's native drags, backdrop, DWM
+  attributes and timing probes but leaves the recording to another process. It
+  returns 77 when its nonvisual checks succeed, never a visual pass.
+
+**How the observer judges a frame.** The resize gates print three counts per
+case. `mixed_geometry` counts captured frames in which the observed control
+patches do not all match their reference pixels at one recent window
+geometry; a one-pixel offset is allowed. `holes`
 counts frames in which at least 16 sampled pixels inside the client area show
 the test's green backdrop. A settled sample is invalid when either condition
-appears in a frame captured after the gesture has ended.
-`EASNAP_TEST_RESIZE_SLOW=1` makes each resize case use one 3,200 ms
-shrink/grow cycle instead of four 400 ms cycles.
+appears in a frame captured after the gesture has ended. Further:
+
+- The observer keeps strict comparison thresholds and names the paused and
+  endpoint references and the failure frames separately, with geometry JSON.
+- Before it selects a reference, it authenticates the captured title pixels
+  against `RenderControl(chrome)` from the real owned caption painter: current
+  HWND ownership alone cannot prove that an asynchronously captured frame
+  contains that HWND. This preparation is bounded and happens before the
+  observed motion; it never prints foreign video and never replaces desktop
+  evidence. An absent or obscured reference still fails preparation.
+- Sixteen patch slots follow the painter's actual text and glyph anchors,
+  including all caption buttons, the timeline In/Out labels and visible status
+  and progress. Hidden status and progress slots are inactive. An icon
+  button's left-aligned label is not sampled at its variable centre.
+- Minimum measurement waits for the actual native clamp, with a one-second
+  deadline, while visual observation continues. This is a test-input wait,
+  never a production delay or permission for a visual defect. A missed clamp
+  still fails; the remaining intermittent misses are not classified as a
+  production minimum-size defect. The pointer is released on the actual resize
+  frame after the clamp, so that a legitimate hover is not misclassified; this
+  does not relax the pixel gate.
+- Foreground activation uses an actual caption click only after confirming
+  that the point belongs to the test window. The drag must enter the native
+  sizing loop and stay in it for its full trajectory; a cancelled or unstarted
+  drag is a failure.
+
+Review the PNGs as well: sampled patches alone do not establish that every
+pixel or control, or the foreign video presentation, is correct. Keep physical
+review without the observer separate: the left, top and top-right defects of
+the open resize limitation were also seen with recorder and comparator
+disabled, so the observer does not explain them. A standard Win32/GDI
+reference window also clipped in captured fast top-left motion; that is
+diagnostic evidence, not a rendering workaround or a demonstrated OS or driver
+cause ([ADR-024](decisions/ADR-024-native-trim-frame.md#known-limitation-transient-artifacts-while-resizing)).
 
 ## Lab
 

@@ -269,6 +269,11 @@ Shutdown (see Context); confirmed process retirement is therefore part of the co
   stress cycles completed without a helper replacement; 32 resize updates
   against a stalled helper returned in 0 to 16 ms; closing a stalled helper
   took 141 ms.
+- 2026-09-29, owner lifetime of the recording island:
+  `test_ui_modernization --window-lifetime`, part of `ui_modernization_native`,
+  destroyed a real owner and reopened the island twelve times; the GDI and USER
+  object counts stayed at 13 and 8 through all twelve cycles. That establishes
+  this bounded case, not that every window lifetime is free of leaks.
 - 2026-09-30, continuous seeking after the duplicate-seek and liveness
   corrections: a 120 s run completed 539 seeks (267 backwards, 227 requested
   while a command was owned) with a maximum native command age of 203 ms

@@ -2,6 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-10-13
+**Amended:** 2026-10-30 — the Copied and Saved notices size themselves to their text
 
 ## Context
 
@@ -55,12 +56,17 @@ Save dialogs take their captions from the caller (`SaveImageDialogText`,
 
 ### Text has to fit
 
-Turkish runs longer than English. Three places size themselves to their text
+Turkish runs longer than English. Four places size themselves to their text
 instead of to a constant: the mode bar (one width for all three buttons, from
-the widest label), the Stop button of the recording island, and the button row
-of a dialog. `text_fits_in_every_language` creates the production windows on a
-private desktop in both languages and checks that no label is wider than the
-control that shows it.
+the widest label), the Stop button of the recording island, the button row
+of a dialog, and the Copied and Saved notices (since 2026-10-30). A notice
+takes one line while the work area allows, wraps otherwise, and is never
+smaller than before. The notices had a fixed width of 250 DIP, which cut the
+Turkish "Saved" text: it needs 385 px at 125 %.
+`text_fits_in_every_language` creates the production windows on a private
+desktop in both languages and checks that no label is wider than the control
+that shows it. The notices are among those windows; with the old width the
+check fails on the Turkish text.
 
 `strings_catalog` reads both tables through the accessor and checks that
 every identifier has text in both languages, that the two use the same

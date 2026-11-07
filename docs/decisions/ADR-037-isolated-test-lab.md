@@ -2,7 +2,8 @@
 
 **Status:** Accepted
 **Date:** 2026-10-19
-**Relates to:** [ADR-025](ADR-025-incremental-test-execution.md), [ADR-026](ADR-026-test-tiers-and-desktop-isolation.md)
+**Amends:** [ADR-026](ADR-026-test-tiers-and-desktop-isolation.md) (the Standard and Full tiers, visible-desktop tests included, run in a Hyper-V VM; a run on the host desktop is made only when the owner asks)
+**Relates to:** [ADR-025](ADR-025-incremental-test-execution.md)
 
 ## Context
 

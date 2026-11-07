@@ -115,26 +115,24 @@ The inline image uses the existing editor's Direct2D DC renderer. The tools
 island uses small GDI surfaces and styled native controls (ADR-016). Image coordinates are physical
 pixels, independent of UI DPI. Dirty annotation bounds restrict image repaint.
 
-`WorkspacePointerSequence` retains the capture-frame and blank-content sequence
-policy. The production editor first claims native text editing, transform
-handles, selected objects, object hits and drawing tools. These sequences cannot
-trigger overlay double-click quick-copy or its pointer-release quick-return
-path. Document commits retain the existing one-shot quick-return contract. Blank
-Pointer content continues through the workspace policy. Double-click directly on text starts
-native caret editing even when that text was not selected.
+`WorkspacePointerSequence` applies the capture-frame and blank-content policy
+(quick-copy, one-shot quick return) only to input the editor does not claim
+first: text editing, handles, selected objects, object hits and drawing tools.
+See [ADR-002](decisions/ADR-002-explicit-region-confirmation.md#pointer-sequences-and-completion),
+[ADR-017](decisions/ADR-017-neumorphic-editor-and-editable-annotations.md),
+[ADR-018](decisions/ADR-018-editor-interaction-corrections.md) and
+[ADR-023](decisions/ADR-023-trim-resize-and-text-click-continuations.md).
 
 ### Document and output
 
 One `ScreenshotEditor` owns the immutable source, persistent annotation document,
 selection, undo/redo snapshots, active transaction, tool defaults and derived
-effect cache. Selected properties do not overwrite defaults. Native multiline
-EDIT owns caret/selection/clipboard behavior; DirectWrite measures and renders
-editing and committed text, including the source-backed EDIT paint. The EDIT
-HWND remains visible: its synchronous native glyph/background DC is clipped to
-an empty region, while the independent source-backed paint pass owns annotation
-pixels. Single-click selection/dragging and blank-click deselection do not
-create a new box until neither selection nor active editor exists. Point sizes
-retain the acquired image's scale when UI DPI changes.
+effect cache. Selected properties do not overwrite defaults. A visible native
+multiline EDIT keeps caret, selection and clipboard while a source-backed
+DirectWrite paint pass draws every annotation pixel; that contract, and the
+click sequence between text boxes, are in
+[ADR-022](decisions/ADR-022-text-input-and-content-sized-trim.md). Point sizes
+keep the acquired image's scale when UI DPI changes (ADR-017).
 
 The main, contextual and brush-size islands are separate owned HWNDs. Frame-aware placement,
 blank/grip dragging, resize hiding and capture-loss restoration are presentation
@@ -165,7 +163,10 @@ pass. There is no second document or export-specific approximation of the tools.
 
 `Composite()` renders at the original selected resolution into an independent
 WIC target. It never captures the island or samples displayed image pixels.
-Copy publishes CF_DIB and PNG; Save uses WIC and the native PNG/JPEG picker.
+Copy publishes CF_DIB and PNG. The CF_DIB image is written bottom-up: .NET
+applications could not read the top-down bitmap Easnap wrote before
+(`Clipboard.GetImage` returns nothing for it; `PutClipboardDib` in
+`platform/platform_utils.cpp`). Save uses WIC and the native PNG/JPEG picker.
 Acquisition, composite or clipboard failure keeps the session available and
 does not substitute an unannotated success result. See ADR-003.
 
@@ -194,21 +195,12 @@ normal Stop path rather than left repeating its last frame. Nothing in the
 application assumes a refresh rate: recording is paced by the selected frame
 rate on a steady clock and UI animation is time-based.
 
-Layout measures with a memory DC, calculates DPI-scaled client rectangles,
-batches child positioning, then invalidates and completes owner-thread paints.
-Client minima include the native frame when converted to outer tracking sizes.
-The native sizing path does not recreate window regions, hold window DCs across
-events or synchronously paint/position the foreign video helper. Theme materials
-reuse bounded geometry/colored-raster caches with complete rounded ends and a
-constant center strip; palette and animation state remain part of cache identity.
-
-Preview resize acknowledgements use the bounded asynchronous process channel.
-Size changes coalesce one posted owner-thread poll so progress does not depend
-solely on a low-priority timer during sustained input. The existing timer and
-recovery deadlines remain; no synchronous helper operation enters layout.
-During shutdown/deferred cleanup, dependent editor/recording islands retire
-before their overlay owner. Recording WM_NCDESTROY clears retired native handles
-even when Windows destroys the owned HWND before its C++ view is released.
+Layout is measured and batched before owner-thread painting, every set of pixels
+has one owner, and neither media work nor teardown enters the resize loop. The
+guide owns these rules:
+[layout](ui/window-implementation-guide.md#3-compute-layout-before-painting),
+[painting](ui/window-implementation-guide.md#4-keep-one-owner-for-each-set-of-pixels),
+[media and shutdown](ui/window-implementation-guide.md#5-keep-media-work-and-shutdown-out-of-the-resize-loop).
 
 The regression path covers all eight resize directions, rapid shrink/grow,
 maximize/restore, both themes and 125% scaling using real HWNDs and desktop
@@ -295,41 +287,17 @@ Finalized media opens the shared trim workflow. The native view owns controls;
 controllers own preview, export, generation tracking and completion decisions.
 UI state cannot claim completion merely because an export worker was started.
 
-The parent preview proxy polls the helper and sends coalesced intents. At most
-one native command is outstanding. An acknowledgement is distinct from a native
-completion callback. Bounded deadlines, confirmed helper retirement, one recovery
-attempt and stale-generation rejection keep transport, resize and close bounded.
-Resize requests are separately coalesced with one unacknowledged request.
-After delayed owner polling returns credit for an old snapshot, a bounded
-refresh grace persists across timer ticks until a fresh reply or three seconds;
-another old snapshot cannot extend it. Explicit failure/recovery remains prompt.
-Timeline pointer input remembers the last requested position within each
-gesture, so stationary down/move/up messages do not replay the same seek after
-playback advances. A new press or a different target remains a new request.
-The native health monitor also distinguishes user intent from actual command
-dispatch. A completed seek can reset the clock between periodic observations;
-a changed native command sequence starts a new progress baseline. Input alone
-cannot extend a missing callback's deadline or excuse a genuinely stalled clock.
-Opening presents the first decoded frame paused at zero, including one-frame
-media, without requiring a Play request.
-Natural completion retains the logical end and the final decoded frame; selected
-Out retains the greatest video PTS strictly before that exclusive boundary.
-The helper keeps at most two bounded BGRA stills (source endpoint and the current
-selected/restart frame), not a duration-dependent frame cache. A helper timer
-uses the measured final video timestamp to cover EVR during its final frame,
-before EOS clears the native surface; actual transport/audio still complete
-through the native callback. Replay seeks to In and preserves its first picture
-until playback resumes. The helper's still HWND is an opaque layered child:
-shared PaintBuffer submits its complete GDI bitmap before the native-to-still
-handoff and on resize. Its independent surface prevents stale parent/timeline
-backing pixels from appearing in the video. The helper's Windows 10 manifest
-enables layered child support. Both siblings keep clipping; all still drawing
-and positioning remain inside the helper. Ordinary playback/paused images
-remain native, and the still hides after replay's actual first-sample interval.
-The private protocol distinguishes ordinary paused
-seeks from exclusive-Out PauseAt intent and requires a matching version-4 pair.
-Logical media duration and the final playable video position remain distinct,
-including AAC tails. See
+The parent's preview proxy drives the helper over a bounded, coalesced private
+pipe: one unacknowledged intent and one unacknowledged resize, at most one
+native command in flight, bounded deadlines, one recovery attempt that replaces
+the whole helper process, and rejection of stale generations. The helper keeps
+at most two bounded stills (source endpoint and selected or restart frame) on a
+layered child of its own, isolated from stale pixels in the parent's backing;
+ordinary playback stays native. Logical duration and the last
+playable video position stay distinct, and parent and helper must match on
+protocol version 4. Opening presents the first decoded frame paused at zero,
+including one-frame media, without requiring a Play request. The contracts and
+their measurements are in
 [ADR-010](decisions/ADR-010-trim-view-ownership-and-orchestration.md).
 
 Exact full-range MP4 Save/Copy reuses the finalized source without re-encoding.

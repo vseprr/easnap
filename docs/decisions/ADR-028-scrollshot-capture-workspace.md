@@ -2,6 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-10-13
+**Amended:** 2026-10-30 — right-click in a locked Scrollshot requests Discard
 
 ## Context
 

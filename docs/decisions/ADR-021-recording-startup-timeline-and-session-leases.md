@@ -1,6 +1,6 @@
 # ADR-021: Recording startup, active-time pacing and session leases
 
-- **Status:** Accepted for implementation
+- **Status:** Accepted
 - **Amended by:** [ADR-031](ADR-031-unsaved-work-survives.md) (recoverable sessions; old lease-less directories removed)
 - **Date:** 2026-09-17
 - **Scope:** Existing recording/MP4 pipeline correctness
