@@ -379,6 +379,31 @@ changes), in the lab VM, by then at Windows 10 build 19045.6466:
   passed on the GDI fallback and the verdict marked it `VM-ok-but-fallback`,
   the provider's documented behaviour on a still desktop.
 
+## Validation of v1.2.0
+
+Prepared on the branch `feature/v1.2` from 2026-11-08; the
+[release notes](v1.2.0.md) summarize it. All runs in the 125 % lab image
+unless noted, each on the uncommitted or committed tree of that step; in
+every run `real_desktop_recording_session` passed on the GDI fallback
+(`VM-ok-but-fallback`) and nothing was retried.
+
+| Step | Run | Result |
+|---|---|---|
+| Pin to screen (`9cbbddb`) | `20261108-021123-full` | Full 50 of 50 |
+| Audio exception boundary, undo limit (`e4904f1`, `ad9be42`) | `20261108-151811-full` | Full 50 of 50 |
+| Clipboard formats first, state machine (`aa07b05`, `797d0d7`) | `20261108-153432-full` | Full 50 of 50 |
+| The same with the WASAPI start-up helper (`7a9337c`) | `20261108-154503-soak` | Soak 56 of 56 |
+| clang-tidy fixes (`b622ea4`) | `20261108-162016-full`, `20261108-163043-soak` | Full 50 of 50, Soak 56 of 56 |
+
+- On the development PC (one 1920 x 1080 display at 125 %), in single runs:
+  `pin_layout_logic`, `pinned_images_native` (five runs),
+  `capture_workspace_production`, `scrollshot_workspace_production`,
+  `data_safety_questions`, `text_fits_in_every_language` and the Fast tier.
+- clang-tidy over the 51 application sources: 46 findings before the fixes, 0
+  after.
+- The owner tried Pin to screen by hand on the development PC on 2026-11-08:
+  everything the feature promises worked.
+
 ## Validation of v1.1.0
 
 The stable release, prepared on the branch `stabilize/v1.1.0` on 2026-11-07

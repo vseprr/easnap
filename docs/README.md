@@ -17,7 +17,7 @@ alongside it. Contributor instructions are in [CONTRIBUTING.md](../CONTRIBUTING.
 | [Design system](ui/design-system.md) | Implemented colors, controls, accessibility and layout |
 | [Window implementation guide](ui/window-implementation-guide.md) | Required shared-code, layout, painting and regression-validation path for new or changed windows |
 | [Security](../SECURITY.md) | Reporting, private storage and publication model |
-| Release notes | [v1.1.0](releases/v1.1.0.md), [v1.1.0-rc.1](releases/v1.1.0-rc.1.md) (not published), [v1.1.0-beta.2](releases/v1.1.0-beta.2.md), [v1.1.0-beta.1](releases/v1.1.0-beta.1.md), [v1.0.2](releases/v1.0.2.md), [v1.0.1](releases/v1.0.1.md), [v1.0.0](releases/v1.0.0.md): what each version changed and how it was checked |
+| Release notes | [v1.2.0](releases/v1.2.0.md) (in preparation; candidate rc.1), [v1.1.0](releases/v1.1.0.md), [v1.1.0-rc.1](releases/v1.1.0-rc.1.md) (not published), [v1.1.0-beta.2](releases/v1.1.0-beta.2.md), [v1.1.0-beta.1](releases/v1.1.0-beta.1.md), [v1.0.2](releases/v1.0.2.md), [v1.0.1](releases/v1.0.1.md), [v1.0.0](releases/v1.0.0.md): what each version changed and how it was checked |
 | [Validation records](releases/validation-history.md) | The individual runs behind the release notes of each release since v1.0.1, including the ones that failed |
 
 ## Decisions

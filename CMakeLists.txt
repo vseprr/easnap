@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Easnap
-    VERSION 1.1.0
+    VERSION 1.2.0
     DESCRIPTION "Easnap - Windows 10 screen capture and recording tool"
     HOMEPAGE_URL "https://github.com/vseprr/easnap"
     LANGUAGES CXX)
@@ -10,7 +10,7 @@ project(Easnap
 # With the project version it forms the version users see, the package names
 # and the release tag: v1.1.0-rc.1. scripts/package-release.ps1 and the
 # Release workflow read this line.
-set(EASNAP_VERSION_PRERELEASE "")
+set(EASNAP_VERSION_PRERELEASE "rc.1")
 if(EASNAP_VERSION_PRERELEASE)
     set(EASNAP_VERSION_TEXT "${PROJECT_VERSION}-${EASNAP_VERSION_PRERELEASE}")
     set(EASNAP_VERSION_IS_PRERELEASE 1)

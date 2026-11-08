@@ -41,7 +41,11 @@ and the individual runs in the [validation records](releases/validation-history.
 ## v1.2 in progress
 
 Work toward v1.2 runs on the branch `feature/v1.2`, created on 2026-11-08 from
-`main` at `df838d4`. Nothing of it is released.
+`main` at `df838d4`. Nothing of it is released. The owner chose on 2026-11-08
+to release v1.2 with the slices below and to leave the trim flow (S2 of
+ADR-039) and the larger candidates to v1.3. The release candidate
+v1.2.0-rc.1 was packaged on the development PC for the owner's second round
+of use; it is not published. Its notes are [v1.2.0](releases/v1.2.0.md).
 
 - **Pin to screen** ([ADR-038](decisions/ADR-038-pinned-images.md)):
   implemented. The tools island has a Pin command (Ctrl+T) that keeps the
