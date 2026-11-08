@@ -42,6 +42,24 @@ namespace {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Closes the queue and joins its consumer however the capture loop ends,
+/// also by an exception: a joinable std::thread that is destroyed ends the
+/// process.
+class ConsumerJoin final {
+public:
+    ConsumerJoin(AudioQueue& queue, std::thread& consumer) noexcept : queue_(queue), consumer_(consumer) {}
+    ~ConsumerJoin() {
+        queue_.close();
+        if (consumer_.joinable()) { consumer_.join(); }
+    }
+    ConsumerJoin(const ConsumerJoin&) = delete;
+    ConsumerJoin& operator=(const ConsumerJoin&) = delete;
+
+private:
+    AudioQueue& queue_;
+    std::thread& consumer_;
+};
+
 /// Converts WAVEFORMATEX / WAVEFORMATEXTENSIBLE to AudioFormat.
 AudioFormat FormatFromWaveFormat(const WAVEFORMATEX& wfx) noexcept {
     AudioFormat fmt;
@@ -453,7 +471,20 @@ AudioCaptureResult WasapiAudioProvider::Start(AudioSource source, PacketCallback
     init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_relaxed);
 
     thread_ = std::thread([this, source, cb = std::move(on_packet)]() mutable {
-        CaptureThread(source, std::move(cb));
+        // Running out of memory, or of threads for the consumer, ends this
+        // capture as a failure the recording reports; it must not end Easnap.
+        try {
+            CaptureThread(source, std::move(cb));
+        } catch (...) {
+            platform::LogMessage(L"[Audio] The capture thread failed with an exception; capture ended");
+            last_failure_hresult_.store(E_OUTOFMEMORY, std::memory_order_release);
+            capture_failures_.Increment();
+            // Start waits for this event while initialisation is not finished.
+            if (::WaitForSingleObject(init_done_event_.get(), 0) != WAIT_OBJECT_0) {
+                init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
+                ::SetEvent(init_done_event_.get());
+            }
+        }
     });
 
     // Wait for the capture thread to complete WASAPI initialization.
@@ -732,14 +763,22 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
 
     // Start a consumer thread that invokes the callback. This ensures the
     // callback does not block the WASAPI capture loop.
-    std::thread consumer_thread([this, &queue, &on_packet]() {
+    std::thread consumer_thread;
+    const ConsumerJoin join_consumer(queue, consumer_thread);
+    consumer_thread = std::thread([this, &queue, &on_packet]() {
         while (true) {
             auto packet = queue.wait_pop();
             if (!packet.has_value()) {
                 break;  // Queue closed and drained.
             }
             if (on_packet) {
-                on_packet(packet.value());
+                // A failed delivery loses this packet, not the process; the
+                // barrier still counts it, or a drain would wait for ever.
+                try {
+                    on_packet(packet.value());
+                } catch (...) {
+                    capture_failures_.Increment();
+                }
             }
             delivery_barrier_.CompleteOne();
         }
