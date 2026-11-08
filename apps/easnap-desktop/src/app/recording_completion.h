@@ -33,6 +33,9 @@ enum class TrimCloseAction {
 [[nodiscard]] TrimCloseAction PlanTrimClose(bool discard_confirmed,
                                             bool export_running) noexcept;
 
+/// `candidate` when it names a file that is not empty, otherwise empty.
+[[nodiscard]] std::wstring ExistingFileDataPath(const std::wstring& candidate);
+
 class IRecordingCompletionBackend {
 public:
     virtual ~IRecordingCompletionBackend() = default;

@@ -6,7 +6,6 @@
 // that owns the message loop.
 #pragma once
 
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -15,7 +14,7 @@
 #include "app/app_settings.h"
 #include "app/recording_completion.h"
 #include "app/recording_finalizer.h"
-#include "app/trim_workflow.h"
+#include "app/trim_flow.h"
 #include "capture/capture_provider.h"
 #include "media/media_interfaces.h"
 #include "platform/platform_utils.h"
@@ -25,7 +24,6 @@ class OverlayController;
 class PinnedImages;
 class RecordingControls;
 class ScrollshotControls;
-class TrimWindow;
 enum class ScrollshotCommand;
 }  // namespace easnap::ui
 namespace easnap::scrollshot {
@@ -52,9 +50,7 @@ inline constexpr UINT kMsgSessionCleanup = WM_APP + 11;
 /// Posted after the background finalizer has stopped every recording worker and
 /// closed (or safely aborted) the temporary MP4. WPARAM carries its generation.
 inline constexpr UINT kMsgRecordingFinalized = WM_APP + 12;
-/// Posted when the trim export worker has stopped and its result can be
-/// reconciled with the coordinator-owned session on the UI thread.
-inline constexpr UINT kMsgTrimExportCompleted = WM_APP + 13;
+// WM_APP + 13 is kMsgTrimExportCompleted, in app/trim_flow.h.
 /// Posted by a Scrollshot capture worker when its progress changed. WPARAM
 /// carries the capture's generation; pixels never travel in the message.
 inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
@@ -171,28 +167,6 @@ private:
     void BeginRecordingFinalization();
     void FinishRecordingWorkflow(bool finalized);
     void StopRecordingForShutdown();
-    void BeginTrimWorkflow(const std::wstring& source_path);
-    enum class PendingTrimAction { None,
-                                   Save,
-                                   Copy };
-    void OnTrimSaveRequested(media::MediaTime start, media::MediaTime end);
-    void OnTrimCopyRequested(media::MediaTime start, media::MediaTime end);
-    void BeginTrimAction(PendingTrimAction action, media::MediaTime start,
-                         media::MediaTime end,
-                         std::wstring save_destination = {},
-                         bool replace_existing = false);
-    void StartTrimExport(media::MediaTime start, media::MediaTime end,
-                         std::wstring destination_path = {},
-                         bool destination_is_clipboard = false,
-                         bool destination_is_save = false,
-                         bool replace_existing = false);
-    void CompletePendingTrimAction();
-    void OnTrimExportCancel();
-    void OnTrimWindowClosed();
-    void SaveUntrimmedRecording();
-    void OnTrimStatusTick();
-    void FinishTrimWorkflow(bool delete_active_session);
-    void StopTrimForShutdown();
 
     enum class ScrollshotAction { Start,
                                   Help,
@@ -247,10 +221,8 @@ private:
     std::unique_ptr<ui::RecordingControls> recording_controls_;
     std::unique_ptr<ui::ScrollshotControls> scrollshot_controls_;
     std::unique_ptr<scrollshot::ScrollshotSession> scrollshot_session_;
-    std::unique_ptr<ui::TrimWindow> trim_window_;
     std::unique_ptr<editor::ScreenshotEditor> editor_;
     std::unique_ptr<recording::RecordingSession> recording_session_;
-    std::unique_ptr<TrimExportController> trim_export_;
     /// Images pinned to the screen. They are not session state: they outlive
     /// every session and close with Easnap (ADR-038).
     std::unique_ptr<ui::PinnedImages> pins_;
@@ -259,21 +231,9 @@ private:
     /// Monitor bounds and scale the frozen snapshot was taken against.
     std::vector<platform::MonitorInfo> session_monitors_;
     media::RecordingOptions recording_options_{};
-    std::wstring trim_source_path_;
-    TrimArtifact trim_artifact_;
     RecordingFinalizer recording_finalizer_;
-    std::atomic<uint64_t> trim_export_generation_{0};
-    media::MediaTime trim_export_start_{0};
-    media::MediaTime trim_export_end_{0};
-    bool trim_export_to_clipboard_{false};
-    bool trim_export_to_save_{false};
-    PendingTrimAction pending_trim_action_{PendingTrimAction::None};
-    media::MediaTime pending_trim_start_{0};
-    media::MediaTime pending_trim_end_{0};
-    std::wstring pending_save_destination_;
-    bool pending_save_replace_{false};
-    uint64_t pending_trim_action_started_ms_{0};
-    bool trim_close_pending_{false};
+    /// Trimming and completion of the finished recording; created by Initialize.
+    std::unique_ptr<TrimFlow> trim_flow_;
 
     /// The stitched image once capture has stopped, until an action takes it.
     platform::BgraImage scrollshot_image_;
@@ -287,7 +247,6 @@ private:
     bool overlay_retired_{false};
     bool recording_controls_retired_{false};
     bool scrollshot_controls_retired_{false};
-    bool trim_window_retired_{false};
     bool editor_retired_{false};
     bool initialized_{false};
 };

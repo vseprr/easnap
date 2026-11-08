@@ -30,6 +30,8 @@ set(EASNAP_SOURCES
     src/app/recording_finalizer.cpp
     src/app/trim_workflow.h
     src/app/trim_workflow.cpp
+    src/app/trim_flow.h
+    src/app/trim_flow.cpp
     src/app/app_settings.h
     src/app/appearance_theme.h
     src/app/app_settings.cpp
