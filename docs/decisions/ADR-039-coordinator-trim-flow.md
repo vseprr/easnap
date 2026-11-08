@@ -1,7 +1,7 @@
 # ADR-039 — CaptureCoordinator gives trimming to a flow of its own
 
 **Status:** Accepted; S1 implemented on `feature/v1.2`, S2 on `feature/v1.3`,
-S3 not yet
+S3 not yet; recording stays in the coordinator (decided after S2)
 **Date:** 2026-11-08
 
 ## Context
@@ -128,7 +128,8 @@ Formatting goes into a separate commit, and moves are reviewed with
 | S2 | `TrimFlow` as a move-only commit, then `test_trim_flow`, the ADR-010 amendment and the architecture text | lab Full and Soak; `test_trim_flow`; owner checklist (S2) |
 | S3 | Optional: the choice of the Scrollshot status text as a pure function with a unit test | Fast; lab Full |
 
-Whether recording becomes a flow is decided after S2.
+Whether recording becomes a flow was decided after S2: it does not (see
+[Recording, decided after S2](#recording-decided-after-s2)).
 
 ### Not extracted in v1.2
 
@@ -141,11 +142,43 @@ Whether recording becomes a flow is decided after S2.
   Running them is the coordinator's own job.
 - **Recording**, until `TrimFlow` has proven the pattern. Its finalizer worker
   holds the session by raw pointer until it is joined, and its island is
-  detached from the overlay before the overlay retires.
+  detached from the overlay before the overlay retires. Decided after S2 to
+  stay; see below.
 - **Exit and recovery.** They are small and decided by the state.
 - **Pins.** They are not session state and stay as ADR-038 describes.
 
 The singleton stays: one capture session per process is a real invariant.
+
+### Recording, decided after S2
+
+Recording stays in `CaptureCoordinator`. Counted on commit `3d37f0f`, its own
+code is 13 definitions, about 340 lines, and six members (the island, the
+session, the region, the options, the finalizer and the island's retired
+flag). Unlike trimming, it is not a stage that follows the workspace but part
+of it:
+
+- While the region is configured, the recording island follows the
+  workspace: the overlay's region and editing callbacks move it, hide it and
+  set its error, and it is owned by the overlay's panel window.
+- Start hides the overlay and the editor, clears the snapshot, releases the
+  capture provider and retires the workspace; a failed start resumes the
+  overlay. A flow would need these as callbacks, and its interface would
+  mirror the coordinator, as Scrollshot's would.
+- Members outside the section use the recording members as well:
+  `Shutdown`, `PrepareForSessionEnd`, `DialogOwner`, the hotkey, the display
+  change, `OnDeferredCleanup`, `EndSession` and `ProcessDialogMessage`.
+- What can fail is already in classes of its own with tests:
+  `RecordingSession` (`real_desktop_recording_session`,
+  `recording_pause_stop_stress`), `RecordingFinalizer`
+  (`recording_finalizer_recovery`), the completion controller
+  (`recording_completion_workflow`) and the state rules
+  (`session_state_transitions`). What remains in the coordinator is guards on
+  the state and calls into these classes.
+
+A move would leave the coordinator at about 1,330 lines and add a second
+owner checklist without a test that a move makes possible. The question is
+reopened if recording gains a stage of its own (for example a camera or a
+second capture source).
 
 ### What the split preserves
 
@@ -251,4 +284,5 @@ only through the coordinator's state machine.
   instead of replacing the clipboard; publication itself is covered by
   `recording_completion_workflow`. Six runs on the development PC passed 132
   of 132 checks and left nothing in the temporary folder.
-- The S2 owner checklist is not run yet.
+- The owner ran the S2 checklist in the running application on the
+  development PC on 2026-11-08 without a problem.

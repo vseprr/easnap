@@ -71,10 +71,28 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   `trim_timeline_seek_stress`, passed only on the runner's retry. Its first
   attempt failed the pointer check: the pointer landed on the window caption
   instead of the timeline. That test does not compile any source S2 changed.
-- Not validated: the S2 owner checklist in the running application (ADR-039).
-  No test runs Save (its file dialog), GIF, a recording without a preview,
-  Exit, sign-out or a display change while trimming; these paths were moved
-  unchanged and are on that checklist.
+- By hand: the owner ran the S2 checklist of ADR-039 in the running
+  application on the development PC (2026-11-08) without a problem: MP4 and
+  GIF Save and Copy of the whole recording and of a part, cancelling an
+  export, discarding during an export, saving a recording without a preview,
+  Exit while trimming and while exporting, sign-out while trimming with the
+  recording offered at the next start, a display change while trimming and the
+  shortcut bringing the trim view forward. No automated test runs Save (its
+  file dialog), GIF, Exit, sign-out or a display change while trimming.
+- **A screenshot is read with the shading split.** With the workspace on
+  screen, `PrepareWorkspaceScreenshot` splits the shading into four windows
+  around the frame for its one picture, as Scrollshot does
+  (`OverlayController::ExposeFrame`, renamed from `ExposeScrollshotFrame`), so
+  no value comes back one level off. `scrollshot_real_desktop` now measures
+  such a read first. On the development PC (SAMSUNG display, 2026-11-08):
+  1,572 pixels of the frame one level off under the single shading, 0 with the
+  shading split. The lab VM shows no shift either way, so there it only shows
+  that nothing else changed: lab Full (run `20261108-234453-full`), 51 of 51
+  with no retry, `scrollshot_real_desktop` on Desktop Duplication as before.
+- **Recording stays in the coordinator**, decided after S2: its island
+  belongs to the workspace while the region is configured, and what can fail
+  is already in classes with tests
+  ([ADR-039](decisions/ADR-039-coordinator-trim-flow.md#recording-decided-after-s2)).
 
 ## v1.2.0
 
@@ -217,10 +235,6 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   recovered; a recovered recording is the untrimmed MP4. A recording that
   starts on a still desktop is read through GDI for its whole length;
   Scrollshot no longer is, recording has not had the same remedy.
-- With the workspace visible, a screenshot can differ from the screen by one
-  level at a few values (measured: 47 as 46, 70 as 69): Windows changes them
-  under the translucent, capture-excluded shading window. Scrollshot avoids
-  it; screenshots do not yet.
 - A window that is open when the language changes keeps its text; only the
   Settings dialog can be open then, and it closes.
 - The mode island's home now starts below a taskbar docked at the top
@@ -316,9 +330,7 @@ post-v1 without a promised date.
 
 ## Next slice
 
-On `feature/v1.3`: the owner checklist of S2
-([ADR-039](decisions/ADR-039-coordinator-trim-flow.md#validation)), then the
-other deferred candidates one bounded slice each, and why a crash report is
+On `feature/v1.3`: the other deferred candidates one bounded slice each, and why a crash report is
 sometimes not written on the hosted runner; the order is in the
 [roadmap](../EASNAP_ROADMAP.md). Package-manager
 submissions remain the owner's step ([distribution](distribution.md)).

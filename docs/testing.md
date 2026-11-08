@@ -129,9 +129,10 @@ result. Capture overlays still cover all active monitors.
 
 On the host, audio and the clipboard are not isolated either.
 `wasapi_audio_capture` plays a short test tone through the default output
-device and records it back. `capture_workspace_production` (Standard tier)
-copies a test image and `annotation_editing_native` (visible desktop) copies
-the word "Paste"; whatever was on the clipboard before is gone.
+device and records it back. `annotation_editing_native` (visible desktop)
+copies the word "Paste"; whatever was on the clipboard before is gone.
+`capture_workspace_production` copies its test images inside a window station
+of its own, which has its own clipboard, and leaves the user's alone.
 
 ## Display coverage
 
