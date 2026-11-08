@@ -50,6 +50,42 @@ private:
     HDESK old_desktop_{}, desktop_{};
 };
 
+// Undo keeps the last kUndoLimit steps: the oldest are dropped, the rest
+// undo and redo exactly.
+void UndoHistoryIsCapped() {
+    constexpr size_t limit = editor::AnnotationDocument::kUndoLimit;
+    editor::AnnotationDocument document;
+    editor::Annotation line;
+    line.tool = editor::ToolId::Line;
+    line.points = {{0, 0}, {10, 10}};
+    const size_t steps = limit + 50;
+    for (size_t i = 0; i < steps; ++i) {
+        auto step = line;
+        step.points[1].x = static_cast<float>(i);
+        document.Apply(step);
+    }
+    size_t undone = 0;
+    while (document.Undo()) { ++undone; }
+    CHECK(undone == limit && document.annotations().size() == steps - limit);
+    size_t redone = 0;
+    while (document.Redo()) { ++redone; }
+    CHECK(redone == limit && document.annotations().size() == steps);
+    CHECK(document.annotations().back().points[1].x == static_cast<float>(steps - 1));
+    // A committed transaction is one step under the same limit.
+    document.BeginTransaction();
+    for (int i = 0; i < 5; ++i) {
+        auto moved = document.annotations().front();
+        moved.points[0].x += 1.0f;
+        document.Replace(0, moved);
+    }
+    document.CommitTransaction();
+    CHECK(document.annotations().front().points[0].x == 5.0f);
+    CHECK(document.Undo() && document.annotations().front().points[0].x == 0.0f);
+    undone = 1;
+    while (document.Undo()) { ++undone; }
+    CHECK(undone == limit);
+}
+
 void Policy() {
     ui::CaptureWorkspace workspace;
     CHECK(workspace.mode() == CaptureMode::Screenshot && !workspace.editing());
@@ -1327,6 +1363,7 @@ int main(int argc, char** argv) {
         return failed ? 1 : 0;
     }
     Policy();
+    UndoHistoryIsCapped();
     PointerPolicy();
     RecordingRoundTrip();
     std::thread clipboard_tests([] {

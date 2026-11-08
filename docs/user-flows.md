@@ -75,8 +75,9 @@ Objects can move beyond every capture edge, including oversized text. Their
 content and selection frames are hidden outside the capture; Undo restores a
 fully hidden object's previous position.
 Property changes affect the selected object; creation defaults stay separate.
-Each completed move, resize or slider gesture is one undo step. Escape cancels
-an active gesture before the normal session cancellation behavior.
+Each completed move, resize or slider gesture is one undo step; Undo goes back
+up to 200 steps. Escape cancels an active gesture before the normal session
+cancellation behavior.
 
 Single-click existing text or a tag to select it for dragging. A blank click
 clears the selection without creating text, even after repeatedly switching

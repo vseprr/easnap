@@ -525,9 +525,13 @@ std::vector<D2D1_POINT_2F> Annotation::Handles() const {
     return {};
 }
 
+void AnnotationDocument::PushUndo(std::vector<Annotation> snapshot) {
+    undo_stack_.push_back(std::move(snapshot));
+    if (undo_stack_.size() > kUndoLimit) { undo_stack_.pop_front(); }
+}
 void AnnotationDocument::Checkpoint() {
     if (!transaction_) {
-        undo_stack_.push_back(annotations_);
+        PushUndo(annotations_);
         redo_stack_.clear();
     }
 }
@@ -554,7 +558,7 @@ void AnnotationDocument::BeginTransaction() {
 void AnnotationDocument::CommitTransaction() {
     if (!transaction_) { return; }
     if (!SameList(*transaction_, annotations_)) {
-        undo_stack_.push_back(std::move(*transaction_));
+        PushUndo(std::move(*transaction_));
         redo_stack_.clear();
     }
     transaction_.reset();
@@ -579,7 +583,7 @@ bool AnnotationDocument::Undo() {
 bool AnnotationDocument::Redo() {
     CancelTransaction();
     if (redo_stack_.empty()) { return false; }
-    undo_stack_.push_back(std::move(annotations_));
+    PushUndo(std::move(annotations_));
     annotations_ = std::move(redo_stack_.back());
     redo_stack_.pop_back();
     ++revision_;

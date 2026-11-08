@@ -17,6 +17,7 @@
 // where a screenshot is shown one to one at the place it was captured.
 #pragma once
 
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -108,6 +109,11 @@ public:
 
 class AnnotationDocument final : public IAnnotationDocument {
 public:
+    /// Undo keeps this many steps; older ones are dropped. Each step holds a
+    /// copy of the whole annotation list, so an unbounded history grew with
+    /// every nudge of an arrow key.
+    static constexpr size_t kUndoLimit = 200;
+
     void Apply(Annotation annotation) override;
     [[nodiscard]] bool CanUndo() const override { return !undo_stack_.empty(); }
     [[nodiscard]] bool CanRedo() const override { return !redo_stack_.empty(); }
@@ -129,7 +135,9 @@ public:
 private:
     std::vector<Annotation> annotations_;
     void Checkpoint();
-    std::vector<std::vector<Annotation>> undo_stack_, redo_stack_;
+    void PushUndo(std::vector<Annotation> snapshot);
+    std::deque<std::vector<Annotation>> undo_stack_;
+    std::vector<std::vector<Annotation>> redo_stack_;
     std::optional<std::vector<Annotation>> transaction_;
     uint64_t revision_{0};
 };
