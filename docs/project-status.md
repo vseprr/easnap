@@ -241,8 +241,8 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   (2026-11-07); this was not seen with a top taskbar.
 - The log gets one line per audio packet for the first packets of every
   recording; these lines are diagnostic and carry no content.
-- On the host, tests share the user's clipboard: `capture_workspace_production`
-  and `annotation_editing_native` replace its content.
+- On the host, `annotation_editing_native` shares the user's clipboard and
+  replaces its content.
 - `mfplay_preview_audio_transport` can miss its 1500 ms limit for retiring a
   suspended native host when the machine is under load.
 - `recording_worker_foundations` expects the capture thread never to wake
