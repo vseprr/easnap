@@ -3,7 +3,8 @@
 // The log is written through the production sink into a directory this test
 // creates and removes. Crash reports come from a second process of this
 // executable that installs the production handler and then fails on purpose,
-// once for every kind of failure the handler claims to catch.
+// once for every kind of failure the handler claims to catch, and once more
+// after its crash folder has gone, when no report can be written.
 
 #include "platform/diagnostics.h"
 #include "platform/platform_utils.h"
@@ -44,6 +45,7 @@ void Check(bool condition, const char* expression, int line) {
 struct Kind {
     const wchar_t* name;
     DWORD exit_code;
+    bool writes_report{true};
 };
 
 constexpr Kind kKinds[] = {
@@ -55,7 +57,10 @@ constexpr Kind kKinds[] = {
     {L"pure-call", 0xE0E50002},
     {L"invalid-parameter", 0xE0E50003},
     {L"stack-overflow", 0xC00000FD},
+    // An access violation after the crash folder has gone: no report can be created.
+    {L"crash-folder-gone", 0xC0000005, false},
 };
+constexpr wchar_t kGoneFolder[] = L"\\gone";
 
 volatile int g_depth_limit = 0;  // Never reached: the recursion below ends in the guard page.
 
@@ -91,11 +96,15 @@ int RunFailingProcess(const wchar_t* kind, const wchar_t* directory) {
     ::_CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_DEBUG);
     ::_CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG);
 #endif
-    diagnostics::StartLog(directory, L"child");
-    diagnostics::InstallCrashHandler(directory, L"test", 3);
-    LogMessage(L"About to fail: %ls", kind);
     const std::wstring name = kind;
-    if (name == L"access-violation") {
+    const bool folder_gone = name == L"crash-folder-gone";
+    const std::wstring crashes = folder_gone ? directory + std::wstring(kGoneFolder) : std::wstring(directory);
+    diagnostics::StartLog(directory, (L"child-" + name).c_str());
+    diagnostics::InstallCrashHandler(crashes, L"test", 3);
+    diagnostics::LogCrashHandlerStatus();
+    if (folder_gone && ::RemoveDirectoryW(crashes.c_str()) == FALSE) { return 0; }
+    LogMessage(L"About to fail: %ls", kind);
+    if (name == L"access-violation" || folder_gone) {
         volatile int* const nowhere = nullptr;
         *nowhere = 1;
     } else if (name == L"cpp-exception") {
@@ -298,12 +307,27 @@ bool RunChild(const wchar_t* kind, const std::wstring& directory, DWORD& exit_co
     return exited;
 }
 
+/// What a failing process logged about its crash report, without the time and thread.
+std::string CrashLine(const std::wstring& directory, const wchar_t* kind) {
+    for (const std::string& line : Lines(ReadFile(directory + L"\\child-" + kind + L".log"))) {
+        std::string text;
+        if (WellFormed(line, &text) && text.rfind("Fatal error 0x", 0) == 0) { return text; }
+    }
+    return {};
+}
+
 void TestCrashReports(const std::wstring& directory) {
     g_case = "no report yet";
     CHECK(!diagnostics::PendingCrashReport(directory).has_value());
     CHECK(!diagnostics::PendingCrashReport(L"").has_value());
     diagnostics::AcknowledgeCrashReports(directory);  // Nothing to acknowledge: no marker either.
     CHECK(Files(directory, L"last-seen.txt").empty());
+
+    // A folder that cannot be created leaves this process without a handler.
+    g_case = "handler without a folder";
+    diagnostics::InstallCrashHandler(directory + L"\\missing\\crashes", L"test", 3);
+    const diagnostics::CrashHandlerStatus status = diagnostics::CrashHandlerInstallStatus();
+    CHECK(status.failed == diagnostics::CrashHandlerStep::Folder && status.error == ERROR_PATH_NOT_FOUND);
 
     std::wstring previous;
     size_t expected_reports = 0;
@@ -315,6 +339,18 @@ void TestCrashReports(const std::wstring& directory) {
         CHECK(RunChild(kind.name, directory, exit_code));
         if (exit_code != kind.exit_code) { std::fprintf(stderr, "  exit code 0x%08lX\n", exit_code); }
         CHECK(exit_code == kind.exit_code);
+        // Printed for every child, so that a failure names the step and the error.
+        const std::string crash_line = CrashLine(directory, kind.name);
+        std::printf("  %s: %s\n", case_name, crash_line.empty() ? "no crash line" : crash_line.c_str());
+
+        if (!kind.writes_report) {
+            CHECK(crash_line.find("; crash report not written: create failed with 0x00000003") != std::string::npos);
+            CHECK(::GetFileAttributesW((directory + kGoneFolder).c_str()) == INVALID_FILE_ATTRIBUTES);
+            CHECK(Files(directory, L"test-*.dmp").size() == expected_reports);
+            CHECK(!diagnostics::PendingCrashReport(directory).has_value());
+            continue;
+        }
+        CHECK(crash_line.find("; crash report written") != std::string::npos);
 
         // One more report; the starting process keeps at most three older ones.
         expected_reports = std::min<size_t>(expected_reports, 3) + 1;
@@ -337,18 +373,18 @@ void TestCrashReports(const std::wstring& directory) {
     }
 
     g_case = "log of the failing process";
-    int fatal_lines = 0, announced = 0, malformed = 0;
+    int fatal_lines = 0, announced = 0, installed = 0, malformed = 0;
     for (const std::wstring& name : Files(directory, L"child*.log")) {
         for (const std::string& line : Lines(ReadFile(directory + L"\\" + name))) {
-            if (!WellFormed(line)) { ++malformed; }
-            if (line.find("About to fail: ") != std::string::npos) { ++announced; }
-            if (line.find("Fatal error 0x") != std::string::npos && line.find("crash report written") != std::string::npos) {
-                ++fatal_lines;
-            }
+            std::string text;
+            if (!WellFormed(line, &text)) { ++malformed; }
+            if (text == "Crash handler installed") { ++installed; }
+            if (text.rfind("About to fail: ", 0) == 0) { ++announced; }
+            if (text.rfind("Fatal error 0x", 0) == 0) { ++fatal_lines; }
         }
     }
     CHECK(malformed == 0);
-    CHECK(announced == static_cast<int>(ARRAYSIZE(kKinds)) && fatal_lines == announced);
+    CHECK(announced == static_cast<int>(ARRAYSIZE(kKinds)) && installed == announced && fatal_lines == announced);
 }
 
 }  // namespace

@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <atomic>
 #include <csignal>
-#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <vector>
@@ -71,14 +70,54 @@ void Rotate(LogState& state) noexcept {
     OpenCurrent(state, true);
 }
 
-/// One line as UTF-8 with its time and thread. Returns the byte count.
-[[nodiscard]] int FormatLine(const wchar_t* text, char* out, int capacity) noexcept {
+/// Appends to a fixed buffer of at least one element and keeps it
+/// terminated; what does not fit is dropped. It calls nothing of the C
+/// runtime and allocates nothing, so the crash path can use it.
+template <typename Char>
+struct FixedText {
+    Char* text;
+    size_t capacity;
+    size_t length{0};
+
+    FixedText& Append(const Char* value) noexcept {
+        while (*value != 0 && length + 1 < capacity) { text[length++] = *value++; }
+        text[length] = 0;
+        return *this;
+    }
+
+    /// `value` with at least `digits` digits, upper case in base 16.
+    FixedText& Digits(unsigned long value, unsigned long base, int digits) noexcept {
+        Char reversed[16];
+        int count = 0;
+        do {
+            const unsigned long digit = value % base;
+            reversed[count++] = static_cast<Char>(digit < 10 ? '0' + digit : 'A' + (digit - 10));
+            value /= base;
+        } while ((value != 0 || count < digits) && count < static_cast<int>(ARRAYSIZE(reversed)));
+        while (count > 0 && length + 1 < capacity) { text[length++] = reversed[--count]; }
+        text[length] = 0;
+        return *this;
+    }
+
+    FixedText& Decimal(unsigned long value, int digits = 1) noexcept { return Digits(value, 10, digits); }
+    FixedText& Hex(unsigned long value) noexcept { return Digits(value, 16, 8); }
+};
+
+/// The time and thread that begin a line: "2026-10-13T12:34:56.789Z [1234] ".
+void AppendLineStart(FixedText<char>& line) noexcept {
     SYSTEMTIME now{};
     ::GetSystemTime(&now);
-    int length = std::snprintf(out, static_cast<size_t>(capacity), "%04u-%02u-%02uT%02u:%02u:%02u.%03uZ [%lu] ",
-                               now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
-                               now.wMilliseconds, ::GetCurrentThreadId());
-    if (length < 0 || length >= capacity) { return 0; }
+    line.Decimal(now.wYear, 4).Append("-").Decimal(now.wMonth, 2).Append("-").Decimal(now.wDay, 2);
+    line.Append("T").Decimal(now.wHour, 2).Append(":").Decimal(now.wMinute, 2).Append(":").Decimal(now.wSecond, 2);
+    line.Append(".").Decimal(now.wMilliseconds, 3).Append("Z [").Decimal(::GetCurrentThreadId()).Append("] ");
+}
+
+/// One line as UTF-8 with its time and thread. Returns the byte count.
+[[nodiscard]] int FormatLine(const wchar_t* text, char* out, int capacity) noexcept {
+    FixedText<char> start{out, static_cast<size_t>(capacity)};
+    AppendLineStart(start);
+    int length = static_cast<int>(start.length);
+    if (length + 3 > capacity) { return 0; }  // No room for the line break.
     // A UTF-16 unit needs at most three bytes; never cut a surrogate pair.
     int units = static_cast<int>(::wcslen(text));
     while (units > 0 && (text[units - 1] == L'\n' || text[units - 1] == L'\r')) { --units; }
@@ -116,18 +155,26 @@ constexpr DWORD kTerminateCode = 0xE0E50001;         ///< abort / std::terminate
 constexpr DWORD kPureCallCode = 0xE0E50002;          ///< pure virtual call
 constexpr DWORD kInvalidParameterCode = 0xE0E50003;  ///< invalid CRT parameter
 constexpr wchar_t kSeenFile[] = L"last-seen.txt";
+constexpr size_t kNameCapacity = 32;
+/// `<directory>\<name>-` with a directory shorter than MAX_PATH.
+constexpr size_t kPrefixCapacity = MAX_PATH + kNameCapacity + 2;
+/// The prefix and "20261013-123456-789-<pid>-9.dmp".
+constexpr size_t kReportPathCapacity = kPrefixCapacity + 48;
+constexpr unsigned kDumpAttempts = 4;      ///< The last one asks for the smallest dump.
+constexpr ULONGLONG kRetryStartMs = 5000;  ///< No attempt begins later than this after the request.
+constexpr DWORD kRetryPauseMs = 100;
 
 using WriteDumpFunction = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE, PMINIDUMP_EXCEPTION_INFORMATION,
                                         PMINIDUMP_USER_STREAM_INFORMATION, PMINIDUMP_CALLBACK_INFORMATION);
 
 struct CrashState {
-    wchar_t directory[MAX_PATH]{};
-    wchar_t name[32]{};
+    wchar_t prefix[kPrefixCapacity]{};  ///< Built when the handler is installed.
     WriteDumpFunction write_dump{nullptr};
     HANDLE request{nullptr};
     HANDLE done{nullptr};
     EXCEPTION_POINTERS* pointers{nullptr};
     DWORD thread_id{0};
+    CrashHandlerStatus status;
     std::atomic<long> entered{0};
 };
 
@@ -136,58 +183,132 @@ CrashState& Crash() {
     return *state;
 }
 
-/// Runs on its own thread, so a stack overflow can still be reported.
-DWORD WINAPI ReportThread(void*) noexcept {
-    CrashState& state = Crash();
-    if (::WaitForSingleObject(state.request, INFINITE) != WAIT_OBJECT_0) { return 0; }
+/// Creates `<prefix><UTC time to the millisecond>-<pid>.dmp` in `path`, or
+/// sets `error`. Windows reuses process IDs quickly, so two reports can share
+/// the second and the ID. A report never replaces another: the name carries
+/// milliseconds, and a name that exists already gets a counter.
+[[nodiscard]] HANDLE CreateReportFile(const CrashState& state, wchar_t* path, size_t capacity, DWORD& error) noexcept {
     SYSTEMTIME now{};
     ::GetSystemTime(&now);
-    // Windows reuses process IDs quickly, so two reports can share the second
-    // and the ID. A report never replaces another: the name carries
-    // milliseconds, and a name that exists already gets a counter.
-    wchar_t path[MAX_PATH + 96]{};
-    bool written = false;
     HANDLE file = INVALID_HANDLE_VALUE;
-    for (unsigned attempt = 1; attempt <= 9 && file == INVALID_HANDLE_VALUE; ++attempt) {
-        wchar_t counter[8]{};
-        if (attempt > 1) { ::swprintf(counter, ARRAYSIZE(counter), L"-%u", attempt); }
-        ::swprintf(path, ARRAYSIZE(path), L"%s\\%s-%04u%02u%02u-%02u%02u%02u-%03u-%lu%s.dmp", state.directory,
-                   state.name, now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond,
-                   now.wMilliseconds, ::GetCurrentProcessId(), counter);
+    for (unsigned long counter = 1; counter <= 9 && file == INVALID_HANDLE_VALUE; ++counter) {
+        FixedText<wchar_t> name{path, capacity};
+        name.Append(state.prefix).Decimal(now.wYear, 4).Decimal(now.wMonth, 2).Decimal(now.wDay, 2).Append(L"-");
+        name.Decimal(now.wHour, 2).Decimal(now.wMinute, 2).Decimal(now.wSecond, 2).Append(L"-");
+        name.Decimal(now.wMilliseconds, 3).Append(L"-").Decimal(::GetCurrentProcessId());
+        if (counter > 1) { name.Append(L"-").Decimal(counter); }
+        name.Append(L".dmp");
         file = ::CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (file == INVALID_HANDLE_VALUE && ::GetLastError() != ERROR_FILE_EXISTS) { break; }
+        if (file == INVALID_HANDLE_VALUE) {
+            error = ::GetLastError();
+            if (error != ERROR_FILE_EXISTS) { break; }
+        }
     }
-    if (file != INVALID_HANDLE_VALUE) {
-        MINIDUMP_EXCEPTION_INFORMATION exception{};
-        exception.ThreadId = state.thread_id;
-        exception.ExceptionPointers = state.pointers;
-        exception.ClientPointers = FALSE;
+    return file;
+}
+
+/// Writes the report into `file`. When Windows fails, for example to read a
+/// thread that is ending at that moment, the file is emptied and the report
+/// tried again, the last time as the smallest dump. A retry is started only
+/// while the request is less than five seconds old (so it begins by about
+/// 5.1 s after the pause), and the last one ends long before `Filter` stops
+/// waiting at twenty. `first_error` is what the first failed attempt reported.
+[[nodiscard]] bool WriteReport(const CrashState& state, HANDLE file, ULONGLONG requested, unsigned& attempts,
+                               DWORD& first_error) noexcept {
+    MINIDUMP_EXCEPTION_INFORMATION exception{};
+    exception.ThreadId = state.thread_id;
+    exception.ExceptionPointers = state.pointers;
+    exception.ClientPointers = FALSE;
+    attempts = 0;
+    while (attempts < kDumpAttempts) {
+        if (attempts > 0) {
+            const LARGE_INTEGER start{};
+            if (::GetTickCount64() - requested > kRetryStartMs ||
+                ::SetFilePointerEx(file, start, nullptr, FILE_BEGIN) == FALSE || ::SetEndOfFile(file) == FALSE) {
+                return false;
+            }
+            ::Sleep(kRetryPauseMs);
+        }
+        ++attempts;
         // Stacks, modules and thread states. No heap, no handle data.
-        const auto type = static_cast<MINIDUMP_TYPE>(MiniDumpNormal | MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules);
-        written = state.write_dump != nullptr &&
-                  state.write_dump(::GetCurrentProcess(), ::GetCurrentProcessId(), file, type,
-                                   state.pointers != nullptr ? &exception : nullptr, nullptr, nullptr) != FALSE;
-        ::CloseHandle(file);
-        if (!written) { ::DeleteFileW(path); }
+        const auto type = static_cast<MINIDUMP_TYPE>(attempts < kDumpAttempts ? MiniDumpNormal | MiniDumpWithThreadInfo |
+                                                                                    MiniDumpWithUnloadedModules
+                                                                              : MiniDumpNormal);
+        if (state.write_dump(::GetCurrentProcess(), ::GetCurrentProcessId(), file, type,
+                             state.pointers != nullptr ? &exception : nullptr, nullptr, nullptr) != FALSE) {
+            return true;
+        }
+        if (attempts == 1) { first_error = ::GetLastError(); }
     }
-    // The crashing thread may hold the log lock: write only if it is free.
+    return false;
+}
+
+/// Writes the crash line to the log, or, when the log is not open or the
+/// failing thread holds it, to the debugger. The A function: the W one
+/// converts on the heap.
+void WriteCrashLine(const char* text) noexcept {
+    bool logged = false;
     LogState& log = Log();
     if (::TryAcquireSRWLockExclusive(&log.lock) != FALSE) {
         if (log.file != INVALID_HANDLE_VALUE) {
-            const DWORD code = state.pointers != nullptr && state.pointers->ExceptionRecord != nullptr
-                                   ? state.pointers->ExceptionRecord->ExceptionCode
-                                   : 0;
-            wchar_t text[160]{};
-            ::swprintf(text, ARRAYSIZE(text), L"Fatal error 0x%08lX on thread %lu; crash report %s", code,
-                       state.thread_id, written ? L"written" : L"could not be written");
-            char line[512];
-            const int length = FormatLine(text, line, static_cast<int>(sizeof(line)));
+            char buffer[320];
+            FixedText<char> line{buffer, sizeof(buffer)};
+            AppendLineStart(line);
+            line.Append(text).Append("\r\n");
             DWORD bytes = 0;
-            if (length > 0) { ::WriteFile(log.file, line, static_cast<DWORD>(length), &bytes, nullptr); }
+            logged = ::WriteFile(log.file, buffer, static_cast<DWORD>(line.length), &bytes, nullptr) != FALSE &&
+                     bytes == line.length;
             ::FlushFileBuffers(log.file);
         }
         ::ReleaseSRWLockExclusive(&log.lock);
     }
+    if (!logged) {
+        char buffer[224];
+        FixedText<char> line{buffer, sizeof(buffer)};
+        line.Append("[easnap] ").Append(text).Append("\n");
+        ::OutputDebugStringA(buffer);
+    }
+}
+
+/// Runs on its own thread, so a stack overflow can still be reported. Once a
+/// failure is reported it calls nothing of the C runtime and allocates
+/// nothing itself, since the failing thread may hold a lock the runtime
+/// needs: its texts are built on its stack, the name prefix and the log state
+/// when the handler is installed.
+DWORD WINAPI ReportThread(void*) noexcept {
+    CrashState& state = Crash();
+    if (::WaitForSingleObject(state.request, INFINITE) != WAIT_OBJECT_0) { return 0; }
+    const ULONGLONG requested = ::GetTickCount64();
+    const char* stage = "writer load";
+    DWORD error = state.status.error;
+    unsigned attempts = 0;
+    bool written = false;
+    if (state.write_dump != nullptr) {
+        wchar_t path[kReportPathCapacity]{};
+        HANDLE file = CreateReportFile(state, path, ARRAYSIZE(path), error);
+        stage = "create";
+        if (file != INVALID_HANDLE_VALUE) {
+            stage = "write";
+            written = WriteReport(state, file, requested, attempts, error);
+            ::CloseHandle(file);
+            if (!written) { ::DeleteFileW(path); }
+        }
+    }
+    const DWORD code = state.pointers != nullptr && state.pointers->ExceptionRecord != nullptr
+                           ? state.pointers->ExceptionRecord->ExceptionCode
+                           : 0;
+    // No path: the line follows the rule of the log.
+    char text[192];
+    FixedText<char> line{text, sizeof(text)};
+    line.Append("Fatal error 0x").Hex(code).Append(" on thread ").Decimal(state.thread_id).Append("; crash report ");
+    if (written) {
+        line.Append("written");
+        if (attempts > 1) { line.Append(", attempt ").Decimal(attempts).Append(" after 0x").Hex(error); }
+    } else {
+        line.Append("not written: ").Append(stage).Append(" failed with 0x").Hex(error);
+        if (attempts > 0) { line.Append(", attempts: ").Decimal(attempts); }
+    }
+    WriteCrashLine(text);
     ::SetEvent(state.done);
     return 0;
 }
@@ -308,28 +429,40 @@ void StopLog() noexcept {
 
 void InstallCrashHandler(const std::wstring& directory, const wchar_t* name, int kept_reports) noexcept {
     CrashState& state = Crash();
-    if (state.request != nullptr || directory.empty() || directory.size() >= ARRAYSIZE(state.directory) ||
-        name == nullptr || ::wcslen(name) >= ARRAYSIZE(state.name) || !EnsureDirectory(directory)) {
+    if (state.request != nullptr) { return; }  // Installed already.
+    if (directory.empty() || directory.size() >= MAX_PATH || name == nullptr || ::wcslen(name) >= kNameCapacity) {
+        state.status = {CrashHandlerStep::Folder, 0};
         return;
     }
-    ::wcscpy_s(state.directory, directory.c_str());
-    ::wcscpy_s(state.name, name);
+    if (!EnsureDirectory(directory)) {
+        state.status = {CrashHandlerStep::Folder, ::GetLastError()};
+        return;
+    }
+    FixedText<wchar_t> prefix{state.prefix, ARRAYSIZE(state.prefix)};
+    prefix.Append(directory.c_str()).Append(L"\\").Append(name).Append(L"-");
+    // The crash path allocates nothing: the log state exists from now on.
+    static_cast<void>(Log());
     // Old reports go now; the newest ones stay for the person to look at.
     const std::vector<ReportFile> reports = ListReports(directory);
     for (size_t index = static_cast<size_t>(std::max(kept_reports, 1)); index < reports.size(); ++index) {
         ::DeleteFileW((directory + L"\\" + reports[index].name).c_str());
     }
     // Loaded now, from the system directory: nothing is resolved while failing.
+    state.status = {CrashHandlerStep::None, 0};
     if (HMODULE library = ::LoadLibraryExW(L"dbghelp.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)) {
         state.write_dump = reinterpret_cast<WriteDumpFunction>(
             reinterpret_cast<void*>(::GetProcAddress(library, "MiniDumpWriteDump")));
     }
+    if (state.write_dump == nullptr) { state.status = {CrashHandlerStep::Writer, ::GetLastError()}; }
     state.request = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
-    state.done = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    HANDLE thread = state.request != nullptr && state.done != nullptr
-                        ? ::CreateThread(nullptr, SIZE_T{256} * 1024, ReportThread, nullptr, 0, nullptr)
-                        : nullptr;
+    if (state.request != nullptr) { state.done = ::CreateEventW(nullptr, TRUE, FALSE, nullptr); }
+    if (state.done == nullptr) {
+        state.status = {CrashHandlerStep::Events, ::GetLastError()};
+        return;  // Windows Error Reporting keeps its default behaviour.
+    }
+    HANDLE thread = ::CreateThread(nullptr, SIZE_T{256} * 1024, ReportThread, nullptr, 0, nullptr);
     if (thread == nullptr) {
+        state.status = {CrashHandlerStep::Thread, ::GetLastError()};
         return;  // Windows Error Reporting keeps its default behaviour.
     }
     ::CloseHandle(thread);
@@ -341,6 +474,29 @@ void InstallCrashHandler(const std::wstring& directory, const wchar_t* name, int
     ::_set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     ::_set_purecall_handler(OnPureCall);
     ::_set_invalid_parameter_handler(OnInvalidParameter);
+}
+
+CrashHandlerStatus CrashHandlerInstallStatus() noexcept { return Crash().status; }
+
+void LogCrashHandlerStatus() {
+    const CrashHandlerStatus status = CrashHandlerInstallStatus();
+    switch (status.failed) {
+        case CrashHandlerStep::None:
+            LogMessage(L"Crash handler installed");
+            return;
+        case CrashHandlerStep::Folder:
+            LogMessage(L"Crash handler not installed: no usable crash folder (error 0x%08lX)", status.error);
+            return;
+        case CrashHandlerStep::Writer:
+            LogMessage(L"Crash handler installed without reports: loading the writer failed with 0x%08lX", status.error);
+            return;
+        case CrashHandlerStep::Events:
+            LogMessage(L"Crash handler not installed: creating its events failed with 0x%08lX", status.error);
+            return;
+        case CrashHandlerStep::Thread:
+            LogMessage(L"Crash handler not installed: creating its thread failed with 0x%08lX", status.error);
+            return;
+    }
 }
 
 std::optional<CrashReport> PendingCrashReport(const std::wstring& directory) {

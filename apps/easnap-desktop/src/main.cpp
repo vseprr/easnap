@@ -621,6 +621,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
     const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
     easnap::platform::LogMessage(L"Easnap %ls started on Windows %lu.%lu build %lu", EASNAP_VERSION_TEXT_W, windows.major,
                                  windows.minor, windows.build);
+    diagnostics::LogCrashHandlerStatus();
     // Windows 10 version 2004. Earlier builds cannot keep Easnap's own windows
     // out of a recording or a scrolling screenshot, and nothing is tested there.
     if (windows.build != 0 && (windows.major < 10 || (windows.major == 10 && windows.build < 19041))) {

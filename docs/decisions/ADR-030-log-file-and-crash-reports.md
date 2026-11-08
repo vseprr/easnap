@@ -3,6 +3,9 @@
 **Status:** Accepted
 **Date:** 2026-10-13
 **Amended:** 2026-11-07 — a report never replaces another
+**Amended:** 2026-11-09 — the crash line names the step that failed and its
+error, a failed dump is tried again, and the report thread allocates nothing
+itself
 
 ## Context
 
@@ -56,8 +59,48 @@ process with the failure's code.
 - `dbghelp.dll` is loaded from the system directory when the handler is
   installed; nothing is resolved while the process is failing.
 - At most three reports are kept. Older ones are deleted at the next start.
-- A line with the failure's code goes to the log when the log is not locked by
-  the failing thread.
+- A line with the failure's code and thread says what became of the report
+  (amended 2026-11-09): `crash report written`, followed by
+  `, attempt N after 0x…` when an earlier attempt failed, or
+  `crash report not written: <step> failed with 0x…`. The step is
+  `writer load` (dbghelp or its `MiniDumpWriteDump` could not be loaded when
+  the handler was installed; that error), `create` (creating the file failed;
+  the Windows error) or `write` (every attempt failed; the error of the first
+  one, then `attempts: N`). The line holds no path. It goes to the log; when
+  the log is not open (the preview helper keeps none), the failing thread
+  holds its lock or the write fails, the same line goes to the debugger
+  through `OutputDebugStringA`, which, unlike the W function, converts
+  nothing on the heap.
+- When `MiniDumpWriteDump` fails, the file is emptied and the dump tried
+  again after 100 ms: four attempts in all, the last one with
+  `MiniDumpNormal` alone. A retry is started only while the request is less
+  than five seconds old, so the last attempt begins by about 5.1 seconds and
+  ends long before the failing thread stops waiting at 20 seconds. The file
+  is deleted only when every attempt failed.
+- Once a failure is reported, the report thread calls nothing of the C
+  runtime and allocates nothing itself: the file name and the line are built
+  in fixed buffers on its stack, the name's folder part and the log's state
+  when the handler is installed. Before, its first `swprintf` could set up the
+  runtime's data for the thread on the heap while the failing thread held a
+  lock. The Windows functions that create the file and write the dump can
+  still use the process heap; a failure that leaves it locked ends when the
+  failing thread stops waiting, without a report or a line.
+- After the log starts, one line says how the installation went: installed,
+  installed without reports because the writer could not be loaded, or not
+  installed because of the folder, the events or the thread, with the error.
+  The preview helper sends that line to the debugger.
+- Some failures never reach the handler, and Windows Error Reporting takes
+  them without a line: the fail-fast family (`__fastfail`, a stack buffer
+  overrun, 0xC0000409), heap corruption (0xC0000374), a second failure while
+  the first is being reported, and termination from outside. An access
+  violation, a C++ exception and a stack overflow end with the same code
+  whether the handler ran or not, so for these three the exit code alone does
+  not prove that it ran; the line does. The 0xE0E5xxxx codes come only from
+  the handler.
+- A dump cut off at the 20-second limit keeps its `.dmp` name. Writing under
+  a temporary name and renaming on success was left out: it adds a step that
+  can fail on the crash path, the counter would have to keep both names
+  unique, and left-over temporary files would escape the retention limit.
 - A report never replaces another (amended 2026-11-07). The name carries the
   time to the millisecond, the file is created only if it does not exist, and
   a name that exists gets a counter (`-2` to `-9`). Before, the name had
@@ -68,8 +111,10 @@ process with the failure's code.
   previous one and could not replace it. With unique names it happened once
   more (2026-11-08, Debug job of the v1.2.0 release run): the children ended
   with the expected codes, so the handler ran, but 7 of 8 wrote no report.
-  The reuse of names was therefore not the whole cause; whether creating the
-  file or writing the dump failed there is not known.
+  The reuse of names was therefore not the whole cause. The line said only
+  "could not be written" and the file was deleted, so which step failed there
+  is not known; since 2026-11-09 the line names the step and the error, and
+  the test prints it for every child, so the next occurrence will say.
 
 The next start tells the user once: Easnap closed unexpectedly, a report was
 saved on this computer, nothing has been sent, here is the folder. The report
@@ -100,8 +145,14 @@ appending across restarts, rotation under four writing threads. A second
 process installs the production handler and fails on purpose in eight ways
 (access violation, C++ exception, `terminate` and a `noexcept` violation on a
 worker thread, `abort`, pure call, invalid parameter, stack overflow). Each
-must end with the expected code and leave one valid minidump under eight
-megabytes; the retention limit and the "seen" mark are checked on the way.
+must end with the expected code, leave one valid minidump under eight
+megabytes and log that the report was written; the retention limit and the
+"seen" mark are checked on the way. A ninth child removes its crash folder
+after installing the handler and then causes an access violation: it must end
+with that code, leave no report and log that creating the file failed with
+0x00000003 (path not found). The test prints every child's line. A folder
+that cannot be created reports the `Folder` step with that error. The retry
+is not exercised: `MiniDumpWriteDump` cannot be made to fail without a fake.
 The test passes in Release and Debug.
 
 In the running application the log file, the notice after a report and its

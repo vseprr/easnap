@@ -39,8 +39,31 @@ void StopLog() noexcept;
 /// `<directory>\<name>-<UTC time to the millisecond>-<pid>.dmp` (with a
 /// counter when that name exists; a report never replaces another) and ends
 /// the process with the failure's code. At most `kept_reports` reports stay in the directory.
-/// Call once, as early as possible.
+/// A line in the log says whether the report was written and, if not, at
+/// which step and with which error; when the log cannot take it, the line
+/// goes to the debugger. Call once, as early as possible.
 void InstallCrashHandler(const std::wstring& directory, const wchar_t* name, int kept_reports = 3) noexcept;
+
+/// The step at which `InstallCrashHandler` failed, if one did.
+enum class CrashHandlerStep : uint8_t {
+    None,    ///< Installed; a failure writes a report.
+    Folder,  ///< Not called yet, or no usable folder or name: nothing installed.
+    Writer,  ///< dbghelp.dll or its MiniDumpWriteDump could not be loaded: installed,
+             ///< a failure ends the process with its code and is logged, without a report.
+    Events,  ///< Nothing installed.
+    Thread,  ///< Nothing installed.
+};
+
+struct CrashHandlerStatus {
+    CrashHandlerStep failed{CrashHandlerStep::Folder};
+    /// The Windows error code of that step; 0 where there is none.
+    DWORD error{0};
+};
+
+[[nodiscard]] CrashHandlerStatus CrashHandlerInstallStatus() noexcept;
+/// Logs `CrashHandlerInstallStatus` in one line. The handler is installed
+/// before the log starts, so call this once the log runs.
+void LogCrashHandlerStatus();
 
 struct CrashReport {
     std::wstring path;

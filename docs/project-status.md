@@ -267,8 +267,11 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   in the run for pull request #19. In the first attempt of the release run of
   v1.2.0 the crash-report test failed again in the Debug job: all 8 failing
   children ended with the expected code, so the handler ran, but 7 wrote no
-  report. Unique names did not prevent it, so the cause is not
-  known; the job passed when it was run again.
+  report. Unique names did not prevent it; the job passed when it was run
+  again. The cause is still unconfirmed, but the next occurrence will name the
+  step that failed (writer load, create or write) and its error code: the
+  crash line now records them, a failed dump is tried again, and the test
+  prints every child's line (2026-11-09).
 - For beta.1 the CodeQL workflow and the AddressSanitizer job passed on the
   hosted runner, where `wasapi_audio_capture` is reported as skipped. In one
   AddressSanitizer run `incremental_test_selection` (5 to 7 s there) hit its
