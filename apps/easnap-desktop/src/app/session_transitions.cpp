@@ -1,5 +1,7 @@
 #include "app/session_transitions.h"
 
+#include "platform/platform_utils.h"
+
 #include <array>
 #include <utility>
 
@@ -93,5 +95,68 @@ PendingWork PendingWorkFor(SessionState state, bool image_at_risk) noexcept {
             return PendingWork::None;
     }
     return PendingWork::None;
+}
+
+const wchar_t* ToString(SessionState state) noexcept {
+    switch (state) {
+        case SessionState::Idle:
+            return L"Idle";
+        case SessionState::RegionSelecting:
+            return L"RegionSelecting";
+        case SessionState::ScreenshotEditing:
+            return L"ScreenshotEditing";
+        case SessionState::ScreenshotExporting:
+            return L"ScreenshotExporting";
+        case SessionState::RecordingConfiguring:
+            return L"RecordingConfiguring";
+        case SessionState::RecordingActive:
+            return L"RecordingActive";
+        case SessionState::RecordingPaused:
+            return L"RecordingPaused";
+        case SessionState::RecordingFinalizing:
+            return L"RecordingFinalizing";
+        case SessionState::RecordingTrimming:
+            return L"RecordingTrimming";
+        case SessionState::Exporting:
+            return L"Exporting";
+        case SessionState::ScrollshotConfiguring:
+            return L"ScrollshotConfiguring";
+        case SessionState::ScrollshotCapturing:
+            return L"ScrollshotCapturing";
+        case SessionState::ScrollshotReview:
+            return L"ScrollshotReview";
+    }
+    return L"Unknown";
+}
+
+bool IsScrollshotState(SessionState state) noexcept {
+    return state == SessionState::ScrollshotConfiguring || state == SessionState::ScrollshotCapturing ||
+           state == SessionState::ScrollshotReview;
+}
+
+bool IsRecordingState(SessionState state) noexcept {
+    switch (state) {
+        case SessionState::RecordingConfiguring:
+        case SessionState::RecordingActive:
+        case SessionState::RecordingPaused:
+        case SessionState::RecordingFinalizing:
+        case SessionState::RecordingTrimming:
+        case SessionState::Exporting:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool SessionStateMachine::RequestTransition(SessionState next) {
+    if (!IsSessionTransitionLegal(state_, next)) {
+        platform::LogMessage(L"Rejected illegal transition %s -> %s", ToString(state_), ToString(next));
+        return false;
+    }
+    if (state_ != next) {
+        platform::LogMessage(L"State %s -> %s", ToString(state_), ToString(next));
+    }
+    state_ = next;
+    return true;
 }
 }  // namespace easnap::app

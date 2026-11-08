@@ -144,57 +144,6 @@ std::wstring GifExportFailureMessage(
 
 }  // namespace
 
-const wchar_t* ToString(SessionState state) noexcept {
-    switch (state) {
-        case SessionState::Idle:
-            return L"Idle";
-        case SessionState::RegionSelecting:
-            return L"RegionSelecting";
-        case SessionState::ScreenshotEditing:
-            return L"ScreenshotEditing";
-        case SessionState::ScreenshotExporting:
-            return L"ScreenshotExporting";
-        case SessionState::RecordingConfiguring:
-            return L"RecordingConfiguring";
-        case SessionState::RecordingActive:
-            return L"RecordingActive";
-        case SessionState::RecordingPaused:
-            return L"RecordingPaused";
-        case SessionState::RecordingFinalizing:
-            return L"RecordingFinalizing";
-        case SessionState::RecordingTrimming:
-            return L"RecordingTrimming";
-        case SessionState::Exporting:
-            return L"Exporting";
-        case SessionState::ScrollshotConfiguring:
-            return L"ScrollshotConfiguring";
-        case SessionState::ScrollshotCapturing:
-            return L"ScrollshotCapturing";
-        case SessionState::ScrollshotReview:
-            return L"ScrollshotReview";
-    }
-    return L"Unknown";
-}
-
-bool IsScrollshotState(SessionState state) noexcept {
-    return state == SessionState::ScrollshotConfiguring || state == SessionState::ScrollshotCapturing ||
-           state == SessionState::ScrollshotReview;
-}
-
-bool IsRecordingState(SessionState state) noexcept {
-    switch (state) {
-        case SessionState::RecordingConfiguring:
-        case SessionState::RecordingActive:
-        case SessionState::RecordingPaused:
-        case SessionState::RecordingFinalizing:
-        case SessionState::RecordingTrimming:
-        case SessionState::Exporting:
-            return true;
-        default:
-            return false;
-    }
-}
-
 
 // --- CaptureCoordinator -----------------------------------------------------
 
@@ -225,7 +174,7 @@ bool CaptureCoordinator::Initialize(HWND host_window) {
                              ::GetLastError());
     }
 
-    state_ = SessionState::Idle;
+    machine_.Reset();
     initialized_ = true;
     platform::LogMessage(L"Coordinator initialised (idle, no capture resources allocated)");
     return true;
@@ -277,7 +226,7 @@ void CaptureCoordinator::Shutdown() {
     // The completion controller refers to the store: it goes first.
     recording_completion_.reset();
     temp_store_.reset();
-    state_ = SessionState::Idle;
+    machine_.Reset();
     initialized_ = false;
     host_window_ = nullptr;
 }
@@ -290,7 +239,7 @@ PendingWork CaptureCoordinator::pending_work() const {
     }
     const bool image_at_risk = editor_ && editor_->visible() &&
                                (editor_->has_annotations() || editor_->document_mode());
-    return PendingWorkFor(state_, image_at_risk);
+    return PendingWorkFor(state(), image_at_risk);
 }
 
 HWND CaptureCoordinator::DialogOwner() const {
@@ -330,7 +279,7 @@ bool CaptureCoordinator::ConfirmExit() {
         case PendingWork::Export: text = IDS_EXIT_EXPORT; break;
         case PendingWork::Image: text = IDS_EXIT_IMAGE; break;
     }
-    platform::LogMessage(L"Exit requested with unsaved work (state %d)", static_cast<int>(state_));
+    platform::LogMessage(L"Exit requested with unsaved work (state %d)", static_cast<int>(state()));
     return ui::ConfirmDestructive(DialogOwner(), strings::Get(text), strings::Get(IDS_EXIT_TITLE),
                                   strings::Get(IDS_EXIT_CONFIRM), strings::Get(IDS_EXIT_STAY));
 }
@@ -350,14 +299,14 @@ void CaptureCoordinator::PrepareForSessionEnd() {
     if (!initialized_) {
         return;
     }
-    platform::LogMessage(L"The Windows session is ending (state %d)", static_cast<int>(state_));
+    platform::LogMessage(L"The Windows session is ending (state %d)", static_cast<int>(state()));
     PersistSettings();
     // A recording that is still running is closed, so that there is a file to
     // offer again. Windows allows a few seconds for this.
     if (recording_finalizer_.has_worker()) {
         recording_finalizer_.Join();
     } else if (recording_session_ &&
-               (state_ == SessionState::RecordingActive || state_ == SessionState::RecordingPaused)) {
+               (state() == SessionState::RecordingActive || state() == SessionState::RecordingPaused)) {
         static_cast<void>(recording_session_->Stop());
     }
     if (trim_export_) {
@@ -378,7 +327,7 @@ void CaptureCoordinator::PrepareForSessionEnd() {
 }
 
 void CaptureCoordinator::OfferRecoveredRecordings() {
-    if (!initialized_ || !temp_store_ || state_ != SessionState::Idle) {
+    if (!initialized_ || !temp_store_ || state() != SessionState::Idle) {
         return;
     }
     enum : int { kSave = 100,
@@ -457,17 +406,7 @@ bool CaptureCoordinator::IsTransitionLegal(SessionState from, SessionState to) n
     return IsSessionTransitionLegal(from, to);
 }
 
-bool CaptureCoordinator::RequestTransition(SessionState next) {
-    if (!IsTransitionLegal(state_, next)) {
-        platform::LogMessage(L"Rejected illegal transition %s -> %s", ToString(state_), ToString(next));
-        return false;
-    }
-    if (state_ != next) {
-        platform::LogMessage(L"State %s -> %s", ToString(state_), ToString(next));
-    }
-    state_ = next;
-    return true;
-}
+bool CaptureCoordinator::RequestTransition(SessionState next) { return machine_.RequestTransition(next); }
 
 void CaptureCoordinator::OnGlobalHotkey() {
     if (!initialized_) {
@@ -485,11 +424,11 @@ void CaptureCoordinator::OnGlobalHotkey() {
         platform::LogMessage(L"Hotkey ignored: a dialog is waiting for an answer");
         return;
     }
-    if (state_ != SessionState::Idle) {
+    if (state() != SessionState::Idle) {
         // Exactly one session may exist. Re-pressing the shortcut during a
         // session brings the active surface forward instead of stacking a new
         // overlay on top of it.
-        if (IsScrollshotState(state_) && scrollshot_controls_ && scrollshot_controls_->visible()) {
+        if (IsScrollshotState(state()) && scrollshot_controls_ && scrollshot_controls_->visible()) {
             // The island takes the focus, so Enter, Ctrl+S and Esc work again
             // after the scrolled application had it.
             scrollshot_controls_->Activate();
@@ -508,7 +447,7 @@ void CaptureCoordinator::OnGlobalHotkey() {
         } else if (editor_ && editor_->visible()) {
             ::SetForegroundWindow(editor_->hwnd());
         }
-        platform::LogMessage(L"Hotkey ignored: a session is already active (%s)", ToString(state_));
+        platform::LogMessage(L"Hotkey ignored: a session is already active (%s)", ToString(state()));
         return;
     }
     BeginCaptureSession();
@@ -580,7 +519,7 @@ void CaptureCoordinator::EnsureOverlay() {
         callbacks.on_mode_island_moved = [this] {
             // The tools island yields to the mode island wherever the user
             // leaves it. The recording and Scrollshot islands never enter its strip.
-            if (overlay_ && editor_ && state_ == SessionState::ScreenshotEditing) {
+            if (overlay_ && editor_ && state() == SessionState::ScreenshotEditing) {
                 editor_->SetRegion(overlay_->selector().selection());
             }
         };
@@ -597,8 +536,8 @@ void CaptureCoordinator::EnsureOverlay() {
 
 void CaptureCoordinator::OnWorkspaceEditingChanged(CaptureMode mode, const RECT& region) {
     if (!overlay_ || !overlay_->visible() ||
-        (state_ != SessionState::RegionSelecting && state_ != SessionState::ScreenshotEditing &&
-         state_ != SessionState::RecordingConfiguring && state_ != SessionState::ScrollshotConfiguring)) { return; }
+        (state() != SessionState::RegionSelecting && state() != SessionState::ScreenshotEditing &&
+         state() != SessionState::RecordingConfiguring && state() != SessionState::ScrollshotConfiguring)) { return; }
     if (platform::IsEmptyRect(region)) {
         return;
     }
@@ -629,9 +568,9 @@ void CaptureCoordinator::OnWorkspaceRegionChanged(const RECT& region) {
     recording_region_ = MakeRecordingRegionEncoderCompatible(region);
     if (recording_controls_) {
         recording_controls_->SetRegion(region, overlay_ && overlay_->selector().interacting());
-        if (state_ == SessionState::RecordingConfiguring) { recording_controls_->SetError(RecordingRegionError()); }
+        if (state() == SessionState::RecordingConfiguring) { recording_controls_->SetError(RecordingRegionError()); }
     }
-    if (state_ == SessionState::ScrollshotConfiguring && scrollshot_controls_) {
+    if (state() == SessionState::ScrollshotConfiguring && scrollshot_controls_) {
         scrollshot_region_ = region;
         scrollshot_controls_->SetFrame(region);
     }
@@ -640,11 +579,11 @@ void CaptureCoordinator::OnWorkspaceRegionChanged(const RECT& region) {
 void CaptureCoordinator::CompleteWorkspaceScreenshot() {
     if (!overlay_ || !overlay_->visible() || overlay_->mode() != CaptureMode::Screenshot) { return; }
     overlay_->EnterEditing();
-    if (state_ == SessionState::ScreenshotEditing && editor_) { editor_->CompleteCopy(); }
+    if (state() == SessionState::ScreenshotEditing && editor_) { editor_->CompleteCopy(); }
 }
 
 bool CaptureCoordinator::PrepareWorkspaceScreenshot() {
-    if (!editor_ || !overlay_ || state_ != SessionState::ScreenshotEditing) { return false; }
+    if (!editor_ || !overlay_ || state() != SessionState::ScreenshotEditing) { return false; }
     if (editor_->has_image()) { return true; }
     const RECT region = overlay_->selector().selection();
     // Capture-excluded workspace windows can remain composed during acquisition.
@@ -723,7 +662,7 @@ void CaptureCoordinator::BeginRecordingConfiguration(const RECT& region) {
 
 void CaptureCoordinator::OnRecordingStart(
     RecordingConfiguration configuration) {
-    if (state_ != SessionState::RecordingConfiguring ||
+    if (state() != SessionState::RecordingConfiguring ||
         !IsValidRecordingConfiguration(configuration) || temp_store_ == nullptr) {
         return;
     }
@@ -818,7 +757,7 @@ std::wstring CaptureCoordinator::RecordingRegionError() const {
 }
 
 void CaptureCoordinator::OnRecordingCancel() {
-    if (state_ != SessionState::RecordingConfiguring) {
+    if (state() != SessionState::RecordingConfiguring) {
         return;
     }
     RequestTransition(SessionState::Idle);
@@ -826,7 +765,7 @@ void CaptureCoordinator::OnRecordingCancel() {
 }
 
 void CaptureCoordinator::OnRecordingPause() {
-    if (state_ != SessionState::RecordingActive || !recording_session_) {
+    if (state() != SessionState::RecordingActive || !recording_session_) {
         return;
     }
     if (!recording_session_->Pause()) {
@@ -846,7 +785,7 @@ void CaptureCoordinator::OnRecordingPause() {
 }
 
 void CaptureCoordinator::OnRecordingResume() {
-    if (state_ != SessionState::RecordingPaused || !recording_session_) {
+    if (state() != SessionState::RecordingPaused || !recording_session_) {
         return;
     }
     if (!recording_session_->Resume()) {
@@ -866,19 +805,19 @@ void CaptureCoordinator::OnRecordingResume() {
 }
 
 void CaptureCoordinator::OnRecordingStop() {
-    if (state_ == SessionState::RecordingActive ||
-        state_ == SessionState::RecordingPaused) {
+    if (state() == SessionState::RecordingActive ||
+        state() == SessionState::RecordingPaused) {
         BeginRecordingFinalization();
     }
 }
 
 void CaptureCoordinator::OnRecordingStatusTick() {
-    if (state_ == SessionState::RecordingFinalizing) {
+    if (state() == SessionState::RecordingFinalizing) {
         OnRecordingFinalized(recording_finalizer_.generation());
         return;
     }
-    if ((state_ != SessionState::RecordingActive &&
-         state_ != SessionState::RecordingPaused) ||
+    if ((state() != SessionState::RecordingActive &&
+         state() != SessionState::RecordingPaused) ||
         !recording_session_) {
         return;
     }
@@ -894,8 +833,8 @@ void CaptureCoordinator::OnRecordingStatusTick() {
 }
 
 void CaptureCoordinator::BeginRecordingFinalization() {
-    if ((state_ != SessionState::RecordingActive &&
-         state_ != SessionState::RecordingPaused) ||
+    if ((state() != SessionState::RecordingActive &&
+         state() != SessionState::RecordingPaused) ||
         !recording_session_ || recording_finalizer_.has_worker()) {
         return;
     }
@@ -921,7 +860,7 @@ void CaptureCoordinator::BeginRecordingFinalization() {
 }
 
 void CaptureCoordinator::OnRecordingFinalized(RecordingFinalizer::Generation generation) {
-    if (!initialized_ || state_ != SessionState::RecordingFinalizing ||
+    if (!initialized_ || state() != SessionState::RecordingFinalizing ||
         !recording_session_) {
         return;
     }
@@ -976,7 +915,7 @@ void CaptureCoordinator::FinishRecordingWorkflow(bool finalized) {
 }
 
 void CaptureCoordinator::BeginTrimWorkflow(const std::wstring& source_path) {
-    if (state_ != SessionState::RecordingTrimming || source_path.empty()) {
+    if (state() != SessionState::RecordingTrimming || source_path.empty()) {
         return;
     }
 
@@ -1107,7 +1046,7 @@ void CaptureCoordinator::OnTrimCopyRequested(media::MediaTime start,
 void CaptureCoordinator::BeginTrimAction(
     PendingTrimAction action, media::MediaTime start, media::MediaTime end,
     std::wstring save_destination, bool replace_existing) {
-    if (state_ != SessionState::RecordingTrimming || action == PendingTrimAction::None ||
+    if (state() != SessionState::RecordingTrimming || action == PendingTrimAction::None ||
         start < media::MediaTime::zero() || end <= start) {
         return;
     }
@@ -1184,7 +1123,7 @@ void CaptureCoordinator::StartTrimExport(media::MediaTime start,
                                          bool destination_is_clipboard,
                                          bool destination_is_save,
                                          bool replace_existing) {
-    if (state_ != SessionState::RecordingTrimming || !trim_export_ ||
+    if (state() != SessionState::RecordingTrimming || !trim_export_ ||
         trim_source_path_.empty() || start < media::MediaTime::zero() ||
         end <= start) {
         return;
@@ -1253,7 +1192,7 @@ void CaptureCoordinator::StartTrimExport(media::MediaTime start,
 }
 
 void CaptureCoordinator::OnTrimExportCancel() {
-    if (state_ != SessionState::Exporting || !trim_export_) {
+    if (state() != SessionState::Exporting || !trim_export_) {
         return;
     }
     trim_export_->Cancel();
@@ -1263,13 +1202,13 @@ void CaptureCoordinator::OnTrimExportCancel() {
 }
 
 void CaptureCoordinator::OnTrimWindowClosed() {
-    if (state_ != SessionState::RecordingTrimming &&
-        state_ != SessionState::Exporting) {
+    if (state() != SessionState::RecordingTrimming &&
+        state() != SessionState::Exporting) {
         return;
     }
     // Without a preview nothing can be trimmed and Save is off, but the
     // recording itself is complete. Closing then offers to save it as it is.
-    if (state_ == SessionState::RecordingTrimming && trim_window_ != nullptr && trim_window_->preview_failed()) {
+    if (state() == SessionState::RecordingTrimming && trim_window_ != nullptr && trim_window_->preview_failed()) {
         SaveUntrimmedRecording();
         return;
     }
@@ -1277,11 +1216,11 @@ void CaptureCoordinator::OnTrimWindowClosed() {
         trim_window_ != nullptr ? trim_window_->hwnd() : host_window_,
         strings::Get(IDS_DISCARD_RECORDING_TEXT), strings::Get(IDS_DISCARD_RECORDING_TITLE),
         strings::Get(IDS_DISCARD_CONFIRM), strings::Get(IDS_DISCARD_RECORDING_KEEP));
-    if (state_ != SessionState::RecordingTrimming && state_ != SessionState::Exporting) {
+    if (state() != SessionState::RecordingTrimming && state() != SessionState::Exporting) {
         return;  // The export finished and closed the session while the question was open.
     }
     const TrimCloseAction action =
-        PlanTrimClose(discard, state_ == SessionState::Exporting);
+        PlanTrimClose(discard, state() == SessionState::Exporting);
     if (action == TrimCloseAction::CancelExportThenDiscard) {
         trim_close_pending_ = true;
         OnTrimExportCancel();
@@ -1301,7 +1240,7 @@ void CaptureCoordinator::SaveUntrimmedRecording() {
          {kDelete, strings::Get(IDS_RECOVERY_DELETE), true},
          {kKeep, strings::Get(IDS_DISCARD_RECORDING_KEEP)}},
         kSave, kKeep);
-    if (state_ != SessionState::RecordingTrimming) {
+    if (state() != SessionState::RecordingTrimming) {
         return;
     }
     if (choice == kDelete) {
@@ -1317,7 +1256,7 @@ void CaptureCoordinator::SaveUntrimmedRecording() {
         trim_window_ != nullptr ? trim_window_->hwnd() : host_window_, media::RecordingFormat::Mp4,
         platform::TimestampedFileName(L"Easnap", RecordingFileExtension(media::RecordingFormat::Mp4)),
         settings_.VideoStartDirectory(), RecordingSaveDialogText());
-    if (state_ != SessionState::RecordingTrimming || !destination.has_value()) {
+    if (state() != SessionState::RecordingTrimming || !destination.has_value()) {
         return;
     }
     if (::CopyFileW(trim_source_path_.c_str(), destination->c_str(), FALSE) == FALSE) {
@@ -1335,7 +1274,7 @@ void CaptureCoordinator::SaveUntrimmedRecording() {
 }
 
 void CaptureCoordinator::OnTrimStatusTick() {
-    if (state_ != SessionState::Exporting || !trim_export_) {
+    if (state() != SessionState::Exporting || !trim_export_) {
         return;
     }
     const TrimExportSnapshot snapshot = trim_export_->Snapshot();
@@ -1351,7 +1290,7 @@ void CaptureCoordinator::OnTrimStatusTick() {
 void CaptureCoordinator::OnTrimExportCompleted(uint64_t export_generation) {
     if (export_generation !=
             trim_export_generation_.load(std::memory_order_acquire) ||
-        state_ != SessionState::Exporting || !trim_export_) {
+        state() != SessionState::Exporting || !trim_export_) {
         return;
     }
     trim_export_->Wait();
@@ -1446,7 +1385,7 @@ void CaptureCoordinator::OnTrimExportCompleted(uint64_t export_generation) {
 }
 
 void CaptureCoordinator::CompletePendingTrimAction() {
-    if (state_ != SessionState::RecordingTrimming ||
+    if (state() != SessionState::RecordingTrimming ||
         pending_trim_action_ == PendingTrimAction::None ||
         !trim_artifact_.Matches(pending_trim_start_, pending_trim_end_) ||
         ExistingFileDataPath(trim_artifact_.path).empty() ||
@@ -1503,11 +1442,11 @@ void CaptureCoordinator::CompletePendingTrimAction() {
 }
 
 void CaptureCoordinator::FinishTrimWorkflow(bool delete_active_session) {
-    if (state_ == SessionState::Exporting && trim_export_) {
+    if (state() == SessionState::Exporting && trim_export_) {
         trim_export_->CancelAndWait();
     }
-    if (state_ == SessionState::RecordingTrimming ||
-        state_ == SessionState::Exporting) {
+    if (state() == SessionState::RecordingTrimming ||
+        state() == SessionState::Exporting) {
         RequestTransition(SessionState::Idle);
     }
     std::optional<media::TemporarySession> active_session;
@@ -1640,10 +1579,10 @@ void CaptureCoordinator::OnScrollshotAction(ScrollshotAction action) {
 }
 
 void CaptureCoordinator::OnScrollshotCommand(ui::ScrollshotCommand command) {
-    const bool holds_image = state_ == SessionState::ScrollshotCapturing || state_ == SessionState::ScrollshotReview;
+    const bool holds_image = state() == SessionState::ScrollshotCapturing || state() == SessionState::ScrollshotReview;
     switch (command) {
         case ui::ScrollshotCommand::Start:
-            if (state_ == SessionState::ScrollshotConfiguring) { OnScrollshotAction(ScrollshotAction::Start); }
+            if (state() == SessionState::ScrollshotConfiguring) { OnScrollshotAction(ScrollshotAction::Start); }
             break;
         case ui::ScrollshotCommand::Copy:
             if (holds_image) { OnScrollshotAction(ScrollshotAction::Copy); }
@@ -1656,7 +1595,7 @@ void CaptureCoordinator::OnScrollshotCommand(ui::ScrollshotCommand command) {
             break;
         case ui::ScrollshotCommand::WheelBlocked:
             // The wheel reached Easnap instead of the content under the frame.
-            if (state_ == SessionState::ScrollshotCapturing && scrollshot_notice_ == ScrollshotNotice::None) {
+            if (state() == SessionState::ScrollshotCapturing && scrollshot_notice_ == ScrollshotNotice::None) {
                 scrollshot_notice_ = ScrollshotNotice::WheelBlocked;
                 UpdateScrollshotStatus();
             }
@@ -1665,8 +1604,8 @@ void CaptureCoordinator::OnScrollshotCommand(ui::ScrollshotCommand command) {
 }
 
 void CaptureCoordinator::StartScrollshotCapture() {
-    const bool from_tools = state_ == SessionState::ScreenshotEditing;
-    if ((state_ != SessionState::ScrollshotConfiguring && !from_tools) || !overlay_ || !overlay_->visible() ||
+    const bool from_tools = state() == SessionState::ScreenshotEditing;
+    if ((state() != SessionState::ScrollshotConfiguring && !from_tools) || !overlay_ || !overlay_->visible() ||
         scrollshot_session_) {
         return;
     }
@@ -1741,7 +1680,7 @@ void CaptureCoordinator::StartScrollshotCapture() {
 
 void CaptureCoordinator::OnScrollshotProgress(uint64_t generation) {
     if (!initialized_ || generation != scrollshot_generation_ || !scrollshot_session_ ||
-        state_ != SessionState::ScrollshotCapturing) {
+        state() != SessionState::ScrollshotCapturing) {
         return;  // A message from a capture that has already ended.
     }
     const scrollshot::ScrollshotProgress progress = scrollshot_session_->progress();
@@ -1767,7 +1706,7 @@ void CaptureCoordinator::UpdateScrollshotStatus() {
     if (!scrollshot_controls_ || scrollshot_controls_->view() != ui::ScrollshotControls::View::Capture) {
         return;
     }
-    const bool capturing = state_ == SessionState::ScrollshotCapturing && scrollshot_session_ != nullptr;
+    const bool capturing = state() == SessionState::ScrollshotCapturing && scrollshot_session_ != nullptr;
     int width = scrollshot_image_.width;
     int height = scrollshot_image_.height;
     UINT message = capturing ? IDS_SCROLLSHOT_STATUS_SCROLL : IDS_SCROLLSHOT_STATUS_READY;
@@ -1829,10 +1768,10 @@ void CaptureCoordinator::ShowScrollshotNotice(ScrollshotNotice notice) {
 }
 
 bool CaptureCoordinator::StopScrollshotCapture() {
-    if (state_ == SessionState::ScrollshotReview) {
+    if (state() == SessionState::ScrollshotReview) {
         return true;
     }
-    if (state_ != SessionState::ScrollshotCapturing || !scrollshot_session_) {
+    if (state() != SessionState::ScrollshotCapturing || !scrollshot_session_) {
         return false;
     }
     if (!scrollshot_session_->Stop(kScrollshotStopDeadline)) {
@@ -1872,7 +1811,7 @@ bool CaptureCoordinator::StopScrollshotCapture() {
 }
 
 void CaptureCoordinator::CopyScrollshot() {
-    if (state_ != SessionState::ScrollshotCapturing && state_ != SessionState::ScrollshotReview) {
+    if (state() != SessionState::ScrollshotCapturing && state() != SessionState::ScrollshotReview) {
         return;
     }
     scrollshot_busy_ = true;
@@ -1896,14 +1835,14 @@ void CaptureCoordinator::CopyScrollshot() {
         EndSession();
         return;
     }
-    if (IsScrollshotState(state_)) {
+    if (IsScrollshotState(state())) {
         if (scrollshot_controls_) { scrollshot_controls_->SetBusy(false); }
         UpdateScrollshotStatus();
     }
 }
 
 void CaptureCoordinator::SaveScrollshot() {
-    if (state_ != SessionState::ScrollshotCapturing && state_ != SessionState::ScrollshotReview) {
+    if (state() != SessionState::ScrollshotCapturing && state() != SessionState::ScrollshotReview) {
         return;
     }
     scrollshot_busy_ = true;
@@ -1938,7 +1877,7 @@ void CaptureCoordinator::SaveScrollshot() {
         owner, platform::TimestampedFileName(L"Easnap", L"png"), settings_.ImageStartDirectory(),
         ui::SaveImageDialogLabels());
     scrollshot_busy_ = false;
-    if (!initialized_ || state_ != SessionState::ScrollshotReview) {
+    if (!initialized_ || state() != SessionState::ScrollshotReview) {
         return;  // The session ended while the dialog was open.
     }
     if (scrollshot_controls_) { scrollshot_controls_->SetFrame(scrollshot_region_); }
@@ -1961,7 +1900,7 @@ void CaptureCoordinator::SaveScrollshot() {
 }
 
 void CaptureCoordinator::EditScrollshot() {
-    if (state_ != SessionState::ScrollshotCapturing && state_ != SessionState::ScrollshotReview) {
+    if (state() != SessionState::ScrollshotCapturing && state() != SessionState::ScrollshotReview) {
         return;
     }
     scrollshot_busy_ = true;
@@ -2040,16 +1979,16 @@ void CaptureCoordinator::EditScrollshot() {
 }
 
 void CaptureCoordinator::DiscardScrollshot() {
-    if (!IsScrollshotState(state_)) {
+    if (!IsScrollshotState(state())) {
         return;
     }
     // More than the first picture means the user has scrolled for it.
     const int height = scrollshot_session_ ? scrollshot_height_ : scrollshot_image_.height;
-    if (state_ != SessionState::ScrollshotConfiguring && height > platform::RectHeight(scrollshot_region_)) {
+    if (state() != SessionState::ScrollshotConfiguring && height > platform::RectHeight(scrollshot_region_)) {
         scrollshot_busy_ = true;
         const bool discard = ConfirmDiscardImage(DialogOwner(), true);
         scrollshot_busy_ = false;
-        if (!discard || !IsScrollshotState(state_)) {
+        if (!discard || !IsScrollshotState(state())) {
             return;
         }
     }
@@ -2132,7 +2071,7 @@ void CaptureCoordinator::OnOverlayCancelled() {
 }
 
 void CaptureCoordinator::OnEditorClosed(bool exported) {
-    if (state_ == SessionState::ScreenshotEditing) {
+    if (state() == SessionState::ScreenshotEditing) {
         if (exported) {
             RequestTransition(SessionState::ScreenshotExporting);
         }
@@ -2154,10 +2093,10 @@ bool SameDisplayLayout(const std::vector<platform::MonitorInfo>& before,
 }  // namespace
 
 void CaptureCoordinator::OnDisplayChanged() {
-    if (state_ == SessionState::Idle) {
+    if (state() == SessionState::Idle) {
         return;
     }
-    if (state_ == SessionState::ScrollshotCapturing || state_ == SessionState::ScrollshotReview) {
+    if (state() == SessionState::ScrollshotCapturing || state() == SessionState::ScrollshotReview) {
         if (SameDisplayLayout(session_monitors_, platform::EnumerateMonitors())) {
             return;
         }
@@ -2165,7 +2104,7 @@ void CaptureCoordinator::OnDisplayChanged() {
         // stitched is the user's work. Stop capturing and keep the image; the
         // island moves to a monitor that exists and all four actions remain.
         platform::LogMessage(L"Display layout changed during a Scrollshot - capture stopped, image kept");
-        if (state_ == SessionState::ScrollshotCapturing && !StopScrollshotCapture()) {
+        if (state() == SessionState::ScrollshotCapturing && !StopScrollshotCapture()) {
             return;  // Still stopping, or the session ended without an image.
         }
         session_monitors_ = platform::EnumerateMonitors();
@@ -2178,7 +2117,7 @@ void CaptureCoordinator::OnDisplayChanged() {
         }
         return;
     }
-    if (state_ == SessionState::ScreenshotEditing && editor_ && editor_->document_mode()) {
+    if (state() == SessionState::ScreenshotEditing && editor_ && editor_->document_mode()) {
         if (SameDisplayLayout(session_monitors_, platform::EnumerateMonitors())) {
             return;
         }
@@ -2219,18 +2158,18 @@ void CaptureCoordinator::OnDisplayChanged() {
         OnOverlayCancelled();
         return;
     }
-    if (IsRecordingState(state_)) {
+    if (IsRecordingState(state())) {
         // The capture provider rejects a region that left the virtual screen
         // and the worker would repeat the last frame until Stop. End the
         // recording instead so the user keeps what was really captured.
         const RECT visible = platform::IntersectRects(recording_region_, platform::VirtualScreenBounds());
         if (::EqualRect(&visible, &recording_region_) == FALSE) {
             platform::LogMessage(L"The recording region left the desktop - ending the recording");
-            if (state_ == SessionState::RecordingActive || state_ == SessionState::RecordingPaused) {
+            if (state() == SessionState::RecordingActive || state() == SessionState::RecordingPaused) {
                 OnRecordingStop();
                 return;
             }
-            if (state_ == SessionState::RecordingConfiguring) {
+            if (state() == SessionState::RecordingConfiguring) {
                 OnRecordingCancel();
                 return;
             }
@@ -2297,7 +2236,7 @@ void CaptureCoordinator::OnDeferredCleanup() {
         }
     }
 
-    if (state_ == SessionState::Idle) {
+    if (state() == SessionState::Idle) {
         // Session finished: release GPU/duplication resources and the frozen
         // desktop copy so an idle Easnap keeps a small, boring footprint.
         snapshot_.Clear();

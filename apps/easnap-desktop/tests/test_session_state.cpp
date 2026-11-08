@@ -1,7 +1,9 @@
 // Easnap unit tests - production session transition rules.
 
+#include <array>
 #include <cstdio>
 #include <cwchar>
+#include <vector>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -37,6 +39,75 @@ void TestIdentityAlwaysLegal() {
         const auto state = static_cast<SessionState>(value);
         CHECK(IsSessionTransitionLegal(state, state));
     }
+}
+
+// The coordinator's one state holder follows the same graph (ADR-039).
+void TestStateMachine() {
+    easnap::app::SessionStateMachine machine;
+    CHECK(machine.state() == SessionState::Idle);
+    CHECK(machine.RequestTransition(SessionState::RegionSelecting));
+    CHECK(machine.state() == SessionState::RegionSelecting);
+    // An illegal edge is refused and leaves the state where it was.
+    CHECK(!machine.RequestTransition(SessionState::RecordingActive));
+    CHECK(machine.state() == SessionState::RegionSelecting);
+    // Staying is always allowed.
+    CHECK(machine.RequestTransition(SessionState::RegionSelecting));
+    CHECK(machine.state() == SessionState::RegionSelecting);
+    // A whole screenshot session.
+    CHECK(machine.RequestTransition(SessionState::ScreenshotEditing));
+    CHECK(machine.RequestTransition(SessionState::ScreenshotExporting));
+    CHECK(machine.RequestTransition(SessionState::Idle));
+    CHECK(machine.state() == SessionState::Idle);
+    // Every state is reachable from Idle, and from each one the machine allows
+    // exactly the pairs the rules allow.
+    constexpr std::size_t count = easnap::app::kSessionStateCount;
+    std::array<int, count> parent{};
+    parent.fill(-1);
+    parent[0] = 0;  // Idle
+    std::vector<std::size_t> queue{0};
+    for (std::size_t head = 0; head < queue.size(); ++head) {
+        for (std::size_t next = 0; next < count; ++next) {
+            if (parent[next] < 0 && IsSessionTransitionLegal(static_cast<SessionState>(queue[head]), static_cast<SessionState>(next))) {
+                parent[next] = static_cast<int>(queue[head]);
+                queue.push_back(next);
+            }
+        }
+    }
+    CHECK(queue.size() == count);
+    for (std::size_t from = 0; from < count; ++from) {
+        if (parent[from] < 0) { continue; }
+        std::vector<std::size_t> path;
+        for (std::size_t at = from; at != 0; at = static_cast<std::size_t>(parent[at])) { path.insert(path.begin(), at); }
+        for (std::size_t to = 0; to < count; ++to) {
+            easnap::app::SessionStateMachine walker;
+            for (const std::size_t step : path) { CHECK(walker.RequestTransition(static_cast<SessionState>(step))); }
+            const auto target = static_cast<SessionState>(from);
+            CHECK(walker.state() == target);
+            const auto next = static_cast<SessionState>(to);
+            const bool legal = IsSessionTransitionLegal(target, next);
+            CHECK(walker.RequestTransition(next) == legal);
+            CHECK(walker.state() == (legal ? next : target));
+        }
+    }
+    // Reset returns to Idle from anywhere, without a transition.
+    CHECK(machine.RequestTransition(SessionState::RegionSelecting));
+    machine.Reset();
+    CHECK(machine.state() == SessionState::Idle);
+}
+
+void TestStateNamesAndGroups() {
+    for (std::size_t value = 0; value < easnap::app::kSessionStateCount; ++value) {
+        const auto state = static_cast<SessionState>(value);
+        CHECK(std::wcscmp(easnap::app::ToString(state), L"Unknown") != 0);
+        for (std::size_t other = 0; other < value; ++other) {
+            CHECK(std::wcscmp(easnap::app::ToString(state), easnap::app::ToString(static_cast<SessionState>(other))) != 0);
+        }
+    }
+    CHECK(easnap::app::IsRecordingState(SessionState::RecordingConfiguring));
+    CHECK(easnap::app::IsRecordingState(SessionState::Exporting));
+    CHECK(!easnap::app::IsRecordingState(SessionState::ScreenshotEditing));
+    CHECK(easnap::app::IsScrollshotState(SessionState::ScrollshotReview));
+    CHECK(!easnap::app::IsScrollshotState(SessionState::ScreenshotEditing));
 }
 
 void TestSessionEntryAndCancellation() {
@@ -517,6 +588,8 @@ int main() {
     TestPendingWork();
     TestRecordingRegionFitsH264();
     TestIdentityAlwaysLegal();
+    TestStateMachine();
+    TestStateNamesAndGroups();
     TestSessionEntryAndCancellation();
     TestScreenshotBranch();
     TestRecordingBranch();
