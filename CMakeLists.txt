@@ -10,7 +10,7 @@ project(Easnap
 # With the project version it forms the version users see, the package names
 # and the release tag: v1.1.0-rc.1. scripts/package-release.ps1 and the
 # Release workflow read this line.
-set(EASNAP_VERSION_PRERELEASE "rc.1")
+set(EASNAP_VERSION_PRERELEASE "")
 if(EASNAP_VERSION_PRERELEASE)
     set(EASNAP_VERSION_TEXT "${PROJECT_VERSION}-${EASNAP_VERSION_PRERELEASE}")
     set(EASNAP_VERSION_IS_PRERELEASE 1)

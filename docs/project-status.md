@@ -38,14 +38,16 @@ and the individual runs in the [validation records](releases/validation-history.
   `island_capture_exclusion` drags those dialogs and reads the themed menu as
   the user sees them.
 
-## v1.2 in progress
+## v1.2.0
 
-Work toward v1.2 runs on the branch `feature/v1.2`, created on 2026-11-08 from
-`main` at `df838d4`. Nothing of it is released. The owner chose on 2026-11-08
-to release v1.2 with the slices below and to leave the trim flow (S2 of
-ADR-039) and the larger candidates to v1.3. The release candidate
-v1.2.0-rc.1 was packaged on the development PC for the owner's second round
-of use; it is not published. Its notes are [v1.2.0](releases/v1.2.0.md).
+Work toward v1.2 ran on the branch `feature/v1.2`, created on 2026-11-08 from
+`main` at `df838d4`. The owner chose on 2026-11-08 to release v1.2 with the
+slices below and to leave the trim flow (S2 of ADR-039) and the larger
+candidates to v1.3. The release candidate v1.2.0-rc.1 was packaged on the
+development PC, installed over v1.1.0 by the owner and used for a second
+round without a problem; it is not published. v1.2.0 is its code with an
+empty prerelease label, prepared for release through a pull request to
+`main`. Its notes are [v1.2.0](releases/v1.2.0.md).
 
 - **Pin to screen** ([ADR-038](decisions/ADR-038-pinned-images.md)):
   implemented. The tools island has a Pin command (Ctrl+T) that keeps the
@@ -64,7 +66,8 @@ of use; it is not published. Its notes are [v1.2.0](releases/v1.2.0.md).
   `capture_workspace_production`, and `text_fits_in_every_language`.
 - By hand: the owner tried the build on the development PC (one 1920 x 1080
   display at 125 %) on 2026-11-08 and reported that everything the feature
-  promises worked; longer use is still to come.
+  promises worked, then used rc.1 for a second round (several pins and Close
+  all among them) without a problem.
 - Not validated: a pin moved between monitors of different scale (the PC has
   one display), long use, and many or very large pins at once. The native test
   reads the pin's picture through `WM_PRINTCLIENT`, not from the screen.
@@ -85,9 +88,10 @@ of use; it is not published. Its notes are [v1.2.0](releases/v1.2.0.md).
 - **The coordinator's state is held by `SessionStateMachine`**, the first
   slice of [ADR-039](decisions/ADR-039-coordinator-trim-flow.md); the log
   lines of transitions are unchanged. `session_state_transitions` checks that
-  the machine allows exactly the pairs the rules allow, from every state.
-  Still to do: the owner's check that a screenshot, a recording with trim and
-  a Scrollshot run from start to Idle as before, then the trim flow (S2).
+  the machine allows exactly the pairs the rules allow, from every state. In
+  the owner's round with rc.1, a screenshot, a recording with trim and a
+  Scrollshot ran from start to Idle as before. The trim flow (S2) is next, in
+  v1.3.
 - The clipboard change and the state machine, with the shorter WASAPI start-up
   code, passed lab Full 50 of 50 (run `20261108-153432-full`, without the
   WASAPI change) and Soak 56 of 56 (run `20261108-154503-soak`, all three) on
@@ -111,8 +115,13 @@ of use; it is not published. Its notes are [v1.2.0](releases/v1.2.0.md).
   owner checked the release candidate by hand; its two problems are
   corrected, and the drag test passed on the development PC with the
   correction.
+- v1.2.0, final sources (2026-11-08, lab, tree `1667af96576c`): Soak 56 of 56
+  at 125 % and Full 50 of 50 at 150 % on the second run, no retry. In the
+  first run at 150 % `real_desktop_recording_session` passed only on the
+  runner's retry: one frame-count check on the GDI fallback at 30 fps. The
+  owner used the release candidate for a second round without a problem.
 - The runs, including the ones that failed, and those of earlier versions are
-  in the [validation records](releases/validation-history.md#validation-of-v110).
+  in the [validation records](releases/validation-history.md#validation-of-v120).
 
 ## Not validated
 
@@ -265,9 +274,9 @@ post-v1 without a promised date.
 
 ## Next slice
 
-On `feature/v1.2`: the smaller slices deferred from the stabilization, then an
-ADR for splitting `CaptureCoordinator` (a small state machine first, then the
-trim flow with a test target of its own), then a release candidate; the order
-is in the [roadmap](../EASNAP_ROADMAP.md). The
-package-manager submissions for v1.1.0 remain the owner's step
-([distribution](distribution.md)).
+Publish v1.2.0 from `main` after the pull request of `feature/v1.2`. Then
+v1.3: S2 of the `CaptureCoordinator` split
+([ADR-039](decisions/ADR-039-coordinator-trim-flow.md)), the trim flow with a
+test target of its own, and the other deferred candidates one bounded slice
+each; the order is in the [roadmap](../EASNAP_ROADMAP.md). Package-manager
+submissions remain the owner's step ([distribution](distribution.md)).

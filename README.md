@@ -15,9 +15,10 @@ and copy the result. Or record a short clip, trim it, and save it as MP4 or GIF.
 Capture, editing and export run locally, with no account, telemetry or network
 connection.
 
-> **v1.1.0** adds Scrollshot, a Settings window, a Turkish interface, a local
-> log and crash reports, and it no longer loses unsaved work on exit, sign-out
-> or a crash. See the [release notes](docs/releases/v1.1.0.md).
+> **v1.2.0** adds Pin to screen: a finished screenshot stays on top of your
+> other windows, where you can move, zoom, copy and save it. Recording,
+> copying and the editor are sturdier. See the
+> [release notes](docs/releases/v1.2.0.md).
 
 ![Easnap screenshot editor with its floating annotation toolbar](docs/images/editor.png)
 
@@ -30,6 +31,8 @@ screenshot, then work at the image's original resolution.
 - Add text and tags, mark an area with Spotlight, or apply a repeated watermark.
 - Use Blur or Pixelate with a brush or an editable region.
 - Move and edit annotations, undo changes, and copy or save as PNG/JPEG.
+- Pin the finished image to the screen: it stays on top of other windows,
+  where you can drag it, zoom it with the wheel, copy it or save it.
 - Read a pixel's RGB or HEX value with the selection magnifier.
 
 ## Scrollshot
@@ -128,6 +131,7 @@ never removes a recording that was not saved; v1.0.2 kept them on removal.
 |---|---|
 | Ctrl+Shift+A | Open or return to the capture workspace |
 | Ctrl+C / Ctrl+S | Copy / save the screenshot |
+| Ctrl+T | Pin the screenshot to the screen |
 | Ctrl+Z / Ctrl+Y | Undo / redo an annotation edit |
 | Esc | Cancel a capture; stop and finalize a recording while its island has the keyboard |
 
