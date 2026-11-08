@@ -1,6 +1,7 @@
 # ADR-039 — CaptureCoordinator gives trimming to a flow of its own
 
-**Status:** Accepted; S1 implemented on `feature/v1.2`, S2 and S3 not yet
+**Status:** Accepted; S1 implemented on `feature/v1.2`, S2 on `feature/v1.3`,
+S3 not yet
 **Date:** 2026-11-08
 
 ## Context
@@ -188,8 +189,9 @@ only through the coordinator's state machine.
 
 ## Consequences
 
-- After S1 and S2 the coordinator has about 1,830 lines, 30 data members and
-  about 65 out-of-line definitions. `OnTrimExportCompleted` stays as a
+- After S1 and S2 the coordinator has 1,669 lines, 30 data members and 64
+  out-of-line definitions (counted when S2 landed; about 1,830 lines were
+  expected). `OnTrimExportCompleted` stays as a
   forwarding member because `main.cpp` calls it.
 - Trimming becomes the first coordinator code with a test of its own.
 - S2 does not meet the rule that code is covered before it moves: the test can
@@ -226,4 +228,27 @@ only through the coordinator's state machine.
   coordinator's state lives in a `SessionStateMachine`, and
   `session_state_transitions` checks that, from every state reachable from
   Idle, the machine allows exactly the pairs the rules allow and leaves the
-  state unchanged after a refusal. The S1 owner checklist is not run yet.
+  state unchanged after a refusal. In the owner's round with v1.2.0-rc.1 a
+  screenshot, a recording with trim and a Scrollshot ran from start to Idle.
+- S2 is implemented. `app/trim_flow` holds what this ADR lists; its private
+  functions keep their names, so `git diff --color-moved` shows the bodies as
+  moved. Besides the renames, a body changed in three places: `Begin` takes
+  the temporary session and keeps it before anything that can throw, and
+  `FinishTrimWorkflow` takes that copy and calls `release_recording` instead
+  of reading and resetting the coordinator's `RecordingSession`.
+  `ExistingFileDataPath` moved to `recording_completion`, which has no string
+  tables; `RecordingSaveDialogText` and `kMsgTrimExportCompleted` moved to
+  `trim_flow.h`, which the coordinator includes.
+- The preview opens on a private desktop, so `test_trim_flow` runs as
+  `trim_flow_production` through `easnap_isolated_desktop`, in the Standard
+  tier. It writes a 12-second H.264 recording into a real temporary session
+  for each case and drives the production window with messages: Copy of the
+  whole recording (no export), Copy of a part (Exporting, then Idle, the
+  session ended once, in about 0.55 s on the development PC), cancelling an
+  export and then discarding, keeping the recording when closing, discarding
+  during an export, and `Destroy` during an export. The completion backend
+  writes files as in the application but records the clipboard publication
+  instead of replacing the clipboard; publication itself is covered by
+  `recording_completion_workflow`. Six runs on the development PC passed 132
+  of 132 checks and left nothing in the temporary folder.
+- The S2 owner checklist is not run yet.

@@ -7,7 +7,7 @@ phase boundaries; what is implemented and validated belongs in project status,
 and what each release contained in its release notes, listed in the
 [documentation index](docs/README.md).
 
-## Current: v1.2.0 published
+## Current: v1.3 on `feature/v1.3`
 
 The first beta of v1.1 was published on 2026-10-13 as a prerelease of
 [`vseprr/easnap`](https://github.com/vseprr/easnap): Scrollshot in the
@@ -19,7 +19,9 @@ owner and not published; the two problems the check found were corrected, and
 v1.1.0 was published on 2026-11-08. v1.2 followed on the branch
 `feature/v1.2`: Pin to screen and the sturdiness slices. Its release
 candidate v1.2.0-rc.1 was checked by the owner and not published, and v1.2.0
-was published on 2026-11-08 as the latest stable version.
+was published on 2026-11-08 as the latest stable version. v1.3 runs on the
+branch `feature/v1.3`, created on 2026-11-08 from `main` at `68e34c5`; its
+first slice is S2 of the coordinator split.
 
 | Phase | State |
 |---|---|
@@ -33,16 +35,19 @@ was published on 2026-11-08 as the latest stable version.
 | Isolated test lab | Implemented 2026-10-19: Hyper-V VM driven by winlab, direct build, capture-path reporting ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md)) |
 | v1.1.0 stable | Stabilization on `stabilize/v1.1.0` (2026-11-07): audit, documentation, formatting, static analysis, code fixes; rc.1 checked by the owner, not published; v1.1.0 published 2026-11-08 |
 | v1.2 | On `feature/v1.2` (from 2026-11-08): Pin to screen ([ADR-038](docs/decisions/ADR-038-pinned-images.md)), audio exception boundary, undo limit, clipboard formats first, the session state machine and a required clang-tidy job; release candidate rc.1 checked by the owner, not published; v1.2.0 published 2026-11-08 |
+| v1.3 | On `feature/v1.3` (from 2026-11-08): S2 of the coordinator split, the trim flow with its own test ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)), implemented; its owner checklist is open. Then the other deferred candidates |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
 
 In this order (details in [project status](docs/project-status.md#next-slice)):
 
-1. v1.3, on a branch of its own: S2 of the `CaptureCoordinator` split
-   ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)), the trim flow
-   with its own test target, and the other candidates under
-   [other deferred work](#other-deferred-work), one bounded slice each.
+1. The owner checklist of S2
+   ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md#validation)) in
+   the running application.
+2. The other v1.3 candidates under [other deferred work](#other-deferred-work),
+   one bounded slice each, and whether recording becomes a flow of its own
+   (decided after S2, ADR-039).
 
 Open on the owner's side: the host Full run for the writer fix, since the host
 desktop is used only when the owner asks. Not covered yet: Windows 11, an N
@@ -87,8 +92,8 @@ this release. Code signing is not in place; binaries are unsigned, and the
 owner decided on 2026-11-07 to publish v1.1.0 unsigned. Candidates from the
 2026-11-07 audit left for v1.3 (v1.2 took the exception boundary for the audio
 threads, the required clang-tidy job and the first slice of the coordinator
-split): the trim flow out of `CaptureCoordinator`, shorter audio and editor
-functions, a golden corpus of recorded frames for Scrollshot, and copying and
+split; v1.3 began with the trim flow out of `CaptureCoordinator`): shorter
+audio and editor functions, a golden corpus of recorded frames for Scrollshot, and copying and
 saving off the interface thread; for the lab, an image at the development PC's
 update revision, one of the two differences left that could explain why the lab
 missed the caption the owner saw ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md#not-validated)). Codec

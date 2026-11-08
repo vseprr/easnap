@@ -40,6 +40,38 @@ and the individual runs in the [validation records](releases/validation-history.
   `island_capture_exclusion` drags those dialogs and reads the themed menu as
   the user sees them.
 
+## v1.3 (in progress)
+
+Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
+`main` at `68e34c5`.
+
+- **The trim flow is a class of its own** (S2 of
+  [ADR-039](decisions/ADR-039-coordinator-trim-flow.md)): `TrimFlow`
+  (`app/trim_flow`) holds the trim window, the export controller, the source
+  path and the latest temporary result of one recording; `CaptureCoordinator`
+  owns it and keeps the recording session, which it releases when the flow
+  asks. The functions were moved, not rewritten; ADR-039 lists the three body
+  changes. The coordinator went from 2,332 to 1,669 lines. Decision 1 of
+  [ADR-010](decisions/ADR-010-trim-view-ownership-and-orchestration.md) is
+  amended accordingly.
+- **`trim_flow_production`** (Standard tier, private desktop) drives the
+  production flow, window, MP4 exporter, completion controller and temporary
+  sessions with messages: Copy of the whole recording and of a part, cancelling
+  an export, keeping or discarding when closing, discarding during an export
+  and destroying the flow during an export. The clipboard publication is
+  recorded instead of performed, so the test leaves the clipboard alone.
+- Validated: lab Full on the uncommitted branch (2026-11-08, run
+  `20261108-201007-full`), 51 of 51 with no retry, including the new test;
+  `real_desktop_recording_session` passed on the GDI fallback as before
+  (`VM-ok-but-fallback`). On the development PC: the Release build without
+  warnings, the Fast tier 23 of 23, clang-tidy without findings on the changed
+  sources, and six runs of the new test, 132 of 132 checks each, leaving
+  nothing in the temporary folder.
+- Not validated: the S2 owner checklist in the running application (ADR-039).
+  No test runs Save (its file dialog), GIF, a recording without a preview,
+  Exit, sign-out or a display change while trimming; these paths were moved
+  unchanged and are on that checklist. The lab Soak tier did not run for S2.
+
 ## v1.2.0
 
 Work toward v1.2 ran on the branch `feature/v1.2`, created on 2026-11-08 from
@@ -280,9 +312,9 @@ post-v1 without a promised date.
 
 ## Next slice
 
-v1.3, on a branch of its own: S2 of the `CaptureCoordinator` split
-([ADR-039](decisions/ADR-039-coordinator-trim-flow.md)), the trim flow with a
-test target of its own, and the other deferred candidates one bounded slice
-each, and why a crash report is sometimes not written on the hosted runner;
-the order is in the [roadmap](../EASNAP_ROADMAP.md). Package-manager
+On `feature/v1.3`: the owner checklist of S2
+([ADR-039](decisions/ADR-039-coordinator-trim-flow.md#validation)), then the
+other deferred candidates one bounded slice each, and why a crash report is
+sometimes not written on the hosted runner; the order is in the
+[roadmap](../EASNAP_ROADMAP.md). Package-manager
 submissions remain the owner's step ([distribution](distribution.md)).

@@ -2,7 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-08-31  
-**Updated:** 2026-09-30
+**Updated:** 2026-11-08 (decision 1 amended by [ADR-039](ADR-039-coordinator-trim-flow.md))
 
 Known limitation: transient redraw artifacts while the trim window is resized or
 maximized are recorded in [project status](../project-status.md) and
@@ -28,10 +28,14 @@ could therefore detect a missing callback but not retire the player.
 
 ## Decision
 
-1. `CaptureCoordinator` remains the sole owner of `SessionState`, the finalized
-   source path, the latest successful temporary result path, recording options,
-   and `TrimExportController`. `TrimWindow` owns only native controls, range
-   interaction and preview resources; callbacks are commands to the coordinator.
+1. `CaptureCoordinator` remains the sole owner of `SessionState`, through its
+   `SessionStateMachine`, and of the `RecordingSession`. `TrimFlow`, owned by
+   the coordinator, owns the finalized source path, the latest successful
+   temporary result, its copy of the recording options and
+   `TrimExportController`. `TrimWindow` owns only native controls, range
+   interaction and preview resources. Its callbacks are commands to
+   `TrimFlow`, which changes the state only through the coordinator's state
+   machine.
 2. The source `RecordingSession` remains alive throughout trimming in protected
    temporary storage. Terminal destinations and prepared clipboard publications
    use the staged lifetime/publication rules in ADR-009/011/014. A temporary

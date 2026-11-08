@@ -59,7 +59,7 @@ Paths in this table are relative to `apps/easnap-desktop/src`.
 | Recording configuration/active/paused/finalizing island and boundary HWNDs | `ui/recording_controls.cpp`: `RecordingControls::ShowConfiguring`, `RetireWorkspace`, nested `Window::Create`, `UpdateForState`, `Layout`, `HandlePanelMessage`, `Destroy` |
 | Preview process and native/still children | `media/preview_process.cpp`: `ProcessMediaPreview::UpdateVideo`, `SendResize`, `Poll`, `Close`; `media/preview_host_main.cpp`: host creation/resize dispatch; `media/media_preview.cpp`: `MfPlayPreview::UpdateVideo`, `NativeVideoWindowProc`, `StillFrameWindowProc`, `ShowStillFrame`, `PresentStillFrame` |
 | Timeline input and preview health | `ui/trim_window.cpp`: `HandleTimelineMessage`, `UpdateTimelineFromPoint`, `SeekTo`, `SetAccessibleTimelineValue`; `media/preview_transport.cpp`: `PreviewTransport::TakeNext`/`Complete`, `PreviewLiveness::Observe`; `media/media_preview.cpp`: `MfPlayPreview::DriveTransport`, `CheckLiveness`, `RequestRecovery` |
-| Session retirement and shutdown | `app/session_state.cpp`: `CaptureCoordinator::EndSession`, `OnDeferredCleanup`, `Shutdown`; check owner relationships before changing teardown order. |
+| Session retirement and shutdown | `app/session_state.cpp`: `CaptureCoordinator::EndSession`, `OnDeferredCleanup`, `Shutdown`; the trim view through `app/trim_flow.cpp`: `TrimFlow::RetireWindow`, `DestroyRetired`, `Destroy`; check owner relationships before changing teardown order. |
 
 Implement in this order: choose the existing surface type and owner; establish
 its initial monitor/DPI and native styles; bind the native procedure; create and
@@ -187,7 +187,9 @@ whose decision 4 states the mechanism behind each rule below.
   source media and must not destroy an owner while its callback is executing.
 
 For owner lifetime, review `CaptureCoordinator::EndSession`,
-`OnDeferredCleanup` and `Shutdown` in `src/app/session_state.cpp`, together with
+`OnDeferredCleanup` and `Shutdown` in `src/app/session_state.cpp` and
+`TrimFlow::RetireWindow`, `DestroyRetired` and `Destroy` in
+`src/app/trim_flow.cpp`, together with
 `RecordingControls::ShowConfiguring`, `RetireWorkspace` and
 `RecordingControls::Window::HandlePanelMessage` in `src/ui/recording_controls.cpp`.
 Paths are relative to `apps/easnap-desktop`. The configuring recording island

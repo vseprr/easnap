@@ -761,9 +761,43 @@ set_tests_properties(ui_material_raster_parity PROPERTIES LABELS "unit;ui;theme"
 set_tests_properties(ui_modernization_native PROPERTIES
     LABELS "integration;ui;accessibility;theme;preview" TIMEOUT 90)
 
+# test_trim_flow - the production trim flow (ADR-039) with its window, MP4
+# exporter, completion controller and temporary sessions, driven with messages
+# on a private desktop.
+add_executable(test_trim_flow
+    test_trim_flow.cpp
+    ../src/app/trim_flow.cpp
+    ../src/app/trim_workflow.cpp
+    ../src/app/recording_completion.cpp
+    ../src/app/recording_workflow.cpp
+    ../src/app/session_transitions.cpp
+    ../src/ui/ui_theme.cpp
+    ../src/ui/native_controls.cpp
+    ../src/ui/trim_window.cpp
+    ../src/ui/trim_layout.cpp
+    ../src/ui/timeline_accessibility.cpp
+    ../src/media/preview_process.cpp
+    ../src/media/preview_transport.cpp
+    ../src/media/mp4_trim_exporter.cpp
+    ../src/media/gif_exporter.cpp
+    ../src/media/gif_encoder.cpp
+    ../src/media/media_foundation_writer.cpp
+    ../src/media/mf_d3d_device.cpp
+    ../src/platform/platform_utils.cpp)
+add_dependencies(test_trim_flow EasnapPreviewHost)
+target_include_directories(test_trim_flow PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_trim_flow PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs mf mfplat mfuuid mfreadwrite mfplay
+    shlwapi comctl32 shell32 ole32 oleaut32 uuid user32 gdi32 advapi32 propsys UIAutomationCore)
+add_test(NAME trim_flow_production
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_trim_flow>)
+set_tests_properties(trim_flow_production PROPERTIES
+    LABELS "integration;trim;recording;preview;isolated-desktop" TIMEOUT 180)
+
 foreach(ui_target test_region_selector test_redaction_renderer test_capture_overlay test_capture_workspace
                   test_scrollshot_workspace test_scrollshot_desktop test_data_safety test_text_fit
-                  test_ui_modernization)
+                  test_ui_modernization test_trim_flow)
     target_link_libraries(${ui_target} PRIVATE uxtheme gdiplus oleacc dwmapi)
 endforeach()
 
