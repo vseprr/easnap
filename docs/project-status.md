@@ -64,6 +64,31 @@ Work toward v1.2 runs on the branch `feature/v1.2`, created on 2026-11-08 from
 - Not validated: a pin moved between monitors of different scale (the PC has
   one display), long use, and many or very large pins at once. The native test
   reads the pin's picture through `WM_PRINTCLIENT`, not from the screen.
+- **Audio capture threads have an exception boundary:** the WASAPI capture
+  thread, its consumer and the mixer of both sources catch what escapes them
+  (in practice running out of memory or threads). The recording's audio then
+  fails through its usual path, and Start and a drain are released, instead of
+  Easnap ending. Validated: lab Full (2026-11-08, run `20261108-151811-full`),
+  50 of 50 with no retry, including `wasapi_audio_capture` and the recording
+  tests. The failure path itself is not exercised: no test runs out of memory.
+- **Undo keeps 200 steps** ([ADR-017](decisions/ADR-017-neumorphic-editor-and-editable-annotations.md));
+  older steps are dropped. Covered in `capture_workspace_production`; same lab
+  run.
+- **Copy prepares both clipboard formats first:** the DIB and the encoded PNG
+  are ready before the clipboard is opened, which is now held only to hand
+  them over. Covered in `capture_workspace_production` and
+  `scrollshot_workspace_production` (host runs).
+- **The coordinator's state is held by `SessionStateMachine`**, the first
+  slice of [ADR-039](decisions/ADR-039-coordinator-trim-flow.md); the log
+  lines of transitions are unchanged. `session_state_transitions` checks that
+  the machine allows exactly the pairs the rules allow, from every state.
+  Still to do: the owner's check that a screenshot, a recording with trim and
+  a Scrollshot run from start to Idle as before, then the trim flow (S2).
+- The clipboard change and the state machine, with the shorter WASAPI start-up
+  code, passed lab Full 50 of 50 (run `20261108-153432-full`, without the
+  WASAPI change) and Soak 56 of 56 (run `20261108-154503-soak`, all three) on
+  2026-11-08, with no retry and the usual GDI fallback of
+  `real_desktop_recording_session`.
 
 ## Validated
 
@@ -133,7 +158,9 @@ Work toward v1.2 runs on the branch `feature/v1.2`, created on 2026-11-08 from
 ## Known limitations and unresolved risks
 
 - Scrollshot is manual and vertical; the image only grows downwards. Copying
-  and saving a very tall image run on the UI thread. At the 48-million-pixel
+  and saving a very tall image run on the UI thread; the PNG for the clipboard
+  is encoded before the clipboard is opened, so other applications can use the
+  clipboard meanwhile (v1.2 branch). At the 48-million-pixel
   limit, editing holds two buffers of about 190 MB and an export a third.
 - A recording that is still being written when Easnap stops cannot be
   recovered; a recovered recording is the untrimmed MP4. A recording that
@@ -194,7 +221,7 @@ Open since v1.0.0:
   known, so freedom from leaks during long resize sessions is not established
   (figures in the same section of ADR-024).
 - Native startup/pause/drain can wait inside Windows; full-range publication
-  is synchronous; undo history is uncapped; late MP4 trims decode from source
+  is synchronous; late MP4 trims decode from source
   start; codec endpoints and GIF timing/palette have granularity. Low size GIF
   can omit tiny visual changes.
 

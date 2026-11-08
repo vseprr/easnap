@@ -38,9 +38,9 @@ In this order (details in [project status](docs/project-status.md#next-slice)):
 
 1. The smaller v1.2 candidates under [other deferred work](#other-deferred-work),
    one bounded slice each, the low-risk ones first.
-2. `CaptureCoordinator` split: an ADR first (a small state machine, then the
-   trim flow with its own test target); no extraction of Scrollshot or the
-   workspace in v1.2.
+2. `CaptureCoordinator` split ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)):
+   S1, the state machine, is in; S2, the trim flow with its own test target,
+   is next. No extraction of Scrollshot or the workspace in v1.2.
 3. A release candidate: lab Full and Soak, the owner's second round of use,
    then v1.2.0.
 

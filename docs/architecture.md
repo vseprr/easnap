@@ -15,9 +15,11 @@ library loading to the Windows system directory before anything else runs, and
 the parent range-checks the state the helper reports over their private pipe.
 
 The hidden host window in `src/main.cpp` receives application messages.
-`CaptureCoordinator` is the sole owner of application session state. UI surfaces
-forward commands and reflect that state; they do not independently start a
-second capture session.
+`CaptureCoordinator` is the sole owner of application session state, held in
+one `SessionStateMachine` (`app/session_transitions.h`) through which every
+transition passes ([ADR-039](decisions/ADR-039-coordinator-trim-flow.md)). UI
+surfaces forward commands and reflect that state; they do not independently
+start a second capture session.
 
 The normal flows, in the states of `SessionState`
 (`app/session_transitions.h`):
@@ -165,8 +167,11 @@ pass. There is no second document or export-specific approximation of the tools.
 WIC target. It never captures the island or samples displayed image pixels.
 Copy publishes CF_DIB and PNG. The CF_DIB image is written bottom-up: .NET
 applications could not read the top-down bitmap Easnap wrote before
-(`Clipboard.GetImage` returns nothing for it; `PutClipboardDib` in
-`platform/platform_utils.cpp`). Save uses WIC and the native PNG/JPEG picker.
+(`Clipboard.GetImage` returns nothing for it; `MakeClipboardDib` in
+`platform/platform_utils.cpp`). Both formats are prepared, the PNG encoded,
+before the clipboard is opened, so other applications are not kept from the
+clipboard while a tall image is encoded. Save uses WIC and the native PNG/JPEG
+picker.
 Acquisition, composite or clipboard failure keeps the session available and
 does not substitute an unannotated success result. See ADR-003.
 
