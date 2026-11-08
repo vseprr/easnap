@@ -285,6 +285,10 @@ private:
     [[nodiscard]] int EnsureBaseRows(int first, int end);
     [[nodiscard]] const ToolbarItem* HitTestToolbar(POINT client_pt) const;
 
+    /// The WM_COMMAND and WM_KEYDOWN arms of `HandleMessage`. Reached only
+    /// through it, so `ui::ConsumePopupInput` sees every message first.
+    void OnCommand(int id, int notification);
+    void OnKeyDown(WPARAM key, LPARAM flags);
     void OnToolbarActivated(const ToolbarItem& item);
     void BeginStroke(POINT client_pt);
     void UpdateStroke(POINT client_pt);

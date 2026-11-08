@@ -1969,102 +1969,9 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             if (draw && ui::DrawComboItem(*draw)) { return TRUE; }
             break;
         }
-        case WM_COMMAND: {
-            const int id = LOWORD(wparam), notification = HIWORD(wparam);
-            if (id == IDCANCEL) {
-                RequestDiscard();
-                return 0;
-            }
-            if (id == 2600 && notification == CBN_DROPDOWN) {
-                COMBOBOXINFO info{sizeof(info)};
-                ::GetComboBoxInfo(Control(2600), &info);
-                ::SetWindowLongPtrW(info.hwndList, GWL_STYLE, ::GetWindowLongPtrW(info.hwndList, GWL_STYLE) & ~WS_BORDER);
-                ::SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE, ::GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
-                ui::RoundWindow(info.hwndList);
-                // Shown again on every drop-down: excluded as an opaque layered
-                // window, it leaves no hole in a capture.
-                static_cast<void>(ui::ExcludeFromCapture(info.hwndList));
-                return 0;
-            }
-            if (id == 2700 && notification == EN_CHANGE) {
-                UpdateTextFromControl();
-                return 0;
-            }
-            if (syncing_context_) { return 0; }
-            if (id == 2600 && (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS)) {
-                wchar_t text[32]{};
-                if (notification == CBN_SELCHANGE) {
-                    ::SendMessageW(Control(2600), CB_GETLBTEXT, ::SendMessageW(Control(2600), CB_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(text));
-                } else {
-                    ::GetWindowTextW(Control(2600), text, 32);
-                }
-                wchar_t* end = nullptr;
-                const double size = std::wcstod(text, &end);
-                while (end && std::iswspace(*end)) { ++end; }
-                if (end && ::lstrcmpiW(end, L"pt") == 0) { end += 2; }
-                if (end && *end == 0 && std::isfinite(size) && size >= 6 && size <= 288) {
-                    auto value = ContextStyle();
-                    value.font_size = static_cast<float>(size);
-                    ChangeStyle(value);
-                } else {
-                    ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_FONT_SIZE_RANGE));
-                    SyncContext();
-                    Invalidate();
-                }
-                if (notification == CBN_KILLFOCUS) { CommitContextTransaction(); }
-                return 0;
-            }
-            if (id == 2605 && notification == BN_CLICKED) {
-                document_.BeginTransaction();
-                ::SetWindowTextW(Control(2604), L"");
-                document_.CommitTransaction();
-                ::SetFocus(Control(2604));
-                SyncWatermarkClear();
-                return 0;
-            }
-            if (id == 2604 && notification == EN_CHANGE && ContextTool() == ToolId::Watermark) {
-                if (!FeatureUsed()) { return 0; }
-                const int length = ::GetWindowTextLengthW(Control(2604));
-                std::wstring text(static_cast<size_t>(length) + 1, L'\0');
-                ::GetWindowTextW(Control(2604), text.data(), length + 1);
-                text.resize(std::min(length, 16));
-                if (!text.empty() && text.back() >= 0xd800 && text.back() <= 0xdbff) { text.pop_back(); }
-                if (text.size() != static_cast<size_t>(length)) {
-                    syncing_context_ = true;
-                    ::SetWindowTextW(Control(2604), text.c_str());
-                    ::SendMessageW(Control(2604), EM_SETSEL, text.size(), text.size());
-                    syncing_context_ = false;
-                }
-                if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
-                Annotation a;
-                if (selected_) {
-                    a = document_.annotations()[*selected_];
-                } else {
-                    a.tool = ToolId::Watermark;
-                    a.style = style_;
-                    a.style.opacity = 30;
-                    a.points = {{0, 0}, {static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)}};
-                }
-                a.text = std::move(text);
-                if (selected_) {
-                    document_.Replace(*selected_, std::move(a));
-                } else {
-                    document_.Apply(std::move(a));
-                    selected_ = document_.annotations().size() - 1;
-                }
-                SyncContext();
-                Invalidate();
-                return 0;
-            }
-            if (notification == BN_CLICKED) {
-                const auto found = std::find_if(toolbar_.begin(), toolbar_.end(), [id](const auto& item) { return item.identifier == id; });
-                if (found != toolbar_.end()) {
-                    const auto item = *found;
-                    OnToolbarActivated(item);
-                }
-            }
+        case WM_COMMAND:
+            OnCommand(LOWORD(wparam), HIWORD(wparam));
             return 0;
-        }
         case WM_PRINTCLIENT:
             PaintToolbar(reinterpret_cast<HDC>(wparam));
             return 0;
@@ -2217,142 +2124,9 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             OnCharacter(static_cast<wchar_t>(wparam));
             return 0;
 
-        case WM_KEYDOWN: {
-            if (editing_text_ && text_edit_) {
-                ::SendMessageW(text_edit_, message, wparam, lparam);
-                return 0;
-            }
-            if (wparam == VK_ESCAPE && (transforming_ || dragging_ || document_.in_transaction())) {
-                // The rollback can remove the selected annotation (a watermark created in this transaction).
-                CancelStroke();
-                document_.CancelTransaction();
-                if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
-                SyncContext();
-                Invalidate();
-                return 0;
-            }
-            if (wparam == VK_ESCAPE && selected_) {
-                Select({});
-                return 0;
-            }
-            if (wparam == VK_DELETE && selected_) {
-                document_.Remove(*selected_);
-                Select({});
-                return 0;
-            }
-            if (selected_ && *selected_ < document_.annotations().size() && wparam >= VK_LEFT && wparam <= VK_DOWN) {
-                auto a = document_.annotations()[*selected_];
-                const float step = (::GetKeyState(VK_SHIFT) & 0x8000) ? 10.0f : 1.0f;
-                for (auto& p : a.points) {
-                    p.x += wparam == VK_LEFT ? -step : wparam == VK_RIGHT ? step
-                                                                          : 0;
-                    p.y += wparam == VK_UP ? -step : wparam == VK_DOWN ? step
-                                                                       : 0;
-                }
-                document_.Replace(*selected_, std::move(a));
-                Invalidate();
-                return 0;
-            }
-            if (wparam == VK_TAB) {
-                ::SetFocus(::GetDlgItem(hwnd_, 2000));
-                return 0;
-            }
-            const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
-            const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            if (document_mode_) {
-                // A document larger than its viewport is moved and scaled from
-                // the keyboard as well as with the wheel.
-                const float page = static_cast<float>(platform::RectHeight(region_)) / zoom_ * 0.9f;
-                const POINT centre{(region_.left + region_.right) / 2, (region_.top + region_.bottom) / 2};
-                switch (wparam) {
-                    case VK_PRIOR: ScrollDocument(0.0f, -page); return 0;
-                    case VK_NEXT: ScrollDocument(0.0f, page); return 0;
-                    case VK_HOME: ScrollDocument(0.0f, -static_cast<float>(source_image_.height)); return 0;
-                    case VK_END: ScrollDocument(0.0f, static_cast<float>(source_image_.height)); return 0;
-                    case VK_UP: ScrollDocument(0.0f, -48.0f * scale_ / zoom_); return 0;
-                    case VK_DOWN: ScrollDocument(0.0f, 48.0f * scale_ / zoom_); return 0;
-                    case VK_LEFT: ScrollDocument(-48.0f * scale_ / zoom_, 0.0f); return 0;
-                    case VK_RIGHT: ScrollDocument(48.0f * scale_ / zoom_, 0.0f); return 0;
-                    case VK_OEM_PLUS:
-                    case VK_ADD:
-                        if (control) {
-                            ZoomDocument(StepZoom(zoom_, 1), centre);
-                            return 0;
-                        }
-                        break;
-                    case VK_OEM_MINUS:
-                    case VK_SUBTRACT:
-                        if (control) {
-                            ZoomDocument(StepZoom(zoom_, -1), centre);
-                            return 0;
-                        }
-                        break;
-                    case '0':
-                    case VK_NUMPAD0:
-                        if (control) {
-                            ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre);
-                            return 0;
-                        }
-                        break;
-                    case '1':
-                    case VK_NUMPAD1:
-                        if (control) {
-                            ZoomDocument(1.0f, centre);
-                            return 0;
-                        }
-                        break;
-                    default:
-                        break;
-                }
-            }
-            if (control) {
-                switch (wparam) {
-                    case 'Z': {
-                        selected_.reset();
-                        if (!FeatureUsed()) { return 0; }
-                        const auto revision = document_.revision();
-                        if (shift) {
-                            document_.Redo();
-                        } else {
-                            document_.Undo();
-                        }
-                        Invalidate();
-                        NotifyMutation(revision);
-                        return 0;
-                    }
-                    case 'Y': {
-                        selected_.reset();
-                        if (!FeatureUsed()) { return 0; }
-                        const auto revision = document_.revision();
-                        document_.Redo();
-                        Invalidate();
-                        NotifyMutation(revision);
-                        return 0;
-                    }
-                    case 'C':
-                        if (!FeatureUsed()) { return 0; }
-                        CompleteCopy();
-                        return 0;
-                    case 'S':
-                        if (!FeatureUsed()) { return 0; }
-                        if (SaveToFile()) {
-                            Close(true);
-                        }
-                        return 0;
-                    case 'T':
-                        if (!FeatureUsed()) { return 0; }
-                        CompletePin();
-                        return 0;
-                    default:
-                        break;
-                }
-            }
-            if (wparam == VK_ESCAPE) {
-                RequestDiscard();
-                return 0;
-            }
+        case WM_KEYDOWN:
+            OnKeyDown(wparam, lparam);
             return 0;
-        }
 
         case WM_CLOSE:
             RequestDiscard();
@@ -2365,6 +2139,237 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             break;
     }
     return ::DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+void ScreenshotEditor::OnCommand(int id, int notification) {
+    if (id == IDCANCEL) {
+        RequestDiscard();
+        return;
+    }
+    if (id == 2600 && notification == CBN_DROPDOWN) {
+        COMBOBOXINFO info{sizeof(info)};
+        ::GetComboBoxInfo(Control(2600), &info);
+        ::SetWindowLongPtrW(info.hwndList, GWL_STYLE, ::GetWindowLongPtrW(info.hwndList, GWL_STYLE) & ~WS_BORDER);
+        ::SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE, ::GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
+        ui::RoundWindow(info.hwndList);
+        // Shown again on every drop-down: excluded as an opaque layered
+        // window, it leaves no hole in a capture.
+        static_cast<void>(ui::ExcludeFromCapture(info.hwndList));
+        return;
+    }
+    if (id == 2700 && notification == EN_CHANGE) {
+        UpdateTextFromControl();
+        return;
+    }
+    if (syncing_context_) { return; }
+    if (id == 2600 && (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS)) {
+        wchar_t text[32]{};
+        if (notification == CBN_SELCHANGE) {
+            ::SendMessageW(Control(2600), CB_GETLBTEXT, ::SendMessageW(Control(2600), CB_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(text));
+        } else {
+            ::GetWindowTextW(Control(2600), text, 32);
+        }
+        wchar_t* end = nullptr;
+        const double size = std::wcstod(text, &end);
+        while (end && std::iswspace(*end)) { ++end; }
+        if (end && ::lstrcmpiW(end, L"pt") == 0) { end += 2; }
+        if (end && *end == 0 && std::isfinite(size) && size >= 6 && size <= 288) {
+            auto value = ContextStyle();
+            value.font_size = static_cast<float>(size);
+            ChangeStyle(value);
+        } else {
+            ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_FONT_SIZE_RANGE));
+            SyncContext();
+            Invalidate();
+        }
+        if (notification == CBN_KILLFOCUS) { CommitContextTransaction(); }
+        return;
+    }
+    if (id == 2605 && notification == BN_CLICKED) {
+        document_.BeginTransaction();
+        ::SetWindowTextW(Control(2604), L"");
+        document_.CommitTransaction();
+        ::SetFocus(Control(2604));
+        SyncWatermarkClear();
+        return;
+    }
+    if (id == 2604 && notification == EN_CHANGE && ContextTool() == ToolId::Watermark) {
+        if (!FeatureUsed()) { return; }
+        const int length = ::GetWindowTextLengthW(Control(2604));
+        std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+        ::GetWindowTextW(Control(2604), text.data(), length + 1);
+        text.resize(std::min(length, 16));
+        if (!text.empty() && text.back() >= 0xd800 && text.back() <= 0xdbff) { text.pop_back(); }
+        if (text.size() != static_cast<size_t>(length)) {
+            syncing_context_ = true;
+            ::SetWindowTextW(Control(2604), text.c_str());
+            ::SendMessageW(Control(2604), EM_SETSEL, text.size(), text.size());
+            syncing_context_ = false;
+        }
+        if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+        Annotation a;
+        if (selected_) {
+            a = document_.annotations()[*selected_];
+        } else {
+            a.tool = ToolId::Watermark;
+            a.style = style_;
+            a.style.opacity = 30;
+            a.points = {{0, 0}, {static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)}};
+        }
+        a.text = std::move(text);
+        if (selected_) {
+            document_.Replace(*selected_, std::move(a));
+        } else {
+            document_.Apply(std::move(a));
+            selected_ = document_.annotations().size() - 1;
+        }
+        SyncContext();
+        Invalidate();
+        return;
+    }
+    if (notification == BN_CLICKED) {
+        const auto found = std::find_if(toolbar_.begin(), toolbar_.end(), [id](const auto& item) { return item.identifier == id; });
+        if (found != toolbar_.end()) {
+            const auto item = *found;
+            OnToolbarActivated(item);
+        }
+    }
+}
+
+void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
+    if (editing_text_ && text_edit_) {
+        ::SendMessageW(text_edit_, WM_KEYDOWN, key, flags);
+        return;
+    }
+    if (key == VK_ESCAPE && (transforming_ || dragging_ || document_.in_transaction())) {
+        // The rollback can remove the selected annotation (a watermark created in this transaction).
+        CancelStroke();
+        document_.CancelTransaction();
+        if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+        SyncContext();
+        Invalidate();
+        return;
+    }
+    if (key == VK_ESCAPE && selected_) {
+        Select({});
+        return;
+    }
+    if (key == VK_DELETE && selected_) {
+        document_.Remove(*selected_);
+        Select({});
+        return;
+    }
+    if (selected_ && *selected_ < document_.annotations().size() && key >= VK_LEFT && key <= VK_DOWN) {
+        auto a = document_.annotations()[*selected_];
+        const float step = (::GetKeyState(VK_SHIFT) & 0x8000) ? 10.0f : 1.0f;
+        for (auto& p : a.points) {
+            p.x += key == VK_LEFT ? -step : key == VK_RIGHT ? step
+                                                            : 0;
+            p.y += key == VK_UP ? -step : key == VK_DOWN ? step
+                                                         : 0;
+        }
+        document_.Replace(*selected_, std::move(a));
+        Invalidate();
+        return;
+    }
+    if (key == VK_TAB) {
+        ::SetFocus(::GetDlgItem(hwnd_, 2000));
+        return;
+    }
+    const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    if (document_mode_) {
+        // A document larger than its viewport is moved and scaled from
+        // the keyboard as well as with the wheel.
+        const float page = static_cast<float>(platform::RectHeight(region_)) / zoom_ * 0.9f;
+        const POINT centre{(region_.left + region_.right) / 2, (region_.top + region_.bottom) / 2};
+        switch (key) {
+            case VK_PRIOR: ScrollDocument(0.0f, -page); return;
+            case VK_NEXT: ScrollDocument(0.0f, page); return;
+            case VK_HOME: ScrollDocument(0.0f, -static_cast<float>(source_image_.height)); return;
+            case VK_END: ScrollDocument(0.0f, static_cast<float>(source_image_.height)); return;
+            case VK_UP: ScrollDocument(0.0f, -48.0f * scale_ / zoom_); return;
+            case VK_DOWN: ScrollDocument(0.0f, 48.0f * scale_ / zoom_); return;
+            case VK_LEFT: ScrollDocument(-48.0f * scale_ / zoom_, 0.0f); return;
+            case VK_RIGHT: ScrollDocument(48.0f * scale_ / zoom_, 0.0f); return;
+            case VK_OEM_PLUS:
+            case VK_ADD:
+                if (control) {
+                    ZoomDocument(StepZoom(zoom_, 1), centre);
+                    return;
+                }
+                break;
+            case VK_OEM_MINUS:
+            case VK_SUBTRACT:
+                if (control) {
+                    ZoomDocument(StepZoom(zoom_, -1), centre);
+                    return;
+                }
+                break;
+            case '0':
+            case VK_NUMPAD0:
+                if (control) {
+                    ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre);
+                    return;
+                }
+                break;
+            case '1':
+            case VK_NUMPAD1:
+                if (control) {
+                    ZoomDocument(1.0f, centre);
+                    return;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+    if (control) {
+        switch (key) {
+            case 'Z': {
+                selected_.reset();
+                if (!FeatureUsed()) { return; }
+                const auto revision = document_.revision();
+                if (shift) {
+                    document_.Redo();
+                } else {
+                    document_.Undo();
+                }
+                Invalidate();
+                NotifyMutation(revision);
+                return;
+            }
+            case 'Y': {
+                selected_.reset();
+                if (!FeatureUsed()) { return; }
+                const auto revision = document_.revision();
+                document_.Redo();
+                Invalidate();
+                NotifyMutation(revision);
+                return;
+            }
+            case 'C':
+                if (!FeatureUsed()) { return; }
+                CompleteCopy();
+                return;
+            case 'S':
+                if (!FeatureUsed()) { return; }
+                if (SaveToFile()) {
+                    Close(true);
+                }
+                return;
+            case 'T':
+                if (!FeatureUsed()) { return; }
+                CompletePin();
+                return;
+            default:
+                break;
+        }
+    }
+    if (key == VK_ESCAPE) {
+        RequestDiscard();
+        return;
+    }
 }
 
 // ---------------------------------------------------------------------------
