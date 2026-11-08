@@ -42,6 +42,24 @@ namespace {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Closes the queue and joins its consumer however the capture loop ends,
+/// also by an exception: a joinable std::thread that is destroyed ends the
+/// process.
+class ConsumerJoin final {
+public:
+    ConsumerJoin(AudioQueue& queue, std::thread& consumer) noexcept : queue_(queue), consumer_(consumer) {}
+    ~ConsumerJoin() {
+        queue_.close();
+        if (consumer_.joinable()) { consumer_.join(); }
+    }
+    ConsumerJoin(const ConsumerJoin&) = delete;
+    ConsumerJoin& operator=(const ConsumerJoin&) = delete;
+
+private:
+    AudioQueue& queue_;
+    std::thread& consumer_;
+};
+
 /// Converts WAVEFORMATEX / WAVEFORMATEXTENSIBLE to AudioFormat.
 AudioFormat FormatFromWaveFormat(const WAVEFORMATEX& wfx) noexcept {
     AudioFormat fmt;
@@ -139,9 +157,9 @@ detail::AudioTimestampResolutionResult ResolveAudioPacketTimestampImpl(
                 input.audio_clock_position - input.device_position,
                 10'000'000, input.sample_rate);
             if (packet_age.has_value() &&
-                packet_age.value() <= kMaximumClockCorrelationAge100ns &&
-                input.audio_clock_qpc_100ns >= packet_age.value()) {
-                correlated_packet_qpc = input.audio_clock_qpc_100ns - packet_age.value();
+                *packet_age <= kMaximumClockCorrelationAge100ns &&
+                input.audio_clock_qpc_100ns >= *packet_age) {
+                correlated_packet_qpc = input.audio_clock_qpc_100ns - *packet_age;
                 result.audio_clock_correlation_valid =
                     correlated_packet_qpc >= static_cast<uint64_t>(input.qpc_epoch_100ns) &&
                     IsNotAfterWithTolerance(correlated_packet_qpc,
@@ -161,8 +179,8 @@ detail::AudioTimestampResolutionResult ResolveAudioPacketTimestampImpl(
         ScaleUnsigned(buffered_frames, 10'000'000, input.sample_rate);
     uint64_t fallback_packet_qpc = input.capture_qpc_100ns;
     if (buffered_duration.has_value() &&
-        fallback_packet_qpc >= buffered_duration.value()) {
-        fallback_packet_qpc -= buffered_duration.value();
+        fallback_packet_qpc >= *buffered_duration) {
+        fallback_packet_qpc -= *buffered_duration;
     }
     if (input.qpc_epoch_100ns > 0 &&
         fallback_packet_qpc < static_cast<uint64_t>(input.qpc_epoch_100ns)) {
@@ -188,9 +206,9 @@ detail::AudioTimestampResolutionResult ResolveAudioPacketTimestampImpl(
             input.capture_qpc_100ns - input.raw_wasapi_qpc_100ns;
         const uint64_t maximum = (std::numeric_limits<uint64_t>::max)();
         const uint64_t maximum_expected_age =
-            buffered_duration.value() > maximum - kTimestampTolerance100ns
+            *buffered_duration > maximum - kTimestampTolerance100ns
                 ? maximum
-                : buffered_duration.value() + kTimestampTolerance100ns;
+                : *buffered_duration + kTimestampTolerance100ns;
         if (raw_age > maximum_expected_age) {
             result.raw_wasapi_plausible = false;
         }
@@ -246,6 +264,9 @@ public:
 
 private:
     void CaptureThread(AudioSource source, PacketCallback on_packet);
+    /// Ends initialisation as a failure: counts it, keeps `hr` for the
+    /// diagnostics and lets Start return `result`.
+    void FailInitialization(AudioCaptureResult result, HRESULT hr) noexcept;
 
     std::thread thread_;
     platform::UniqueHandle stop_event_;
@@ -453,7 +474,20 @@ AudioCaptureResult WasapiAudioProvider::Start(AudioSource source, PacketCallback
     init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_relaxed);
 
     thread_ = std::thread([this, source, cb = std::move(on_packet)]() mutable {
-        CaptureThread(source, std::move(cb));
+        // Running out of memory, or of threads for the consumer, ends this
+        // capture as a failure the recording reports; it must not end Easnap.
+        try {
+            CaptureThread(source, std::move(cb));
+        } catch (...) {
+            platform::LogMessage(L"[Audio] The capture thread failed with an exception; capture ended");
+            last_failure_hresult_.store(E_OUTOFMEMORY, std::memory_order_release);
+            capture_failures_.Increment();
+            // Start waits for this event while initialisation is not finished.
+            if (::WaitForSingleObject(init_done_event_.get(), 0) != WAIT_OBJECT_0) {
+                init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
+                ::SetEvent(init_done_event_.get());
+            }
+        }
     });
 
     // Wait for the capture thread to complete WASAPI initialization.
@@ -505,15 +539,19 @@ void WasapiAudioProvider::Stop() {
 // CaptureThread — the real event-driven WASAPI capture loop
 // ---------------------------------------------------------------------------
 
+void WasapiAudioProvider::FailInitialization(AudioCaptureResult result, HRESULT hr) noexcept {
+    last_failure_hresult_.store(hr, std::memory_order_release);
+    capture_failures_.Increment();
+    init_result_.store(result, std::memory_order_release);
+    ::SetEvent(init_done_event_.get());
+}
+
 void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_packet) {
     // Initialize COM as MTA on this thread.
     const HRESULT com_hr = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(com_hr)) {
         platform::LogMessage(L"[Audio] CoInitializeEx failed: 0x%08lX", com_hr);
-        last_failure_hresult_.store(com_hr, std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::InitializationFailed, com_hr);
         return;
     }
 
@@ -529,10 +567,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
                                     CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
     if (FAILED(hr)) {
         platform::LogMessage(L"[Audio] CoCreateInstance(MMDeviceEnumerator) failed: 0x%08lX", hr);
-        last_failure_hresult_.store(hr, std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
         return;
     }
 
@@ -544,10 +579,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
     }
     if (FAILED(hr) || !device) {
         platform::LogMessage(L"[Audio] GetDefaultAudioEndpoint failed: 0x%08lX", hr);
-        last_failure_hresult_.store(hr, std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::SourceUnavailable, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::SourceUnavailable, hr);
         return;
     }
 
@@ -556,10 +588,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
                           nullptr, reinterpret_cast<void**>(audio_client.GetAddressOf()));
     if (FAILED(hr) || !audio_client) {
         platform::LogMessage(L"[Audio] IMMDevice::Activate failed: 0x%08lX", hr);
-        last_failure_hresult_.store(hr, std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
         return;
     }
 
@@ -568,10 +597,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
     hr = audio_client->GetMixFormat(&mix_format);
     if (FAILED(hr) || mix_format == nullptr) {
         platform::LogMessage(L"[Audio] GetMixFormat failed: 0x%08lX", hr);
-        last_failure_hresult_.store(hr, std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
         return;
     }
 
@@ -610,10 +636,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
 
     if (FAILED(hr)) {
         platform::LogMessage(L"[Audio] IAudioClient::Initialize failed: 0x%08lX", hr);
-        last_failure_hresult_.store(hr, std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
         return;
     }
 
@@ -621,21 +644,14 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
     platform::UniqueHandle audio_event(::CreateEventW(nullptr, FALSE, FALSE, nullptr));
     if (!audio_event) {
         platform::LogMessage(L"[Audio] Failed to create audio event");
-        last_failure_hresult_.store(HRESULT_FROM_WIN32(::GetLastError()),
-                                    std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::InitializationFailed, HRESULT_FROM_WIN32(::GetLastError()));
         return;
     }
 
     hr = audio_client->SetEventHandle(audio_event.get());
     if (FAILED(hr)) {
         platform::LogMessage(L"[Audio] SetEventHandle failed: 0x%08lX", hr);
-        last_failure_hresult_.store(hr, std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
         return;
     }
 
@@ -644,10 +660,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
     hr = audio_client->GetService(IID_PPV_ARGS(&capture_client));
     if (FAILED(hr)) {
         platform::LogMessage(L"[Audio] GetService(IAudioCaptureClient) failed: 0x%08lX", hr);
-        last_failure_hresult_.store(hr, std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
         return;
     }
 
@@ -680,10 +693,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
         qpc_frequency.QuadPart <= 0 ||
         ::QueryPerformanceCounter(&qpc_epoch) == FALSE) {
         platform::LogMessage(L"[Audio] QueryPerformanceCounter initialization failed");
-        last_failure_hresult_.store(E_FAIL, std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::InitializationFailed, E_FAIL);
         return;
     }
     const MediaTime qpc_epoch_100ns = QpcTicksToMediaTime(qpc_epoch, qpc_frequency);
@@ -693,10 +703,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
     hr = audio_client->Start();
     if (FAILED(hr)) {
         platform::LogMessage(L"[Audio] IAudioClient::Start failed: 0x%08lX", hr);
-        last_failure_hresult_.store(hr, std::memory_order_release);
-        capture_failures_.Increment();
-        init_result_.store(AudioCaptureResult::InitializationFailed, std::memory_order_release);
-        ::SetEvent(init_done_event_.get());
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
         return;
     }
 
@@ -732,14 +739,22 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
 
     // Start a consumer thread that invokes the callback. This ensures the
     // callback does not block the WASAPI capture loop.
-    std::thread consumer_thread([this, &queue, &on_packet]() {
+    std::thread consumer_thread;
+    const ConsumerJoin join_consumer(queue, consumer_thread);
+    consumer_thread = std::thread([this, &queue, &on_packet]() {
         while (true) {
             auto packet = queue.wait_pop();
             if (!packet.has_value()) {
                 break;  // Queue closed and drained.
             }
             if (on_packet) {
-                on_packet(packet.value());
+                // A failed delivery loses this packet, not the process; the
+                // barrier still counts it, or a drain would wait for ever.
+                try {
+                    on_packet(packet.value());
+                } catch (...) {
+                    capture_failures_.Increment();
+                }
             }
             delivery_barrier_.CompleteOne();
         }

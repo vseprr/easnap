@@ -50,6 +50,42 @@ private:
     HDESK old_desktop_{}, desktop_{};
 };
 
+// Undo keeps the last kUndoLimit steps: the oldest are dropped, the rest
+// undo and redo exactly.
+void UndoHistoryIsCapped() {
+    constexpr size_t limit = editor::AnnotationDocument::kUndoLimit;
+    editor::AnnotationDocument document;
+    editor::Annotation line;
+    line.tool = editor::ToolId::Line;
+    line.points = {{0, 0}, {10, 10}};
+    const size_t steps = limit + 50;
+    for (size_t i = 0; i < steps; ++i) {
+        auto step = line;
+        step.points[1].x = static_cast<float>(i);
+        document.Apply(step);
+    }
+    size_t undone = 0;
+    while (document.Undo()) { ++undone; }
+    CHECK(undone == limit && document.annotations().size() == steps - limit);
+    size_t redone = 0;
+    while (document.Redo()) { ++redone; }
+    CHECK(redone == limit && document.annotations().size() == steps);
+    CHECK(document.annotations().back().points[1].x == static_cast<float>(steps - 1));
+    // A committed transaction is one step under the same limit.
+    document.BeginTransaction();
+    for (int i = 0; i < 5; ++i) {
+        auto moved = document.annotations().front();
+        moved.points[0].x += 1.0f;
+        document.Replace(0, moved);
+    }
+    document.CommitTransaction();
+    CHECK(document.annotations().front().points[0].x == 5.0f);
+    CHECK(document.Undo() && document.annotations().front().points[0].x == 0.0f);
+    undone = 1;
+    while (document.Undo()) { ++undone; }
+    CHECK(undone == limit);
+}
+
 void Policy() {
     ui::CaptureWorkspace workspace;
     CHECK(workspace.mode() == CaptureMode::Screenshot && !workspace.editing());
@@ -209,6 +245,16 @@ void EditorAndCompletion() {
             if (!active->completing()) { active->CompleteCopy(); }
         }
     };
+    int pins{};
+    bool accept_pin = true;
+    platform::BgraImage pinned;
+    RECT pinned_source{};
+    callbacks.on_pin = [&](platform::BgraImage image, const RECT& from) {
+        ++pins;
+        pinned = std::move(image);
+        pinned_source = from;
+        return accept_pin;
+    };
     editor::ScreenshotEditor editor(callbacks);
     active = &editor;
     const auto open = [&] {
@@ -326,6 +372,48 @@ void EditorAndCompletion() {
     editor.Destroy();
     open();
     CHECK(editor.CompleteCopy() && acquisitions == 1 && closed == 1 && copied);
+    editor.Destroy();
+
+    // Pin to screen (ADR-038): the island's Pin button acquires once, hands
+    // the composite and its source over, and closes as an export.
+    open();
+    pins = 0;
+    HWND pin_button = ::GetDlgItem(editor.hwnd(), 2409);
+    CHECK(pin_button && (::GetWindowLongPtrW(pin_button, GWL_STYLE) & WS_VISIBLE));
+    wchar_t pin_name[64]{};
+    ::GetWindowTextW(pin_button, pin_name, 64);
+    CHECK(std::wstring_view(pin_name) == L"Pin to screen (Ctrl+T)");
+    // The commands stay on one row with Pin among them.
+    RECT pin_rect{}, copy_rect{};
+    ::GetWindowRect(pin_button, &pin_rect);
+    ::GetWindowRect(::GetDlgItem(editor.hwnd(), 2404), &copy_rect);
+    CHECK(pin_rect.top == copy_rect.top && pin_rect.left < copy_rect.left);
+    ::SendMessageW(pin_button, BM_CLICK, 0, 0);
+    CHECK(acquisitions == 1 && pins == 1 && closed == 1 && copied && !editor.visible());
+    CHECK(pinned.pixels == expected.pixels && ::EqualRect(&pinned_source, &region) != FALSE);
+    editor.Destroy();
+    // Ctrl+T after drawing: the annotation is part of the pinned image.
+    open();
+    pins = 0;
+    SelectTool(editor, editor::ToolId::Rectangle);
+    Draw(editor, {-100, -20}, {120, 120});
+    {
+        std::array<BYTE, 256> control{};
+        control[VK_CONTROL] = 0x80;
+        ::SetKeyboardState(control.data());
+        editor.Keyboard(WM_KEYDOWN, 'T', 0);
+        control.fill(0);
+        ::SetKeyboardState(control.data());
+    }
+    CHECK(pins == 1 && closed == 1 && pinned.width == 320 && pinned.height == 220 && pinned.pixels != expected.pixels);
+    editor.Destroy();
+    // A pin that cannot be made leaves the session and its image in place.
+    open();
+    pins = 0;
+    accept_pin = false;
+    ::SendMessageW(::GetDlgItem(editor.hwnd(), 2409), BM_CLICK, 0, 0);
+    CHECK(pins == 1 && closed == 0 && editor.visible() && editor.has_image());
+    accept_pin = true;
     editor.Destroy();
 
     // Failed acquisition keeps the provisional frame editable and retryable.
@@ -1275,6 +1363,7 @@ int main(int argc, char** argv) {
         return failed ? 1 : 0;
     }
     Policy();
+    UndoHistoryIsCapped();
     PointerPolicy();
     RecordingRoundTrip();
     std::thread clipboard_tests([] {

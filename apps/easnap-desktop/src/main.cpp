@@ -16,6 +16,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 
+#include <cmath>
 #include <string>
 
 #include "app/session_state.h"
@@ -224,7 +225,7 @@ std::wstring DiagnosticDetails() {
         text += L"  " + std::to_wstring(easnap::platform::RectWidth(monitor.bounds)) + L" x " +
                 std::to_wstring(easnap::platform::RectHeight(monitor.bounds)) + L" at " +
                 std::to_wstring(monitor.bounds.left) + L"," + std::to_wstring(monitor.bounds.top) + L", " +
-                std::to_wstring(static_cast<int>(monitor.scale() * 100.0f + 0.5f)) + L"%" +
+                std::to_wstring(std::lround(monitor.scale() * 100.0f)) + L"%" +
                 (monitor.primary ? L", primary" : L"") + L"\r\n";
     }
     return text;

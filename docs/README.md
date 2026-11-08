@@ -17,7 +17,7 @@ alongside it. Contributor instructions are in [CONTRIBUTING.md](../CONTRIBUTING.
 | [Design system](ui/design-system.md) | Implemented colors, controls, accessibility and layout |
 | [Window implementation guide](ui/window-implementation-guide.md) | Required shared-code, layout, painting and regression-validation path for new or changed windows |
 | [Security](../SECURITY.md) | Reporting, private storage and publication model |
-| Release notes | [v1.1.0](releases/v1.1.0.md), [v1.1.0-rc.1](releases/v1.1.0-rc.1.md) (not published), [v1.1.0-beta.2](releases/v1.1.0-beta.2.md), [v1.1.0-beta.1](releases/v1.1.0-beta.1.md), [v1.0.2](releases/v1.0.2.md), [v1.0.1](releases/v1.0.1.md), [v1.0.0](releases/v1.0.0.md): what each version changed and how it was checked |
+| Release notes | [v1.2.0](releases/v1.2.0.md), [v1.1.0](releases/v1.1.0.md), [v1.1.0-rc.1](releases/v1.1.0-rc.1.md) (not published), [v1.1.0-beta.2](releases/v1.1.0-beta.2.md), [v1.1.0-beta.1](releases/v1.1.0-beta.1.md), [v1.0.2](releases/v1.0.2.md), [v1.0.1](releases/v1.0.1.md), [v1.0.0](releases/v1.0.0.md): what each version changed and how it was checked |
 | [Validation records](releases/validation-history.md) | The individual runs behind the release notes of each release since v1.0.1, including the ones that failed |
 
 ## Decisions
@@ -30,7 +30,8 @@ not unfinished roadmap instructions.
   [state and completion](decisions/ADR-002-explicit-region-confirmation.md),
   [editor/export](decisions/ADR-003-editor-window-and-export-model.md),
   [frame performance](decisions/ADR-015-frame-interaction-rendering.md),
-  [island placement around the frame](decisions/ADR-036-island-placement-around-the-frame.md).
+  [island placement around the frame](decisions/ADR-036-island-placement-around-the-frame.md),
+  [pinned images as screen content](decisions/ADR-038-pinned-images.md).
 - Appearance/accessibility: [shared theme and native controls](decisions/ADR-016-shared-appearance-and-native-controls.md),
   [neumorphic controls and editable annotations](decisions/ADR-017-neumorphic-editor-and-editable-annotations.md),
   [editor interaction corrections](decisions/ADR-018-editor-interaction-corrections.md),
@@ -48,6 +49,7 @@ not unfinished roadmap instructions.
   [startup, pacing and session leases](decisions/ADR-021-recording-startup-timeline-and-session-leases.md).
 - Media/completion: [MP4 trim](decisions/ADR-009-mp4-trim-boundaries-and-publication.md),
   [preview ownership](decisions/ADR-010-trim-view-ownership-and-orchestration.md),
+  [trimming in a flow of its own (planned)](decisions/ADR-039-coordinator-trim-flow.md),
   [publication/clipboard lifetime](decisions/ADR-011-recording-completion-and-clipboard-lifetime.md),
   [GIF policy](decisions/ADR-013-gif-stream-timing-palette-and-publication.md),
   [shared configuration/completion](decisions/ADR-014-unified-recording-configuration-and-format-completion.md).

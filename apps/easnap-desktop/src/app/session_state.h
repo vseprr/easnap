@@ -22,6 +22,7 @@
 
 namespace easnap::ui {
 class OverlayController;
+class PinnedImages;
 class RecordingControls;
 class ScrollshotControls;
 class TrimWindow;
@@ -70,12 +71,8 @@ inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
 ///     -> RecordingFinalizing -> RecordingTrimming -> Exporting -> Idle
 ///     -> ScrollshotConfiguring -> ScrollshotCapturing -> ScrollshotReview
 ///        -> Idle, or -> ScreenshotEditing to annotate the stitched image
-[[nodiscard]] const wchar_t* ToString(SessionState state) noexcept;
-/// True while a recording session holds data that must not be discarded.
-[[nodiscard]] bool IsRecordingState(SessionState state) noexcept;
-
-/// True from the moment Scrollshot is chosen until its image has been handed on.
-[[nodiscard]] bool IsScrollshotState(SessionState state) noexcept;
+///
+/// `SessionStateMachine` (session_transitions.h) holds the current state.
 
 enum class CaptureMode { Screenshot,
                          Record,
@@ -96,7 +93,7 @@ public:
     bool Initialize(HWND host_window);
     void Shutdown();
 
-    [[nodiscard]] SessionState state() const noexcept { return state_; }
+    [[nodiscard]] SessionState state() const noexcept { return machine_.state(); }
     [[nodiscard]] static bool IsTransitionLegal(SessionState from, SessionState to) noexcept;
     /// Attempts a transition; illegal transitions are rejected and logged.
     bool RequestTransition(SessionState next);
@@ -240,7 +237,7 @@ private:
     void ScheduleCleanup();
 
     HWND host_window_{nullptr};
-    SessionState state_{SessionState::Idle};
+    SessionStateMachine machine_;
     AppSettings settings_{};
 
     std::unique_ptr<capture::IRegionCaptureProvider> capture_provider_;
@@ -254,6 +251,9 @@ private:
     std::unique_ptr<editor::ScreenshotEditor> editor_;
     std::unique_ptr<recording::RecordingSession> recording_session_;
     std::unique_ptr<TrimExportController> trim_export_;
+    /// Images pinned to the screen. They are not session state: they outlive
+    /// every session and close with Easnap (ADR-038).
+    std::unique_ptr<ui::PinnedImages> pins_;
     capture::DesktopSnapshot snapshot_;
     RECT recording_region_{};
     /// Monitor bounds and scale the frozen snapshot was taken against.

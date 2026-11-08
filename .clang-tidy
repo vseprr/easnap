@@ -1,8 +1,11 @@
 ---
-# Static analysis of apps/easnap-desktop/src, report only for now (CI job
-# "clang-tidy", continue-on-error). Turned off: checks that fire on Win32
-# idioms (HANDLE/LPARAM casts, GetProcAddress, message switches), narrowing,
-# which MSVC /W4 already reports, and enum sizes, which touch persisted values.
+# Static analysis of apps/easnap-desktop/src (CI job "clang-tidy", required:
+# any finding fails it). Turned off: checks that fire on Win32 idioms
+# (HANDLE/LPARAM casts, GetProcAddress, message switches), narrowing, which
+# MSVC /W4 already reports, and enum sizes, which touch persisted values.
+# std::bad_array_new_length is ignored like std::bad_alloc: MSVC's allocation
+# path throws it visibly, so every allocation in a noexcept function was
+# reported. An empty catch that says "deliberately" in its comment is allowed.
 Checks: >-
   -*,
   bugprone-*,
@@ -18,3 +21,5 @@ WarningsAsErrors: ''
 HeaderFilterRegex: '.*[\\/]apps[\\/]easnap-desktop[\\/]src[\\/].*'
 CheckOptions:
   bugprone-empty-catch.AllowEmptyCatchForExceptions: 'std::bad_alloc'
+  bugprone-empty-catch.IgnoreCatchWithKeywords: '@TODO;@FIXME;deliberately'
+  bugprone-exception-escape.IgnoredExceptions: 'bad_array_new_length'

@@ -56,7 +56,8 @@ public:
     [[nodiscard]] virtual MediaTime duration() const noexcept = 0;
     /// Optional per-sample cancellation hook for sources that may internally
     /// scan/decode before yielding the next interval frame.
-    virtual void SetCancellationProbe(std::function<bool()> probe) {
+    // A sink: an override keeps the probe with std::move.
+    virtual void SetCancellationProbe(std::function<bool()> probe) { // NOLINT(performance-unnecessary-value-param)
         static_cast<void>(probe);
     }
     virtual bool Reset() = 0;
@@ -95,7 +96,7 @@ using GifProgressCallback = std::function<bool(float)>;
 /// staging file, then atomically publishes only a finalized GIF89a stream.
 /// The source is never opened for writing by this layer.
 bool ExportGif(IGifFrameSource& source, const std::wstring& destination_path,
-               const GifEncodeOptions& options, GifProgressCallback progress,
+               const GifEncodeOptions& options, const GifProgressCallback& progress,
                bool replace_existing, GifEncodeDiagnostics& diagnostics,
                std::wstring& error, TrimExportFailure* failure = nullptr);
 

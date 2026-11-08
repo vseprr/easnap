@@ -4,7 +4,12 @@
 
 #include "ui/ui_theme.h"
 
+#include <functional>
 #include <vector>
+
+namespace easnap::app {
+struct AppSettings;
+} // namespace easnap::app
 
 namespace easnap::ui {
 
@@ -47,7 +52,8 @@ enum class Icon { None,
                   Minimize,
                   Maximize,
                   Scissors,
-                  Help };
+                  Help,
+                  Pin };
 enum class ButtonRole { Standard,
                         Primary,
                         Destructive,
@@ -102,8 +108,15 @@ void RoundWindow(HWND window, float radius = 8.0f);
 /// True on Windows builds that can keep a window out of every screen capture
 /// (10.0.19041 and later). Earlier builds show such a window as a black box.
 [[nodiscard]] bool CaptureExclusionSupported();
-/// True when, in addition, every visible window of this process is excluded.
+/// True when, in addition, every visible window of this process is excluded,
+/// apart from windows marked as screen content.
 [[nodiscard]] bool CanCaptureVisibleWindows();
+/// Marks a window whose pixels belong in captures, such as a pinned image
+/// (ADR-038): `CanCaptureVisibleWindows` does not wait for its exclusion.
+void MarkAsScreenContent(HWND window);
+/// Removes the mark; called before the window is destroyed.
+void RemoveScreenContentMark(HWND window) noexcept;
+[[nodiscard]] bool IsScreenContent(HWND window) noexcept;
 /// Keeps a top-level window out of every screen capture. A window that is not
 /// layered becomes layered at full opacity first: on Windows 10 a plain
 /// excluded window that is shown again or moved over content that is not
@@ -140,6 +153,18 @@ private:
 int ShowMessage(HWND owner, const wchar_t* text, const wchar_t* title, UINT flags);
 /// The image Save dialog's text in the active language.
 [[nodiscard]] platform::SaveImageDialogText SaveImageDialogLabels();
+/// What became of a finished image given to `SaveFinishedImage`.
+enum class ImageSaveOutcome { SavedToFolder,
+                              SavedAs,
+                              Cancelled,
+                              Failed };
+/// Saves a finished screenshot as Settings ask: straight into the screenshots
+/// folder with quick save, otherwise through the Save dialog, whose folder is
+/// remembered in `settings`. A quick save that fails falls back to the
+/// dialog. `before_dialog` runs just before the dialog opens, for windows that
+/// must not cover it. Without settings the dialog opens in its own folder.
+[[nodiscard]] ImageSaveOutcome SaveFinishedImage(HWND owner, const platform::BgraImage& image, app::AppSettings* settings,
+                                                 const std::function<void()>& before_dialog = {});
 /// One button of `ShowChoice`. The value is what the call returns for it.
 struct DialogChoice {
     int value{0};

@@ -54,6 +54,10 @@ set(EASNAP_SOURCES
     src/ui/island_layout.cpp
     src/ui/scrollshot_layout.h
     src/ui/scrollshot_layout.cpp
+    src/ui/pin_layout.h
+    src/ui/pin_layout.cpp
+    src/ui/pinned_images.h
+    src/ui/pinned_images.cpp
     src/strings/strings.h
     src/ui/trim_window.h
     src/ui/trim_window.cpp

@@ -75,8 +75,9 @@ Objects can move beyond every capture edge, including oversized text. Their
 content and selection frames are hidden outside the capture; Undo restores a
 fully hidden object's previous position.
 Property changes affect the selected object; creation defaults stay separate.
-Each completed move, resize or slider gesture is one undo step. Escape cancels
-an active gesture before the normal session cancellation behavior.
+Each completed move, resize or slider gesture is one undo step; Undo goes back
+up to 200 steps. Escape cancels an active gesture before the normal session
+cancellation behavior.
 
 Single-click existing text or a tag to select it for dragging. A blank click
 clears the selection without creating text, even after repeatedly switching
@@ -118,6 +119,9 @@ To finish:
 - **Save:** download icon or **Ctrl+S** opens the native PNG/JPEG destination
   picker. Success closes the session; cancelling or failure keeps it available.
   Auxiliary configuration/brush islands stay hidden while the picker is open.
+- **Pin to screen:** pin icon or **Ctrl+T** keeps the finished image on the
+  screen as a pinned image (below) and closes the session. If no pin can be
+  made, a notice says so and the session stays.
 - **Discard:** X, **Esc**, or the workspace's right-click cancellation path.
   Escape first cancels an active text edit or transform when applicable.
 
@@ -125,6 +129,28 @@ Copy always uses the full-resolution composited source and annotations.
 Success briefly shows a green notice and closes the session. Clipboard,
 acquisition or compositing failure keeps the image/tools available for retry.
 Neither dragging a handle nor double-clicking a toolbar control copies the image.
+
+### Pinned images
+
+A pinned image stays above other windows until it is closed, also after the
+capture session ends; any number can be open, the newest on top. A screenshot
+appears exactly over the place it was taken from, at 100 %, with a thin border
+that takes the accent colour while the pin is active. An image larger than the
+screen, such as a stitched one, starts reduced to fit the screen.
+
+| Input | Action |
+|---|---|
+| Drag anywhere on the pin | Move it |
+| Wheel | Zoom in or out (10 % to 400 %) around the pointer |
+| Ctrl+1 | Original size |
+| Ctrl+C / Ctrl+S | Copy / Save, as from the editor |
+| Double-click, Esc | Close |
+| Right-click, Shift+F10 | Copy, Save..., Original size, Close, and Close all pinned images when more than one is open |
+
+A pin closes without a question. Pins are part of what is on the screen: later
+screenshots, Scrollshots and recordings contain them, so move or close a pin
+first to keep it out. Exit closes every pin; pins are not restored at the next
+start. See [ADR-038](decisions/ADR-038-pinned-images.md).
 
 ### Mode round trips and quick return
 
@@ -332,6 +358,10 @@ normal cleanup so pasting remains possible after closing Easnap.
 | Screenshot Editing | Arrows / Shift+Arrows | Move the selected annotation by 1 / 10 pixels |
 | Text box | Enter / Ctrl+Enter / Ctrl+A | New line / commit / select all text |
 | Screenshot Editing | Ctrl+C / Ctrl+S | Copy / Save |
+| Screenshot Editing | Ctrl+T | Pin to screen |
+| Pinned image | Ctrl+C / Ctrl+S / Ctrl+1 | Copy / Save / original size |
+| Pinned image | Wheel | Zoom around the pointer |
+| Pinned image | Esc, double-click | Close |
 | Screenshot Editing | Esc | Cancel pending text, then clear the selection, then cancel the session; asks first when something has been drawn |
 | Scrollshot, before Start | Enter | Start |
 | Scrollshot capture and review | Enter / Ctrl+C | Copy |

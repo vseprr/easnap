@@ -524,15 +524,13 @@ public:
                 int green = static_cast<int>((pixel >> 8) & 0xFFu);
                 int red = static_cast<int>((pixel >> 16) & 0xFFu);
                 if (policy_ == GifQuantizationPolicy::Balanced) {
-                    const int offset = kBayer4x4[static_cast<std::size_t>(
-                                           (y & 3) * 4 + (x & 3))] -
+                    const int offset = kBayer4x4[static_cast<std::size_t>(y & 3) * 4 + static_cast<std::size_t>(x & 3)] -
                                        8;
                     red = std::clamp(red + offset, 0, 255);
                     green = std::clamp(green + offset, 0, 255);
                     blue = std::clamp(blue + offset, 0, 255);
                 } else if (policy_ == GifQuantizationPolicy::Rgb332Ordered) {
-                    const int pattern = kBayer4x4[static_cast<std::size_t>(
-                                            (y & 3) * 4 + (x & 3))] -
+                    const int pattern = kBayer4x4[static_cast<std::size_t>(y & 3) * 4 + static_cast<std::size_t>(x & 3)] -
                                         8;
                     red = std::clamp(red + pattern * 36 / 16, 0, 255);
                     green = std::clamp(green + pattern * 36 / 16, 0, 255);
@@ -786,7 +784,8 @@ public:
         UpdatePeak(current.capacity());
         diagnostics_.intended_duration_100ns +=
             static_cast<uint64_t>(duration.count());
-        if (previous_canvas_.empty()) {
+        // A pending frame exists whenever a previous canvas does.
+        if (previous_canvas_.empty() || !pending_) {
             previous_canvas_ = current;
             pending_ = MakeFullFrame(current, duration);
             UpdatePeak(current.capacity());
@@ -1118,6 +1117,9 @@ private:
 
     bool FlushPending(std::wstring& error,
                       uint64_t reserved_centiseconds = 0) {
+        if (!pending_) {
+            return true; // Nothing waits to be written.
+        }
         const int64_t duration = pending_->duration.count();
         if (duration <= 0 ||
             cumulative_ticks_ > (std::numeric_limits<int64_t>::max)() - duration) {
@@ -1151,6 +1153,7 @@ private:
         uint64_t remaining = desired_centiseconds - emitted_centiseconds_ -
                              reserved_centiseconds;
         bool duration_only = false;
+        const bool delta = pending_->delta;
         while (remaining > 0) {
             const uint16_t delay = static_cast<uint16_t>(
                 (std::min)(remaining, static_cast<uint64_t>(kMaximumGifDelay)));
@@ -1161,7 +1164,7 @@ private:
             remaining -= delay;
             duration_only = true;
         }
-        if (pending_->delta) {
+        if (delta) {
             ++diagnostics_.delta_frames;
         } else {
             ++diagnostics_.full_frames;
@@ -1179,7 +1182,7 @@ private:
             (pending_.has_value()
                  ? static_cast<uint64_t>(pending_->indices.capacity())
                  : 0u) +
-            sizeof(PaletteQuantizer) + 4096u * 64u + scaling_working_bytes_;
+            sizeof(PaletteQuantizer) + uint64_t{4096} * 64u + scaling_working_bytes_;
         diagnostics_.peak_working_bytes =
             (std::max)(diagnostics_.peak_working_bytes, owned);
     }
@@ -1238,7 +1241,7 @@ bool VisitAdaptedFrames(IGifFrameSource& source, uint32_t output_width,
     int64_t cumulative_source_ticks = 0;
     int64_t last_timestamp = -1;
 
-    const auto emit = [&](VideoFrame frame) {
+    const auto emit = [&](const VideoFrame& frame) {
         if (!callback(frame)) {
             if (error.empty()) {
                 SetError(error, L"Processing a GIF frame failed");
@@ -1278,7 +1281,7 @@ bool VisitAdaptedFrames(IGifFrameSource& source, uint32_t output_width,
         }
 
         if (options.distributed_cadence && pending.has_value() &&
-            distributed_group_ready) {
+            distributed_group_ready) { // NOLINT(bugprone-branch-clone) Each branch is its own cadence case; merging them would reorder the conditions.
             if (!emit(*pending)) {
                 return false;
             }
@@ -1394,7 +1397,7 @@ bool VisitAdaptedFrames(IGifFrameSource& source, uint32_t output_width,
 }  // namespace
 
 bool ExportGif(IGifFrameSource& source, const std::wstring& destination_path,
-               const GifEncodeOptions& options, GifProgressCallback progress,
+               const GifEncodeOptions& options, const GifProgressCallback& progress,
                bool replace_existing, GifEncodeDiagnostics& diagnostics,
                std::wstring& error, TrimExportFailure* failure) {
     diagnostics = {};

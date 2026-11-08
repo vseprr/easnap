@@ -276,7 +276,7 @@ private:
                 static_cast<void>(Execute(Command::Shutdown));
             }
         } catch (...) {
-            // Joining below is still mandatory; the worker owns all COM/MF state.
+            // Deliberately empty: joining below is still mandatory; the worker owns all COM/MF state.
         }
         if (worker_.joinable()) {
             worker_.join();
@@ -1039,7 +1039,7 @@ private:
             const std::scoped_lock lock(error_mutex_);
             last_error_ = message;
         } catch (...) {
-            // No memory to describe the failure: has_error() still reports it,
+            // Deliberately empty: with no memory to describe the failure, has_error() still reports it,
             // and the callers fall back to their own text when it is empty.
         }
         has_error_.store(true, std::memory_order_relaxed);

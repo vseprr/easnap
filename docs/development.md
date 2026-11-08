@@ -110,8 +110,10 @@ the whole tree is listed in `.git-blame-ignore-revs`; run
 `git blame` skips it.
 
 Static analysis uses clang-tidy with the checks in `.clang-tidy`. The CI job
-runs it on the application sources and only reports; the findings left on
-2026-11-07 were checked one by one and are harmless. clang-tidy needs the
+runs it on the application sources and fails on any finding. A finding is
+fixed in the code; where the code is right as it is, a `NOLINT(check)` on the
+line says why, and an empty `catch` says "deliberately" in its comment.
+clang-tidy needs the
 compile commands of a Ninja build, which the Visual Studio generator does not
 write. From a "x64 Native Tools" prompt of Visual Studio 2022:
 

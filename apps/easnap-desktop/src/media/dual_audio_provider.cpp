@@ -19,6 +19,7 @@
 #include "media/audio_delivery_barrier.h"
 #include "media/audio_resampler.h"
 #include "media/dual_audio_mixer.h"
+#include "platform/platform_utils.h"
 
 namespace easnap::media {
 namespace {
@@ -351,7 +352,7 @@ void AudioCaptureProvider::Deliver(AudioPacket packet) noexcept {
 
 void AudioCaptureProvider::MixerMain() noexcept {
     const HRESULT com_result = ::CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    {
+    try {
         detail::AudioResampler system_converter;
         detail::AudioResampler microphone_converter;
         bool initialized = SUCCEEDED(com_result) && system_ && microphone_ &&
@@ -562,6 +563,21 @@ void AudioCaptureProvider::MixerMain() noexcept {
                        !microphone_queue_.packets.empty();
             });
         }
+    } catch (...) {
+        // Out of memory while mixing: the audio of this recording fails
+        // through the usual path instead of ending Easnap. Start and a drain
+        // waiting for the mixer are released.
+        platform::LogMessage(L"[Audio] The mixer failed with an exception; mixing ended");
+        mixer_failure_hresult_.store(E_OUTOFMEMORY, std::memory_order_release);
+        dual_failed_.store(true, std::memory_order_release);
+        {
+            const std::scoped_lock lock(mixer_mutex_);
+            mixer_init_done_ = true;
+            mixer_running_ = false;
+            flush_done_ = true;
+        }
+        mixer_initialized_.notify_all();
+        flush_completed_.notify_all();
     }
     if (SUCCEEDED(com_result)) {
         ::CoUninitialize();

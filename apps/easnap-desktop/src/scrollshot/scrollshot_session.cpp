@@ -136,7 +136,9 @@ void ScrollshotSession::CaptureLoop() {
         const capture::RegionCaptureResult captured =
             provider_->CaptureRegionImage(options_.region, capture_options, frame);
         if (captured.status == capture::RegionCaptureStatus::Failed) {
-            if (failure_run_ < kFailureLimit && ++failure_run_ == kFailureLimit) {
+            const bool counting = failure_run_ < kFailureLimit;
+            if (counting) { ++failure_run_; }
+            if (counting && failure_run_ == kFailureLimit) {
                 capture_failed_ = true;
                 progress_changed_ = true;
                 Publish(true);

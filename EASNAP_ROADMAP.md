@@ -1,6 +1,6 @@
 # Easnap delivery roadmap
 
-**Updated:** 2026-11-07
+**Updated:** 2026-11-08
 
 Read this with [project status](docs/project-status.md). This file records the
 phase boundaries; what is implemented and validated belongs in project status,
@@ -29,13 +29,20 @@ v1.1.0 was published on 2026-11-08 as the latest stable version.
 | Beta readiness | Implemented; v1.1.0-beta.1 and v1.1.0-beta.2 published as prereleases |
 | Isolated test lab | Implemented 2026-10-19: Hyper-V VM driven by winlab, direct build, capture-path reporting ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md)) |
 | v1.1.0 stable | Stabilization on `stabilize/v1.1.0` (2026-11-07): audit, documentation, formatting, static analysis, code fixes; rc.1 checked by the owner, not published; v1.1.0 published 2026-11-08 |
+| v1.2 | On `feature/v1.2` (from 2026-11-08): Pin to screen ([ADR-038](docs/decisions/ADR-038-pinned-images.md)), audio exception boundary, undo limit, clipboard formats first, the session state machine and a required clang-tidy job; release candidate rc.1 checked by the owner, not published; v1.2.0 prepared |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
 
 In this order (details in [project status](docs/project-status.md#next-slice)):
 
-1. v1.2 on a branch of its own.
+1. v1.2.0: the release candidate rc.1 (Pin to screen and the sturdiness
+   slices) passed the owner's second round of use; v1.2.0 is published from
+   `feature/v1.2` through a pull request to `main`.
+2. v1.3: S2 of the `CaptureCoordinator` split
+   ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)), the trim flow
+   with its own test target, and the other candidates under
+   [other deferred work](#other-deferred-work), one bounded slice each.
 
 Open on the owner's side: the host Full run for the writer fix, since the host
 desktop is used only when the owner asks. Not covered yet: Windows 11, an N
@@ -77,12 +84,13 @@ included in v1 and has no promised release date.
 Camera, Mouse Effects, device pickers, GPU-native recording, a single muxing
 thread for audio and video, and long-video trim optimization remain outside
 this release. Code signing is not in place; binaries are unsigned, and the
-owner decided on 2026-11-07 to publish v1.1.0 unsigned. v1.2 candidates from
-the 2026-11-07 audit: splitting `CaptureCoordinator` (an ADR first), shorter
-audio and editor functions, an exception boundary for the WASAPI capture
-thread, a golden corpus of recorded frames for Scrollshot, and a clang-tidy job
-that can be required; for the lab, an image at the development PC's update
-revision, one of the two differences left that could explain why the lab
+owner decided on 2026-11-07 to publish v1.1.0 unsigned. Candidates from the
+2026-11-07 audit left for v1.3 (v1.2 took the exception boundary for the audio
+threads, the required clang-tidy job and the first slice of the coordinator
+split): the trim flow out of `CaptureCoordinator`, shorter audio and editor
+functions, a golden corpus of recorded frames for Scrollshot, and copying and
+saving off the interface thread; for the lab, an image at the development PC's
+update revision, one of the two differences left that could explain why the lab
 missed the caption the owner saw ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md#not-validated)). Codec
 cut-point granularity, GIF palette/timing limits and source-start decoding for
 late trims are documented implementation limits, not unimplemented v1 features.

@@ -248,7 +248,7 @@ private:
                                              &raw_stride))) {
             format.stride = static_cast<LONG>(raw_stride);
         } else if (SUCCEEDED(result)) {
-            format.stride = static_cast<LONG>(format.buffer_width * 4u);
+            format.stride = static_cast<LONG>(format.buffer_width) * 4;
         }
         if (SUCCEEDED(result) &&
             (format.stride == 0 ||

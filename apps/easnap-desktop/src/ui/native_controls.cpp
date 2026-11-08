@@ -15,12 +15,14 @@
 #include <oleacc.h>
 #include <gdiplus.h>
 
+#include "app/app_settings.h"
 #include "strings/strings.h"
 
 namespace easnap::ui {
 namespace {
 constexpr UINT_PTR kButtonSubclass = 0xEA51;
 constexpr UINT_PTR kTooltipSubclass = 0xEA52;
+constexpr wchar_t kScreenContentProperty[] = L"Easnap.ScreenContent";
 struct ButtonData {
     ButtonStyle style;
     bool hot{false};
@@ -549,6 +551,15 @@ void DrawIcon(HDC dc, const RECT& r, Icon icon, COLORREF color, float scale) {
             graphics.FillEllipse(&dot, 11, 17, 2, 2);
             break;
         }
+        case Icon::Pin:
+            line(8, 3, 16, 3);
+            line(9, 3, 9, 10);
+            line(15, 3, 15, 10);
+            line(9, 10, 6, 14);
+            line(15, 10, 18, 14);
+            line(6, 14, 18, 14);
+            line(12, 14, 12, 21);
+            break;
         case Icon::None: break;
     }
 }
@@ -802,13 +813,13 @@ bool CaptureExclusionSupported() {
 }
 bool CanCaptureVisibleWindows() {
     // Where exclusion is missing, or one visible window lacks it, the caller
-    // retains its hide fallback.
+    // retains its hide fallback. Screen content is meant to be captured.
     if (!CaptureExclusionSupported()) { return false; }
     bool excluded = true;
     const bool enumerated = ::EnumWindows([](HWND hwnd, LPARAM param) -> BOOL {
         DWORD process{};
         ::GetWindowThreadProcessId(hwnd, &process);
-        if (process == ::GetCurrentProcessId() && ::IsWindowVisible(hwnd)) {
+        if (process == ::GetCurrentProcessId() && ::IsWindowVisible(hwnd) && !IsScreenContent(hwnd)) {
             DWORD affinity{};
             if (!::GetWindowDisplayAffinity(hwnd, &affinity) || affinity != 0x11) {
                 *reinterpret_cast<bool*>(param) = false;
@@ -820,6 +831,15 @@ bool CanCaptureVisibleWindows() {
                                           reinterpret_cast<LPARAM>(&excluded));
     return enumerated && excluded;
 }
+void MarkAsScreenContent(HWND window) {
+    if (window && !::SetPropW(window, kScreenContentProperty, reinterpret_cast<HANDLE>(1))) {
+        platform::LogMessage(L"A window could not be marked as screen content (error %lu)", ::GetLastError());
+    }
+}
+void RemoveScreenContentMark(HWND window) noexcept {
+    if (window) { static_cast<void>(::RemovePropW(window, kScreenContentProperty)); }
+}
+bool IsScreenContent(HWND window) noexcept { return window && ::GetPropW(window, kScreenContentProperty) != nullptr; }
 bool ExcludeFromCapture(HWND window) {
     if (!window) { return false; }
     const LONG_PTR style = ::GetWindowLongPtrW(window, GWL_EXSTYLE);
@@ -1467,6 +1487,23 @@ int ShowChoice(HWND owner, const wchar_t* text, const wchar_t* title, const std:
 }
 platform::SaveImageDialogText SaveImageDialogLabels() {
     return {strings::Get(IDS_SHELL_SAVE_IMAGE_TITLE), strings::Get(IDS_SHELL_FILE_TYPE_PNG), strings::Get(IDS_SHELL_FILE_TYPE_JPEG)};
+}
+ImageSaveOutcome SaveFinishedImage(HWND owner, const platform::BgraImage& image, app::AppSettings* settings,
+                                   const std::function<void()>& before_dialog) {
+    const std::wstring suggested = platform::TimestampedFileName(L"Easnap", L"png");
+    // Quick save: straight into the chosen folder. If that cannot be written,
+    // the dialog below still offers every other place.
+    if (settings != nullptr && settings->quick_save_images && !settings->image_folder.empty()) {
+        const std::wstring quick = platform::UniqueFilePath(settings->image_folder, suggested);
+        if (!quick.empty() && platform::SaveImage(image, quick)) { return ImageSaveOutcome::SavedToFolder; }
+    }
+    const std::wstring initial = settings != nullptr ? settings->ImageStartDirectory() : std::wstring();
+    if (before_dialog) { before_dialog(); }
+    const auto destination = platform::ShowSaveImageDialog(owner, suggested, initial, SaveImageDialogLabels());
+    if (!destination) { return ImageSaveOutcome::Cancelled; }
+    if (!platform::SaveImage(image, *destination)) { return ImageSaveOutcome::Failed; }
+    if (settings != nullptr) { settings->last_image_directory = platform::DirectoryOf(*destination); }
+    return ImageSaveOutcome::SavedAs;
 }
 bool ConfirmDestructive(HWND owner, const wchar_t* text, const wchar_t* title, const wchar_t* confirm, const wchar_t* keep) {
     return ShowChoice(owner, text, title, {{IDYES, confirm, true}, {IDNO, keep}}, IDNO, IDNO) == IDYES;

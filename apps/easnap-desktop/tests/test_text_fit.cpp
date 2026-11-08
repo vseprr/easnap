@@ -268,6 +268,7 @@ void Notices(const RECT& region) {
         {Kind::Saved, strings::Get(IDS_NOTICE_SAVED), true},
         {Kind::Status, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE), false},
         {Kind::Status, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED), false},
+        {Kind::Status, strings::Get(IDS_EDITOR_NOTICE_PIN_FAILED), false},
     };
     for (const Notice& notice : notices) {
         if (notice.kind == Kind::Copied) {

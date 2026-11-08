@@ -4,6 +4,7 @@ Date: 2026-09-16
 Status: Implemented.  
 **Amended by:** [ADR-018](ADR-018-editor-interaction-corrections.md) (selection, text editing, compact controls); [ADR-019](ADR-019-stable-native-paint-and-custom-window-chrome.md) (custom message dialog and window chrome); [ADR-020](ADR-020-workspace-layering-and-outline-interaction.md) (hit targets follow outlines); [ADR-036](ADR-036-island-placement-around-the-frame.md) (island placement around the frame)  
 **Amended:** 2026-11-07 — the submenu arrow of owner-drawn menus
+**Amended:** 2026-11-08 — undo keeps 200 steps
 
 ## Context
 
@@ -52,7 +53,10 @@ preview isolation, publication and recovery contracts remain in force.
 6. An annotation document stores persistent objects and reversible snapshots of
    annotation state, never copies of the captured image. Selection is separate
    from creation defaults. A completed geometry or slider gesture is one undo
-   entry; cancellation restores the preceding state. Lines/arrows expose two
+   entry; cancellation restores the preceding state. Undo keeps the last 200
+   entries (`AnnotationDocument::kUndoLimit`) and drops older ones: each entry
+   is a copy of the whole annotation list, and holding an arrow key over a
+   selected annotation added one per repeat, about 40 MB in ten seconds. Lines/arrows expose two
    endpoints; rectangular/elliptical shapes, effect regions and spotlight
    regions expose four corners. Pen, text and tags move without resize handles.
    Watermark is a document effect, with no repeated-word transform handles.

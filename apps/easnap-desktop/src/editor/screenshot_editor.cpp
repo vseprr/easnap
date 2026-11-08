@@ -48,8 +48,9 @@ constexpr int kWholeBitmapRows = 8192;
 constexpr int kPreviewBandRows = 4096;
 constexpr int kCompositeBandRows = 2048;
 
-/// Preferred tool island width, clamped to the current monitor.
-constexpr float kIslandWidth = 832.0f;
+/// Preferred tool island width, clamped to the current monitor. One row of
+/// tools and commands, with 28 DIPs to spare after the last command.
+constexpr float kIslandWidth = 870.0f;
 constexpr float kIslandGrip = 24.0f;
 
 enum CommandId {
@@ -61,6 +62,7 @@ enum CommandId {
     kCommandCancel,
     kCommandTheme,
     kCommandScrollshot,
+    kCommandPin,
 };
 
 /// Tooltip tool on the island itself: a disabled button receives no mouse
@@ -523,9 +525,13 @@ std::vector<D2D1_POINT_2F> Annotation::Handles() const {
     return {};
 }
 
+void AnnotationDocument::PushUndo(std::vector<Annotation> snapshot) {
+    undo_stack_.push_back(std::move(snapshot));
+    if (undo_stack_.size() > kUndoLimit) { undo_stack_.pop_front(); }
+}
 void AnnotationDocument::Checkpoint() {
     if (!transaction_) {
-        undo_stack_.push_back(annotations_);
+        PushUndo(annotations_);
         redo_stack_.clear();
     }
 }
@@ -552,7 +558,7 @@ void AnnotationDocument::BeginTransaction() {
 void AnnotationDocument::CommitTransaction() {
     if (!transaction_) { return; }
     if (!SameList(*transaction_, annotations_)) {
-        undo_stack_.push_back(std::move(*transaction_));
+        PushUndo(std::move(*transaction_));
         redo_stack_.clear();
     }
     transaction_.reset();
@@ -577,7 +583,7 @@ bool AnnotationDocument::Undo() {
 bool AnnotationDocument::Redo() {
     CancelTransaction();
     if (redo_stack_.empty()) { return false; }
-    undo_stack_.push_back(std::move(annotations_));
+    PushUndo(std::move(annotations_));
     annotations_ = std::move(redo_stack_.back());
     redo_stack_.pop_back();
     ++revision_;
@@ -716,6 +722,10 @@ bool ScreenshotEditor::CreateToolbarControls() {
                 if (item.command == kCommandScrollshot) {
                     style.icon = Icon::Scissors;
                     name = strings::Get(IDS_SCROLLSHOT_TOOL);
+                }
+                if (item.command == kCommandPin) {
+                    style.icon = Icon::Pin;
+                    name = strings::Get(IDS_EDITOR_PIN_BUTTON);
                 }
                 break;
         }
@@ -1264,7 +1274,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         const wchar_t* name;
     };
     // Only Copy keeps its name from here; CreateToolbarControls names the others.
-    const Command commands[] = {{kCommandUndo, L"Undo"}, {kCommandRedo, L"Redo"}, {kCommandClear, L"Clear annotations"}, {kCommandTheme, L"Switch theme"}, {kCommandSave, L"Save"}, {kCommandCancel, L"Discard"}, {kCommandCopy, strings::Get(IDS_EDITOR_COPY_BUTTON)}};
+    const Command commands[] = {{kCommandUndo, L"Undo"}, {kCommandRedo, L"Redo"}, {kCommandClear, L"Clear annotations"}, {kCommandTheme, L"Switch theme"}, {kCommandPin, L"Pin"}, {kCommandSave, L"Save"}, {kCommandCancel, L"Discard"}, {kCommandCopy, strings::Get(IDS_EDITOR_COPY_BUTTON)}};
     for (const auto& entry : commands) {
         ToolbarItem item;
         item.kind = ToolbarItem::Kind::Command;
@@ -1675,6 +1685,25 @@ void ScreenshotEditor::Keyboard(UINT message, WPARAM key, LPARAM flags) {
 bool ScreenshotEditor::CompleteCopy() {
     if (!CopyToClipboard()) { return false; }
     ui::ShowCaptureCopiedNotice(region_);
+    Close(true);
+    return true;
+}
+
+bool ScreenshotEditor::CompletePin() {
+    if (!callbacks_.on_pin || !EnsureImage()) { return false; }
+    platform::BgraImage image = CompositeCommitted();
+    if (image.empty()) {
+        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_PIN_FAILED));
+        Invalidate();
+        return false;
+    }
+    if (!callbacks_.on_pin(std::move(image), region_)) {
+        // Failure safety: the session stays open so no capture is lost.
+        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_PIN_FAILED));
+        Invalidate();
+        return false;
+    }
+    platform::LogMessage(L"Screenshot pinned to the screen");
     Close(true);
     return true;
 }
@@ -2310,6 +2339,10 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                             Close(true);
                         }
                         return 0;
+                    case 'T':
+                        if (!FeatureUsed()) { return 0; }
+                        CompletePin();
+                        return 0;
                     default:
                         break;
                 }
@@ -2384,6 +2417,10 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
     }
     if (item.kind == ToolbarItem::Kind::Command && item.command == kCommandCopy) {
         CompleteCopy();
+        return;
+    }
+    if (item.kind == ToolbarItem::Kind::Command && item.command == kCommandPin) {
+        CompletePin();
         return;
     }
     const auto revision = document_.revision();
@@ -3256,48 +3293,44 @@ bool ScreenshotEditor::SaveToFile() {
         return false;
     }
 
-    const std::wstring suggested = platform::TimestampedFileName(L"Easnap", L"png");
-    // Quick save: straight into the chosen folder. If that cannot be written,
-    // the dialog below still offers every other place.
-    if (settings_ != nullptr && settings_->quick_save_images && !settings_->image_folder.empty()) {
-        const std::wstring quick = platform::UniqueFilePath(settings_->image_folder, suggested);
-        if (!quick.empty() && platform::SaveImage(image, quick)) {
+    bool dialog = false;
+    const auto outcome = ui::SaveFinishedImage(hwnd_, image, settings_, [&] {
+        // Topmost owned islands and combo lists must not cover a native file
+        // dialog. Freeze their timers/placement during its nested message loop.
+        dialog = true;
+        modal_active_ = true;
+        ShowBrushPopup(false);
+        ::KillTimer(context_, 0xEA61);
+        context_fade_started_ = 0;
+        ::KillTimer(context_, 0xEA63);
+        ::SendMessageW(Control(2600), CB_SHOWDROPDOWN, FALSE, 0);
+        if (tooltip_) {
+            ::SendMessageW(tooltip_, TTM_POP, 0, 0);
+            ::SendMessageW(tooltip_, TTM_ACTIVATE, FALSE, 0);
+        }
+        ::ShowWindow(context_, SW_HIDE);
+    });
+    if (dialog) {
+        modal_active_ = false;
+        if (tooltip_) { ::SendMessageW(tooltip_, TTM_ACTIVATE, TRUE, 0); }
+        if (visible_) { PlaceContext(); }
+    }
+    switch (outcome) {
+        case ui::ImageSaveOutcome::SavedToFolder:
             platform::LogMessage(L"Screenshot saved without a dialog");
             ui::ShowCaptureSavedNotice(region_);
             return true;
-        }
+        case ui::ImageSaveOutcome::SavedAs:
+            platform::LogMessage(L"Screenshot exported successfully");
+            return true;
+        case ui::ImageSaveOutcome::Cancelled:
+            return false;  // Keep editing.
+        case ui::ImageSaveOutcome::Failed:
+            ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED));
+            Invalidate();
+            return false;
     }
-    const std::wstring initial = settings_ != nullptr ? settings_->ImageStartDirectory() : std::wstring();
-    // Topmost owned islands and combo lists must not cover a native file dialog.
-    // Freeze their timers/placement during its nested message loop.
-    modal_active_ = true;
-    ShowBrushPopup(false);
-    ::KillTimer(context_, 0xEA61);
-    context_fade_started_ = 0;
-    ::KillTimer(context_, 0xEA63);
-    ::SendMessageW(Control(2600), CB_SHOWDROPDOWN, FALSE, 0);
-    if (tooltip_) {
-        ::SendMessageW(tooltip_, TTM_POP, 0, 0);
-        ::SendMessageW(tooltip_, TTM_ACTIVATE, FALSE, 0);
-    }
-    ::ShowWindow(context_, SW_HIDE);
-    const auto destination = platform::ShowSaveImageDialog(hwnd_, suggested, initial, ui::SaveImageDialogLabels());
-    modal_active_ = false;
-    if (tooltip_) { ::SendMessageW(tooltip_, TTM_ACTIVATE, TRUE, 0); }
-    if (visible_) { PlaceContext(); }
-    if (!destination) {
-        return false;  // Cancelled: keep editing.
-    }
-    if (!platform::SaveImage(image, *destination)) {
-        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED));
-        Invalidate();
-        return false;
-    }
-    if (settings_ != nullptr) {
-        settings_->last_image_directory = platform::DirectoryOf(*destination);
-    }
-    platform::LogMessage(L"Screenshot exported successfully");
-    return true;
+    return false;
 }
 
 }  // namespace easnap::editor

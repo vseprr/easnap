@@ -2,6 +2,7 @@
 #include "strings/strings.h"
 #include "ui/native_controls.h"
 #include <algorithm>
+#include <cmath>
 
 namespace easnap::ui {
 void CaptureWorkspace::SetMode(app::CaptureMode mode) noexcept {
@@ -149,7 +150,7 @@ bool WorkspacePointerSequence::Up(POINT point) noexcept {
 BYTE ModeToolbarOpacity(uint64_t elapsed_ms) noexcept {
     if (elapsed_ms >= kModeToolbarFadeDurationMs) { return 0; }
     const double t = static_cast<double>(elapsed_ms) / kModeToolbarFadeDurationMs;
-    return static_cast<BYTE>(255.0 * (1.0 - t * t * (3.0 - 2.0 * t)) + 0.5);
+    return static_cast<BYTE>(std::lround(255.0 * (1.0 - t * t * (3.0 - 2.0 * t))));
 }
 namespace {
 void ShowCaptureNotice(const RECT& region, const std::wstring& text, bool status) {

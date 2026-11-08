@@ -379,6 +379,53 @@ changes), in the lab VM, by then at Windows 10 build 19045.6466:
   passed on the GDI fallback and the verdict marked it `VM-ok-but-fallback`,
   the provider's documented behaviour on a still desktop.
 
+## Validation of v1.2.0
+
+Prepared on the branch `feature/v1.2` on 2026-11-08; the release candidate
+rc.1 was checked by the owner and not published, and v1.2.0 is its code with
+an empty prerelease label. The [release notes](v1.2.0.md) summarize it. All
+runs in the 125 % lab image unless noted, each on the uncommitted or
+committed tree of that step; in every run `real_desktop_recording_session`
+passed on the GDI fallback (`VM-ok-but-fallback`), and nothing was retried
+except in the one run named below the table.
+
+| Step | Run | Result |
+|---|---|---|
+| Pin to screen (`9cbbddb`) | `20261108-021123-full` | Full 50 of 50 |
+| Audio exception boundary, undo limit (`e4904f1`, `ad9be42`) | `20261108-151811-full` | Full 50 of 50 |
+| Clipboard formats first, state machine (`aa07b05`, `797d0d7`) | `20261108-153432-full` | Full 50 of 50 |
+| The same with the WASAPI start-up helper (`7a9337c`) | `20261108-154503-soak` | Soak 56 of 56 |
+| clang-tidy fixes (`b622ea4`) | `20261108-162016-full`, `20261108-163043-soak` | Full 50 of 50, Soak 56 of 56 |
+| Release candidate rc.1 (`43e7465`), 150 % image | `20261108-164836-full` | Full 50 of 50 |
+| Final sources (tree `1667af96576c`), 125 % | `20261108-182055-soak` | Soak 56 of 56 (14 min 53 s) |
+| Final sources, 150 % image | `20261108-184738-full` | Full 50 of 50 (10 min 34 s) |
+
+- The run at 150 % before it on the same tree (`20261108-183548-full`)
+  passed 50 of 50 only because the runner retried
+  `real_desktop_recording_session` once. Its first attempt failed one check,
+  `diagnostics.capture_attempts + 2 >= expected_attempts`, in the changing
+  30 fps scenario: the GDI fallback took 84 of the 90 frames, with 7 pacing
+  slots missed, while tests ran in parallel. The retry passed. v1.2 does not
+  change the video capture path (only comments in `recording_session.cpp`
+  and `media_foundation_writer.cpp`), and the test had not failed in the lab
+  runs before.
+
+- On the development PC (one 1920 x 1080 display at 125 %), in single runs:
+  `pin_layout_logic`, `pinned_images_native` (five runs),
+  `capture_workspace_production`, `scrollshot_workspace_production`,
+  `data_safety_questions`, `text_fits_in_every_language` and the Fast tier.
+- clang-tidy over the 51 application sources: 46 findings before the fixes, 0
+  after.
+- The owner tried Pin to screen by hand on the development PC on 2026-11-08:
+  everything the feature promises worked.
+- The owner then installed rc.1 over v1.1.0 on the development PC and used it
+  for a second round on 2026-11-08, following the steps they were given: the
+  version in About, several pins and Close all, screenshots copied and saved,
+  a recording trimmed and saved, and a Scrollshot copied, which also covers
+  the state machine's run from start to Idle. They reported no problem.
+- The rc.1 packages were built on the development PC
+  (`package-release.ps1`); the executable reported 1.2.0-rc.1.
+
 ## Validation of v1.1.0
 
 The stable release, prepared on the branch `stabilize/v1.1.0` on 2026-11-07

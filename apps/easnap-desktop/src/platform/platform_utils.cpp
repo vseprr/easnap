@@ -165,18 +165,20 @@ bool WriteEncodedImage(const BgraImage& image, ImageFormat format, IStream* stre
     return true;
 }
 
-bool PutClipboardDib(const BgraImage& image) {
+/// The image as clipboard memory in CF_DIB, or null. The caller owns it until
+/// SetClipboardData accepts it.
+HGLOBAL MakeClipboardDib(const BgraImage& image) {
     // 32bpp BI_RGB DIB: the format virtually every Windows application accepts.
     const size_t pixel_bytes = image.pixels.size() * sizeof(uint32_t);
     const size_t total = sizeof(BITMAPINFOHEADER) + pixel_bytes;
     HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, total);
     if (memory == nullptr) {
-        return false;
+        return nullptr;
     }
     auto* header = static_cast<BITMAPINFOHEADER*>(::GlobalLock(memory));
     if (header == nullptr) {
         ::GlobalFree(memory);
-        return false;
+        return nullptr;
     }
     *header = BITMAPINFOHEADER{};
     header->biSize = sizeof(BITMAPINFOHEADER);
@@ -194,39 +196,41 @@ bool PutClipboardDib(const BgraImage& image) {
         std::memcpy(rows + static_cast<size_t>(image.height - 1 - y) * image.width, image.row(y), row_bytes);
     }
     ::GlobalUnlock(memory);
-
-    if (::SetClipboardData(CF_DIB, memory) == nullptr) {
-        ::GlobalFree(memory);
-        return false;
-    }
-    return true;  // Ownership transferred to the clipboard.
+    return memory;
 }
 
-bool PutClipboardPng(const BgraImage& image) {
-    static const UINT png_format = ::RegisterClipboardFormatW(L"PNG");
-    if (png_format == 0) {
-        return false;
-    }
+/// The image encoded as PNG in clipboard memory, or null. Encoding a tall
+/// image takes seconds, so it happens before the clipboard is opened.
+HGLOBAL MakeClipboardPng(const BgraImage& image) {
     std::vector<uint8_t> bytes;
     if (!EncodeImage(image, ImageFormat::Png, bytes) || bytes.empty()) {
-        return false;
+        return nullptr;
     }
     HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes.size());
     if (memory == nullptr) {
-        return false;
+        return nullptr;
     }
     void* target = ::GlobalLock(memory);
     if (target == nullptr) {
         ::GlobalFree(memory);
-        return false;
+        return nullptr;
     }
     std::memcpy(target, bytes.data(), bytes.size());
     ::GlobalUnlock(memory);
-    if (::SetClipboardData(png_format, memory) == nullptr) {
+    return memory;
+}
+
+/// Hands `memory` to the open clipboard, or frees it when the clipboard
+/// refuses it.
+bool PutClipboardMemory(UINT format, HGLOBAL memory) {
+    if (memory == nullptr) {
+        return false;
+    }
+    if (format == 0 || ::SetClipboardData(format, memory) == nullptr) {
         ::GlobalFree(memory);
         return false;
     }
-    return true;
+    return true;  // Ownership transferred to the clipboard.
 }
 
 }  // namespace
@@ -877,15 +881,29 @@ bool CopyImageToClipboard(HWND owner, const BgraImage& image) {
     if (image.empty()) {
         return false;
     }
+    // Both formats are ready before the clipboard opens: other applications
+    // cannot use the clipboard while it is open, and a tall PNG takes seconds.
+    // CF_DIB is the reliable baseline; PNG is offered for apps that want it.
+    HGLOBAL dib = MakeClipboardDib(image);
+    if (dib == nullptr) {
+        LogMessage(L"Clipboard image memory could not be allocated");
+        return false;
+    }
+    HGLOBAL png = MakeClipboardPng(image);
     if (::OpenClipboard(owner) == FALSE) {
         LogMessage(L"OpenClipboard failed (error %lu)", ::GetLastError());
+        ::GlobalFree(dib);
+        if (png != nullptr) { ::GlobalFree(png); }
         return false;
     }
     bool ok = false;
     if (::EmptyClipboard() != FALSE) {
-        // CF_DIB is the reliable baseline; PNG is offered for apps that want it.
-        ok = PutClipboardDib(image);
-        PutClipboardPng(image);
+        static const UINT png_format = ::RegisterClipboardFormatW(L"PNG");
+        ok = PutClipboardMemory(CF_DIB, dib);
+        static_cast<void>(PutClipboardMemory(png_format, png));
+    } else {
+        ::GlobalFree(dib);
+        if (png != nullptr) { ::GlobalFree(png); }
     }
     ::CloseClipboard();
     return ok;
@@ -991,8 +1009,14 @@ std::wstring UniqueFilePath(const std::wstring& directory, const std::wstring& f
     std::wstring base = directory;
     if (base.back() != L'\\' && base.back() != L'/') { base += L'\\'; }
     for (int attempt = 1; attempt < 1000; ++attempt) {
-        const std::wstring candidate =
-            base + stem + (attempt == 1 ? std::wstring() : L" (" + std::to_wstring(attempt) + L")") + extension;
+        std::wstring candidate = base;
+        candidate += stem;
+        if (attempt != 1) {
+            candidate += L" (";
+            candidate += std::to_wstring(attempt);
+            candidate += L")";
+        }
+        candidate += extension;
         if (::GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES) {
             return candidate;
         }

@@ -385,7 +385,7 @@ std::optional<std::wstring>
 RecordingCompletionController::StageClipboardArtifact(
     const std::wstring& source_path, media::RecordingFormat format,
     bool allow_move) {
-    const auto destination = PrepareClipboardDestination(format);
+    auto destination = PrepareClipboardDestination(format);
     if (!destination.has_value()) {
         return std::nullopt;
     }

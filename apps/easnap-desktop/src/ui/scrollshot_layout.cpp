@@ -50,6 +50,7 @@ using platform::MonitorInfo;
 /// Monitors ordered by distance from the frame, nearest first.
 [[nodiscard]] std::vector<const MonitorInfo*> ByDistance(const std::vector<MonitorInfo>& monitors, const RECT& frame) {
     std::vector<const MonitorInfo*> ordered;
+    ordered.reserve(monitors.size());
     for (const MonitorInfo& monitor : monitors) { ordered.push_back(&monitor); }
     const auto distance = [&frame](const MonitorInfo* monitor) {
         const LONG dx = (monitor->bounds.left + monitor->bounds.right) / 2 - (frame.left + frame.right) / 2;

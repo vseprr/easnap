@@ -38,6 +38,66 @@ and the individual runs in the [validation records](releases/validation-history.
   `island_capture_exclusion` drags those dialogs and reads the themed menu as
   the user sees them.
 
+## v1.2.0
+
+Work toward v1.2 ran on the branch `feature/v1.2`, created on 2026-11-08 from
+`main` at `df838d4`. The owner chose on 2026-11-08 to release v1.2 with the
+slices below and to leave the trim flow (S2 of ADR-039) and the larger
+candidates to v1.3. The release candidate v1.2.0-rc.1 was packaged on the
+development PC, installed over v1.1.0 by the owner and used for a second
+round without a problem; it is not published. v1.2.0 is its code with an
+empty prerelease label, prepared for release through a pull request to
+`main`. Its notes are [v1.2.0](releases/v1.2.0.md).
+
+- **Pin to screen** ([ADR-038](decisions/ADR-038-pinned-images.md)):
+  implemented. The tools island has a Pin command (Ctrl+T) that keeps the
+  finished image above other windows as a pinned image; the island's preferred
+  width grew from 832 to 870 DIPs for it. A pin moves by dragging, zooms with
+  the wheel (10 to 400 %), copies, saves, returns to its original size and
+  closes from the keyboard and its menu. Pins are screen content: later
+  captures contain them, and they do not make acquisition hide the workspace
+  or refuse Scrollshot. The editor and the pin share one Save path for quick
+  save and the Save dialog.
+- Validated: lab Full tier on the uncommitted branch (2026-11-08, run
+  `20261108-021123-full`), 50 of 50 with no retry, including the two new tests;
+  `real_desktop_recording_session` passed on the GDI fallback as before
+  (`VM-ok-but-fallback`). On the host, in single runs: `pin_layout_logic` (56
+  checks), `pinned_images_native` (71 checks, five runs), the new Pin checks in
+  `capture_workspace_production`, and `text_fits_in_every_language`.
+- By hand: the owner tried the build on the development PC (one 1920 x 1080
+  display at 125 %) on 2026-11-08 and reported that everything the feature
+  promises worked, then used rc.1 for a second round (several pins and Close
+  all among them) without a problem.
+- Not validated: a pin moved between monitors of different scale (the PC has
+  one display), long use, and many or very large pins at once. The native test
+  reads the pin's picture through `WM_PRINTCLIENT`, not from the screen.
+- **Audio capture threads have an exception boundary:** the WASAPI capture
+  thread, its consumer and the mixer of both sources catch what escapes them
+  (in practice running out of memory or threads). The recording's audio then
+  fails through its usual path, and Start and a drain are released, instead of
+  Easnap ending. Validated: lab Full (2026-11-08, run `20261108-151811-full`),
+  50 of 50 with no retry, including `wasapi_audio_capture` and the recording
+  tests. The failure path itself is not exercised: no test runs out of memory.
+- **Undo keeps 200 steps** ([ADR-017](decisions/ADR-017-neumorphic-editor-and-editable-annotations.md));
+  older steps are dropped. Covered in `capture_workspace_production`; same lab
+  run.
+- **Copy prepares both clipboard formats first:** the DIB and the encoded PNG
+  are ready before the clipboard is opened, which is now held only to hand
+  them over. Covered in `capture_workspace_production` and
+  `scrollshot_workspace_production` (host runs).
+- **The coordinator's state is held by `SessionStateMachine`**, the first
+  slice of [ADR-039](decisions/ADR-039-coordinator-trim-flow.md); the log
+  lines of transitions are unchanged. `session_state_transitions` checks that
+  the machine allows exactly the pairs the rules allow, from every state. In
+  the owner's round with rc.1, a screenshot, a recording with trim and a
+  Scrollshot ran from start to Idle as before. The trim flow (S2) is next, in
+  v1.3.
+- The clipboard change and the state machine, with the shorter WASAPI start-up
+  code, passed lab Full 50 of 50 (run `20261108-153432-full`, without the
+  WASAPI change) and Soak 56 of 56 (run `20261108-154503-soak`, all three) on
+  2026-11-08, with no retry and the usual GDI fallback of
+  `real_desktop_recording_session`.
+
 ## Validated
 
 - v1.1.0-beta.2 (2026-10-30): the Full tier passed 48 of 48 with no retry in
@@ -55,8 +115,13 @@ and the individual runs in the [validation records](releases/validation-history.
   owner checked the release candidate by hand; its two problems are
   corrected, and the drag test passed on the development PC with the
   correction.
+- v1.2.0, final sources (2026-11-08, lab, tree `1667af96576c`): Soak 56 of 56
+  at 125 % and Full 50 of 50 at 150 % on the second run, no retry. In the
+  first run at 150 % `real_desktop_recording_session` passed only on the
+  runner's retry: one frame-count check on the GDI fallback at 30 fps. The
+  owner used the release candidate for a second round without a problem.
 - The runs, including the ones that failed, and those of earlier versions are
-  in the [validation records](releases/validation-history.md#validation-of-v110).
+  in the [validation records](releases/validation-history.md#validation-of-v120).
 
 ## Not validated
 
@@ -106,7 +171,9 @@ and the individual runs in the [validation records](releases/validation-history.
 ## Known limitations and unresolved risks
 
 - Scrollshot is manual and vertical; the image only grows downwards. Copying
-  and saving a very tall image run on the UI thread. At the 48-million-pixel
+  and saving a very tall image run on the UI thread; the PNG for the clipboard
+  is encoded before the clipboard is opened, so other applications can use the
+  clipboard meanwhile (v1.2 branch). At the 48-million-pixel
   limit, editing holds two buffers of about 190 MB and an export a third.
 - A recording that is still being written when Easnap stops cannot be
   recovered; a recovered recording is the untrimmed MP4. A recording that
@@ -167,7 +234,7 @@ Open since v1.0.0:
   known, so freedom from leaks during long resize sessions is not established
   (figures in the same section of ADR-024).
 - Native startup/pause/drain can wait inside Windows; full-range publication
-  is synchronous; undo history is uncapped; late MP4 trims decode from source
+  is synchronous; late MP4 trims decode from source
   start; codec endpoints and GIF timing/palette have granularity. Low size GIF
   can omit tiny visual changes.
 
@@ -207,7 +274,9 @@ post-v1 without a promised date.
 
 ## Next slice
 
-v1.2, on a branch of its own: the slices deferred from the stabilization are
-listed in the [roadmap](../EASNAP_ROADMAP.md). The package-manager
-submissions for v1.1.0 remain the owner's step
-([distribution](distribution.md)).
+Publish v1.2.0 from `main` after the pull request of `feature/v1.2`. Then
+v1.3: S2 of the `CaptureCoordinator` split
+([ADR-039](decisions/ADR-039-coordinator-trim-flow.md)), the trim flow with a
+test target of its own, and the other deferred candidates one bounded slice
+each; the order is in the [roadmap](../EASNAP_ROADMAP.md). Package-manager
+submissions remain the owner's step ([distribution](distribution.md)).

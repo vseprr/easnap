@@ -63,7 +63,7 @@ public:
         initialized_ = true;
         handles_ = {input, output};
         return ::UpdateProcThreadAttribute(get(), 0,
-                                           PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles_.data(),
+                                           PROC_THREAD_ATTRIBUTE_HANDLE_LIST, static_cast<void*>(handles_.data()),
                                            sizeof(handles_), nullptr, nullptr) != FALSE;
     }
     LPPROC_THREAD_ATTRIBUTE_LIST get() noexcept {

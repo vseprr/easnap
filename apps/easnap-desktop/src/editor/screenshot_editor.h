@@ -17,6 +17,7 @@
 // where a screenshot is shown one to one at the place it was captured.
 #pragma once
 
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -108,6 +109,11 @@ public:
 
 class AnnotationDocument final : public IAnnotationDocument {
 public:
+    /// Undo keeps this many steps; older ones are dropped. Each step holds a
+    /// copy of the whole annotation list, so an unbounded history grew with
+    /// every nudge of an arrow key.
+    static constexpr size_t kUndoLimit = 200;
+
     void Apply(Annotation annotation) override;
     [[nodiscard]] bool CanUndo() const override { return !undo_stack_.empty(); }
     [[nodiscard]] bool CanRedo() const override { return !redo_stack_.empty(); }
@@ -129,7 +135,9 @@ public:
 private:
     std::vector<Annotation> annotations_;
     void Checkpoint();
-    std::vector<std::vector<Annotation>> undo_stack_, redo_stack_;
+    void PushUndo(std::vector<Annotation> snapshot);
+    std::deque<std::vector<Annotation>> undo_stack_;
+    std::vector<std::vector<Annotation>> redo_stack_;
     std::optional<std::vector<Annotation>> transaction_;
     uint64_t revision_{0};
 };
@@ -152,6 +160,9 @@ public:
         /// The tools island's Scrollshot button, pressed while the frame is
         /// still provisional. It never acquires or fixes the screenshot.
         std::function<void()> on_scrollshot;
+        /// Pin to screen: the finished image and the desktop rectangle it was
+        /// taken from. False when it could not be pinned; the editor then stays.
+        std::function<bool(platform::BgraImage image, const RECT& source)> on_pin;
         /// The viewport of a document moved, scrolled or zoomed.
         std::function<void(const ImageView&)> on_view_changed;
         /// An area in desktop pixels that the islands never cover: the mode
@@ -210,6 +221,9 @@ public:
     /// treating that commit as a reason to complete the session.
     [[nodiscard]] platform::BgraImage CompositeCommitted();
     bool CompleteCopy();
+    /// Pin to screen: hands the finished image to `Callbacks::on_pin` and
+    /// closes as an export. False, with a notice, when it could not be pinned.
+    bool CompletePin();
     [[nodiscard]] bool completing() const noexcept { return completing_; }
     [[nodiscard]] uint64_t revision() const noexcept { return document_.revision(); }
     [[nodiscard]] const AnnotationDocument& document() const noexcept { return document_; }

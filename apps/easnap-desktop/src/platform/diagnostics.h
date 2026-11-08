@@ -17,7 +17,7 @@ namespace easnap::platform::diagnostics {
 
 struct LogOptions {
     /// A log file that has reached this size is set aside and a new one begun.
-    uint64_t max_bytes{1024 * 1024};
+    uint64_t max_bytes{uint64_t{1024} * 1024};
     /// Files kept in all: the current one and `kept_files - 1` earlier ones.
     int kept_files{3};
 };
