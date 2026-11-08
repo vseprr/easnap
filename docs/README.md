@@ -49,7 +49,8 @@ not unfinished roadmap instructions.
   [startup, pacing and session leases](decisions/ADR-021-recording-startup-timeline-and-session-leases.md).
 - Media/completion: [MP4 trim](decisions/ADR-009-mp4-trim-boundaries-and-publication.md),
   [preview ownership](decisions/ADR-010-trim-view-ownership-and-orchestration.md),
-  [trimming in a flow of its own (planned)](decisions/ADR-039-coordinator-trim-flow.md),
+  [trimming in a flow of its own](decisions/ADR-039-coordinator-trim-flow.md),
+  [external videos in the trim view (proposed)](decisions/ADR-040-external-video-in-the-trim-view.md),
   [publication/clipboard lifetime](decisions/ADR-011-recording-completion-and-clipboard-lifetime.md),
   [GIF policy](decisions/ADR-013-gif-stream-timing-palette-and-publication.md),
   [shared configuration/completion](decisions/ADR-014-unified-recording-configuration-and-format-completion.md).
