@@ -1,6 +1,7 @@
-# ADR-019: Stable native painting and custom window chrome
+# ADR-019 — Stable native painting and custom window chrome
 
-**Status:** Implemented, 2026-09-17.  
+**Status:** Implemented  
+**Date:** 2026-09-17  
 **Amended by:** [ADR-022](ADR-022-text-input-and-content-sized-trim.md) (annotation EDIT painting); [ADR-023](ADR-023-trim-resize-and-text-click-continuations.md) (DWM rounding replaces per-resize window regions); [ADR-024](ADR-024-native-trim-frame.md) (resizable windows keep the native frame)  
 New windows must follow the [implementation guide](../ui/window-implementation-guide.md).
 

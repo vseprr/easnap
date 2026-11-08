@@ -1,7 +1,8 @@
 # ADR-015 — Damage-limited frame rendering and gesture completion
 
 **Status:** Accepted  
-**Date:** 2026-09-13
+**Date:** 2026-09-13  
+**Amended:** 2026-10-13 — measured frame-update figures; the performance-report reference removed
 
 ## Context
 

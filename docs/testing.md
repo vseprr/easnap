@@ -75,6 +75,23 @@ In practice:
 The cache is a local iteration aid, not a release gate. Use `-Mode Full` to
 ignore it; a lab run always does.
 
+### Parameters of test.ps1
+
+| Parameter | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `-Configuration` | `Debug`, `Release` | `Release` | Build configuration whose tests are run. |
+| `-BuildDir` | path | `build` | Build directory, relative to the repository or absolute. |
+| `-Tier` | `Fast`, `Standard`, `Full`, `Soak` | `Standard` | Which tests are considered; see [Tiers](#tiers). |
+| `-Mode` | `Affected`, `Full` | `Affected` | `Affected` reuses unchanged passes; `Full` ignores the cache. |
+| `-DesktopTests` | `Run`, `Defer` | `Run` for `Full` and `Soak`, otherwise `Defer` | `Run` runs the visible-desktop tests one at a time on the chosen display; `Defer` lists them as pending and does not run them. |
+| `-Monitor` | number, part of a name, `\\.\DISPLAYn`, `Primary`, `Ask` | `Ask` | Display for visible-desktop tests. |
+| `-Filter` | regular expression | none | Only tests whose name matches are considered. |
+| `-HostOnly` | `Include`, `Exclude`, `Only` | `Include` | How the tests listed under `tests.hostOnly` in `testenv.json` are treated. |
+| `-Jobs` | 1 to 16 | `4` | Number of background tests run in parallel. |
+| `-NoCountdown` | switch | off | Skips the countdown before visible-desktop tests. |
+| `-ListMonitors` | switch | off | Prints the active displays and exits. |
+| `-ListOnly` | switch | off | Prints, as JSON, which tests would run, be reused, be deferred or be excluded, without running them. |
+
 ## Keeping tests away from your work
 
 Windows has one pointer, one keyboard focus and one input queue per logon

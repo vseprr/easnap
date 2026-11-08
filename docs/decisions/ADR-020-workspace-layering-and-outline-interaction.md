@@ -1,7 +1,8 @@
-# ADR-020: Workspace ownership and outline interaction
+# ADR-020 — Workspace ownership and outline interaction
 
-Date: 2026-09-17  
-Status: Accepted for the requested follow-up corrections
+**Status:** Accepted for the requested follow-up corrections  
+**Date:** 2026-09-17  
+**Amended:** 2026-10-13 — magnifier sampling note
 
 ## Context
 

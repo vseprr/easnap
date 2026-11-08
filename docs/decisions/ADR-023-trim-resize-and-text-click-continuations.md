@@ -1,7 +1,8 @@
-# ADR-023: Trim resize surfaces and text click continuations
+# ADR-023 — Trim resize surfaces and text click continuations
 
-Date: 2026-09-19
-Status: Implemented and accepted in the closed 2026-09-21 UI correction session.  
+**Status:** Implemented  
+**Date:** 2026-09-19  
+**Amended:** 2026-09-21 — accepted in the closed 2026-09-21 UI correction session  
 **Amended by:** [ADR-024](ADR-024-native-trim-frame.md) (top-level redraw and copy-bits policy)  
 New windows follow the [implementation guide](../ui/window-implementation-guide.md).
 

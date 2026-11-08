@@ -1,7 +1,8 @@
 # ADR-013 — GIF stream, timing, palette, delta, and publication contracts
 
 **Status:** Accepted  
-**Date:** 2026-09-03
+**Date:** 2026-09-03  
+**Amended:** 2026-10-13 — measured palette and size figures
 
 ## Context
 

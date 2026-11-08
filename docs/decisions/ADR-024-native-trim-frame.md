@@ -1,7 +1,8 @@
-# ADR-024: Preserve the native trim resize frame
+# ADR-024 — Preserve the native trim resize frame
 
-Date: 2026-09-21
-Status: Implemented and accepted by the user on 2026-09-21; session closed.
+**Status:** Implemented  
+**Date:** 2026-09-21  
+**Amended:** 2026-09-21 — accepted by the user; session closed
 
 Required implementation sequence for future windows: [window implementation guide](../ui/window-implementation-guide.md).
 

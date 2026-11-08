@@ -2,6 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2026-08-31  
+**Amended:** 2026-10-13 — owner-lifetime check of the recording island recorded  
 **Updated:** 2026-11-08 (decision 1 amended by [ADR-039](ADR-039-coordinator-trim-flow.md))
 
 Known limitation: transient redraw artifacts while the trim window is resized or

@@ -1,7 +1,7 @@
-# ADR-022: Native text input and content-sized trim presentation
+# ADR-022 — Native text input and content-sized trim presentation
 
-Date: 2026-09-19  
-Status: Implemented.  
+**Status:** Implemented  
+**Date:** 2026-09-19  
 **Amended by:** [ADR-023](ADR-023-trim-resize-and-text-click-continuations.md) (resize minimum, blank double-click continuation); [ADR-024](ADR-024-native-trim-frame.md) (native frame and painting policy)
 
 Accepted and closed, 2026-09-21: the user accepted all session corrections,
