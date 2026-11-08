@@ -200,7 +200,7 @@ is time-based.
   `trim_timeline_seek_stress` and `trim_timeline_seek_soak`, because a long
   run with the WGC observer faulted during WGC's asynchronous shutdown, at an
   address in the unloaded `GraphicsCapture.dll`. Set it by hand when running
-  `test_ui_modernization --seek-stress` directly; the executable alone uses
+  `test_native_ui --seek-stress` directly; the executable alone uses
   WGC. The choice is test-only: it pins no DLL, adds no teardown sleep and
   changes no picture threshold. The other endpoint and resize checks keep
   covering WGC; do not silently switch every visual test.
@@ -239,7 +239,7 @@ is time-based.
 
 ## Diagnostics that are not registered tests
 
-`test_ui_modernization` has opt-in modes that are not registered tests:
+`test_native_ui` has opt-in modes that are not registered tests:
 `--resize-edges` and `--resize-controls` observe the trim window while it is
 resized and maximized, `--trim-checks`, `--text-checks` and
 `--window-lifetime` exercise one area each. The strict resize gate

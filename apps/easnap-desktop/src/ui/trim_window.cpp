@@ -709,7 +709,7 @@ bool TrimWindow::CreateControls() {
     range_label_ = CreateControl(L"STATIC", strings::Get(IDS_TRIM_RANGE_PLACEHOLDER),
                                  SS_LEFT, -1);
     status_ = ::CreateWindowExW(
-        0, L"EDIT", L"Opening preview…",
+        0, L"EDIT", strings::Get(IDS_TRIM_STATUS_OPENING),
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL |
             ES_READONLY,
         0, 0, 1, 1, hwnd_, nullptr, ::GetModuleHandleW(nullptr), nullptr);

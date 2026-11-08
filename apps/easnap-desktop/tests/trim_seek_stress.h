@@ -1,4 +1,4 @@
-// Included by test_ui_modernization.cpp. Exercise production timeline messages
+// Included by test_native_ui.cpp. Exercise production timeline messages
 // and real native clicks while the actual isolated preview remains playing.
 // No mock player, replacement HWND painter or alternate transport is used.
 

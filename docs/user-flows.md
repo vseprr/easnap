@@ -299,7 +299,7 @@ GIF preset's final palette or cadence. Play/Pause, seek and In/Out controls
 operate on that source.
 Trim retains dragging, resizing, minimize/maximize and system close. It opens
 to suit the recording aspect ratio while keeping the controls readable. Manual
-resizing retains a 480 x 400 DIP usable client minimum, capped to the work area.
+resizing retains a 512 x 400 DIP usable client minimum, capped to the work area.
 The video starts below the custom caption; the time and range rows are below
 the timeline. Extreme source ratios fit inside the readable UI. The preview
 keeps its aspect ratio and consumes surplus side space before shrinking. Empty

@@ -1325,7 +1325,7 @@ void TestTrimLayoutContainmentAcrossDpiAndResize() {
     CHECK(busy.progress.bottom() <= busy.save_or_cancel.y);
     for (const float scale : {1.0f, 1.25f, 1.5f, 2.0f}) {
         const auto dip = [scale](int value) { return static_cast<int>(std::lround(value * scale)); };
-        for (const auto size : {std::pair{480, 400}, std::pair{1200, 400}, std::pair{480, 800}}) {
+        for (const auto size : {std::pair{512, 400}, std::pair{1200, 400}, std::pair{512, 800}}) {
             for (const bool exporting : {false, true}) {
                 for (const int status : {0, 52, 10'000}) {
                     // The range readout can wrap at the supported minimum.

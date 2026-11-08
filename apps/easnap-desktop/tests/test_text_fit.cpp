@@ -18,6 +18,8 @@
 #include "ui/recording_controls.h"
 #include "ui/scrollshot_controls.h"
 #include "ui/settings_dialog.h"
+#include "ui/trim_layout.h"
+#include "ui/trim_window.h"
 
 #include <commctrl.h>
 
@@ -49,6 +51,15 @@ std::wstring TextOf(HWND window) {
     return text;
 }
 
+/// The text in UTF-8, so that a failure message prints it whole.
+std::string Utf8(const std::wstring& text) {
+    const int length = static_cast<int>(text.size());
+    const int size = ::WideCharToMultiByte(CP_UTF8, 0, text.c_str(), length, nullptr, 0, nullptr, nullptr);
+    std::string result(static_cast<size_t>((std::max)(size, 0)), '\0');
+    if (size > 0) { ::WideCharToMultiByte(CP_UTF8, 0, text.c_str(), length, result.data(), size, nullptr, nullptr); }
+    return result;
+}
+
 /// Checks every visible button and label below `top`. Returns how many
 /// controls with text were examined.
 int CheckFits(HWND top, const char* surface) {
@@ -71,8 +82,8 @@ int CheckFits(HWND top, const char* surface) {
             ++context->examined;
             if (needed > client.right) {
                 ++failed;
-                std::fprintf(stderr, "FAIL [%s] %s: button %d \"%ls\" needs %d px, has %ld\n", g_language,
-                             context->surface, ::GetDlgCtrlID(child), text.c_str(), needed, client.right);
+                std::fprintf(stderr, "FAIL [%s] %s: button %d \"%s\" needs %d px, has %ld\n", g_language,
+                             context->surface, ::GetDlgCtrlID(child), Utf8(text).c_str(), needed, client.right);
             } else {
                 ++passed;
             }
@@ -92,8 +103,8 @@ int CheckFits(HWND top, const char* surface) {
                                wrapped.right <= client.right);
             if (!fits) {
                 ++failed;
-                std::fprintf(stderr, "FAIL [%s] %s: label %d \"%ls\" needs %ld px in one line (or %ld px high wrapped), has %ld x %ld\n",
-                             g_language, context->surface, ::GetDlgCtrlID(child), text.c_str(), single.right,
+                std::fprintf(stderr, "FAIL [%s] %s: label %d \"%s\" needs %ld px in one line (or %ld px high wrapped), has %ld x %ld\n",
+                             g_language, context->surface, ::GetDlgCtrlID(child), Utf8(text).c_str(), single.right,
                              wrapped.bottom, client.right, client.bottom);
             } else {
                 ++passed;
@@ -299,14 +310,55 @@ void Notices(const RECT& region) {
                                               : wrapped.right <= client.right && wrapped.bottom < client.bottom;
             if (!fits) {
                 ++failed;
-                std::fprintf(stderr, "FAIL [%s] notice \"%ls\" needs %ld x %ld (wrapped %ld x %ld), has %ld x %ld\n", g_language,
-                             notice.text.c_str(), single.right, single.bottom, wrapped.right, wrapped.bottom, client.right, client.bottom);
+                std::fprintf(stderr, "FAIL [%s] notice \"%s\" needs %ld x %ld (wrapped %ld x %ld), has %ld x %ld\n", g_language,
+                             Utf8(notice.text).c_str(), single.right, single.bottom, wrapped.right, wrapped.bottom, client.right, client.bottom);
             } else {
                 ++passed;
             }
             ::DestroyWindow(window);
         }
     }
+}
+
+/// The trim window opened on a file that does not exist: it shows its preview
+/// error and starts no preview process. Cancel export takes the place of Save
+/// while a trim is exported. Every state is checked at the opening size and at
+/// the smallest size the window allows, where its button cells are narrowest.
+void TrimWindow(const RECT& region) {
+    constexpr int kCancelExport = 103;  // The button's identifier in trim_window.cpp.
+    struct State {
+        bool exporting;
+        bool cancelling;
+        const char* name;
+    };
+    ui::TrimWindow trim({});
+    const bool opened = trim.Open(L"easnap-text-fit-missing.mp4", region);
+    CHECK(opened);
+    if (!opened) { return; }
+    CHECK(trim.preview_failed());
+    for (const bool smallest : {false, true}) {
+        const UINT dpi = ::GetDpiForWindow(trim.hwnd());
+        if (smallest) {
+            // Asked for less, the window keeps its minimum size.
+            ::SetWindowPos(trim.hwnd(), nullptr, 0, 0, 1, 1, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+            RECT client{};
+            ::GetClientRect(trim.hwnd(), &client);
+            CHECK(client.right == ::MulDiv(ui::kTrimMinClientWidthDip, static_cast<int>(dpi), 96));
+        }
+        for (const State& state : {State{false, false, "editing"}, State{true, false, "exporting"},
+                                   State{true, true, "cancelling"}}) {
+            trim.SetExporting(state.exporting, state.cancelling);
+            const std::string surface = std::string(smallest ? "trim at its smallest, " : "trim, ") + state.name;
+            const HWND cancel = ::GetDlgItem(trim.hwnd(), kCancelExport);
+            RECT cell{};
+            ::GetClientRect(cancel, &cell);
+            std::printf("MEASURE [%s] %s, %u dpi: Cancel export needs %d px of its %ld px cell\n", g_language,
+                        surface.c_str(), dpi, ui::ButtonContentWidth(cancel), cell.right);
+            CHECK(CheckFits(trim.hwnd(), surface.c_str()) >= 8);
+        }
+        trim.SetExporting(false);
+    }
+    trim.Destroy();
 }
 
 }  // namespace
@@ -333,6 +385,7 @@ int main() {
             ModeBar(monitor);
             Settings();
             Notices(region);
+            TrimWindow(region);
         }
     }
     platform::GraphicsEnvironment::Get().Shutdown();

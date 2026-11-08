@@ -42,7 +42,7 @@ Phase 3 follow-up work; it does not start Phase 4.
   the next target index. Existing frame dragging and document Undo remain.
 - Initial trim dimensions derive from source aspect ratio, work area and a
   readable control width. Fonts/targets keep their DPI scale. Manual resizing
-  retains the 480 x 400 client-DIP minimum established by ADR-023, with native
+  retains the 512 x 400 client-DIP minimum established by ADR-023, with native
   outer-frame allowances from ADR-024. The video HWND fits the available
   area without distortion, so surplus space disappears before the image shrinks.
 - Remove the redundant recording heading. Status uses measured wrapped text

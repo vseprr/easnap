@@ -25,7 +25,7 @@ observed bottom-right motion and did not cover that origin change.
 - Return zero from WM_NCCALCSIZE. Remove the top-level SWP_NOCOPYBITS override.
   Keep the existing child layout batching and complete owner-thread painting;
   no synchronous paint/position call crosses into the preview helper.
-- Include the native side/bottom frame in the 480 x 400 DIP client minimum.
+- Include the native side/bottom frame in the 512 x 400 DIP client minimum.
   Measure status text with a memory DC, avoiding a window-DC presentation during
   layout. The custom caption and button materials remain unchanged.
 - Reuse the horizontally constant part of the Gaussian material raster with
@@ -54,7 +54,7 @@ desktop captures, not a guarantee made by those sources.
 
 The material test compares 768 cases against the pre-optimization production
 raster hash; on 2026-09-21 the three-slice raster ran that comparison in 141 ms,
-against 891 ms before. A separate opt-in `test_ui_modernization --resize-edges` diagnostic
+against 891 ms before. A separate opt-in `test_native_ui --resize-edges` diagnostic
 uses real pointer drags and independent Windows Graphics Capture monitor frames
 in both themes. It checks all eight edges/corners and maximize/restore, including
 settled frames. On 2026-09-21 that observation recorded 4,065 drag frames and

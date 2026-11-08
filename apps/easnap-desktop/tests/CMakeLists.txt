@@ -610,13 +610,20 @@ add_executable(test_text_fit
     ../src/editor/redaction_renderer.cpp
     ../src/app/recording_workflow.cpp
     ../src/ui/settings_dialog.cpp
+    ../src/ui/trim_window.cpp
+    ../src/ui/trim_layout.cpp
+    ../src/ui/timeline_accessibility.cpp
+    ../src/app/trim_workflow.cpp
     ../src/app/app_settings.cpp
+    ../src/media/preview_process.cpp
+    ../src/media/preview_transport.cpp
+    ../src/media/media_foundation_writer.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_text_fit PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
 target_link_libraries(test_text_fit PRIVATE easnap_project_options easnap_strings
-    d3d11 d2d1 dwrite dxgi windowscodecs
-    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs mf mfplat mfuuid mfreadwrite mfplay
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 oleaut32 uuid imm32 propsys UIAutomationCore)
 add_test(NAME text_fits_in_every_language
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_text_fit>)
 set_tests_properties(text_fits_in_every_language PROPERTIES
@@ -706,8 +713,8 @@ add_test(NAME island_capture_exclusion COMMAND test_island_capture)
 set_tests_properties(island_capture_exclusion PROPERTIES
     LABELS "integration;real-desktop-capture;recording;scrollshot" TIMEOUT 90 SKIP_RETURN_CODE 77)
 
-add_executable(test_ui_modernization
-    test_ui_modernization.cpp
+add_executable(test_native_ui
+    test_native_ui.cpp
     ../src/capture/capture_provider.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/overlay.cpp
@@ -731,24 +738,24 @@ add_executable(test_ui_modernization
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/platform/platform_utils.cpp)
-add_dependencies(test_ui_modernization EasnapPreviewHost)
-target_link_libraries(test_ui_modernization PRIVATE windowsapp easnap_strings)
-target_include_directories(test_ui_modernization PRIVATE
+add_dependencies(test_native_ui EasnapPreviewHost)
+target_link_libraries(test_native_ui PRIVATE windowsapp easnap_strings)
+target_include_directories(test_native_ui PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
-target_link_libraries(test_ui_modernization PRIVATE easnap_project_options
+target_link_libraries(test_native_ui PRIVATE easnap_project_options
     d3d11 d2d1 dwrite dxgi dxguid windowscodecs mf mfplat mfuuid mfreadwrite mfplay
     shlwapi comctl32 shell32 ole32 oleaut32 uuid user32 gdi32 advapi32 propsys UIAutomationCore)
-add_test(NAME ui_modernization_native COMMAND test_ui_modernization)
-add_test(NAME trim_endpoint_presentation COMMAND test_ui_modernization --trim-endpoint)
+add_test(NAME ui_modernization_native COMMAND test_native_ui)
+add_test(NAME trim_endpoint_presentation COMMAND test_native_ui --trim-endpoint)
 set_tests_properties(trim_endpoint_presentation PROPERTIES
     LABELS "integration;ui;preview;desktop-visual" TIMEOUT 90)
 # 24 real clicks per case keep every gate (frame, motion and freeze thresholds)
 # reachable in about a third of the time; the 72-click run is the soak variant.
 add_test(NAME trim_timeline_seek_stress
-         COMMAND test_ui_modernization --seek-stress
+         COMMAND test_native_ui --seek-stress
                  "${CMAKE_CURRENT_BINARY_DIR}/seek-stress-$<CONFIG>" 24)
 add_test(NAME trim_timeline_seek_soak
-         COMMAND test_ui_modernization --seek-stress
+         COMMAND test_native_ui --seek-stress
                  "${CMAKE_CURRENT_BINARY_DIR}/seek-soak-$<CONFIG>" 72)
 set_tests_properties(trim_timeline_seek_stress trim_timeline_seek_soak PROPERTIES
     LABELS "integration;ui;preview;desktop-visual;stress" TIMEOUT 300
@@ -756,7 +763,7 @@ set_tests_properties(trim_timeline_seek_stress trim_timeline_seek_soak PROPERTIE
     # teardown. DXGI observes the same composed desktop; pixel gates are shared.
     ENVIRONMENT "EASNAP_TEST_CAPTURE=duplication")
 set_property(TEST trim_timeline_seek_soak APPEND PROPERTY LABELS soak)
-add_test(NAME ui_material_raster_parity COMMAND test_ui_modernization --material-rasters)
+add_test(NAME ui_material_raster_parity COMMAND test_native_ui --material-rasters)
 set_tests_properties(ui_material_raster_parity PROPERTIES LABELS "unit;ui;theme" TIMEOUT 30)
 set_tests_properties(ui_modernization_native PROPERTIES
     LABELS "integration;ui;accessibility;theme;preview" TIMEOUT 90)
@@ -797,7 +804,7 @@ set_tests_properties(trim_flow_production PROPERTIES
 
 foreach(ui_target test_region_selector test_redaction_renderer test_capture_overlay test_capture_workspace
                   test_scrollshot_workspace test_scrollshot_desktop test_data_safety test_text_fit
-                  test_ui_modernization test_trim_flow)
+                  test_native_ui test_trim_flow)
     target_link_libraries(${ui_target} PRIVATE uxtheme gdiplus oleacc dwmapi)
 endforeach()
 
@@ -864,7 +871,7 @@ set_tests_properties(wasapi_audio_capture PROPERTIES
     SKIP_RETURN_CODE 77
     TIMEOUT 60)
 
-add_test(NAME annotation_editing_native COMMAND test_ui_modernization --editor-checks)
+add_test(NAME annotation_editing_native COMMAND test_native_ui --editor-checks)
 set_tests_properties(annotation_editing_native PROPERTIES LABELS "integration;editor;ui" TIMEOUT 60)
 
 # These assertions use the physical desktop, pointer, focus or capture timing.
