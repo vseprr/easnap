@@ -66,11 +66,15 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   (`VM-ok-but-fallback`). On the development PC: the Release build without
   warnings, the Fast tier 23 of 23, clang-tidy without findings on the changed
   sources, and six runs of the new test, 132 of 132 checks each, leaving
-  nothing in the temporary folder.
+  nothing in the temporary folder. Lab Soak on the same tree (run
+  `20261108-202202-soak`): 57 of 57, the new test included; one test,
+  `trim_timeline_seek_stress`, passed only on the runner's retry. Its first
+  attempt failed the pointer check: the pointer landed on the window caption
+  instead of the timeline. That test does not compile any source S2 changed.
 - Not validated: the S2 owner checklist in the running application (ADR-039).
   No test runs Save (its file dialog), GIF, a recording without a preview,
   Exit, sign-out or a display change while trimming; these paths were moved
-  unchanged and are on that checklist. The lab Soak tier did not run for S2.
+  unchanged and are on that checklist.
 
 ## v1.2.0
 
