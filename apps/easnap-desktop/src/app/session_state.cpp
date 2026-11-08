@@ -17,6 +17,7 @@
 #include "scrollshot/scrollshot_session.h"
 #include "strings/strings.h"
 #include "ui/overlay.h"
+#include "ui/pinned_images.h"
 #include "ui/recording_controls.h"
 #include "ui/scrollshot_controls.h"
 #include "ui/trim_window.h"
@@ -242,6 +243,8 @@ void CaptureCoordinator::Shutdown() {
         recording_completion_->Shutdown();
     }
     EndSession();
+    // Pins outlive every session but not Easnap.
+    pins_.reset();
     if (editor_) {
         editor_->Destroy();
         editor_.reset();
@@ -2101,6 +2104,12 @@ std::unique_ptr<editor::ScreenshotEditor> CaptureCoordinator::CreateEditor() {
         if (overlay_) { overlay_->InvalidateImage(damage); }
     };
     callbacks.on_scrollshot = [this] { OnScrollshotAction(ScrollshotAction::Start); };
+    callbacks.on_pin = [this](platform::BgraImage image, const RECT& source) {
+        // The coordinator only hands the image over; the editor then ends the
+        // session as an export (ADR-038).
+        if (!pins_) { pins_.reset(new (std::nothrow) ui::PinnedImages(&settings_)); }
+        return pins_ && pins_->Pin(std::move(image), source);
+    };
     callbacks.on_view_changed = [this](const editor::ImageView& view) { PublishDocumentView(view); };
     callbacks.keep_clear = [this] { return overlay_ ? overlay_->mode_island_rect() : RECT{}; };
     return std::make_unique<editor::ScreenshotEditor>(std::move(callbacks));

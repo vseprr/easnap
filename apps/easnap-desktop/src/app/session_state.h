@@ -22,6 +22,7 @@
 
 namespace easnap::ui {
 class OverlayController;
+class PinnedImages;
 class RecordingControls;
 class ScrollshotControls;
 class TrimWindow;
@@ -254,6 +255,9 @@ private:
     std::unique_ptr<editor::ScreenshotEditor> editor_;
     std::unique_ptr<recording::RecordingSession> recording_session_;
     std::unique_ptr<TrimExportController> trim_export_;
+    /// Images pinned to the screen. They are not session state: they outlive
+    /// every session and close with Easnap (ADR-038).
+    std::unique_ptr<ui::PinnedImages> pins_;
     capture::DesktopSnapshot snapshot_;
     RECT recording_region_{};
     /// Monitor bounds and scale the frozen snapshot was taken against.

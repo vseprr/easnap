@@ -424,6 +424,37 @@ target_link_libraries(test_island_layout PRIVATE easnap_project_options
 add_test(NAME island_layout_logic COMMAND test_island_layout)
 set_tests_properties(island_layout_logic PROPERTIES LABELS "unit;ui;layout" TIMEOUT 30)
 
+# Where a pinned image goes, its zoom steps and limits, zooming around the
+# pointer and keeping it on a work area (ADR-038). Rectangles only.
+add_executable(test_pin_layout
+    test_pin_layout.cpp
+    ../src/ui/pin_layout.cpp)
+target_include_directories(test_pin_layout PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(test_pin_layout PRIVATE easnap_project_options user32)
+add_test(NAME pin_layout_logic COMMAND test_pin_layout)
+set_tests_properties(pin_layout_logic PROPERTIES LABELS "unit;ui;layout;pin" TIMEOUT 30)
+
+# Real pin windows from the production collection, driven by messages on a
+# private window station and desktop: styles, capture marking, painted pixels,
+# wheel zoom, keyboard, menu commands, closing and DPI/display changes.
+add_executable(test_pinned_images
+    test_pinned_images.cpp
+    ../src/ui/pinned_images.cpp
+    ../src/ui/pin_layout.cpp
+    ../src/ui/capture_workspace.cpp
+    ../src/ui/ui_theme.cpp
+    ../src/ui/native_controls.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_pinned_images PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_pinned_images PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi windowscodecs gdiplus uxtheme dwmapi
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+add_test(NAME pinned_images_native
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_pinned_images>)
+set_tests_properties(pinned_images_native PROPERTIES
+    LABELS "integration;ui;pin;clipboard;isolated-desktop" TIMEOUT 60)
+
 # The log file through the production sink, and crash reports from a second
 # process that installs the production handler and fails on purpose.
 add_executable(test_diagnostics

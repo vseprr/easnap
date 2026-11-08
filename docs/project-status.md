@@ -38,6 +38,33 @@ and the individual runs in the [validation records](releases/validation-history.
   `island_capture_exclusion` drags those dialogs and reads the themed menu as
   the user sees them.
 
+## v1.2 in progress
+
+Work toward v1.2 runs on the branch `feature/v1.2`, created on 2026-11-08 from
+`main` at `df838d4`. Nothing of it is released.
+
+- **Pin to screen** ([ADR-038](decisions/ADR-038-pinned-images.md)):
+  implemented. The tools island has a Pin command (Ctrl+T) that keeps the
+  finished image above other windows as a pinned image; the island's preferred
+  width grew from 832 to 870 DIPs for it. A pin moves by dragging, zooms with
+  the wheel (10 to 400 %), copies, saves, returns to its original size and
+  closes from the keyboard and its menu. Pins are screen content: later
+  captures contain them, and they do not make acquisition hide the workspace
+  or refuse Scrollshot. The editor and the pin share one Save path for quick
+  save and the Save dialog.
+- Validated: lab Full tier on the uncommitted branch (2026-11-08, run
+  `20261108-021123-full`), 50 of 50 with no retry, including the two new tests;
+  `real_desktop_recording_session` passed on the GDI fallback as before
+  (`VM-ok-but-fallback`). On the host, in single runs: `pin_layout_logic` (56
+  checks), `pinned_images_native` (71 checks, five runs), the new Pin checks in
+  `capture_workspace_production`, and `text_fits_in_every_language`.
+- By hand: the owner tried the build on the development PC (one 1920 x 1080
+  display at 125 %) on 2026-11-08 and reported that everything the feature
+  promises worked; longer use is still to come.
+- Not validated: a pin moved between monitors of different scale (the PC has
+  one display), long use, and many or very large pins at once. The native test
+  reads the pin's picture through `WM_PRINTCLIENT`, not from the screen.
+
 ## Validated
 
 - v1.1.0-beta.2 (2026-10-30): the Full tier passed 48 of 48 with no retry in
@@ -207,7 +234,9 @@ post-v1 without a promised date.
 
 ## Next slice
 
-v1.2, on a branch of its own: the slices deferred from the stabilization are
-listed in the [roadmap](../EASNAP_ROADMAP.md). The package-manager
-submissions for v1.1.0 remain the owner's step
+On `feature/v1.2`: the smaller slices deferred from the stabilization, then an
+ADR for splitting `CaptureCoordinator` (a small state machine first, then the
+trim flow with a test target of its own), then a release candidate; the order
+is in the [roadmap](../EASNAP_ROADMAP.md). The
+package-manager submissions for v1.1.0 remain the owner's step
 ([distribution](distribution.md)).

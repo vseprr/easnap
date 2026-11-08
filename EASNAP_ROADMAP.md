@@ -1,6 +1,6 @@
 # Easnap delivery roadmap
 
-**Updated:** 2026-11-07
+**Updated:** 2026-11-08
 
 Read this with [project status](docs/project-status.md). This file records the
 phase boundaries; what is implemented and validated belongs in project status,
@@ -29,13 +29,20 @@ v1.1.0 was published on 2026-11-08 as the latest stable version.
 | Beta readiness | Implemented; v1.1.0-beta.1 and v1.1.0-beta.2 published as prereleases |
 | Isolated test lab | Implemented 2026-10-19: Hyper-V VM driven by winlab, direct build, capture-path reporting ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md)) |
 | v1.1.0 stable | Stabilization on `stabilize/v1.1.0` (2026-11-07): audit, documentation, formatting, static analysis, code fixes; rc.1 checked by the owner, not published; v1.1.0 published 2026-11-08 |
+| v1.2 | In progress on `feature/v1.2` (from 2026-11-08): Pin to screen implemented ([ADR-038](docs/decisions/ADR-038-pinned-images.md)) and checked by the owner by hand |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
 
 In this order (details in [project status](docs/project-status.md#next-slice)):
 
-1. v1.2 on a branch of its own.
+1. The smaller v1.2 candidates under [other deferred work](#other-deferred-work),
+   one bounded slice each, the low-risk ones first.
+2. `CaptureCoordinator` split: an ADR first (a small state machine, then the
+   trim flow with its own test target); no extraction of Scrollshot or the
+   workspace in v1.2.
+3. A release candidate: lab Full and Soak, the owner's second round of use,
+   then v1.2.0.
 
 Open on the owner's side: the host Full run for the writer fix, since the host
 desktop is used only when the owner asks. Not covered yet: Windows 11, an N

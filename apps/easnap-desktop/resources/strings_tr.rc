@@ -295,4 +295,12 @@ BEGIN
     IDS_TRIM_PREVIEW_HELPER_MISSING "EasnapPreviewHost.exe Easnap klasöründe yok; bu yüzden kayıtlar önizlenemiyor ve kırpılamıyor. ZIP dosyasının tamamını yeniden çıkarın ya da Easnap'i yeniden kurun."
     IDS_RECORDING_KEPT_UNTIL_NEXT_START "Easnap kırpma görünümünü açamadı.\n\nKayıt yalnızca Easnap yeniden açılana kadar tutulur. Saklamak için buradan kopyalayın:\n%1"
     IDS_TRIM_SAVE_UNTRIMMED_FAILED "Kayıt oraya kaydedilemedi. Kayıt hâlâ açık; başka bir yer seçin."
+    IDS_EDITOR_PIN_BUTTON "Ekrana sabitle (Ctrl+T)"
+    IDS_EDITOR_NOTICE_PIN_FAILED "Görüntü sabitlenemedi - yeniden deneyin ya da kopyalayın veya kaydedin"
+    IDS_PIN_WINDOW_NAME "Sabitlenmiş görüntü"
+    IDS_PIN_MENU_COPY "Kopyala\tCtrl+C"
+    IDS_PIN_MENU_SAVE "Kaydet...\tCtrl+S"
+    IDS_PIN_MENU_ORIGINAL_SIZE "Gerçek boyut\tCtrl+1"
+    IDS_PIN_MENU_CLOSE "Kapat\tEsc"
+    IDS_PIN_MENU_CLOSE_ALL "Sabitlenmiş tüm görüntüleri kapat"
 END

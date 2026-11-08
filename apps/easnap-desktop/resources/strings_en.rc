@@ -296,4 +296,12 @@ BEGIN
     IDS_TRIM_PREVIEW_HELPER_MISSING "EasnapPreviewHost.exe is missing from the Easnap folder, so recordings cannot be previewed or trimmed. Extract the complete ZIP again, or reinstall Easnap."
     IDS_RECORDING_KEPT_UNTIL_NEXT_START "Easnap could not open the trim view.\n\nThe recording is kept only until Easnap starts again. To keep it, copy it from here:\n%1"
     IDS_TRIM_SAVE_UNTRIMMED_FAILED "The recording could not be saved there. It is still open; choose another place."
+    IDS_EDITOR_PIN_BUTTON "Pin to screen (Ctrl+T)"
+    IDS_EDITOR_NOTICE_PIN_FAILED "Could not pin the image - try again, or copy or save it"
+    IDS_PIN_WINDOW_NAME "Pinned image"
+    IDS_PIN_MENU_COPY "Copy\tCtrl+C"
+    IDS_PIN_MENU_SAVE "Save...\tCtrl+S"
+    IDS_PIN_MENU_ORIGINAL_SIZE "Original size\tCtrl+1"
+    IDS_PIN_MENU_CLOSE "Close\tEsc"
+    IDS_PIN_MENU_CLOSE_ALL "Close all pinned images"
 END

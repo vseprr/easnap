@@ -48,7 +48,7 @@ All paths below are under `apps/easnap-desktop/src`.
 | Area | Responsibility |
 |---|---|
 | `app/` | Coordinator, transition policy, settings, recording/finalization, trim and completion orchestration |
-| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls, Scrollshot island and preview, trim view, and the message and Settings dialogs |
+| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls, Scrollshot island and preview, trim view, pinned images, and the message and Settings dialogs |
 | `editor/` | Screenshot document, commands/history, tools, reversible effects, the scrolled and zoomed view, inline rendering and full-resolution composite |
 | `capture/` | Desktop acquisition, per-output fallback and capture worker |
 | `scrollshot/` | Stitching engine and the capture session that feeds it |
@@ -169,6 +169,18 @@ applications could not read the top-down bitmap Easnap wrote before
 `platform/platform_utils.cpp`). Save uses WIC and the native PNG/JPEG picker.
 Acquisition, composite or clipboard failure keeps the session available and
 does not substitute an unannotated success result. See ADR-003.
+
+### Pinned images
+
+Pin to screen hands the composite and its source rectangle from the editor
+(`Callbacks::on_pin`) to `ui::PinnedImages`, which the coordinator holds but
+does not treat as session state: the session ends as an export and the pins
+stay until they are closed or Easnap exits. Each pin is a plain topmost tool
+window that paints its image with GDI; `ui/pin_layout` holds its placement and
+zoom as pure geometry. Pins are screen content: they are not excluded from
+capture, and a window property tells `CanCaptureVisibleWindows` not to wait
+for them, so the workspace stays visible during acquisition and Scrollshot
+stays available. See [ADR-038](decisions/ADR-038-pinned-images.md).
 
 ## Native windows and shared presentation
 
