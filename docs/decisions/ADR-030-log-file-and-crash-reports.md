@@ -65,7 +65,11 @@ process with the failure's code.
   hosted runner `diagnostics_log_and_crash_reports` failed in 2 of 40 jobs
   with every later report missing; the likely cause is that Windows reused
   the process ID within the same second, so a report got the name of the
-  previous one and could not replace it.
+  previous one and could not replace it. With unique names it happened once
+  more (2026-11-08, Debug job of the v1.2.0 release run): the children ended
+  with the expected codes, so the handler ran, but 7 of 8 wrote no report.
+  The reuse of names was therefore not the whole cause; whether creating the
+  file or writing the dump failed there is not known.
 
 The next start tells the user once: Easnap closed unexpectedly, a report was
 saved on this computer, nothing has been sent, here is the folder. The report

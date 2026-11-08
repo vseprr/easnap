@@ -7,7 +7,7 @@ phase boundaries; what is implemented and validated belongs in project status,
 and what each release contained in its release notes, listed in the
 [documentation index](docs/README.md).
 
-## Current: v1.1.0 published
+## Current: v1.2.0 published
 
 The first beta of v1.1 was published on 2026-10-13 as a prerelease of
 [`vseprr/easnap`](https://github.com/vseprr/easnap): Scrollshot in the
@@ -16,7 +16,10 @@ corrections from testing the first, was published on 2026-10-30. The
 stabilization toward v1.1.0 ran on 2026-11-07 on the branch
 `stabilize/v1.1.0`. Its release candidate v1.1.0-rc.1 was checked by the
 owner and not published; the two problems the check found were corrected, and
-v1.1.0 was published on 2026-11-08 as the latest stable version.
+v1.1.0 was published on 2026-11-08. v1.2 followed on the branch
+`feature/v1.2`: Pin to screen and the sturdiness slices. Its release
+candidate v1.2.0-rc.1 was checked by the owner and not published, and v1.2.0
+was published on 2026-11-08 as the latest stable version.
 
 | Phase | State |
 |---|---|
@@ -29,17 +32,14 @@ v1.1.0 was published on 2026-11-08 as the latest stable version.
 | Beta readiness | Implemented; v1.1.0-beta.1 and v1.1.0-beta.2 published as prereleases |
 | Isolated test lab | Implemented 2026-10-19: Hyper-V VM driven by winlab, direct build, capture-path reporting ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md)) |
 | v1.1.0 stable | Stabilization on `stabilize/v1.1.0` (2026-11-07): audit, documentation, formatting, static analysis, code fixes; rc.1 checked by the owner, not published; v1.1.0 published 2026-11-08 |
-| v1.2 | On `feature/v1.2` (from 2026-11-08): Pin to screen ([ADR-038](docs/decisions/ADR-038-pinned-images.md)), audio exception boundary, undo limit, clipboard formats first, the session state machine and a required clang-tidy job; release candidate rc.1 checked by the owner, not published; v1.2.0 prepared |
+| v1.2 | On `feature/v1.2` (from 2026-11-08): Pin to screen ([ADR-038](docs/decisions/ADR-038-pinned-images.md)), audio exception boundary, undo limit, clipboard formats first, the session state machine and a required clang-tidy job; release candidate rc.1 checked by the owner, not published; v1.2.0 published 2026-11-08 |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
 
 In this order (details in [project status](docs/project-status.md#next-slice)):
 
-1. v1.2.0: the release candidate rc.1 (Pin to screen and the sturdiness
-   slices) passed the owner's second round of use; v1.2.0 is published from
-   `feature/v1.2` through a pull request to `main`.
-2. v1.3: S2 of the `CaptureCoordinator` split
+1. v1.3, on a branch of its own: S2 of the `CaptureCoordinator` split
    ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)), the trim flow
    with its own test target, and the other candidates under
    [other deferred work](#other-deferred-work), one bounded slice each.
