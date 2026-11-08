@@ -2,7 +2,8 @@
 
 **Status:** Accepted
 **Date:** 2026-10-13
-**Amended:** 2026-10-30 — right-click in a locked Scrollshot requests Discard
+**Amended:** 2026-10-30 — right-click in a locked Scrollshot requests Discard;
+2026-11-08 — a screenshot splits the shading as well
 
 ## Context
 
@@ -61,10 +62,14 @@ everywhere inside that window's rectangle, even where a window region cuts
 the window away. The workspace's shading was such a window: one
 monitor-sized window at 48% opacity with a region around the selection.
 
-Before the first picture `OverlayController::ExposeScrollshotFrame` replaces
+Before the first picture `OverlayController::ExposeFrame` replaces
 it with four plain windows above, below, left and right of the frame. The
 screen looks the same, and no translucent window's rectangle contains the
-frame any more. The single window returns when the capture stops. The input
+frame any more. The single window returns when the capture stops. Since
+v1.3 a screenshot read with the workspace on screen does the same around its
+one picture: measured on the development PC, 1,572 pixels of the frame
+came back one level off under the single shading and none with the
+shading split. The lab VM, which has no GPU, shows no shift either way. The input
 plane (opacity 1 of 255) and the colour-keyed chrome window were measured to
 have no such effect.
 
@@ -191,9 +196,6 @@ path.
   of the content the user sees. It is not in the image.
 - The shortcuts depend on focus. This is stated in the help text rather than
   solved with a keyboard hook.
-- Screenshots keep the single shading window, which moves with the selection
-  as one region update. A screenshot taken with the workspace visible can
-  therefore differ from the screen by one level at a few values.
 - A recording that starts on a still desktop is read through GDI for its whole
   length, as before. The option above would lift that; it has not been applied
   to recording.

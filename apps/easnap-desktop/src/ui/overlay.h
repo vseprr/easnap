@@ -83,10 +83,11 @@ public:
     /// contains the frame, and waits until the compositor shows it. Windows
     /// passes every pixel under a translucent capture-excluded window through
     /// a blend that changes a few values by one level - in captures too, and
-    /// even where a window region cuts the window away. Call before the first
-    /// picture of a scrolling capture. The screen looks the same. Ends with
-    /// `false`, StopScrollshotCapture or Destroy.
-    void ExposeScrollshotFrame(bool exposed);
+    /// even where a window region cuts the window away. Call before a
+    /// screenshot is read and before the first picture of a scrolling capture.
+    /// The screen looks the same. Ends with `false`, StopScrollshotCapture or
+    /// Destroy.
+    void ExposeFrame(bool exposed);
     [[nodiscard]] bool frame_exposed() const noexcept { return frame_exposed_; }
     void RequestScrollshotCommand(ScrollshotCommand command);
     /// Shows a fixed image that is larger than its frame: the workspace of a

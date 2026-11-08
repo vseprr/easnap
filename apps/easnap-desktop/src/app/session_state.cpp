@@ -503,7 +503,11 @@ bool CaptureCoordinator::PrepareWorkspaceScreenshot() {
     // Capture-excluded workspace windows can remain composed during acquisition.
     // Older Windows builds or any unprotected popup retain the safe hide fallback.
     const bool keep_visible = ui::CanCaptureVisibleWindows();
-    if (!keep_visible) {
+    if (keep_visible) {
+        // Nothing translucent may contain the frame, or a few values come back
+        // one level off. The screen looks the same.
+        overlay_->ExposeFrame(true);
+    } else {
         editor_->Hide();
         overlay_->Hide();
     }
@@ -514,6 +518,7 @@ bool CaptureCoordinator::PrepareWorkspaceScreenshot() {
     // That is a failed capture: the editor says so and the frame stays for
     // another try.
     const bool read = capture_provider_ && capture_provider_->CaptureDesktop(settings_.capture_cursor, final_snapshot);
+    if (keep_visible) { overlay_->ExposeFrame(false); }
     const bool complete = read && final_snapshot.RegionComplete(region);
     if (read && !complete) {
         platform::LogMessage(L"A display under the selection could not be read; no screenshot was taken");
@@ -985,17 +990,17 @@ void CaptureCoordinator::StartScrollshotCapture() {
     // excluded from capture, and the shading is rearranged so that nothing
     // translucent contains the frame. Neither is visible, so a failure only
     // has to put the shading back.
-    overlay_->ExposeScrollshotFrame(true);
+    overlay_->ExposeFrame(true);
     auto session = std::make_unique<scrollshot::ScrollshotSession>(capture::CreateRegionCaptureProvider(), options);
     if (!session->Start()) {
-        overlay_->ExposeScrollshotFrame(false);
+        overlay_->ExposeFrame(false);
         platform::LogMessage(L"Scrollshot could not capture its first picture");
         ui::ShowMessage(message_owner, strings::Get(IDS_SCROLLSHOT_START_FAILED),
                         strings::Get(IDS_SCROLLSHOT_HELP_TITLE), MB_OK | MB_ICONWARNING);
         return;
     }
     if (!RequestTransition(SessionState::ScrollshotCapturing)) {
-        overlay_->ExposeScrollshotFrame(false);
+        overlay_->ExposeFrame(false);
         return;  // The session object stops its worker as it goes out of scope.
     }
     scrollshot_session_ = std::move(session);

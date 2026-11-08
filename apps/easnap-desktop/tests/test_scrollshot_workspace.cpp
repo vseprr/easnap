@@ -332,7 +332,7 @@ void OverlayPhases() {
     std::vector<HWND> shading = VisibleShading(monitor.bounds);
     RECT shade_rect{};
     CHECK(shading.size() == 1 && ::GetWindowRect(shading[0], &shade_rect) && ::EqualRect(&shade_rect, &monitor.bounds));
-    overlay.ExposeScrollshotFrame(true);
+    overlay.ExposeFrame(true);
     CHECK(overlay.frame_exposed());
     shading = VisibleShading(monitor.bounds);
     CHECK(shading.size() == 4);
