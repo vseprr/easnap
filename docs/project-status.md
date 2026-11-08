@@ -239,8 +239,9 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   Settings dialog can be open then, and it closes.
 - The mode island's home now starts below a taskbar docked at the top
   (2026-11-07); this was not seen with a top taskbar.
-- The log gets one line per audio packet for the first packets of every
-  recording; these lines are diagnostic and carry no content.
+- The log gets two lines per audio packet for the first eight packets of
+  every recording, from each source when both are recorded; these lines are
+  diagnostic and carry no content.
 - On the host, `annotation_editing_native` shares the user's clipboard and
   replaces its content.
 - `mfplay_preview_audio_transport` can miss its 1500 ms limit for retiring a

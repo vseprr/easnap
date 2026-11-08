@@ -42,6 +42,22 @@ struct MappedAudioPacket {
     media::MediaTime committed_audio_end, media::MediaTime last_tick,
     std::optional<media::MediaTime> pending_audio_start) noexcept;
 
+/// Latest audio end the writer may accept once video has been written up to
+/// `video_end`: audio may lead video by `maximum_lead`. The sum saturates at
+/// the MediaTime range instead of overflowing.
+[[nodiscard]] media::MediaTime AudioWriterGateLimit(
+    media::MediaTime video_end, media::MediaTime maximum_lead) noexcept;
+
+/// Removes the frames of `mapped` that begin before `committed_end`, the end
+/// of the audio already written, in whole frames rounded up. The kept suffix
+/// starts exactly at `committed_end`. Returns Mapped when nothing overlaps or
+/// a suffix remains, Dropped when every frame overlaps, and Invalid when
+/// `sample_rate` is zero or the trimmed packet cannot be represented.
+/// `mapped` changes only when a suffix remains.
+[[nodiscard]] AudioPacketMapResult TrimAudioOverlap(
+    MappedAudioPacket& mapped, media::MediaTime committed_end,
+    uint32_t sample_rate) noexcept;
+
 /// Maps QPC-anchored WASAPI packets onto recording active time. Within a
 /// continuous device run, every boundary is derived from cumulative PCM frame
 /// counts, so callback scheduling never perturbs sample timestamps.

@@ -44,27 +44,6 @@ uint64_t SaturatingAdd(uint64_t left, uint64_t right) noexcept {
     return right > maximum - left ? maximum : left + right;
 }
 
-uint64_t TimeToAudioFramesCeiling(media::MediaTime time,
-                                  uint32_t sample_rate) noexcept {
-    if (time <= media::MediaTime::zero() || sample_rate == 0) {
-        return 0;
-    }
-    const uint64_t ticks = static_cast<uint64_t>(time.count());
-    const uint64_t seconds = ticks / 10'000'000ULL;
-    const uint64_t remainder = ticks % 10'000'000ULL;
-    return seconds * sample_rate +
-           (remainder * sample_rate + 9'999'999ULL) / 10'000'000ULL;
-}
-
-media::MediaTime AudioFramesToTime(uint64_t frames,
-                                   uint32_t sample_rate) noexcept {
-    const uint64_t seconds = frames / sample_rate;
-    const uint64_t remainder = frames % sample_rate;
-    return media::MediaTime{static_cast<int64_t>(
-        seconds * 10'000'000ULL +
-        (remainder * 10'000'000ULL) / sample_rate)};
-}
-
 bool SameAudioFormat(const media::AudioFormat& left,
                      const media::AudioFormat& right) noexcept {
     return left.sample_rate == right.sample_rate && left.channels == right.channels &&
@@ -947,8 +926,15 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
         }
 
         MappedAudioPacket mapped;
-        const AudioPacketMapResult map_result =
-            audio_timeline_.Map(packet, mapped);
+        AudioPacketMapResult map_result = audio_timeline_.Map(packet, mapped);
+        if (map_result == AudioPacketMapResult::Mapped && mapped.frame_count != 0) {
+            // The video-driven silence frontier can legitimately advance a few
+            // frames beyond a newly re-anchored mixed packet after pause/resume.
+            // Reconcile that overlap at whole PCM-frame boundaries instead of
+            // submitting a non-monotonic sample or discarding the usable suffix.
+            map_result = TrimAudioOverlap(mapped, committed_audio_end_,
+                                          audio_format_.sample_rate);
+        }
         if (map_result == AudioPacketMapResult::Dropped) {
             return;
         }
@@ -956,23 +942,6 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
             RecordFailure(L"Mapping captured PCM onto the active-time audio timeline failed");
             audio_accepting_.store(false, std::memory_order_release);
             return;
-        }
-        // The video-driven silence frontier can legitimately advance a few
-        // frames beyond a newly re-anchored mixed packet after pause/resume.
-        // Reconcile that overlap at whole PCM-frame boundaries instead of
-        // submitting a non-monotonic sample or discarding the usable suffix.
-        if (mapped.timestamp < committed_audio_end_) {
-            const uint64_t overlap_frames = TimeToAudioFramesCeiling(
-                committed_audio_end_ - mapped.timestamp,
-                audio_format_.sample_rate);
-            if (overlap_frames >= mapped.frame_count) {
-                return;
-            }
-            mapped.first_frame += static_cast<uint32_t>(overlap_frames);
-            mapped.frame_count -= static_cast<uint32_t>(overlap_frames);
-            mapped.timestamp = committed_audio_end_;
-            mapped.duration = AudioFramesToTime(mapped.frame_count,
-                                                audio_format_.sample_rate);
         }
         if (mapped.timestamp < silence_write_position_) {
             RecordFailure(L"Captured audio arrived behind an already committed audio gap");
@@ -1004,46 +973,9 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
         chunk.discontinuity = mapped.discontinuity;
 
         const media::MediaTime chunk_end = chunk.timestamp + chunk.duration;
-        const auto wait_start = std::chrono::steady_clock::now();
-        const auto gate_open = [this, chunk_end] {
-            const int64_t video_end =
-                last_video_writer_end_100ns_.load(std::memory_order_acquire);
-            const int64_t maximum = (std::numeric_limits<int64_t>::max)();
-            const int64_t allowed_audio_end =
-                video_end > maximum - kMaximumAudioWriterLead.count()
-                    ? maximum
-                    : video_end + kMaximumAudioWriterLead.count();
-            return chunk_end.count() <= allowed_audio_end ||
-                   !consumer_running_.load(std::memory_order_acquire) ||
-                   state() == RecordingSessionState::Failed;
-        };
-        bool video_stalled = false;
-        int64_t observed_video_end =
-            last_video_writer_end_100ns_.load(std::memory_order_acquire);
-        auto last_video_progress = wait_start;
-        while (!audio_video_progress_.wait_for(audio_lock, kAudioGateStallPoll,
-                                               gate_open)) {
-            const int64_t video_end =
-                last_video_writer_end_100ns_.load(std::memory_order_acquire);
-            const auto now = std::chrono::steady_clock::now();
-            if (video_end != observed_video_end) {
-                observed_video_end = video_end;
-                last_video_progress = now;
-            } else if (now - last_video_progress >= kAudioGateStallLimit) {
-                video_stalled = true;
-                break;
-            }
-        }
-        const auto wait_elapsed =
-            std::chrono::steady_clock::now() - wait_start;
-        const auto wait_microseconds =
-            std::chrono::duration_cast<std::chrono::microseconds>(wait_elapsed)
-                .count();
-        audio_backpressure_wait_timing_.Add(
-            wait_microseconds > 0 ? static_cast<uint64_t>(wait_microseconds) : 0);
-        const uint64_t gate_wait_microseconds =
-            wait_microseconds > 0 ? static_cast<uint64_t>(wait_microseconds) : 0;
-        if (video_stalled) {
+        const VideoGateWait gate_wait = WaitForVideoGate(audio_lock, chunk_end);
+        audio_backpressure_wait_timing_.Add(gate_wait.wait_microseconds);
+        if (gate_wait.video_stalled) {
             write_failed = true;
             write_failure_context =
                 L"Recording video stopped advancing while captured audio waited for it";
@@ -1104,7 +1036,7 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
             }
         }
         CompleteAudioPacketTrace(trace_index, chunk.timestamp, chunk_end,
-                                 gate_wait_microseconds, written);
+                                 gate_wait.wait_microseconds, written);
     } catch (...) {
         write_failed = true;
         write_failure_context =
@@ -1128,6 +1060,43 @@ void RecordingSession::OnAudioPacket(const media::AudioPacket& packet) noexcept 
         frame_queue_.close();
         capture_worker_->Stop();
     }
+}
+
+RecordingSession::VideoGateWait RecordingSession::WaitForVideoGate(
+    std::unique_lock<std::mutex>& audio_lock, media::MediaTime chunk_end) {
+    const auto wait_start = std::chrono::steady_clock::now();
+    const auto gate_open = [this, chunk_end] {
+        const int64_t video_end =
+            last_video_writer_end_100ns_.load(std::memory_order_acquire);
+        return chunk_end <= AudioWriterGateLimit(media::MediaTime{video_end},
+                                                 kMaximumAudioWriterLead) ||
+               !consumer_running_.load(std::memory_order_acquire) ||
+               state() == RecordingSessionState::Failed;
+    };
+    bool video_stalled = false;
+    int64_t observed_video_end =
+        last_video_writer_end_100ns_.load(std::memory_order_acquire);
+    auto last_video_progress = wait_start;
+    while (!audio_video_progress_.wait_for(audio_lock, kAudioGateStallPoll,
+                                           gate_open)) {
+        const int64_t video_end =
+            last_video_writer_end_100ns_.load(std::memory_order_acquire);
+        const auto now = std::chrono::steady_clock::now();
+        if (video_end != observed_video_end) {
+            observed_video_end = video_end;
+            last_video_progress = now;
+        } else if (now - last_video_progress >= kAudioGateStallLimit) {
+            video_stalled = true;
+            break;
+        }
+    }
+    const auto wait_elapsed =
+        std::chrono::steady_clock::now() - wait_start;
+    const auto wait_microseconds =
+        std::chrono::duration_cast<std::chrono::microseconds>(wait_elapsed)
+            .count();
+    return {video_stalled,
+            wait_microseconds > 0 ? static_cast<uint64_t>(wait_microseconds) : 0};
 }
 
 bool RecordingSession::FinalizeAudioTimeline(media::MediaTime endpoint) noexcept {

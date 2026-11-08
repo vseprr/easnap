@@ -190,6 +190,17 @@ private:
     /// Caller must hold audio_callback_mutex_ and have ensured silence_buffer_
     /// is initialized and writer_ is valid. Returns false on writer failure.
     [[nodiscard]] bool FillSilenceGap(media::MediaTime target) noexcept;
+    struct VideoGateWait {
+        bool video_stalled;
+        uint64_t wait_microseconds;
+    };
+    /// Waits on audio_lock, which holds audio_callback_mutex_ and is held
+    /// again on return, until video has been written far enough for audio
+    /// ending at chunk_end, the consumer stops or the session fails.
+    /// video_stalled reports a video frontier that stopped advancing. Waiting
+    /// can throw; the audio callback catches it.
+    [[nodiscard]] VideoGateWait WaitForVideoGate(
+        std::unique_lock<std::mutex>& audio_lock, media::MediaTime chunk_end);
     [[nodiscard]] bool FinalizeAudioTimeline(media::MediaTime endpoint) noexcept;
     void ResetAudioTimelineDiagnostics() noexcept;
     void TraceAudioSegment(media::MediaTime active_offset,

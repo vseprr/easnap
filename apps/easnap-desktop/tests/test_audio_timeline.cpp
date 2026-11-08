@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 
 #include "recording/audio_timeline.h"
 
@@ -384,6 +385,192 @@ void TestSequentialRecordingSessions() {
           timeline.last_end() == mapped.duration);
 }
 
+void TestAudioWriterGateLimitSaturates() {
+    using easnap::media::MediaTime;
+    using easnap::recording::AudioWriterGateLimit;
+    constexpr int64_t kMaximum = (std::numeric_limits<int64_t>::max)();
+    constexpr int64_t kMinimum = (std::numeric_limits<int64_t>::min)();
+    constexpr MediaTime kLead{1'000'000};
+
+    CHECK(AudioWriterGateLimit(MediaTime::zero(), kLead) == MediaTime{1'000'000});
+    CHECK(AudioWriterGateLimit(MediaTime{-5}, kLead) == MediaTime{999'995});
+    CHECK(AudioWriterGateLimit(MediaTime{kMaximum - 1'000'000}, kLead) ==
+          MediaTime{kMaximum});
+    CHECK(AudioWriterGateLimit(MediaTime{kMaximum - 1'000'000 + 1}, kLead) ==
+          MediaTime{kMaximum});
+    CHECK(AudioWriterGateLimit(MediaTime{kMaximum}, kLead) == MediaTime{kMaximum});
+
+    // Without a lead, audio may reach exactly the written video.
+    CHECK(AudioWriterGateLimit(MediaTime{12'345}, MediaTime::zero()) ==
+          MediaTime{12'345});
+    CHECK(AudioWriterGateLimit(MediaTime{kMaximum}, MediaTime::zero()) ==
+          MediaTime{kMaximum});
+    CHECK(AudioWriterGateLimit(MediaTime{kMinimum}, MediaTime::zero()) ==
+          MediaTime{kMinimum});
+
+    // The session never passes a negative lead; it saturates at the bottom.
+    CHECK(AudioWriterGateLimit(MediaTime{5'000'000}, MediaTime{-1'000'000}) ==
+          MediaTime{4'000'000});
+    CHECK(AudioWriterGateLimit(MediaTime{kMinimum + 1}, MediaTime{-1'000'000}) ==
+          MediaTime{kMinimum});
+}
+
+easnap::recording::MappedAudioPacket OverlapPacket(int64_t timestamp,
+                                                   uint32_t first_frame,
+                                                   uint32_t frame_count,
+                                                   int64_t duration) {
+    easnap::recording::MappedAudioPacket mapped;
+    mapped.timestamp = easnap::media::MediaTime{timestamp};
+    mapped.duration = easnap::media::MediaTime{duration};
+    mapped.first_frame = first_frame;
+    mapped.frame_count = frame_count;
+    mapped.discontinuity = true;
+    mapped.qpc_precise = true;
+    mapped.decision = easnap::recording::AudioTimelineDecision::ClockCalibration;
+    mapped.qpc_error_100ns = -1'234;
+    return mapped;
+}
+
+bool SameMappedPacket(const easnap::recording::MappedAudioPacket& left,
+                      const easnap::recording::MappedAudioPacket& right) {
+    return left.timestamp == right.timestamp &&
+           left.duration == right.duration &&
+           left.first_frame == right.first_frame &&
+           left.frame_count == right.frame_count &&
+           left.discontinuity == right.discontinuity &&
+           left.qpc_precise == right.qpc_precise &&
+           left.decision == right.decision &&
+           left.qpc_error_100ns == right.qpc_error_100ns;
+}
+
+void TestTrimAudioOverlap() {
+    using easnap::media::MediaTime;
+    using easnap::recording::AudioPacketMapResult;
+    using easnap::recording::TrimAudioOverlap;
+    constexpr uint32_t k48kHz = 48'000;
+    constexpr uint32_t k44kHz = 44'100;
+
+    // Audio that starts at or after the written end is left alone.
+    {
+        auto mapped = OverlapPacket(10'000'000, 120, 960, 200'000);
+        const auto original = mapped;
+        CHECK(TrimAudioOverlap(mapped, MediaTime{10'000'000}, k48kHz) ==
+              AudioPacketMapResult::Mapped);
+        CHECK(SameMappedPacket(mapped, original));
+        CHECK(TrimAudioOverlap(mapped, MediaTime{9'000'000}, k48kHz) ==
+              AudioPacketMapResult::Mapped);
+        CHECK(SameMappedPacket(mapped, original));
+    }
+
+    // 10 ms of overlap is exactly 480 frames at 48 kHz; only the frame window
+    // and its timing change.
+    {
+        auto mapped = OverlapPacket(10'000'000, 120, 960, 200'000);
+        CHECK(TrimAudioOverlap(mapped, MediaTime{10'100'000}, k48kHz) ==
+              AudioPacketMapResult::Mapped);
+        CHECK(mapped.first_frame == 600);
+        CHECK(mapped.frame_count == 480);
+        CHECK(mapped.timestamp == MediaTime{10'100'000});
+        CHECK(mapped.duration == MediaTime{100'000});
+        CHECK(mapped.discontinuity);
+        CHECK(mapped.qpc_precise);
+        CHECK(mapped.decision ==
+              easnap::recording::AudioTimelineDecision::ClockCalibration);
+        CHECK(mapped.qpc_error_100ns == -1'234);
+    }
+
+    // One tick of overlap costs a whole frame, and the rest starts at the
+    // written end rather than on the 48 kHz frame grid.
+    {
+        auto mapped = OverlapPacket(10'000'000, 120, 960, 200'000);
+        CHECK(TrimAudioOverlap(mapped, MediaTime{10'000'001}, k48kHz) ==
+              AudioPacketMapResult::Mapped);
+        CHECK(mapped.first_frame == 121);
+        CHECK(mapped.frame_count == 959);
+        CHECK(mapped.timestamp == MediaTime{10'000'001});
+        CHECK(mapped.duration == MediaTime{199'791});
+    }
+
+    // An overlap of every frame, or more, drops the packet unchanged.
+    {
+        auto mapped = OverlapPacket(10'000'000, 120, 480, 100'000);
+        const auto original = mapped;
+        CHECK(TrimAudioOverlap(mapped, MediaTime{10'100'000}, k48kHz) ==
+              AudioPacketMapResult::Dropped);
+        CHECK(SameMappedPacket(mapped, original));
+        CHECK(TrimAudioOverlap(mapped, MediaTime{10'200'000}, k48kHz) ==
+              AudioPacketMapResult::Dropped);
+        CHECK(SameMappedPacket(mapped, original));
+    }
+
+    // 99,791 ticks round up to 479 frames, which keeps the last frame.
+    {
+        auto mapped = OverlapPacket(10'000'000, 120, 480, 100'000);
+        CHECK(TrimAudioOverlap(mapped, MediaTime{10'099'791}, k48kHz) ==
+              AudioPacketMapResult::Mapped);
+        CHECK(mapped.first_frame == 599);
+        CHECK(mapped.frame_count == 1);
+        CHECK(mapped.timestamp == MediaTime{10'099'791});
+        CHECK(mapped.duration == MediaTime{208});
+    }
+
+    // A 44.1 kHz frame lasts 226.757 ticks: 227 ticks need two frames and
+    // 100,001 ticks need 442.
+    {
+        auto mapped = OverlapPacket(10'000'000, 0, 1'000, 226'757);
+        CHECK(TrimAudioOverlap(mapped, MediaTime{10'000'227}, k44kHz) ==
+              AudioPacketMapResult::Mapped);
+        CHECK(mapped.first_frame == 2);
+        CHECK(mapped.frame_count == 998);
+        CHECK(mapped.timestamp == MediaTime{10'000'227});
+        CHECK(mapped.duration == MediaTime{226'303});
+
+        auto longer = OverlapPacket(10'000'000, 0, 1'000, 226'757);
+        CHECK(TrimAudioOverlap(longer, MediaTime{10'100'001}, k44kHz) ==
+              AudioPacketMapResult::Mapped);
+        CHECK(longer.first_frame == 442);
+        CHECK(longer.frame_count == 558);
+        CHECK(longer.timestamp == MediaTime{10'100'001});
+        CHECK(longer.duration == MediaTime{126'530});
+    }
+
+    // A packet placed before zero is trimmed against a written end of zero.
+    {
+        auto mapped = OverlapPacket(-100'000, 0, 960, 200'000);
+        CHECK(TrimAudioOverlap(mapped, MediaTime::zero(), k48kHz) ==
+              AudioPacketMapResult::Mapped);
+        CHECK(mapped.first_frame == 480);
+        CHECK(mapped.frame_count == 480);
+        CHECK(mapped.timestamp == MediaTime::zero());
+        CHECK(mapped.duration == MediaTime{100'000});
+    }
+
+    // Without a sample rate, with a frame index past uint32_t or with an
+    // overlap wider than MediaTime, the packet is invalid and unchanged.
+    {
+        auto mapped = OverlapPacket(10'000'000, 120, 960, 200'000);
+        const auto original = mapped;
+        CHECK(TrimAudioOverlap(mapped, MediaTime{10'100'000}, 0) ==
+              AudioPacketMapResult::Invalid);
+        CHECK(SameMappedPacket(mapped, original));
+
+        auto unindexable = OverlapPacket(
+            10'000'000, (std::numeric_limits<uint32_t>::max)() - 100, 960,
+            200'000);
+        const auto unindexable_original = unindexable;
+        CHECK(TrimAudioOverlap(unindexable, MediaTime{10'100'000}, k48kHz) ==
+              AudioPacketMapResult::Invalid);
+        CHECK(SameMappedPacket(unindexable, unindexable_original));
+
+        auto distant = OverlapPacket((std::numeric_limits<int64_t>::min)(), 0,
+                                     960, 200'000);
+        const auto distant_original = distant;
+        CHECK(TrimAudioOverlap(distant, MediaTime::zero(), k48kHz) ==
+              AudioPacketMapResult::Invalid);
+        CHECK(SameMappedPacket(distant, distant_original));
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -398,6 +585,8 @@ int main() {
     TestSparseTickUsesCommittedNotMappedFrontier();
     TestDevicePositionResetReanchorsAtResolvedQpc();
     TestSequentialRecordingSessions();
+    TestAudioWriterGateLimitSaturates();
+    TestTrimAudioOverlap();
     if (g_fail == 0) {
         std::printf("PASSED  %d/%d tests\n", g_pass, g_pass + g_fail);
         return 0;
