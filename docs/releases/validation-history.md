@@ -425,6 +425,19 @@ except in the one run named below the table.
   the state machine's run from start to Idle. They reported no problem.
 - The rc.1 packages were built on the development PC
   (`package-release.ps1`); the executable reported 1.2.0-rc.1.
+- **Hosted runner:** the Build run of pull request #19 (run `42497529229`)
+  passed Release, Debug, AddressSanitizer, Format, repository hygiene and
+  clang-tidy, now required to pass, with no finding; CodeQL passed (run
+  `42497529180`). The Release run of the tag (`42498615669`) failed on its
+  first attempt in the Debug job: `diagnostics_log_and_crash_reports`
+  found no report from 7 of its 8 failing children, which all ended with
+  the expected code (0.93 s, against 1.82 s in the pull request's run). The
+  failed jobs were run again on the same tag and passed, and the draft was
+  created.
+- **The draft** before publication: the setup, the ZIP and the symbols ZIP
+  matched their SHA-256 files, `gh attestation verify` accepted the setup and
+  the ZIP, and `Easnap.exe`, `EasnapPreviewHost.exe` and the setup reported
+  1.2.0. Published on 2026-11-08 as the latest release.
 
 ## Validation of v1.1.0
 

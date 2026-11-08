@@ -12,14 +12,16 @@ and the individual runs in the [validation records](releases/validation-history.
 ## Baseline
 
 - Latest stable release:
-  [v1.1.0](https://github.com/vseprr/easnap/releases/tag/v1.1.0), published on
-  2026-11-08 from `main`, tag on the merge of pull request #17
-  ([release notes](releases/v1.1.0.md)). The latest prerelease before it was
-  v1.1.0-beta.2 (2026-10-30).
-- The Release workflow built, tested and attested its packages on the hosted
-  runner. Before publication the draft's three packages matched their SHA-256
-  files, the installer's and the ZIP's attestations verified, and both
-  executables and the installer reported 1.1.0.
+  [v1.2.0](https://github.com/vseprr/easnap/releases/tag/v1.2.0), published on
+  2026-11-08 from `main`, tag on the merge of pull request #19
+  ([release notes](releases/v1.2.0.md)). The stable release before it was
+  [v1.1.0](releases/v1.1.0.md), published the same day from the merge of pull
+  request #17.
+- The Release workflow built, tested and attested the v1.2.0 packages on the
+  hosted runner, on its second attempt (below). Before publication the
+  draft's three packages matched their SHA-256 files, the installer's and the
+  ZIP's attestations verified, and both executables and the installer
+  reported 1.2.0.
 - Stabilization toward v1.1.0 ran on the branch `stabilize/v1.1.0`, created
   on 2026-11-07 from `main` at `42b3efa` and merged by pull request #17. Its
   release candidate rc.1 was checked by the owner and not published
@@ -41,13 +43,13 @@ and the individual runs in the [validation records](releases/validation-history.
 ## v1.2.0
 
 Work toward v1.2 ran on the branch `feature/v1.2`, created on 2026-11-08 from
-`main` at `df838d4`. The owner chose on 2026-11-08 to release v1.2 with the
-slices below and to leave the trim flow (S2 of ADR-039) and the larger
-candidates to v1.3. The release candidate v1.2.0-rc.1 was packaged on the
-development PC, installed over v1.1.0 by the owner and used for a second
-round without a problem; it is not published. v1.2.0 is its code with an
-empty prerelease label, prepared for release through a pull request to
-`main`. Its notes are [v1.2.0](releases/v1.2.0.md).
+`main` at `df838d4` and merged by pull request #19. The owner chose on
+2026-11-08 to release v1.2 with the slices below and to leave the trim flow
+(S2 of ADR-039) and the larger candidates to v1.3. The release candidate
+v1.2.0-rc.1 was packaged on the development PC, installed over v1.1.0 by the
+owner and used for a second round without a problem; it is not published.
+v1.2.0 is its code with an empty prerelease label, published on 2026-11-08.
+Its notes are [v1.2.0](releases/v1.2.0.md).
 
 - **Pin to screen** ([ADR-038](decisions/ADR-038-pinned-images.md)):
   implemented. The tools island has a Pin command (Ctrl+T) that keeps the
@@ -210,8 +212,12 @@ empty prerelease label, prepared for release through a pull request to
   the same name; report names are now unique
   ([ADR-030](decisions/ADR-030-log-file-and-crash-reports.md)). With both
   changes, the two tests passed in the Release, Debug and AddressSanitizer
-  jobs of the run for pull request #17 and of the release run of v1.1.0; two
-  runs do not show that the failures are gone.
+  jobs of the run for pull request #17 and of the release run of v1.1.0, and
+  in the run for pull request #19. In the first attempt of the release run of
+  v1.2.0 the crash-report test failed again in the Debug job: all 8 failing
+  children ended with the expected code, so the handler ran, but 7 wrote no
+  report. Unique names did not prevent it, so the cause is not
+  known; the job passed when it was run again.
 - For beta.1 the CodeQL workflow and the AddressSanitizer job passed on the
   hosted runner, where `wasapi_audio_capture` is reported as skipped. In one
   AddressSanitizer run `incremental_test_selection` (5 to 7 s there) hit its
@@ -274,9 +280,9 @@ post-v1 without a promised date.
 
 ## Next slice
 
-Publish v1.2.0 from `main` after the pull request of `feature/v1.2`. Then
-v1.3: S2 of the `CaptureCoordinator` split
+v1.3, on a branch of its own: S2 of the `CaptureCoordinator` split
 ([ADR-039](decisions/ADR-039-coordinator-trim-flow.md)), the trim flow with a
 test target of its own, and the other deferred candidates one bounded slice
-each; the order is in the [roadmap](../EASNAP_ROADMAP.md). Package-manager
+each, and why a crash report is sometimes not written on the hosted runner;
+the order is in the [roadmap](../EASNAP_ROADMAP.md). Package-manager
 submissions remain the owner's step ([distribution](distribution.md)).
