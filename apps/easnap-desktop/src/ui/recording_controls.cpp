@@ -44,7 +44,7 @@ constexpr DWORD kPanelStyle = WS_POPUP | WS_CLIPCHILDREN;
 constexpr DWORD kPanelExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTROLPARENT;
 
 [[nodiscard]] int ScaleDip(int value, float scale) noexcept {
-    return (std::max)(1, static_cast<int>(static_cast<float>(value) * scale + 0.5f));
+    return (std::max)(1, static_cast<int>(std::lround(static_cast<float>(value) * scale)));
 }
 
 [[nodiscard]] LONG ClampCoordinate(LONG value, LONG minimum, LONG maximum) noexcept {

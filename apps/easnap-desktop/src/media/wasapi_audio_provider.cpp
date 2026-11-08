@@ -157,9 +157,9 @@ detail::AudioTimestampResolutionResult ResolveAudioPacketTimestampImpl(
                 input.audio_clock_position - input.device_position,
                 10'000'000, input.sample_rate);
             if (packet_age.has_value() &&
-                packet_age.value() <= kMaximumClockCorrelationAge100ns &&
-                input.audio_clock_qpc_100ns >= packet_age.value()) {
-                correlated_packet_qpc = input.audio_clock_qpc_100ns - packet_age.value();
+                *packet_age <= kMaximumClockCorrelationAge100ns &&
+                input.audio_clock_qpc_100ns >= *packet_age) {
+                correlated_packet_qpc = input.audio_clock_qpc_100ns - *packet_age;
                 result.audio_clock_correlation_valid =
                     correlated_packet_qpc >= static_cast<uint64_t>(input.qpc_epoch_100ns) &&
                     IsNotAfterWithTolerance(correlated_packet_qpc,
@@ -179,8 +179,8 @@ detail::AudioTimestampResolutionResult ResolveAudioPacketTimestampImpl(
         ScaleUnsigned(buffered_frames, 10'000'000, input.sample_rate);
     uint64_t fallback_packet_qpc = input.capture_qpc_100ns;
     if (buffered_duration.has_value() &&
-        fallback_packet_qpc >= buffered_duration.value()) {
-        fallback_packet_qpc -= buffered_duration.value();
+        fallback_packet_qpc >= *buffered_duration) {
+        fallback_packet_qpc -= *buffered_duration;
     }
     if (input.qpc_epoch_100ns > 0 &&
         fallback_packet_qpc < static_cast<uint64_t>(input.qpc_epoch_100ns)) {
@@ -206,9 +206,9 @@ detail::AudioTimestampResolutionResult ResolveAudioPacketTimestampImpl(
             input.capture_qpc_100ns - input.raw_wasapi_qpc_100ns;
         const uint64_t maximum = (std::numeric_limits<uint64_t>::max)();
         const uint64_t maximum_expected_age =
-            buffered_duration.value() > maximum - kTimestampTolerance100ns
+            *buffered_duration > maximum - kTimestampTolerance100ns
                 ? maximum
-                : buffered_duration.value() + kTimestampTolerance100ns;
+                : *buffered_duration + kTimestampTolerance100ns;
         if (raw_age > maximum_expected_age) {
             result.raw_wasapi_plausible = false;
         }

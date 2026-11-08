@@ -685,6 +685,9 @@ private:
 
     HRESULT PrepareStillFrame(MediaTime position, bool exclusive_end,
                               MediaTime& native_target) noexcept {
+        if (!video_endpoint_) {
+            return E_UNEXPECTED; // Seeks are accepted only once the endpoint exists.
+        }
         if (position > video_endpoint_->last_frame_position ||
             (!exclusive_end && position == video_endpoint_->last_frame_position)) {
             native_target = video_endpoint_->last_frame_position;

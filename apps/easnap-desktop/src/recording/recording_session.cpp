@@ -1231,7 +1231,7 @@ void RecordingSession::RecordFailure(std::wstring message) noexcept {
             last_error_ = BoundedDiagnostic(std::move(message));
         }
     } catch (...) {
-        // Failure reporting must never prevent deterministic worker cleanup.
+        // Deliberately empty: failure reporting must never prevent deterministic worker cleanup.
     }
     state_.store(RecordingSessionState::Failed, std::memory_order_release);
 }

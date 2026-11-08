@@ -363,7 +363,7 @@ struct StitchEngine::Impl {
         if (high < low || end_row <= first_row) { return; }
         const int step = std::max(1, (end_row - first_row) / 256);
         const int needed = std::max(3, (kMinOverlapRows + step - 1) / step);
-        const size_t count = static_cast<size_t>(high - low + 1);
+        const size_t count = static_cast<size_t>(static_cast<int64_t>(high) - low + 1);
         std::vector<uint32_t> cost(count, std::numeric_limits<uint32_t>::max());
         for (int candidate = low; candidate <= high; ++candidate) {
             uint64_t sum = 0;
@@ -724,7 +724,7 @@ struct StitchEngine::Impl {
                 const int64_t rival_total = rival.info + prior;
                 const int64_t lead = static_cast<int64_t>(best.good) * rival_total -
                                      static_cast<int64_t>(rival.good) * best_total;
-                const int64_t evidence_needed = std::max<int64_t>(2 * active_segments, best_total / 50);
+                const int64_t evidence_needed = std::max<int64_t>(2 * static_cast<int64_t>(active_segments), best_total / 50);
                 if (lead < evidence_needed * rival_total) { tied.push_back(i); }
             }
             bool decided = tied.empty();

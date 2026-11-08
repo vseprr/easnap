@@ -246,7 +246,7 @@ TrimExportSnapshot TrimExportController::Snapshot() const {
     }
 }
 
-void TrimExportController::Run(TrimExportRequest request) noexcept {
+void TrimExportController::Run(const TrimExportRequest& request) noexcept {
     bool succeeded = false;
     media::TrimExportFailure failure;
     try {
@@ -269,7 +269,7 @@ void TrimExportController::Run(TrimExportRequest request) noexcept {
         try {
             failure.detail = L"Unexpected exception from the trim exporter";
         } catch (...) {
-            // The stage alone still reports the failure.
+            // Deliberately empty: the stage alone still reports the failure.
         }
         platform::LogMessage(L"[Trim] Unexpected exception from the trim exporter");
     }

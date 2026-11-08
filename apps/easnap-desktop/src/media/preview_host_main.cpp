@@ -96,7 +96,7 @@ public:
         try {
             static_cast<void>(SendSnapshot());
         } catch (...) {
-            // Process exit is itself a failure signal to the supervising parent.
+            // Deliberately empty: process exit is itself a failure signal to the supervising parent.
         }
     }
 

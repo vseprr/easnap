@@ -7,6 +7,7 @@
 #include <shlobj.h>
 
 #include <chrono>
+#include <cmath>
 #include <new>
 #include <utility>
 
@@ -354,7 +355,7 @@ void CaptureCoordinator::OfferRecoveredRecordings() {
             when = std::wstring(date_text) + L" " + time_text;
         }
         const ULONGLONG bytes = (static_cast<ULONGLONG>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
-        const ULONGLONG megabytes = std::max<ULONGLONG>(1, (bytes + 512 * 1024) / (1024 * 1024));
+        const ULONGLONG megabytes = std::max<ULONGLONG>(1, (bytes + 512ULL * 1024) / (1024ULL * 1024));
         const std::wstring text = strings::Format(IDS_RECOVERY_TEXT, {when, std::to_wstring(megabytes)});
         const int choice = ui::ShowChoice(
             host_window_, text.c_str(), strings::Get(IDS_RECOVERY_TITLE),
@@ -632,7 +633,7 @@ void CaptureCoordinator::BeginRecordingConfiguration(const RECT& region) {
 
     if (!recording_controls_) {
         ui::RecordingControls::Callbacks callbacks;
-        callbacks.on_start = [this](RecordingConfiguration configuration) { OnRecordingStart(std::move(configuration)); };
+        callbacks.on_start = [this](RecordingConfiguration configuration) { OnRecordingStart(configuration); };
         callbacks.on_cancel = [this] { OnRecordingCancel(); };
         callbacks.on_pause = [this] { OnRecordingPause(); };
         callbacks.on_resume = [this] { OnRecordingResume(); };
@@ -2058,7 +2059,7 @@ void CaptureCoordinator::PublishDocumentView(const editor::ImageView& view) {
     if (!overlay_ || !overlay_->document_view()) {
         return;
     }
-    const int percent = static_cast<int>(view.zoom * 100.0f + 0.5f);
+    const int percent = static_cast<int>(std::lround(view.zoom * 100.0f));
     overlay_->SetDocumentView(
         view.viewport, view.top_fraction(), view.visible_fraction(),
         strings::Format(IDS_DOCUMENT_VIEW_LABEL, {std::to_wstring(view.image_width),

@@ -327,7 +327,7 @@ void InstallCrashHandler(const std::wstring& directory, const wchar_t* name, int
     state.request = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
     state.done = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
     HANDLE thread = state.request != nullptr && state.done != nullptr
-                        ? ::CreateThread(nullptr, 256 * 1024, ReportThread, nullptr, 0, nullptr)
+                        ? ::CreateThread(nullptr, SIZE_T{256} * 1024, ReportThread, nullptr, 0, nullptr)
                         : nullptr;
     if (thread == nullptr) {
         return;  // Windows Error Reporting keeps its default behaviour.

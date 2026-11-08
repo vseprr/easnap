@@ -190,14 +190,12 @@ jobs:
         shell: pwsh
         run: ./scripts/format.ps1 -Check
 
-  # Static analysis with the checks in .clang-tidy. Report only for now: the
-  # findings that remain were triaged as harmless (2026-11-07); make the job
-  # required once they are gone. clang-tidy reads the compile commands of a
-  # Ninja configure; nothing is built.
+  # Static analysis with the checks in .clang-tidy; any finding fails the job.
+  # clang-tidy reads the compile commands of a Ninja configure; nothing is
+  # built.
   tidy:
-    name: clang-tidy (windows-2022, report only)
+    name: clang-tidy (windows-2022)
     runs-on: windows-2022
-    continue-on-error: true
 
     steps:
       - name: Check out

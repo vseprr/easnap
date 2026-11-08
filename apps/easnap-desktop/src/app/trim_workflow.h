@@ -144,7 +144,7 @@ public:
     [[nodiscard]] TrimExportSnapshot Snapshot() const;
 
 private:
-    void Run(TrimExportRequest request) noexcept;
+    void Run(const TrimExportRequest& request) noexcept;
 
     std::unique_ptr<media::ITrimExporter> exporter_;
     CompletionCallback on_completed_;

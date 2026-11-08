@@ -1009,8 +1009,14 @@ std::wstring UniqueFilePath(const std::wstring& directory, const std::wstring& f
     std::wstring base = directory;
     if (base.back() != L'\\' && base.back() != L'/') { base += L'\\'; }
     for (int attempt = 1; attempt < 1000; ++attempt) {
-        const std::wstring candidate =
-            base + stem + (attempt == 1 ? std::wstring() : L" (" + std::to_wstring(attempt) + L")") + extension;
+        std::wstring candidate = base;
+        candidate += stem;
+        if (attempt != 1) {
+            candidate += L" (";
+            candidate += std::to_wstring(attempt);
+            candidate += L")";
+        }
+        candidate += extension;
         if (::GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES) {
             return candidate;
         }
