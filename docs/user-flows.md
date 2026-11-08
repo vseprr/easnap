@@ -424,6 +424,10 @@ When another application holds the shortcut at start, a notification says so;
 the tooltip of the icon and the menu then name clicking the icon as the way to
 capture.
 
+When the settings cannot be saved, a full disk for example, they still apply
+until Easnap closes, and a notification says so once, never during a capture.
+After OK in Settings a message says it instead.
+
 **About** shows the version, the shortcut and the Windows build. **Copy
 details** puts the version, Windows build, language, shortcut and display
 layout on the clipboard for a bug report. **Check for updates** opens the

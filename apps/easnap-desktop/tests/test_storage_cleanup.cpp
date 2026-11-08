@@ -137,6 +137,24 @@ void TestPinnedAncestor(const std::wstring& fixture) {
     ::RemoveDirectoryW(directory.c_str());
 }
 
+/// A directory is created or found; a file of that name is not a directory.
+void TestEnsureDirectory(const std::wstring& fixture) {
+    using easnap::platform::EnsureDirectory;
+    const std::wstring directory = fixture + L"\\ensured";
+    const std::wstring file = fixture + L"\\not-a-directory";
+    CHECK(EnsureDirectory(directory));
+    const DWORD attributes = ::GetFileAttributesW(directory.c_str());
+    CHECK(attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0);
+    CHECK(EnsureDirectory(directory));
+    CHECK(WriteSentinel(file));
+    CHECK(!EnsureDirectory(file));
+    CHECK(::GetLastError() == ERROR_DIRECTORY);
+    CHECK(SentinelIntact(file));
+    CHECK(!EnsureDirectory(std::wstring()));
+    ::DeleteFileW(file.c_str());
+    ::RemoveDirectoryW(directory.c_str());
+}
+
 } // namespace
 
 int main() {
@@ -202,6 +220,7 @@ int main() {
     CHECK(RemoveDirectoryTree(locked));
 
     TestPinnedAncestor(fixture);
+    TestEnsureDirectory(fixture);
 
     // These operations unlink only exact owned entries, even if assertions fail.
     ::RemoveDirectoryW(link.c_str());

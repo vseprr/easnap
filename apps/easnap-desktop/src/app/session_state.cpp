@@ -57,9 +57,9 @@ CaptureCoordinator& CaptureCoordinator::Instance() {
 
 CaptureCoordinator::~CaptureCoordinator() { Shutdown(); }
 
-bool CaptureCoordinator::Initialize(HWND host_window) {
+void CaptureCoordinator::Initialize(HWND host_window) {
     if (initialized_) {
-        return true;
+        return;
     }
     host_window_ = host_window;
     settings_ = AppSettings::Load();
@@ -91,7 +91,6 @@ bool CaptureCoordinator::Initialize(HWND host_window) {
     machine_.Reset();
     initialized_ = true;
     platform::LogMessage(L"Coordinator initialised (idle, no capture resources allocated)");
-    return true;
 }
 
 void CaptureCoordinator::Shutdown() {
@@ -214,7 +213,7 @@ void CaptureCoordinator::PrepareForSessionEnd() {
         return;
     }
     platform::LogMessage(L"The Windows session is ending (state %d)", static_cast<int>(state()));
-    PersistSettings();
+    PersistSettings(IfNotSaved::LogOnly);
     // A recording that is still running is closed, so that there is a file to
     // offer again. Windows allows a few seconds for this.
     if (recording_finalizer_.has_worker()) {
@@ -1631,12 +1630,32 @@ bool CaptureCoordinator::ProcessDialogMessage(MSG& message) const {
     return trim_flow_ && trim_flow_->ProcessDialogMessage(message);
 }
 
-bool CaptureCoordinator::PersistSettings() {
-    if (!settings_.Save()) {
-        platform::LogMessage(L"Settings could not be written");
+bool CaptureCoordinator::PersistSettings(IfNotSaved if_not_saved) {
+    if (!initialized_) {
+        // The values are defaults, not the ones read from the file.
+        platform::LogMessage(L"Settings were not written: the coordinator is not initialised");
         return false;
     }
-    return true;
+    SettingsSaveError error;
+    if (settings_.Save({}, &error)) {
+        return true;
+    }
+    if (error.kind == SettingsSaveError::Kind::InvalidValue) {
+        // A programming error, not something the user can remedy.
+        platform::LogMessage(L"Settings were not written: a value is out of range");
+        return false;
+    }
+    platform::LogMessage(L"Settings could not be written (error %lu)", error.code);
+    // Posted, not shown here: a caller may be in the middle of its own work.
+    if (if_not_saved == IfNotSaved::TellUser && host_window_ != nullptr && SettingsNoticeDue()) {
+        ::PostMessageW(host_window_, kMsgSettingsNotSaved, 0, 0);
+    }
+    return false;
+}
+
+bool CaptureCoordinator::SettingsNoticeDue() const {
+    return ShouldTellSettingsNotSaved(state(), platform::ModalLoopActive() || ui::PopupActive(),
+                                      settings_failure_told_);
 }
 
 void CaptureCoordinator::SetAppearanceTheme(AppearanceTheme preference) {

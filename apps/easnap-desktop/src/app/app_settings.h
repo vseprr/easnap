@@ -20,6 +20,20 @@ enum class LanguageSetting { System,
            language == LanguageSetting::Turkish;
 }
 
+/// Why `AppSettings::Save` did not write everything.
+struct SettingsSaveError {
+    enum class Kind {
+        /// A value outside its range was refused before anything was written:
+        /// a programming error, not a problem of the disk.
+        InvalidValue,
+        /// The folder, the file or one of its keys could not be written.
+        WriteFailed,
+    };
+    Kind kind{Kind::WriteFailed};
+    /// The Win32 error of the first step that failed; none for InvalidValue.
+    DWORD code{ERROR_SUCCESS};
+};
+
 /// User-visible preferences, persisted as an INI file next to the session data.
 struct AppSettings {
     /// The explicit choice. It applies when `appearance_follows_system` is off.
@@ -54,7 +68,8 @@ struct AppSettings {
 
     [[nodiscard]] static std::wstring FilePath();
     [[nodiscard]] static AppSettings Load(const std::wstring& custom_path = {});
-    bool Save(const std::wstring& custom_path = {}) const;
+    /// False when anything was not written; `error`, when given, says why.
+    bool Save(const std::wstring& custom_path = {}, SettingsSaveError* error = nullptr) const;
 
     /// Human readable shortcut, e.g. "Ctrl + Shift + A".
     [[nodiscard]] std::wstring HotkeyDisplayText() const;

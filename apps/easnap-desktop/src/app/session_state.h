@@ -54,6 +54,8 @@ inline constexpr UINT kMsgRecordingFinalized = WM_APP + 12;
 /// Posted by a Scrollshot capture worker when its progress changed. WPARAM
 /// carries the capture's generation; pixels never travel in the message.
 inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
+/// Posted when a save of the settings failed and the user may be told now.
+inline constexpr UINT kMsgSettingsNotSaved = WM_APP + 16;
 /// Timer on the host window: retired windows are destroyed once no dialog of
 /// theirs is running its own message loop any more.
 inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
@@ -85,8 +87,10 @@ public:
     CaptureCoordinator& operator=(const CaptureCoordinator&) = delete;
 
     /// Prepares the coordinator. Deliberately does not create capture, encoder
-    /// or renderer resources: Idle must stay passive.
-    bool Initialize(HWND host_window);
+    /// or renderer resources: Idle must stay passive. Nothing in it can fail:
+    /// unreadable settings are defaults, and a missing clipboard listener is
+    /// logged.
+    void Initialize(HWND host_window);
     void Shutdown();
 
     [[nodiscard]] SessionState state() const noexcept { return machine_.state(); }
@@ -113,7 +117,18 @@ public:
 
     [[nodiscard]] AppSettings& settings() noexcept { return settings_; }
     [[nodiscard]] const AppSettings& settings() const noexcept { return settings_; }
-    bool PersistSettings();
+    /// What a failed save of the settings leads to besides a log line.
+    enum class IfNotSaved { TellUser,
+                            LogOnly };
+    /// Writes `settings()`; false when they were not written. With TellUser a
+    /// failure posts kMsgSettingsNotSaved when `SettingsNoticeDue()`. Refused
+    /// before Initialize, whose loaded values would be overwritten.
+    bool PersistSettings(IfNotSaved if_not_saved = IfNotSaved::TellUser);
+    /// True while the user may be told that the settings cannot be saved:
+    /// not told yet this run, idle, and no dialog or menu of Easnap open.
+    [[nodiscard]] bool SettingsNoticeDue() const;
+    /// The user has been told, in a notification or a dialog; not again this run.
+    void MarkSettingsFailureTold() noexcept { settings_failure_told_ = true; }
     /// An explicit Light or Dark choice; ends following Windows.
     void SetAppearanceTheme(AppearanceTheme preference);
     /// Light or Dark as Windows is set for applications, from now on.
@@ -249,6 +264,8 @@ private:
     bool scrollshot_controls_retired_{false};
     bool editor_retired_{false};
     bool initialized_{false};
+    /// The user has been told this run that the settings cannot be saved.
+    bool settings_failure_told_{false};
 };
 
 }  // namespace easnap::app

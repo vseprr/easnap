@@ -1,6 +1,6 @@
 # Project status
 
-**Updated:** 2026-11-08
+**Updated:** 2026-11-09
 
 The current state of the implementation: what is built, what was actually
 validated, what is open and the next slice. Read it with the
@@ -93,6 +93,30 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   belongs to the workspace while the region is configured, and what can fail
   is already in classes with tests
   ([ADR-039](decisions/ADR-039-coordinator-trim-flow.md#recording-decided-after-s2)).
+- **Settings that cannot be saved are told**
+  ([ADR-033](decisions/ADR-033-settings-shortcut-and-launch-behaviour.md#settings-that-cannot-be-saved)):
+  once per run, in a notification, never during a capture or while a dialog
+  or menu of Easnap is open. OK in Settings says it in its own message, and
+  its message about "Start with Windows" no longer says the other settings
+  were saved when they were not. The log line names the Win32 error. With it,
+  small clean-ups: a file where a folder should be no longer counts as that
+  folder (`EnsureDirectory`; "Open data folder" then opens nothing);
+  `CaptureCoordinator::Initialize` cannot fail and the dead check after it is
+  gone; a failed `GetMessage` ends through `WM_DESTROY`; failures of the DLL
+  search restriction and of the tray icon's version, tooltip and notification
+  calls are logged; the unused `EASNAP_VERSION_STRING` definition is removed.
+- Validated on the development PC (2026-11-09): the Release build without
+  warnings; the Fast tier 23 of 23, with new checks in
+  `session_state_transitions` (a read-only file and a file where the folder
+  should be fail and keep the saved values; when the notice is due) and
+  `storage_cleanup_containment` (`EnsureDirectory`); `strings_catalog`,
+  `text_fits_in_every_language`, `capture_workspace_production` and
+  `trim_flow_production`. In the first run of those four in parallel,
+  `trim_flow_production` reached its 180 s limit while cancelling an export;
+  it passed alone and in a second parallel run. clang-tidy without findings
+  on the changed sources. Not validated: the notification itself, which no
+  test can see, and the flow with an unwritable `settings.ini` in the running
+  application; no lab run.
 
 ## v1.2.0
 

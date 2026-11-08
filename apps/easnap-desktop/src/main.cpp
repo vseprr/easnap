@@ -75,7 +75,10 @@ public:
             return false;
         }
         data.uVersion = NOTIFYICON_VERSION_4;
-        ::Shell_NotifyIconW(NIM_SETVERSION, &data);
+        if (::Shell_NotifyIconW(NIM_SETVERSION, &data) == FALSE) {
+            // The icon keeps the old callbacks: clicks work, WM_CONTEXTMENU does not come.
+            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_SETVERSION) failed (error %lu)", ::GetLastError());
+        }
         added_ = true;
         return true;
     }
@@ -108,20 +111,31 @@ public:
         NOTIFYICONDATAW data = MakeData();
         data.uFlags = NIF_TIP | NIF_SHOWTIP;
         ::wcsncpy_s(data.szTip, tooltip_.c_str(), _TRUNCATE);
-        ::Shell_NotifyIconW(NIM_MODIFY, &data);
+        if (::Shell_NotifyIconW(NIM_MODIFY, &data) == FALSE) {
+            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_MODIFY) for the tooltip failed (error %lu)",
+                                         ::GetLastError());
+        }
     }
 
-    void ShowBalloon(const wchar_t* title, const wchar_t* text) const {
+    /// True when the shell took the notification; false without an icon.
+    bool ShowBalloon(const wchar_t* title, const wchar_t* text) const {
         if (!added_) {
-            return;
+            return false;
         }
         NOTIFYICONDATAW data = MakeData();
         data.uFlags = NIF_INFO;
         data.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;
         ::wcsncpy_s(data.szInfoTitle, title, _TRUNCATE);
         ::wcsncpy_s(data.szInfo, text, _TRUNCATE);
-        ::Shell_NotifyIconW(NIM_MODIFY, &data);
+        if (::Shell_NotifyIconW(NIM_MODIFY, &data) == FALSE) {
+            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_MODIFY) for a notification failed (error %lu)",
+                                         ::GetLastError());
+            return false;
+        }
+        return true;
     }
+
+    [[nodiscard]] bool added() const noexcept { return added_; }
 
 private:
     [[nodiscard]] NOTIFYICONDATAW MakeData() const {
@@ -319,13 +333,36 @@ void ShowSettings(HWND hwnd) {
     }
     const bool startup_refused = model.start_with_windows != started_with_windows &&
                                  !easnap::platform::SetStartupEntry(model.start_with_windows, executable);
-    coordinator.PersistSettings();
+    const bool saved = coordinator.PersistSettings();
     g_tray.SetTooltip(TrayTooltip());
     easnap::platform::LogMessage(L"Settings changed");
     if (startup_refused) {
         // The next visit to Settings shows the entry as it really is.
         easnap::platform::LogMessage(L"The startup entry could not be changed");
+    }
+    if (!saved) {
+        // Said here instead of in a notification. Marked first: the dialog's
+        // own message loop would otherwise show the notification as well.
+        coordinator.MarkSettingsFailureTold();
+        easnap::ui::ShowErrorMessage(
+            nullptr, strings::Get(startup_refused ? IDS_SETTINGS_STARTUP_AND_SAVE_FAILED : IDS_SETTINGS_SAVE_FAILED));
+    } else if (startup_refused) {
         easnap::ui::ShowErrorMessage(nullptr, strings::Get(IDS_SETTINGS_STARTUP_FAILED));
+    }
+}
+
+/// Says once per run that the settings cannot be saved: in a notification, or
+/// in a dialog when there is no icon to carry one. A notification the shell
+/// refused is tried again after the next failed save.
+void TellSettingsNotSaved() {
+    namespace strings = easnap::strings;
+    auto& coordinator = CaptureCoordinator::Instance();
+    if (g_tray.ShowBalloon(kProductName, strings::Get(IDS_SETTINGS_NOT_SAVED_NOTICE))) {
+        coordinator.MarkSettingsFailureTold();
+    } else if (!g_tray.added()) {
+        // Marked first: the dialog's own message loop may handle another notice.
+        coordinator.MarkSettingsFailureTold();
+        easnap::ui::ShowErrorMessage(nullptr, strings::Get(IDS_SETTINGS_SAVE_FAILED));
     }
 }
 
@@ -353,7 +390,11 @@ void OpenDataFolder() {
     if (directory.empty()) {
         return;
     }
-    easnap::platform::EnsureDirectory(directory);
+    if (!easnap::platform::EnsureDirectory(directory)) {
+        // A file may hold the folder's name: there is nothing to open.
+        easnap::platform::LogMessage(L"The data folder could not be created (error %lu)", ::GetLastError());
+        return;
+    }
     ::ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
@@ -499,6 +540,11 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             coordinator.OnScrollshotProgress(static_cast<uint64_t>(wparam));
             return 0;
 
+        case easnap::app::kMsgSettingsNotSaved:
+            // Asked again: a session or a dialog may have opened since the post.
+            if (coordinator.SettingsNoticeDue()) { TellSettingsNotSaved(); }
+            return 0;
+
         case WM_CLIPBOARDUPDATE:
             coordinator.OnClipboardChanged();
             return 0;
@@ -555,7 +601,7 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
                 ::UnregisterHotKey(hwnd, IDH_EASNAP_CAPTURE);
                 g_hotkey_registered = false;
             }
-            coordinator.PersistSettings();
+            coordinator.PersistSettings(CaptureCoordinator::IfNotSaved::LogOnly);
             coordinator.Shutdown();
             g_tray.Remove();
             ::PostQuitMessage(0);
@@ -587,7 +633,9 @@ HWND CreateHostWindow(HINSTANCE instance) {
 }  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR command_line, _In_ int) {
-    easnap::platform::RestrictDllSearchPath();
+    // A failure is logged once the log is open.
+    const bool dll_search_restricted = easnap::platform::RestrictDllSearchPath();
+    const DWORD dll_search_error = dll_search_restricted ? ERROR_SUCCESS : ::GetLastError();
     namespace diagnostics = easnap::platform::diagnostics;
     const std::wstring crash_directory = diagnostics::CrashDirectory();
     diagnostics::InstallCrashHandler(crash_directory, L"easnap");
@@ -629,6 +677,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
         ::MessageBoxW(nullptr, text.c_str(), kProductName, MB_OK | MB_ICONWARNING);
         return 1;
     }
+    if (!dll_search_restricted) {
+        easnap::platform::LogMessage(L"SetDefaultDllDirectories failed (error %lu)", dll_search_error);
+    }
     easnap::platform::EnableDpiAwareness();
 
     const easnap::platform::ComRuntime com;
@@ -646,10 +697,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
     }
 
     auto& coordinator = CaptureCoordinator::Instance();
-    if (!coordinator.Initialize(host)) {
-        ::DestroyWindow(host);
-        return 1;
-    }
+    coordinator.Initialize(host);
     // Text shown before this line follows Windows; from here the choice in Settings applies.
     easnap::strings::SetPreference(ToPreference(coordinator.settings().language));
 
@@ -673,9 +721,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
         }
     } else if (!coordinator.settings().first_run_notice_shown) {
         // Where Easnap lives and how to start a capture: said once per computer.
-        g_tray.ShowBalloon(kProductName, easnap::strings::Format(IDS_SHELL_TRAY_READY_BALLOON, {shortcut}).c_str());
+        // Where the settings cannot be saved, that is said instead.
         coordinator.settings().first_run_notice_shown = true;
-        coordinator.PersistSettings();
+        if (coordinator.PersistSettings()) {
+            g_tray.ShowBalloon(kProductName, easnap::strings::Format(IDS_SHELL_TRAY_READY_BALLOON, {shortcut}).c_str());
+        } else {
+            coordinator.settings().first_run_notice_shown = false;
+            TellSettingsNotSaved();
+        }
     }
 
     ShowCrashNotice(crash_directory);
@@ -685,7 +738,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
     BOOL result = FALSE;
     while ((result = ::GetMessageW(&message, nullptr, 0, 0)) != 0) {
         if (result == -1) {
-            break;  // Fatal message-queue error.
+            // The queue cannot be read. WM_DESTROY saves the settings and shuts
+            // the coordinator down while COM is still initialised.
+            easnap::platform::LogMessage(L"GetMessage failed (error %lu)", ::GetLastError());
+            ::DestroyWindow(host);
+            break;
         }
         if (coordinator.ProcessDialogMessage(message)) {
             continue;
@@ -694,11 +751,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
         ::DispatchMessageW(&message);
     }
 
+    // WM_DESTROY has done this. Repeated so that the function-static
+    // coordinator never shuts down in its destructor, after COM is gone.
+    coordinator.Shutdown();
     g_tray.Remove();
     // Release process-wide graphics COM objects while the main apartment is
     // still initialized; the function-static environment is destroyed later.
     easnap::platform::GraphicsEnvironment::Get().Shutdown();
     easnap::platform::LogMessage(L"Easnap exited");
     diagnostics::StopLog();
-    return static_cast<int>(message.wParam);
+    return result == -1 ? 1 : static_cast<int>(message.wParam);
 }

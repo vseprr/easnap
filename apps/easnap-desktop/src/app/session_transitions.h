@@ -68,4 +68,10 @@ enum class PendingWork {
 /// screenshot without annotations can be taken again and does not count.
 [[nodiscard]] PendingWork PendingWorkFor(SessionState state, bool image_at_risk) noexcept;
 
+/// Whether the user is told now that the settings could not be saved: once
+/// per run, and only while no session and none of the application's dialogs
+/// or menus is open. A failure during a session is found again by the save
+/// that follows its end.
+[[nodiscard]] bool ShouldTellSettingsNotSaved(SessionState state, bool dialog_open, bool already_told) noexcept;
+
 }  // namespace easnap::app

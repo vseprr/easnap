@@ -584,6 +584,76 @@ void TestRecordingRegionFitsH264() {
     CHECK(!RecordingRegionFitsH264(RECT{0, 0, 0, 100}) && !RecordingRegionFitsH264(RECT{10, 10, 5, 5}));
 }
 
+/// A settings file that cannot be written keeps what it held, and Save says why.
+void TestSettingsSaveFailures() {
+    using easnap::app::SettingsSaveError;
+    const std::wstring base = (std::filesystem::temp_directory_path() /
+                               (L"easnap_unwritable_" + std::to_wstring(::GetCurrentProcessId())))
+                                  .wstring();
+    const std::wstring path = base + L".ini";
+    std::error_code error;
+    ::SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);  // Left by an interrupted run.
+    std::filesystem::remove(path, error);
+
+    AppSettings earlier;
+    earlier.capture_cursor = true;
+    earlier.image_folder = L"C:\\Earlier";
+    CHECK(earlier.Save(path));
+    CHECK(::SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_READONLY) != FALSE);
+    AppSettings later = earlier;
+    later.capture_cursor = false;
+    later.image_folder = L"C:\\Later";
+    SettingsSaveError failure;
+    CHECK(!later.Save(path, &failure));
+    CHECK(failure.kind == SettingsSaveError::Kind::WriteFailed);
+    CHECK(failure.code == ERROR_ACCESS_DENIED);
+    const AppSettings kept = AppSettings::Load(path);
+    CHECK(kept.capture_cursor && kept.image_folder == L"C:\\Earlier");
+    CHECK(::SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL) != FALSE);
+    std::filesystem::remove(path, error);
+
+    // The folder the file belongs in is a file.
+    const std::wstring blocker = base + L".folder";
+    {
+        std::ofstream file(blocker, std::ios::binary);
+        file << "not a folder";
+    }
+    failure = {};
+    CHECK(!earlier.Save(blocker + L"\\settings.ini", &failure));
+    CHECK(failure.kind == SettingsSaveError::Kind::WriteFailed);
+    CHECK(failure.code == ERROR_DIRECTORY);
+    CHECK(std::filesystem::is_regular_file(blocker, error));
+    std::filesystem::remove(blocker, error);
+
+    // A value out of range is refused before anything is written.
+    AppSettings invalid;
+    invalid.language = static_cast<easnap::app::LanguageSetting>(7);
+    failure = {};
+    CHECK(!invalid.Save(path, &failure));
+    CHECK(failure.kind == SettingsSaveError::Kind::InvalidValue);
+    CHECK(!std::filesystem::exists(path, error));
+}
+
+/// When a failed save is told: once per run, while idle, with no dialog or
+/// menu of Easnap open.
+void TestSettingsNoticeDecision() {
+    using easnap::app::ShouldTellSettingsNotSaved;
+    CHECK(ShouldTellSettingsNotSaved(SessionState::Idle, false, false));
+    CHECK(!ShouldTellSettingsNotSaved(SessionState::Idle, true, false));   // A dialog or menu is open.
+    CHECK(!ShouldTellSettingsNotSaved(SessionState::Idle, false, true));   // Told already.
+    CHECK(!ShouldTellSettingsNotSaved(SessionState::Idle, true, true));
+    // Never during a session: the save after its end finds the failure again.
+    for (std::size_t value = 0; value < easnap::app::kSessionStateCount; ++value) {
+        const auto state = static_cast<SessionState>(value);
+        if (state == SessionState::Idle) { continue; }
+        for (const bool dialog_open : {false, true}) {
+            for (const bool already_told : {false, true}) {
+                CHECK(!ShouldTellSettingsNotSaved(state, dialog_open, already_told));
+            }
+        }
+    }
+}
+
 int main() {
     TestPendingWork();
     TestRecordingRegionFitsH264();
@@ -601,6 +671,8 @@ int main() {
     TestAudioSourceSettingsPersistence();
     TestAppearanceSettingsPersistence();
     TestSettingsLanguageAndFolders();
+    TestSettingsSaveFailures();
+    TestSettingsNoticeDecision();
     TestBothRecordingTransitions();
     TestRecordingRegionAndElapsedFormatting();
 

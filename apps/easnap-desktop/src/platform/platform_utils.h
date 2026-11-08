@@ -109,7 +109,8 @@ struct WindowsVersion {
 [[nodiscard]] bool SystemUsesDarkApps() noexcept;
 
 /// Call first in every process entry point, before any library is loaded.
-void RestrictDllSearchPath();
+/// False when Windows refused; GetLastError tells why.
+[[nodiscard]] bool RestrictDllSearchPath();
 void EnableDpiAwareness();
 [[nodiscard]] std::vector<MonitorInfo> EnumerateMonitors();
 [[nodiscard]] MonitorInfo MonitorForPoint(POINT pt);
@@ -299,6 +300,8 @@ std::optional<std::wstring> KnownFolder(REFKNOWNFOLDERID folder_id);
 std::wstring AppDataDirectory();
 std::wstring DirectoryOf(const std::wstring& path);
 std::wstring TimestampedFileName(const wchar_t* prefix, const wchar_t* extension);
+/// Creates the directory unless it exists. False when it cannot be created or
+/// a file has its name (GetLastError is then ERROR_DIRECTORY).
 bool EnsureDirectory(const std::wstring& path);
 /// Deletes a directory strictly below AppDataDirectory(); refuses reparse points.
 /// Returns false on incomplete cleanup, leaving unremoved entries intact.

@@ -303,11 +303,11 @@ ComRuntime::~ComRuntime() {
 // DPI and monitors
 // ---------------------------------------------------------------------------
 
-void RestrictDllSearchPath() {
+bool RestrictDllSearchPath() {
     // Dynamic loads by bare name resolve from System32 (and directories added
     // explicitly), never from the directory a portable copy was unpacked into.
     // Static imports are covered by the /DEPENDENTLOADFLAG linker option.
-    ::SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS);
+    return ::SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS) != FALSE;
 }
 
 void EnableDpiAwareness() {
@@ -1040,12 +1040,25 @@ std::wstring TimestampedFileName(const wchar_t* prefix, const wchar_t* extension
 
 bool EnsureDirectory(const std::wstring& path) {
     if (path.empty()) {
+        ::SetLastError(ERROR_PATH_NOT_FOUND);
         return false;
     }
     if (::CreateDirectoryW(path.c_str(), nullptr) != FALSE) {
         return true;
     }
-    return ::GetLastError() == ERROR_ALREADY_EXISTS;
+    if (::GetLastError() != ERROR_ALREADY_EXISTS) {
+        return false;
+    }
+    // The name exists; it serves only if it is a directory and not a file.
+    const DWORD attributes = ::GetFileAttributesW(path.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        return false;
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        ::SetLastError(ERROR_DIRECTORY);
+        return false;
+    }
+    return true;
 }
 
 bool RemoveDirectoryTree(const std::wstring& path) {

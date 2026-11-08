@@ -97,6 +97,10 @@ PendingWork PendingWorkFor(SessionState state, bool image_at_risk) noexcept {
     return PendingWork::None;
 }
 
+bool ShouldTellSettingsNotSaved(SessionState state, bool dialog_open, bool already_told) noexcept {
+    return state == SessionState::Idle && !dialog_open && !already_told;
+}
+
 const wchar_t* ToString(SessionState state) noexcept {
     switch (state) {
         case SessionState::Idle:

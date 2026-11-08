@@ -66,8 +66,7 @@ target_compile_definitions(easnap_project_options INTERFACE
     NOMINMAX
     STRICT
     _WIN32_WINNT=${EASNAP_WINDOWS_BASELINE}
-    WINVER=${EASNAP_WINDOWS_BASELINE}
-    EASNAP_VERSION_STRING="${PROJECT_VERSION}")
+    WINVER=${EASNAP_WINDOWS_BASELINE})
 
 if(MSVC)
     target_compile_options(easnap_project_options INTERFACE
