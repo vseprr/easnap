@@ -40,6 +40,60 @@ and the individual runs in the [validation records](releases/validation-history.
   `island_capture_exclusion` drags those dialogs and reads the themed menu as
   the user sees them.
 
+## v1.3 (in progress)
+
+Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
+`main` at `68e34c5`.
+
+- **The trim flow is a class of its own** (S2 of
+  [ADR-039](decisions/ADR-039-coordinator-trim-flow.md)): `TrimFlow`
+  (`app/trim_flow`) holds the trim window, the export controller, the source
+  path and the latest temporary result of one recording; `CaptureCoordinator`
+  owns it and keeps the recording session, which it releases when the flow
+  asks. The functions were moved, not rewritten; ADR-039 lists the three body
+  changes. The coordinator went from 2,332 to 1,669 lines. Decision 1 of
+  [ADR-010](decisions/ADR-010-trim-view-ownership-and-orchestration.md) is
+  amended accordingly.
+- **`trim_flow_production`** (Standard tier, private desktop) drives the
+  production flow, window, MP4 exporter, completion controller and temporary
+  sessions with messages: Copy of the whole recording and of a part, cancelling
+  an export, keeping or discarding when closing, discarding during an export
+  and destroying the flow during an export. The clipboard publication is
+  recorded instead of performed, so the test leaves the clipboard alone.
+- Validated: lab Full on the uncommitted branch (2026-11-08, run
+  `20261108-201007-full`), 51 of 51 with no retry, including the new test;
+  `real_desktop_recording_session` passed on the GDI fallback as before
+  (`VM-ok-but-fallback`). On the development PC: the Release build without
+  warnings, the Fast tier 23 of 23, clang-tidy without findings on the changed
+  sources, and six runs of the new test, 132 of 132 checks each, leaving
+  nothing in the temporary folder. Lab Soak on the same tree (run
+  `20261108-202202-soak`): 57 of 57, the new test included; one test,
+  `trim_timeline_seek_stress`, passed only on the runner's retry. Its first
+  attempt failed the pointer check: the pointer landed on the window caption
+  instead of the timeline. That test does not compile any source S2 changed.
+- By hand: the owner ran the S2 checklist of ADR-039 in the running
+  application on the development PC (2026-11-08) without a problem: MP4 and
+  GIF Save and Copy of the whole recording and of a part, cancelling an
+  export, discarding during an export, saving a recording without a preview,
+  Exit while trimming and while exporting, sign-out while trimming with the
+  recording offered at the next start, a display change while trimming and the
+  shortcut bringing the trim view forward. No automated test runs Save (its
+  file dialog), GIF, Exit, sign-out or a display change while trimming.
+- **A screenshot is read with the shading split.** With the workspace on
+  screen, `PrepareWorkspaceScreenshot` splits the shading into four windows
+  around the frame for its one picture, as Scrollshot does
+  (`OverlayController::ExposeFrame`, renamed from `ExposeScrollshotFrame`), so
+  no value comes back one level off. `scrollshot_real_desktop` now measures
+  such a read first. On the development PC (SAMSUNG display, 2026-11-08):
+  1,572 pixels of the frame one level off under the single shading, 0 with the
+  shading split. The lab VM shows no shift either way, so there it only shows
+  that nothing else changed: lab Full (run `20261108-234453-full`), 51 of 51
+  with no retry, `scrollshot_real_desktop` on Desktop Duplication as before.
+- **Recording stays in the coordinator**, decided after S2: its island
+  belongs to the workspace while the region is configured, and what can fail
+  is already in classes with tests
+  ([ADR-039](decisions/ADR-039-coordinator-trim-flow.md#recording-decided-after-s2)).
+
 ## v1.2.0
 
 Work toward v1.2 ran on the branch `feature/v1.2`, created on 2026-11-08 from
@@ -181,18 +235,14 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   recovered; a recovered recording is the untrimmed MP4. A recording that
   starts on a still desktop is read through GDI for its whole length;
   Scrollshot no longer is, recording has not had the same remedy.
-- With the workspace visible, a screenshot can differ from the screen by one
-  level at a few values (measured: 47 as 46, 70 as 69): Windows changes them
-  under the translucent, capture-excluded shading window. Scrollshot avoids
-  it; screenshots do not yet.
 - A window that is open when the language changes keeps its text; only the
   Settings dialog can be open then, and it closes.
 - The mode island's home now starts below a taskbar docked at the top
   (2026-11-07); this was not seen with a top taskbar.
 - The log gets one line per audio packet for the first packets of every
   recording; these lines are diagnostic and carry no content.
-- On the host, tests share the user's clipboard: `capture_workspace_production`
-  and `annotation_editing_native` replace its content.
+- On the host, `annotation_editing_native` shares the user's clipboard and
+  replaces its content.
 - `mfplay_preview_audio_transport` can miss its 1500 ms limit for retiring a
   suspended native host when the machine is under load.
 - `recording_worker_foundations` expects the capture thread never to wake
@@ -280,9 +330,7 @@ post-v1 without a promised date.
 
 ## Next slice
 
-v1.3, on a branch of its own: S2 of the `CaptureCoordinator` split
-([ADR-039](decisions/ADR-039-coordinator-trim-flow.md)), the trim flow with a
-test target of its own, and the other deferred candidates one bounded slice
-each, and why a crash report is sometimes not written on the hosted runner;
-the order is in the [roadmap](../EASNAP_ROADMAP.md). Package-manager
+On `feature/v1.3`: the other deferred candidates one bounded slice each, and why a crash report is
+sometimes not written on the hosted runner; the order is in the
+[roadmap](../EASNAP_ROADMAP.md). Package-manager
 submissions remain the owner's step ([distribution](distribution.md)).

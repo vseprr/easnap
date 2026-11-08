@@ -17,9 +17,11 @@ the parent range-checks the state the helper reports over their private pipe.
 The hidden host window in `src/main.cpp` receives application messages.
 `CaptureCoordinator` is the sole owner of application session state, held in
 one `SessionStateMachine` (`app/session_transitions.h`) through which every
-transition passes ([ADR-039](decisions/ADR-039-coordinator-trim-flow.md)). UI
-surfaces forward commands and reflect that state; they do not independently
-start a second capture session.
+transition passes ([ADR-039](decisions/ADR-039-coordinator-trim-flow.md)). The
+trimming and completion of a finished recording are held by `TrimFlow`
+(`app/trim_flow.h`), which the coordinator owns and which changes the state
+only through that machine. UI surfaces forward commands and reflect that
+state; they do not independently start a second capture session.
 
 The normal flows, in the states of `SessionState`
 (`app/session_transitions.h`):
@@ -302,6 +304,9 @@ Detailed policies are in ADR-004–008, ADR-012 and ADR-014.
 
 Finalized media opens the shared trim workflow. The native view owns controls;
 controllers own preview, export, generation tracking and completion decisions.
+`TrimFlow` owns the trim view, the export controller, the finalized source path
+and the latest temporary result for one recording; the coordinator keeps the
+recording session and releases it when the flow ends.
 UI state cannot claim completion merely because an export worker was started.
 
 The parent's preview proxy drives the helper over a bounded, coalesced private

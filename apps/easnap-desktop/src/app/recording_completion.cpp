@@ -248,6 +248,21 @@ TrimCloseAction PlanTrimClose(bool discard_confirmed,
                           : TrimCloseAction::DiscardNow;
 }
 
+std::wstring ExistingFileDataPath(const std::wstring& candidate) {
+    if (candidate.empty()) {
+        return {};
+    }
+    WIN32_FILE_ATTRIBUTE_DATA attributes{};
+    if (::GetFileAttributesExW(candidate.c_str(), GetFileExInfoStandard,
+                               &attributes) == FALSE ||
+        (attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        return {};
+    }
+    const ULARGE_INTEGER size{attributes.nFileSizeLow,
+                              attributes.nFileSizeHigh};
+    return size.QuadPart == 0 ? std::wstring{} : candidate;
+}
+
 std::unique_ptr<IRecordingCompletionBackend>
 CreateRecordingCompletionBackend() {
     return std::make_unique<WindowsRecordingCompletionBackend>();

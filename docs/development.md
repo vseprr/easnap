@@ -110,7 +110,8 @@ the whole tree is listed in `.git-blame-ignore-revs`; run
 `git blame` skips it.
 
 Static analysis uses clang-tidy with the checks in `.clang-tidy`. The CI job
-runs it on the application sources and fails on any finding. A finding is
+runs it on the application sources and fails on any finding; a pull request
+to `main` cannot be merged until it passes (branch protection). A finding is
 fixed in the code; where the code is right as it is, a `NOLINT(check)` on the
 line says why, and an empty `catch` says "deliberately" in its comment.
 clang-tidy needs the

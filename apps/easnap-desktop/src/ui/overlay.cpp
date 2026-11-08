@@ -613,8 +613,8 @@ public:
         return ::IsWindowVisible(magnifier_) && ::GetWindowRect(magnifier_, &box) && ::PtInRect(&box, point);
     }
 
-    /// See OverlayController::ExposeScrollshotFrame. Without the four windows
-    /// the shading stays as it is and the capture is merely not exact.
+    /// See OverlayController::ExposeFrame. Without the four windows the
+    /// shading stays as it is and the capture is merely not exact.
     void SetFrameExposed(bool exposed) {
         if (exposed && shade_ && !shade_strips_[0]) {
             HINSTANCE instance = ::GetModuleHandleW(nullptr);
@@ -1550,11 +1550,11 @@ void OverlayController::BeginScrollshotCapture() {
 void OverlayController::StopScrollshotCapture() {
     if (!workspace_.scrollshot_capturing()) { return; }
     workspace_.StopScrollshotCapture();
-    ExposeScrollshotFrame(false);
+    ExposeFrame(false);
     Invalidate();
 }
 
-void OverlayController::ExposeScrollshotFrame(bool exposed) {
+void OverlayController::ExposeFrame(bool exposed) {
     if (frame_exposed_ == exposed || windows_.empty()) { return; }
     frame_exposed_ = exposed;
     for (const auto& window : windows_) { window->SetFrameExposed(exposed); }

@@ -345,6 +345,40 @@ int RunTest() {
     overlay.EnterEditing();
     overlay.selector().SetSelection(frame);
     overlay.RegionChanged();
+    // Whether this desktop can be duplicated at all, asked while the workspace
+    // that has just appeared still gives the duplication a new frame.
+    capture::RegionImageOptions probe_options;
+    platform::BgraImage probe;
+    const capture::RegionCaptureResult probed = provider->CaptureRegionImage(page_rect, probe_options, probe);
+    const bool duplication_available = probed.status == capture::RegionCaptureStatus::FrameAcquired &&
+                                       probed.primary_failure.stage == capture::RegionCaptureFailureStage::None;
+
+    // --- A screenshot with the workspace on screen ----------------------------
+    // Read as the application reads it: the shading split so that no
+    // translucent window contains the frame, then one picture of the desktop.
+    {
+        const auto frame_differs = [&](int& shifted) {
+            ::DwmFlush();
+            capture::DesktopSnapshot picture;
+            platform::BgraImage image;
+            shifted = 0;
+            if (!provider->CaptureDesktop(false, picture) || !picture.CropRegion(frame, image)) { return -1; }
+            return DifferingRows(image, document, kSideMargin, kVerticalMargin, nullptr, &shifted);
+        };
+        int single_shifted = 0, split_shifted = 0;
+        const int single_differing = frame_differs(single_shifted);
+        overlay.ExposeFrame(true);
+        CHECK(overlay.frame_exposed());
+        const bool exact = PumpUntil([&] { return frame_differs(split_shifted) == 0 && split_shifted == 0; }, 3s);
+        overlay.ExposeFrame(false);
+        std::printf("MEASURE screenshot of the frame (%ls): %d rows differ and %d pixels are one level off under the "
+                    "single shading; %d pixels with the shading split\n",
+                    provider->name(), single_differing, single_shifted, split_shifted);
+        CHECK(single_differing == 0);
+        CHECK(exact);
+        CHECK(!overlay.frame_exposed());
+    }
+
     overlay.SetMode(app::CaptureMode::Scrollshot);
     ui::ScrollshotControls::Callbacks control_callbacks;
     control_callbacks.on_wheel_blocked = [&] { ++wheel_blocked; };
@@ -359,13 +393,8 @@ int RunTest() {
     // As the application does before the first picture: it gives up its own
     // duplication of the output, which a process can hold only once, and
     // rearranges the shading.
-    capture::RegionImageOptions probe_options;
-    platform::BgraImage probe;
-    const capture::RegionCaptureResult probed = provider->CaptureRegionImage(page_rect, probe_options, probe);
-    const bool duplication_available = probed.status == capture::RegionCaptureStatus::FrameAcquired &&
-                                       probed.primary_failure.stage == capture::RegionCaptureFailureStage::None;
     provider->Release();
-    overlay.ExposeScrollshotFrame(true);
+    overlay.ExposeFrame(true);
     scrollshot::ScrollshotSession session(capture::CreateRegionCaptureProvider(), options);
     const bool started = session.Start();
     CHECK(started);
