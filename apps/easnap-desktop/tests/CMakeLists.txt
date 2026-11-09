@@ -319,6 +319,42 @@ set_tests_properties(recording_pause_stop_stress PROPERTIES
     TIMEOUT 120
     SKIP_RETURN_CODE 77)
 
+# What a recorded frame costs (ADR-042): the whole test monitor with changing
+# content, 30 fps, three recordings of 10 seconds. It reports figures and
+# judges none; Soak tier, run in the lab by a Soak run or `lab.ps1 probe`.
+add_test(NAME recording_frame_cost
+         COMMAND test_recording_session_integration --frame-cost)
+set_tests_properties(recording_frame_cost PROPERTIES
+    LABELS "integration;real-desktop-capture;recording;performance;soak"
+    TIMEOUT 180
+    SKIP_RETURN_CODE 77)
+
+# What allocating a frame's buffers costs on this machine, against reusing
+# them (ADR-042): the production BgraImage and the writer's Media Foundation
+# buffer calls at 1080p and 2160p. It prints MEASURE lines and checks only
+# that the calls succeed; alone, so other tests do not skew its figures.
+add_executable(test_frame_buffer_cost
+    test_frame_buffer_cost.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_frame_buffer_cost PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_frame_buffer_cost PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs mfplat
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+# Loaded on first use, as in Easnap: where Windows has no Media Foundation the
+# test still starts, measures the images and reports itself skipped.
+if(MSVC)
+    target_link_options(test_frame_buffer_cost PRIVATE /DELAYLOAD:mfplat.dll)
+    target_link_libraries(test_frame_buffer_cost PRIVATE delayimp)
+endif()
+add_test(NAME frame_buffer_cost COMMAND test_frame_buffer_cost)
+set_tests_properties(frame_buffer_cost PROPERTIES
+    LABELS "unit;recording;performance"
+    RUN_SERIAL TRUE
+    TIMEOUT 60
+    SKIP_RETURN_CODE 77)
+
 # ---------------------------------------------------------------------------
 # test_region_selector — RegionSelector interaction logic (ADR-002 coverage)
 #
@@ -923,7 +959,8 @@ set_tests_properties(annotation_editing_native PROPERTIES LABELS "integration;ed
 # The three capture_* tests left this list: they are message-driven and run on
 # a private desktop instead.
 set(interactive_desktop_tests
-    real_desktop_recording_session recording_pause_stop_stress scrollshot_real_desktop
+    real_desktop_recording_session recording_pause_stop_stress recording_frame_cost
+    scrollshot_real_desktop
     scrollshot_realistic_desktop island_capture_exclusion
     ui_modernization_native annotation_editing_native trim_endpoint_presentation
     trim_timeline_seek_stress trim_timeline_seek_soak)

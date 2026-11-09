@@ -332,6 +332,13 @@ Open since v1.0.0:
 Open since the v1.0.1 review:
 
 - The capture path still allocates a frame image and an NV12 buffer per frame.
+  What that costs is now measured by `frame_buffer_cost` (fast tier, on the
+  machine it runs on) and `recording_frame_cost` (Soak tier and
+  `lab.ps1 probe`, the whole test monitor); whether to reuse the buffers waits
+  for the lab figures, and `recording_frame_cost` has not run yet. The memory
+  bound in the session diagnostics now counts the seven pictures that can be
+  alive at once, not five
+  ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md)).
 - The repacking of a locked hardware surface was exercised only on the hosted
   runner's WARP adapter, not on a physical GPU with a software encoder.
 - Editor pixel effects still repaint the whole image for a spotlight preview

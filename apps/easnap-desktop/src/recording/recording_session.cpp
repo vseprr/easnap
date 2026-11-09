@@ -26,6 +26,9 @@ constexpr media::MediaTime kMaximumAudioWriterLead{1'000'000};  // 100 ms
 // Pause/Stop/Abort callers that wait for the callback to drain.
 constexpr std::chrono::seconds kAudioGateStallLimit{10};
 constexpr std::chrono::milliseconds kAudioGateStallPoll{250};
+// Pictures ConsumerMain holds while it writes: the pending frame and the one
+// just taken from the queue, whose timestamp sets the pending frame's duration.
+constexpr uint64_t kConsumerHeldFrames = 2;
 
 std::wstring BoundedDiagnostic(std::wstring message) {
     if (message.size() > kMaximumDiagnosticCharacters) {
@@ -1246,8 +1249,19 @@ uint64_t RecordingSession::BoundedFramePayloadBytes() const noexcept {
     }
     const uint64_t pixels = SaturatingMultiply(static_cast<uint64_t>(width),
                                                static_cast<uint64_t>(height));
-    const uint64_t bgra_frames = static_cast<uint64_t>(frame_queue_.capacity()) + 2;
+    // BGRA pictures alive at once, every one a separate image when the
+    // content changes: the queue's slots, the two the capture worker holds
+    // outside it (the latest, kept even when the full queue rejected it, and
+    // the one being captured) and the two ConsumerMain holds while it writes
+    // (the pending frame and the one just taken, whose timestamp ends it).
+    // With the default queue that is seven, not the five counted before.
+    const uint64_t bgra_frames = static_cast<uint64_t>(frame_queue_.capacity()) +
+                                 capture::kCaptureWorkerHeldFrames + kConsumerHeldFrames;
     const uint64_t bgra_bytes = SaturatingMultiply(SaturatingMultiply(pixels, 4), bgra_frames);
+    // One NV12 buffer: the one the writer converts the frame into. Samples
+    // that Media Foundation keeps after WriteSample (the sink writer's queue
+    // and the encoder's own, limited by the sink writer's throttling) are not
+    // Easnap's to bound and are not counted.
     const uint64_t nv12_bytes = SaturatingAdd(pixels, pixels / 2);
     return SaturatingAdd(bgra_bytes, nv12_bytes);
 }

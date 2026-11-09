@@ -116,6 +116,9 @@ struct RecordingSessionDiagnostics {
     capture::AggregateTiming audio_backpressure_wait_timing;
     std::size_t queue_capacity{0};
     std::size_t peak_queue_depth{0};
+    /// Pixel bytes of the BGRA pictures and the NV12 conversion buffer that
+    /// can be alive at once; samples Media Foundation keeps after WriteSample
+    /// are not included.
     uint64_t bounded_frame_payload_bytes{0};
     int64_t audio_session_active_zero_100ns{0};
     int64_t maximum_audio_writer_lead_100ns{0};

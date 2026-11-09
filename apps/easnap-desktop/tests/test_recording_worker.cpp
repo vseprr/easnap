@@ -258,6 +258,57 @@ private:
     std::shared_ptr<TimelineObservations> observations_;
 };
 
+struct PictureObservations {
+    TimelineObservations timeline;
+    std::vector<std::weak_ptr<const easnap::platform::BgraImage>> pictures;
+    std::size_t peak_alive{0};
+};
+
+// Every capture makes a new picture, as a recording of changing content does.
+// Asked for the next one, the provider counts the pictures still alive and the
+// one it is about to make: what the worker holds at that moment.
+class NewPictureCaptureProvider final : public easnap::capture::IRegionCaptureProvider {
+public:
+    explicit NewPictureCaptureProvider(std::shared_ptr<PictureObservations> observations)
+        : observations_(std::move(observations)) {}
+
+    bool CaptureDesktop(bool, easnap::capture::DesktopSnapshot&) override { return false; }
+    bool CaptureRegion(const RECT&, bool, easnap::platform::BgraImage&) override { return false; }
+
+    easnap::capture::RegionCaptureResult CaptureRegionFrame(
+        const RECT&, bool, easnap::media::MediaTime timestamp,
+        easnap::media::MediaTime duration, easnap::media::VideoFrame& out) override {
+        easnap::platform::BgraImage image;
+        image.width = 2;
+        image.height = 2;
+        image.pixels.assign(4, 0xff102030u);
+        auto picture = std::make_shared<const easnap::platform::BgraImage>(std::move(image));
+        {
+            const std::scoped_lock lock(observations_->timeline.mutex);
+            const auto alive = static_cast<std::size_t>(std::count_if(
+                observations_->pictures.begin(), observations_->pictures.end(),
+                [](const auto& earlier) { return !earlier.expired(); }));
+            observations_->peak_alive = (std::max)(observations_->peak_alive, alive + 1);
+            observations_->pictures.push_back(picture);
+            ++observations_->timeline.capture_count;
+        }
+        observations_->timeline.changed.notify_all();
+        out = easnap::media::VideoFrame{std::move(picture), timestamp, duration};
+        return {easnap::capture::RegionCaptureStatus::FrameAcquired, {2, 4}};
+    }
+
+    easnap::capture::RegionCaptureResult CaptureRegionImage(
+        const RECT&, const easnap::capture::RegionImageOptions&, easnap::platform::BgraImage&) override {
+        return {};  // Unused by the recording worker; a default result is a failure.
+    }
+
+    void Release() noexcept override {}
+    [[nodiscard]] const wchar_t* name() const override { return L"new-picture-test"; }
+
+private:
+    std::shared_ptr<PictureObservations> observations_;
+};
+
 bool WaitForCaptureCount(const std::shared_ptr<TimelineObservations>& observations,
                          std::size_t minimum) {
     using namespace std::chrono_literals;
@@ -537,6 +588,34 @@ void TestFramesReadThroughGdiAreCounted() {
     CHECK(worker.no_new_frames() >= 2);
 }
 
+// The recording session's bound on frame memory counts the pictures the
+// worker holds outside its queue (kCaptureWorkerHeldFrames). Nothing takes a
+// frame from the queue here: it fills, the newest picture is rejected and
+// kept as the latest, and the next one is captured while that one is held.
+void TestWorkerHoldsBoundedPictures() {
+    auto observations = std::make_shared<PictureObservations>();
+    const std::shared_ptr<TimelineObservations> timeline(observations,
+                                                         &observations->timeline);
+    auto provider = std::make_unique<NewPictureCaptureProvider>(observations);
+    easnap::media::FrameQueue<easnap::media::VideoFrame> queue(
+        easnap::capture::kDefaultVideoFrameQueueCapacity);
+    easnap::media::RecordingOptions options;
+    options.region = RECT{0, 0, 2, 2};
+    options.include_cursor = false;
+    options.target_frame_rate = easnap::capture::kMaximumTargetFrameRate;
+
+    easnap::capture::RecordingCaptureWorker worker(std::move(provider), options, queue);
+    CHECK(worker.Start());
+    CHECK(WaitForCaptureCount(timeline, easnap::capture::kDefaultVideoFrameQueueCapacity + 5));
+    worker.Stop();
+
+    CHECK(worker.queue_full_rejections() >= 2);
+    CHECK(queue.size() == easnap::capture::kDefaultVideoFrameQueueCapacity);
+    const std::scoped_lock lock(observations->timeline.mutex);
+    CHECK(observations->peak_alive == easnap::capture::kDefaultVideoFrameQueueCapacity +
+                                          easnap::capture::kCaptureWorkerHeldFrames);
+}
+
 void TestCaptureFailureDiagnosticsRemainBounded() {
     auto observations = std::make_shared<TimelineObservations>();
     auto provider =
@@ -589,6 +668,7 @@ int main() {
     TestStartupFailureReleasesBarrier();
     TestTransientCaptureFailuresReuseLatestFrame();
     TestFramesReadThroughGdiAreCounted();
+    TestWorkerHoldsBoundedPictures();
     TestCaptureFailureDiagnosticsRemainBounded();
     std::printf("QUEUE_LAYOUT object=%zu slot=%zu video_frame=%zu\n",
                 sizeof(easnap::media::FrameQueue<easnap::media::VideoFrame>),

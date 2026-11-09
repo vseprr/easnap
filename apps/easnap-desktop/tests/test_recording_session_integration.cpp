@@ -5,6 +5,7 @@
 #include <mfidl.h>
 #include <mfreadwrite.h>
 #include <propvarutil.h>
+#include <psapi.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 
@@ -19,6 +20,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -51,6 +53,14 @@ void Check(bool condition, const char* expression, const char* file, int line) {
 // True when the pause/stop stress found no audio endpoint at all: its
 // video-only cycles ran, but the audio sources it exists to cover did not.
 bool g_stress_audio_skipped = false;
+
+// True when the frame cost measurement found no capture path that reads the
+// test monitor: there was nothing to measure.
+bool g_frame_cost_skipped = false;
+
+uint64_t FileTimeTicks(const FILETIME& time) noexcept {
+    return (static_cast<uint64_t>(time.dwHighDateTime) << 32) | time.dwLowDateTime;
+}
 
 class MediaFoundationRuntime final {
 public:
@@ -639,15 +649,38 @@ Mp4Inspection InspectMp4(const std::wstring& path, UINT32 expected_width,
     return inspection;
 }
 
-RECT ModestPrimaryMonitorRegion() {
+// The display chosen for the test (EASNAP_TEST_MONITOR), else the primary one.
+std::optional<MONITORINFO> TestMonitorInfo() {
     POINT origin{};
     const auto* selected = easnap::test::SelectedTestMonitor();
     const HMONITOR monitor = selected ? selected->handle : ::MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO info{};
     info.cbSize = sizeof(info);
     if (::GetMonitorInfoW(monitor, &info) == FALSE) {
+        return std::nullopt;
+    }
+    return info;
+}
+
+// The whole test monitor; an odd width or height loses its last column or
+// row, since the H.264 recording needs even dimensions.
+RECT WholeTestMonitorRegion() {
+    const std::optional<MONITORINFO> info = TestMonitorInfo();
+    if (!info.has_value()) {
         return {};
     }
+    RECT region = info->rcMonitor;
+    region.right -= (region.right - region.left) % 2;
+    region.bottom -= (region.bottom - region.top) % 2;
+    return region;
+}
+
+RECT ModestPrimaryMonitorRegion() {
+    const std::optional<MONITORINFO> monitor_info = TestMonitorInfo();
+    if (!monitor_info.has_value()) {
+        return {};
+    }
+    const MONITORINFO& info = *monitor_info;
 
     const LONG monitor_width = info.rcMonitor.right - info.rcMonitor.left;
     const LONG monitor_height = info.rcMonitor.bottom - info.rcMonitor.top;
@@ -670,8 +703,11 @@ class VisibleTestSurface final {
 public:
     ~VisibleTestSurface() { Stop(); }
 
-    bool Start(const RECT& region, bool animate) {
+    // Animating, the surface repaints about every `repaint_interval`.
+    bool Start(const RECT& region, bool animate,
+               std::chrono::milliseconds repaint_interval = std::chrono::milliseconds(40)) {
         region_ = region;
+        repaint_interval_ = repaint_interval;
         animate_.store(animate, std::memory_order_release);
         try {
             thread_ = std::thread(&VisibleTestSurface::ThreadMain, this);
@@ -686,6 +722,22 @@ public:
     // Starts or stops repainting; it takes effect within one repaint interval.
     void SetAnimating(bool animate) noexcept {
         animate_.store(animate, std::memory_order_release);
+    }
+
+    // CPU time the painting thread has used so far, in 100 ns units: the part
+    // of this process's CPU time that a recording in Easnap does not have.
+    [[nodiscard]] std::optional<uint64_t> PaintingCpuTime100ns() noexcept {
+        if (!thread_.joinable()) {
+            return std::nullopt;
+        }
+        FILETIME creation{};
+        FILETIME exit{};
+        FILETIME kernel{};
+        FILETIME user{};
+        if (::GetThreadTimes(thread_.native_handle(), &creation, &exit, &kernel, &user) == FALSE) {
+            return std::nullopt;
+        }
+        return FileTimeTicks(kernel) + FileTimeTicks(user);
     }
 
     void Stop() noexcept {
@@ -786,7 +838,7 @@ private:
                 DrawFrame(window, frame_index++);
             }
             std::unique_lock lock(mutex_);
-            changed_.wait_for(lock, std::chrono::milliseconds(animate ? 40 : 100),
+            changed_.wait_for(lock, animate ? repaint_interval_ : std::chrono::milliseconds(100),
                               [this] { return stop_.load(std::memory_order_acquire); });
         }
         ::DestroyWindow(window);
@@ -795,6 +847,7 @@ private:
     }
 
     RECT region_{};
+    std::chrono::milliseconds repaint_interval_{40};
     std::atomic<bool> animate_{false};
     std::atomic<bool> stop_{false};
     std::mutex mutex_;
@@ -816,8 +869,12 @@ void PrintProbeLine(const wchar_t* text) {
     }
 }
 
+enum class ProbedCapturePath { None,
+                               Gdi,
+                               Duplication };
+
 // Reads `region` as a recording does (`CaptureRegionFrame`) and reports which
-// path delivered it; true when Desktop Duplication did. Each try gives a fresh
+// path delivered it (None when no path read it). Each try gives a fresh
 // provider its first frame on a desktop that has stood still, then repaints a
 // test window over the region until Desktop Duplication delivers a frame. The
 // lab reads the EASNAP_CAPTURE_PATH line: Duplication only for a frame without
@@ -829,7 +886,7 @@ void PrintProbeLine(const wchar_t* text) {
 // picture comes through GDI. The repaint after it must come through Desktop
 // Duplication: the provider asks it again instead of reading through GDI for
 // the rest of the recording. The tries go on until such a black frame appears.
-bool ProbeRecordingCapturePath(const RECT& region) {
+ProbedCapturePath ProbeRecordingCapturePath(const RECT& region) {
     using Clock = std::chrono::steady_clock;
     using namespace std::chrono_literals;
     namespace capture = easnap::capture;
@@ -847,7 +904,7 @@ bool ProbeRecordingCapturePath(const RECT& region) {
     }
     if (!on_one_monitor) {
         PrintProbeLine(L"EASNAP_CAPTURE_PATH=GDI (recording path probe: the region spans monitors)");
-        return false;
+        return ProbedCapturePath::Gdi;
     }
 
     struct Try {
@@ -944,7 +1001,9 @@ bool ProbeRecordingCapturePath(const RECT& region) {
                       tries);
     }
     PrintProbeLine(line);
-    return duplication;
+    return duplication ? ProbedCapturePath::Duplication
+           : captured  ? ProbedCapturePath::Gdi
+                       : ProbedCapturePath::None;
 }
 
 void TestRealDesktopRecordingSession() {
@@ -968,7 +1027,8 @@ void TestRealDesktopRecordingSession() {
     // path read as GDI on every machine.
     CHECK(easnap::platform::GraphicsEnvironment::Get().EnsureInitialized());
     // Printed first: CTest keeps only the head of a long test output.
-    const bool duplication_available = ProbeRecordingCapturePath(region);
+    const bool duplication_available =
+        ProbeRecordingCapturePath(region) == ProbedCapturePath::Duplication;
 
     wchar_t temporary_path[MAX_PATH]{};
     const DWORD temporary_length =
@@ -1865,14 +1925,274 @@ void TestPauseStopStress() {
     platform::GraphicsEnvironment::Get().Shutdown();
 }
 
+struct ProcessCost {
+    uint64_t cpu_100ns{0};
+    uint64_t page_faults{0};
+    uint64_t peak_private_bytes{0};
+    uint64_t private_bytes{0};
+};
+
+std::optional<ProcessCost> ReadProcessCost() {
+    FILETIME creation{};
+    FILETIME exit{};
+    FILETIME kernel{};
+    FILETIME user{};
+    if (::GetProcessTimes(::GetCurrentProcess(), &creation, &exit, &kernel, &user) == FALSE) {
+        return std::nullopt;
+    }
+    PROCESS_MEMORY_COUNTERS_EX memory{};
+    memory.cb = sizeof(memory);
+    if (::GetProcessMemoryInfo(::GetCurrentProcess(),
+                               reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&memory),
+                               sizeof(memory)) == FALSE) {
+        return std::nullopt;
+    }
+    return ProcessCost{FileTimeTicks(kernel) + FileTimeTicks(user), memory.PageFaultCount,
+                       memory.PeakPagefileUsage, memory.PrivateUsage};
+}
+
+double Median(std::vector<double> values) {
+    if (values.empty()) {
+        return 0.0;
+    }
+    std::sort(values.begin(), values.end());
+    const std::size_t middle = values.size() / 2;
+    return values.size() % 2 != 0 ? values[middle] : (values[middle - 1] + values[middle]) / 2.0;
+}
+
+// --frame-cost (ADR-042): what a recorded frame costs this process. The whole
+// test monitor with content that changes faster than the frame rate, 30 fps,
+// MP4 without audio, three recordings of 10 active seconds, each measured from
+// Start to the end of Finalize. Prints one RECORDING_FRAME_COST line per
+// recording and a summary of the medians. The checks cover only that each
+// recording is sound and that nearly every frame was a new picture, which is
+// what makes the figures a measurement of per-frame cost; no figure is judged.
+void TestRecordingFrameCost() {
+    using namespace std::chrono_literals;
+    using namespace easnap;
+    constexpr uint32_t kFrameRate = 30;
+    constexpr int kRepetitions = 3;
+    constexpr auto kActive = 10s;
+    // The system timer stretches this to about 15.6 ms: the picture changes
+    // about twice in every 33 ms frame slot, so each capture finds a new one.
+    constexpr auto kRepaintInterval = 10ms;
+    constexpr double kMebibyte = 1024.0 * 1024.0;
+
+    // Before the first window or monitor query, as the application does: the
+    // lab's display is 1920 x 1080 at 125 %.
+    platform::EnableDpiAwareness();
+    MediaFoundationRuntime runtime;
+    CHECK(SUCCEEDED(runtime.result()));
+    if (FAILED(runtime.result())) {
+        return;
+    }
+    CHECK(platform::GraphicsEnvironment::Get().EnsureInitialized());
+
+    const RECT region = WholeTestMonitorRegion();
+    const UINT32 width = static_cast<UINT32>(region.right - region.left);
+    const UINT32 height = static_cast<UINT32>(region.bottom - region.top);
+    CHECK(width >= 2 && height >= 2);
+    if (width < 2 || height < 2) {
+        platform::GraphicsEnvironment::Get().Shutdown();
+        return;
+    }
+    // Printed first: CTest keeps only the head of a long test output.
+    const ProbedCapturePath path = ProbeRecordingCapturePath(region);
+    if (path == ProbedCapturePath::None) {
+        g_frame_cost_skipped = true;
+        platform::GraphicsEnvironment::Get().Shutdown();
+        return;
+    }
+    const char* const path_name = path == ProbedCapturePath::Duplication ? "Duplication" : "GDI";
+
+    auto store = media::CreateTemporarySessionStore();
+    CHECK(store != nullptr);
+    VisibleTestSurface surface;
+    const bool surface_started = surface.Start(region, true, kRepaintInterval);
+    CHECK(surface_started);
+
+    struct Repetition {
+        double frames{0};
+        double acquired{0};
+        double attempts{0};
+        double fallback_frames{0};
+        double pacing_missed{0};
+        double queue_full{0};
+        double peak_queue{0};
+        double copy_us{0};
+        double video_writer_us{0};
+        double faults_per_frame{0};
+        double cpu_us_per_frame{0};
+        double private_peak_mb{0};
+    };
+    std::vector<Repetition> repetitions;
+    for (int repetition = 1; store != nullptr && surface_started && repetition <= kRepetitions;
+         ++repetition) {
+        media::RecordingOptions options;
+        options.region = region;
+        options.format = media::RecordingFormat::Mp4;
+        options.audio = media::AudioSource::None;
+        // Where the pointer rests is not controlled; without it, runs compare.
+        options.include_cursor = false;
+        options.target_frame_rate = kFrameRate;
+        auto session = recording::CreateVideoRecordingSession(*store, options);
+        CHECK(session != nullptr);
+        if (session == nullptr) {
+            break;
+        }
+
+        const std::optional<uint64_t> painting_before = surface.PaintingCpuTime100ns();
+        const std::optional<ProcessCost> before = ReadProcessCost();
+        const bool started = session->Start();
+        if (!started) {
+            std::fprintf(stderr, "Frame cost Start error: %ls\n", session->last_error().c_str());
+        }
+        CHECK(started);
+        if (!started) {
+            break;
+        }
+        // The length of the recording, not a synchronisation.
+        std::this_thread::sleep_for(kActive);
+        const bool finalized = session->Stop();
+        const std::optional<ProcessCost> after = ReadProcessCost();
+        const std::optional<uint64_t> painting_after = surface.PaintingCpuTime100ns();
+        if (!finalized) {
+            std::fprintf(stderr, "Frame cost Stop error: %ls\n", session->last_error().c_str());
+        }
+        CHECK(finalized);
+        CHECK(before.has_value() && after.has_value());
+        CHECK(painting_before.has_value() && painting_after.has_value());
+
+        const recording::RecordingSessionDiagnostics diagnostics = session->diagnostics();
+        CHECK(diagnostics.all_worker_threads_stopped);
+        CHECK(diagnostics.accepted_frames > 0);
+        CHECK(diagnostics.written_frames == diagnostics.accepted_frames);
+        CHECK(diagnostics.capture_failures == 0);
+        // Nearly every frame is a new picture; reused pictures cost nothing.
+        // Printed, not asserted: a compositor that falls behind in a VM makes
+        // the figures doubtful without making the recording wrong.
+        std::printf("RECORDING_FRAME_COST acquired_ratio=%.3f
+                    ",
+                            diagnostics.capture_attempts == 0
+                        ? 0.0
+                        : static_cast<double>(diagnostics.acquired_frames) /
+                              static_cast<double>(diagnostics.capture_attempts));
+        if (path == ProbedCapturePath::Duplication) {
+            // Only what is taken before the first composed frame comes through GDI.
+            CHECK(diagnostics.fallback_frames <= 3);
+        }
+        const Mp4Inspection inspection =
+            InspectMp4(session->finalized_path(), width, height, false);
+        CHECK(inspection.valid);
+        CHECK(inspection.sample_count == diagnostics.written_frames);
+
+        const uint64_t frames = diagnostics.written_frames;
+        Repetition result;
+        result.frames = static_cast<double>(frames);
+        result.acquired = static_cast<double>(diagnostics.acquired_frames);
+        result.attempts = static_cast<double>(diagnostics.capture_attempts);
+        result.fallback_frames = static_cast<double>(diagnostics.fallback_frames);
+        result.pacing_missed = static_cast<double>(diagnostics.pacing_slots_missed);
+        result.queue_full = static_cast<double>(diagnostics.queue_full_rejections);
+        result.peak_queue = static_cast<double>(diagnostics.peak_queue_depth);
+        result.copy_us = static_cast<double>(diagnostics.region_copy_timing.average_microseconds());
+        result.video_writer_us =
+            static_cast<double>(diagnostics.writer_submission_timing.average_microseconds());
+        uint64_t painting_100ns = 0;
+        if (painting_before.has_value() && painting_after.has_value() &&
+            *painting_after >= *painting_before) {
+            painting_100ns = *painting_after - *painting_before;
+        }
+        if (before.has_value() && after.has_value() && frames > 0) {
+            const uint64_t faults = after->page_faults - before->page_faults;
+            const uint64_t process_100ns = after->cpu_100ns - before->cpu_100ns;
+            const uint64_t recording_100ns =
+                process_100ns > painting_100ns ? process_100ns - painting_100ns : 0;
+            result.faults_per_frame = static_cast<double>(faults) / static_cast<double>(frames);
+            result.cpu_us_per_frame =
+                static_cast<double>(recording_100ns) / 10.0 / static_cast<double>(frames);
+            // The process's peak since it started; it covers the probe and
+            // any earlier recording of this run.
+            result.private_peak_mb = static_cast<double>(after->peak_private_bytes) / kMebibyte;
+        }
+        const auto& copy = diagnostics.region_copy_timing;
+        const auto& writer = diagnostics.writer_submission_timing;
+        std::printf(
+            "RECORDING_FRAME_COST region=%ux%u fps=%u path=%s frames=%llu acquired=%llu "
+            "attempts=%llu fallback_frames=%llu pacing_missed=%llu queue_full=%llu "
+            "peak_queue=%zu copy_us=%llu/%llu/%llu video_writer_us=%llu/%llu/%llu "
+            "faults_per_frame=%.1f cpu_us_per_frame=%.0f private_peak_mb=%.1f "
+            "repetition=%d private_mb=%.1f painting_cpu_us_per_frame=%.0f\n",
+            width, height, kFrameRate, path_name, static_cast<unsigned long long>(frames),
+            static_cast<unsigned long long>(diagnostics.acquired_frames),
+            static_cast<unsigned long long>(diagnostics.capture_attempts),
+            static_cast<unsigned long long>(diagnostics.fallback_frames),
+            static_cast<unsigned long long>(diagnostics.pacing_slots_missed),
+            static_cast<unsigned long long>(diagnostics.queue_full_rejections),
+            diagnostics.peak_queue_depth,
+            static_cast<unsigned long long>(copy.minimum_microseconds),
+            static_cast<unsigned long long>(copy.average_microseconds()),
+            static_cast<unsigned long long>(copy.maximum_microseconds),
+            static_cast<unsigned long long>(writer.minimum_microseconds),
+            static_cast<unsigned long long>(writer.average_microseconds()),
+            static_cast<unsigned long long>(writer.maximum_microseconds),
+            result.faults_per_frame, result.cpu_us_per_frame, result.private_peak_mb, repetition,
+            after.has_value() ? static_cast<double>(after->private_bytes) / kMebibyte : 0.0,
+            frames > 0 ? static_cast<double>(painting_100ns) / 10.0 / static_cast<double>(frames)
+                       : 0.0);
+        repetitions.push_back(result);
+
+        const std::optional<media::TemporarySession> temporary = session->temporary_session();
+        session.reset();
+        CHECK(temporary.has_value());
+        if (temporary.has_value()) {
+            CHECK(store->DeleteSession(*temporary));
+        }
+    }
+    surface.Stop();
+    CHECK(repetitions.size() == static_cast<std::size_t>(kRepetitions));
+
+    const auto median = [&repetitions](double Repetition::* figure) {
+        std::vector<double> values;
+        values.reserve(repetitions.size());
+        for (const Repetition& repetition : repetitions) {
+            values.push_back(repetition.*figure);
+        }
+        return Median(std::move(values));
+    };
+    std::printf(
+        "RECORDING_FRAME_COST summary region=%ux%u fps=%u path=%s repetitions=%zu "
+        "frames=%.0f acquired=%.0f attempts=%.0f fallback_frames=%.0f pacing_missed=%.0f "
+        "queue_full=%.0f peak_queue=%.0f copy_us_avg=%.0f video_writer_us_avg=%.0f "
+        "faults_per_frame=%.1f cpu_us_per_frame=%.0f private_peak_mb=%.1f\n",
+        width, height, kFrameRate, path_name, repetitions.size(), median(&Repetition::frames),
+        median(&Repetition::acquired), median(&Repetition::attempts),
+        median(&Repetition::fallback_frames), median(&Repetition::pacing_missed),
+        median(&Repetition::queue_full), median(&Repetition::peak_queue),
+        median(&Repetition::copy_us), median(&Repetition::video_writer_us),
+        median(&Repetition::faults_per_frame), median(&Repetition::cpu_us_per_frame),
+        median(&Repetition::private_peak_mb));
+    store.reset();
+    platform::GraphicsEnvironment::Get().Shutdown();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "--stress") == 0)
         TestPauseStopStress();
+    else if (argc > 1 && std::strcmp(argv[1], "--frame-cost") == 0)
+        TestRecordingFrameCost();
     else
         TestRealDesktopRecordingSession();
     if (g_fail == 0) {
+        if (g_frame_cost_skipped) {
+            // No capture path read the test monitor; 77 is SKIP_RETURN_CODE.
+            std::printf("SKIPPED  %d/%d checks passed, but no capture path reads the test "
+                        "monitor: nothing was measured\n",
+                        g_pass, g_pass + g_fail);
+            return 77;
+        }
         if (g_stress_audio_skipped) {
             // Video-only cycles passed, but the audio sources this stress exists
             // to cover had no endpoint. 77 is SKIP_RETURN_CODE: skipped, not passed.

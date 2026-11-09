@@ -20,6 +20,10 @@ namespace easnap::capture {
 /// Three queued 4K BGRA frames consume 99,532,800 bytes (94.921875 MiB) of
 /// pixel payload. Callers may choose another fixed capacity deliberately.
 inline constexpr std::size_t kDefaultVideoFrameQueueCapacity = 3;
+/// Pictures the worker holds outside its output queue at most: the latest
+/// one, kept for reuse even after the full queue rejected it, and the new one
+/// being captured while the latest is still held.
+inline constexpr std::size_t kCaptureWorkerHeldFrames = 2;
 inline constexpr uint32_t kMaximumTargetFrameRate = 240;
 inline constexpr std::size_t kCaptureFailureDiagnosticCapacity = 8;
 
