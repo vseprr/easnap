@@ -116,6 +116,11 @@ struct RecordingSessionDiagnostics {
     capture::AggregateTiming audio_backpressure_wait_timing;
     std::size_t queue_capacity{0};
     std::size_t peak_queue_depth{0};
+    /// BGRA pictures the capture worker made because none was free to reuse
+    /// (ADR-042); a recording of changing content stops at about the number
+    /// of pictures alive at once.
+    uint64_t picture_allocations{0};
+    std::size_t peak_pictures_in_use{0};
     /// Pixel bytes of the BGRA pictures and the NV12 conversion buffer that
     /// can be alive at once; samples Media Foundation keeps after WriteSample
     /// are not included.

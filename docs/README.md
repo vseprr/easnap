@@ -47,7 +47,7 @@ not unfinished roadmap instructions.
   [controls/finalization](decisions/ADR-008-recording-ui-and-safe-finalization.md),
   [Both audio](decisions/ADR-012-dual-source-audio-mixing.md),
   [startup, pacing and session leases](decisions/ADR-021-recording-startup-timeline-and-session-leases.md),
-  [what a frame's buffers cost (proposed)](decisions/ADR-042-recording-frame-buffer-cost.md).
+  [what a frame's buffers cost](decisions/ADR-042-recording-frame-buffer-cost.md).
 - Media/completion: [MP4 trim](decisions/ADR-009-mp4-trim-boundaries-and-publication.md),
   [preview ownership](decisions/ADR-010-trim-view-ownership-and-orchestration.md),
   [trimming in a flow of its own](decisions/ADR-039-coordinator-trim-flow.md),

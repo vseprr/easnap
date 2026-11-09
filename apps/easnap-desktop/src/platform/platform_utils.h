@@ -138,7 +138,19 @@ struct BgraImage {
     int height{0};
     std::vector<uint32_t> pixels;
 
+    /// Gives the picture the size `w` x `h`, every pixel opaque black.
     void Reset(int w, int h);
+    /// Gives the picture the size `w` x `h` without filling it, for a caller
+    /// that writes every pixel next. Pixels already there keep their old
+    /// values and added ones are zero, so the picture means nothing until the
+    /// caller has written all of it. A picture reused at its size is neither
+    /// filled nor reallocated (ADR-042).
+    void ResizeForOverwrite(int w, int h);
+    /// Gives the picture the size `w` x `h` and copies every pixel from
+    /// `source`, 32bpp rows `source_pitch` bytes apart, made fully opaque in
+    /// the same pass: the picture `Reset`, a row copy and `MakeOpaque` give,
+    /// with one write per pixel instead of three.
+    void CopyOpaqueFrom(int w, int h, const void* source, size_t source_pitch);
     [[nodiscard]] bool empty() const noexcept { return width <= 0 || height <= 0 || pixels.empty(); }
     [[nodiscard]] size_t stride_bytes() const noexcept { return static_cast<size_t>(width) * 4u; }
     [[nodiscard]] uint32_t* row(int y) noexcept { return pixels.data() + static_cast<size_t>(y) * width; }

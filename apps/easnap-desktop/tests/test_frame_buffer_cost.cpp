@@ -2,9 +2,15 @@
 // against reusing them (ADR-042).
 //
 // Times the production BgraImage::Reset on a new image every iteration (an
-// allocation, the opaque fill and the release, as a recording does for every
-// frame) and on one image reset to the same size (the fill alone), and a full
-// frame copy into that image (what writing every pixel once costs). Then the
+// allocation, the opaque fill and the release, as a recording did for every
+// frame before its pictures were pooled) and on one image reset to the same
+// size (the fill alone), a full frame copy into that image (what writing every
+// pixel once costs) and MakeOpaque (the third pass the readback made). Then
+// what a frame's readback costs now: ResizeForOverwrite on a reused picture
+// (no fill) and CopyOpaqueFrom, the one-pass opaque copy, into a reused
+// picture (a pooled frame) and into a new one (a pool still filling up); a
+// check first proves that the one-pass copy gives the same bytes as Reset, a
+// row copy and MakeOpaque. Then the
 // writer's NV12 buffer calls (MFCreateMemoryBuffer, Lock, Unlock,
 // SetCurrentLength) with a new buffer every iteration and with one buffer
 // reused; both write every byte, as the conversion does, so the pages of a new
@@ -128,6 +134,86 @@ void MeasureBgraImages(const FrameSize& size) {
         g_sink = g_sink + reused.pixels[reused.pixels.size() / 2];
         return reused.pixels.back() == 0xFF336699u;
     });
+
+    Measure("bgra_make_opaque", size, [&reused] {
+        reused.MakeOpaque();
+        g_sink = g_sink + reused.pixels[reused.pixels.size() / 2];
+        return reused.pixels.back() == 0xFF336699u;
+    });
+
+    const uint32_t* storage = reused.pixels.data();
+    Measure("bgra_resize_for_overwrite_reused", size, [&size, &reused, storage] {
+        reused.ResizeForOverwrite(size.width, size.height);
+        g_sink = g_sink + reused.pixels[reused.pixels.size() / 2];
+        return reused.width == size.width && reused.height == size.height &&
+               reused.pixels.data() == storage;
+    });
+
+    // A desktop picture's alpha byte is not reliable; the copy makes it opaque.
+    const std::vector<uint32_t> desktop(pixels, 0x00336699u);
+    const std::size_t pitch = static_cast<std::size_t>(size.width) * sizeof(uint32_t);
+    Measure("bgra_copy_opaque_reused", size, [&size, &reused, &desktop, pitch] {
+        reused.CopyOpaqueFrom(size.width, size.height, desktop.data(), pitch);
+        g_sink = g_sink + reused.pixels[reused.pixels.size() / 2];
+        return reused.pixels.front() == 0xFF336699u && reused.pixels.back() == 0xFF336699u;
+    });
+
+    Measure("bgra_copy_opaque_fresh", size, [&size, &desktop, pitch] {
+        easnap::platform::BgraImage image;
+        image.CopyOpaqueFrom(size.width, size.height, desktop.data(), pitch);
+        g_sink = g_sink + image.pixels[image.pixels.size() / 2];
+        return image.pixels.front() == 0xFF336699u && image.pixels.back() == 0xFF336699u;
+    });
+}
+
+// CopyOpaqueFrom gives exactly the bytes Reset, a row copy and MakeOpaque gave,
+// from rows with padding between them, into a fresh picture and into one that
+// held a larger, a smaller and an equal picture before.
+void CheckOpaqueCopyMatchesThreePasses() {
+    constexpr int kWidth = 37;
+    constexpr int kHeight = 11;
+    constexpr std::size_t kPitch = kWidth * sizeof(uint32_t) + 20;
+    std::vector<uint8_t> source(kPitch * kHeight);
+    for (std::size_t index = 0; index < source.size(); ++index) {
+        source[index] = static_cast<uint8_t>(index * 37u + 11u);
+    }
+
+    easnap::platform::BgraImage expected;
+    expected.Reset(kWidth, kHeight);
+    for (int y = 0; y < kHeight; ++y) {
+        std::memcpy(expected.row(y), source.data() + static_cast<std::size_t>(y) * kPitch,
+                    expected.stride_bytes());
+    }
+    expected.MakeOpaque();
+
+    const auto matches = [&expected](const easnap::platform::BgraImage& image) {
+        return image.width == expected.width && image.height == expected.height &&
+               image.pixels == expected.pixels;
+    };
+    easnap::platform::BgraImage fresh;
+    fresh.CopyOpaqueFrom(kWidth, kHeight, source.data(), kPitch);
+    CHECK(matches(fresh));
+
+    easnap::platform::BgraImage larger;
+    larger.Reset(kWidth * 2, kHeight * 2);
+    const uint32_t* larger_storage = larger.pixels.data();
+    larger.CopyOpaqueFrom(kWidth, kHeight, source.data(), kPitch);
+    CHECK(matches(larger));
+    CHECK(larger.pixels.data() == larger_storage);  // Shrinking keeps the storage.
+
+    easnap::platform::BgraImage smaller;
+    smaller.Reset(3, 2);
+    smaller.CopyOpaqueFrom(kWidth, kHeight, source.data(), kPitch);
+    CHECK(matches(smaller));
+
+    const uint32_t* storage = fresh.pixels.data();
+    fresh.CopyOpaqueFrom(kWidth, kHeight, source.data(), kPitch);
+    CHECK(matches(fresh));
+    CHECK(fresh.pixels.data() == storage);  // Reused at its size: no allocation.
+
+    easnap::platform::BgraImage empty;
+    empty.ResizeForOverwrite(-4, 3);
+    CHECK(empty.width == 0 && empty.height == 3 && empty.empty());
 }
 
 // Fills `buffer` as CoreWriteVideoFrame does: Lock, write every byte, Unlock,
@@ -177,6 +263,7 @@ void MeasureNv12Buffers(const FrameSize& size) {
 }  // namespace
 
 int main() {
+    CheckOpaqueCopyMatchesThreePasses();
     for (const FrameSize& size : kSizes) {
         MeasureBgraImages(size);
     }

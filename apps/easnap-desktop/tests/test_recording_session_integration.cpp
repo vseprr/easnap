@@ -2121,7 +2121,8 @@ void TestRecordingFrameCost() {
             "attempts=%llu fallback_frames=%llu pacing_missed=%llu queue_full=%llu "
             "peak_queue=%zu copy_us=%llu/%llu/%llu video_writer_us=%llu/%llu/%llu "
             "faults_per_frame=%.1f cpu_us_per_frame=%.0f private_peak_mb=%.1f "
-            "repetition=%d private_mb=%.1f painting_cpu_us_per_frame=%.0f\n",
+            "repetition=%d private_mb=%.1f painting_cpu_us_per_frame=%.0f "
+            "picture_allocations=%llu peak_pictures=%zu\n",
             width, height, kFrameRate, path_name, static_cast<unsigned long long>(frames),
             static_cast<unsigned long long>(diagnostics.acquired_frames),
             static_cast<unsigned long long>(diagnostics.capture_attempts),
@@ -2138,7 +2139,14 @@ void TestRecordingFrameCost() {
             result.faults_per_frame, result.cpu_us_per_frame, result.private_peak_mb, repetition,
             after.has_value() ? static_cast<double>(after->private_bytes) / kMebibyte : 0.0,
             frames > 0 ? static_cast<double>(painting_100ns) / 10.0 / static_cast<double>(frames)
-                       : 0.0);
+                       : 0.0,
+            static_cast<unsigned long long>(diagnostics.picture_allocations),
+            diagnostics.peak_pictures_in_use);
+        // The worker's pool reuses its pictures: it never has more in use than
+        // can be alive at once, and makes one only when every earlier one is.
+        CHECK(diagnostics.peak_pictures_in_use <=
+              capture::RecordingPicturesAlive(diagnostics.queue_capacity));
+        CHECK(diagnostics.picture_allocations <= diagnostics.peak_pictures_in_use);
         repetitions.push_back(result);
 
         const std::optional<media::TemporarySession> temporary = session->temporary_session();

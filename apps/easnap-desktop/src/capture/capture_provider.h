@@ -117,10 +117,21 @@ struct RegionImageOptions {
     /// black surface. With this set, such a picture is read through GDI and
     /// duplication is asked again next time, instead of the output being
     /// given up for the life of the provider. For a capture that starts on a
-    /// desktop that is standing still: recording (`CaptureRegionFrame`) and
-    /// Scrollshot set it.
+    /// desktop that is standing still: recording
+    /// (`RecordingFrameImageOptions`) and Scrollshot set it.
     bool await_first_composed_frame{false};
 };
+
+/// How a recording reads each frame, both through the recording worker and
+/// `CaptureRegionFrame`: one poll without waiting (ADR-005), the pointer when
+/// asked, and a duplication that has not composed anything yet answered
+/// through GDI and asked again next frame (ADR-004 as amended by ADR-028).
+[[nodiscard]] constexpr RegionImageOptions RecordingFrameImageOptions(bool include_cursor) noexcept {
+    RegionImageOptions options;
+    options.include_cursor = include_cursor;
+    options.await_first_composed_frame = true;
+    return options;
+}
 
 /// Captures bounded desktop regions synchronously. Recording calls this only
 /// from its dedicated worker and transports results through a bounded queue.
@@ -141,7 +152,9 @@ public:
         media::MediaTime duration, media::VideoFrame& out) = 0;
 
     /// Captures one region as a plain image through the same per-output path.
-    /// `NoNewFrame` leaves `out` untouched.
+    /// `NoNewFrame` leaves `out` untouched. `out` may hold an earlier
+    /// picture: its storage is reused, and a picture that is acquired is
+    /// written in full. The recording worker reads its pooled pictures here.
     virtual RegionCaptureResult CaptureRegionImage(
         const RECT& region, const RegionImageOptions& options, BgraImage& out) = 0;
 

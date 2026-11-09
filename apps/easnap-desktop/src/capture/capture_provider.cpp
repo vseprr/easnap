@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 namespace easnap::capture {
 namespace {
@@ -113,13 +114,11 @@ bool ReadTextureToImage(ID3D11Device* device, ID3D11DeviceContext* context, ID3D
         return false;
     }
 
-    out.Reset(static_cast<int>(desc.Width), static_cast<int>(desc.Height));
-    const auto* source = static_cast<const uint8_t*>(mapped.pData);
-    for (int y = 0; y < out.height; ++y) {
-        std::memcpy(out.row(y), source + static_cast<size_t>(y) * mapped.RowPitch, out.stride_bytes());
-    }
+    // Every pixel is copied, so the picture is not filled first; the desktop
+    // image is always fully opaque.
+    out.CopyOpaqueFrom(static_cast<int>(desc.Width), static_cast<int>(desc.Height), mapped.pData,
+                       mapped.RowPitch);
     context->Unmap(staging.Get(), 0);
-    out.MakeOpaque();  // The desktop image is always fully opaque.
     return true;
 }
 
@@ -194,14 +193,9 @@ bool ReadTextureRegionToImage(ID3D11Device* device, ID3D11DeviceContext* context
         return false;
     }
 
-    out.Reset(static_cast<int>(width), static_cast<int>(height));
-    const auto* source = static_cast<const uint8_t*>(mapped.pData);
-    for (int y = 0; y < out.height; ++y) {
-        std::memcpy(out.row(y), source + static_cast<size_t>(y) * mapped.RowPitch,
-                    out.stride_bytes());
-    }
+    out.CopyOpaqueFrom(static_cast<int>(width), static_cast<int>(height), mapped.pData,
+                       mapped.RowPitch);
     context->Unmap(staging.Get(), 0);
-    out.MakeOpaque();
     return true;
 }
 
@@ -272,9 +266,8 @@ bool CaptureMonitorWithGdi(const RECT& bounds, BgraImage& out,
             const DWORD blit_error = ok ? ERROR_SUCCESS : ::GetLastError();
             ::GdiFlush();
             if (ok) {
-                out.Reset(width, height);
-                std::memcpy(out.pixels.data(), bits, out.pixels.size() * sizeof(uint32_t));
-                out.MakeOpaque();
+                // A top-down 32bpp section: rows are exactly `width` pixels.
+                out.CopyOpaqueFrom(width, height, bits, static_cast<size_t>(width) * sizeof(uint32_t));
             } else if (failure != nullptr) {
                 *failure = Win32Failure(RegionCaptureFailureStage::GdiBitBlt,
                                         blit_error);
@@ -366,13 +359,11 @@ public:
                                            media::MediaTime duration,
                                            media::VideoFrame& out) override {
         BgraImage image;
-        RegionImageOptions options;
-        options.include_cursor = include_cursor;
         // A recording usually starts on a desktop that stands still. Its first
         // black picture comes from GDI and the next frame asks duplication
         // again; nothing waits inside a frame.
-        options.await_first_composed_frame = true;
-        RegionCaptureResult result = CaptureRecordingRegion(region, options, image);
+        RegionCaptureResult result =
+            CaptureRecordingRegion(region, RecordingFrameImageOptions(include_cursor), image);
         if (result.status != RegionCaptureStatus::FrameAcquired) {
             return result;
         }
@@ -398,6 +389,7 @@ public:
         needs_rebuild_ = false;
         recording_frame_available_ = false;
         duplication_initialization_failure_ = {};
+        acquire_scratch_ = BgraImage{};
     }
 
     [[nodiscard]] const wchar_t* name() const override {
@@ -714,13 +706,20 @@ private:
     /// an all-black primary monitor: the surface exists but was never filled.
     /// Such frames are kept only as a last resort while the loop keeps asking
     /// for a real presentation.
+    ///
+    /// Every attempt reads into the provider's scratch picture; an acquired
+    /// picture is handed over by swapping it with `out`, whose storage becomes
+    /// the next scratch. `out` is touched only when a frame is acquired, and a
+    /// caller that passes the same pictures again (the recording worker's
+    /// pool) gets no allocation per frame.
     FrameAcquireStatus AcquireFrame(OutputDuplication& output, BgraImage& out,
                                     const RECT* source_region, UINT timeout_ms,
                                     int attempts, RegionCaptureMetrics* metrics,
                                     RegionCaptureFailureDiagnostic* failure) {
         output.ReleaseFrame();
 
-        BgraImage provisional;
+        BgraImage& candidate = acquire_scratch_;
+        // Set once an attempt has read a blank picture into the candidate.
         bool have_provisional = false;
         output.last_frame_composed = false;
 
@@ -761,7 +760,6 @@ private:
 
             output.frame_acquired = true;
             ComPtr<ID3D11Texture2D> texture;
-            BgraImage candidate;
             const auto copy_start = std::chrono::steady_clock::now();
             const HRESULT texture_result = resource.As(&texture);
             if (FAILED(texture_result) && failure != nullptr) {
@@ -786,21 +784,17 @@ private:
 
             const bool carries_desktop_update = info.LastPresentTime.QuadPart != 0 || info.AccumulatedFrames != 0;
             output.last_frame_composed = carries_desktop_update;
-            if (carries_desktop_update && !ImageLooksBlank(candidate)) {
-                out = std::move(candidate);
+            if (!ImageLooksBlank(candidate)) {
+                // Content is there, whether or not the frame carried the
+                // update flag.
+                std::swap(out, candidate);
                 return FrameAcquireStatus::Acquired;
             }
-            provisional = std::move(candidate);
             have_provisional = true;
-            if (!ImageLooksBlank(provisional)) {
-                // Content is there even though the frame carried no update flag.
-                out = std::move(provisional);
-                return FrameAcquireStatus::Acquired;
-            }
         }
 
         if (have_provisional) {
-            out = std::move(provisional);
+            std::swap(out, candidate);
             return FrameAcquireStatus::Acquired;  // Blank; caller decides whether to fall back.
         }
         // A single attempt is a poll or a deliberate wait for change: an idle
@@ -812,6 +806,9 @@ private:
     }
 
     std::vector<OutputDuplication> outputs_;
+    /// Where `AcquireFrame` reads before it hands a picture over; one more
+    /// region-sized picture while a recording runs, freed by `Release`.
+    BgraImage acquire_scratch_;
     bool initialized_{false};
     bool using_fallback_{false};
     bool recording_frame_available_{false};

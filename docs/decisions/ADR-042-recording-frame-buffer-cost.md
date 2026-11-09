@@ -1,25 +1,27 @@
 # ADR-042 — What a recorded frame's buffers cost
 
-**Status:** Proposed; the measurement and the corrected memory bound are
-implemented, the decision on reusing the buffers waits for the lab figures  
+**Status:** Accepted (BGRA pool and no-fill resize implemented; NV12 sample
+reuse deferred)  
 **Date:** 2026-11-09
 
 ## Context
 
-Every frame a recording captures and writes gets new memory:
+Before this decision, every frame a recording captured and wrote got new
+memory:
 
-- **The BGRA picture.** `CaptureRegionFrame` reads each frame into a new
-  `BgraImage` and wraps it in a new `shared_ptr<const BgraImage>`
-  (`capture_provider.cpp`). Inside it, `AcquireFrame` reads into a local
-  `candidate` image and moves it into the caller's, so the caller's buffer
+- **The BGRA picture.** `CaptureRegionFrame` read each frame into a new
+  `BgraImage` and wrapped it in a new `shared_ptr<const BgraImage>`
+  (`capture_provider.cpp`). Inside it, `AcquireFrame` read into a local
+  `candidate` image and moved it into the caller's, so the caller's buffer
   would be freed even if the caller kept its image. `BgraImage::Reset`
-  allocates the pixels of an empty image and always fills them with opaque
-  black before the row copy overwrites them; `MakeOpaque` then writes every
+  allocated the pixels of an empty image and always filled them with opaque
+  black before the row copy overwrote them; `MakeOpaque` then wrote every
   pixel a third time. At 1920 × 1080 the picture is 8,294,400 bytes.
 - **The NV12 buffer.** `CoreWriteVideoFrame` (`media_foundation_writer.cpp`)
   calls `MFCreateMemoryBuffer` with the NV12 size for each frame, converts the
   picture straight into it and hands it to the sink writer in a new
-  `MFCreateSample`. At 1920 × 1080 the buffer is 3,110,400 bytes.
+  `MFCreateSample`. At 1920 × 1080 the buffer is 3,110,400 bytes. This is
+  unchanged.
 
 Already reused: the Direct3D staging texture of a steady region, the frame
 queue's slots, the picture of a cadence slot without a new frame (ADR-005
@@ -32,21 +34,37 @@ H.264 encoder.
 
 ## Decision
 
-Measure first, inside Easnap, before any buffer changes. Two tests do it:
+Measure first, inside Easnap, then decide by a threshold set in advance:
+reuse the buffers if reuse would save **at least 1 ms per frame at 1080p30 on
+Desktop Duplication**, or **at least 5 % of the process CPU time per frame**,
+or if `pacing_missed` or `queue_full` would drop.
+
+The figures below met it for the BGRA picture: **the recording worker reuses
+its pictures from a pool, and a picture that is overwritten in full is no
+longer filled first.** They did not meet it for the NV12 buffer, whose reuse
+is deferred.
+
+### The measurement
 
 - **`frame_buffer_cost`** (fast tier, `unit;recording;performance`,
   `tests/test_frame_buffer_cost.cpp`) times on the machine it runs on, 200
-  iterations each at 1920 × 1080 and 3840 × 2160, the production
+  iterations each at 1920 × 1080 and 3840 × 2160: the production
   `BgraImage::Reset` on a new image every iteration (allocation, fill and
-  release) against one image reset to the same size (the fill alone), a full
-  frame copy (writing every pixel once), and the writer's
-  `MFCreateMemoryBuffer`, `Lock`, `Unlock` and `SetCurrentLength` with a new
-  buffer every iteration against one buffer reused; both NV12 variants write
-  every byte, as the conversion does. It prints one `MEASURE` line per
-  operation with the median time and the page faults per operation, and
-  checks only that sizes and calls are sound. The 3840 × 2160 lines give a 4K
-  figure without a 4K display. Where Windows has no Media Foundation it
-  measures the images and exits 77.
+  release: what a frame cost before) against one image reset to the same size
+  (the fill alone), a full frame copy (writing every pixel once) and
+  `MakeOpaque`; then what a frame's readback costs now, `ResizeForOverwrite`
+  on a reused picture and `CopyOpaqueFrom` into a reused picture (a pooled
+  frame) and into a new one (a pool that is still filling up); and the
+  writer's `MFCreateMemoryBuffer`, `Lock`, `Unlock` and `SetCurrentLength`
+  with a new buffer every iteration against one buffer reused. Both NV12
+  variants write every byte, as the conversion does. It prints one `MEASURE`
+  line per operation with the median time and the page faults per operation.
+  It checks that sizes and calls are sound, that `CopyOpaqueFrom` gives
+  exactly the bytes of `Reset`, a row copy and `MakeOpaque` (rows with padding
+  between them, into new, larger, smaller and same-size pictures) and that a
+  picture reused at its size keeps its storage; it never judges a time. The
+  3840 × 2160 lines give a 4K figure without a 4K display. Where Windows has
+  no Media Foundation it measures the images and exits 77.
 - **`recording_frame_cost`** (Soak tier, visible desktop,
   `integration;real-desktop-capture;recording;performance;soak`,
   `test_recording_session_integration --frame-cost`) records the whole test
@@ -59,23 +77,22 @@ Measure first, inside Easnap, before any buffer changes. Two tests do it:
   recording with the capture path from the recording-path probe, frames,
   acquired frames and attempts, `fallback_frames`, missed pacing slots,
   queue-full rejections, the peak queue depth, `region_copy_timing`,
-  `writer_submission_timing`, faults and CPU time per written frame and the
-  process's peak private bytes since it started, then a `summary` line with
-  the medians. The painting thread's own CPU time is printed apart. It checks that the
-  recordings are sound and that at least 90 % of the attempts acquired a new
-  picture. It runs in the lab by a Soak run or `lab.ps1 probe`; the host runs
-  it only when the owner asks.
-
-The lab figures decide. Reuse the buffers if reuse would save **at least
-1 ms per frame at 1080p30 on Desktop Duplication**, or **at least 5 % of the
-process CPU time per frame**, or if `pacing_missed` or `queue_full` would
-drop. Otherwise record the figures here and close the question.
+  `writer_submission_timing`, faults and CPU time per written frame, the
+  process's peak private bytes since it started, and the pool's
+  `picture_allocations` and `peak_pictures`, then a `summary` line with the
+  medians. The painting thread's own CPU time is printed apart. It checks
+  that the recordings are sound, that at least 90 % of the attempts acquired
+  a new picture, that the pool never had more pictures in use than can be
+  alive at once and that it made a picture only when every earlier one was in
+  use. It runs in the lab by a Soak run or `lab.ps1 probe`; the host runs it
+  only when the owner asks.
 
 ### Host figures
 
 `frame_buffer_cost` on the development PC (AMD Ryzen 7 5800X3D, 16 logical
 processors, 64 GB, Windows 10 22H2, Release build, run alone), 2026-11-09.
-Median of 200 iterations; faults are page faults per operation.
+Median of 200 iterations; faults are page faults per operation. The first
+run, before the change:
 
 | Operation | 1920 × 1080 | Faults | 3840 × 2160 | Faults |
 |---|---|---|---|---|
@@ -85,90 +102,156 @@ Median of 200 iterations; faults are page faults per operation.
 | New NV12 buffer: create, `Lock`, write, `Unlock`, release | 422 µs | 762 | 1,489 µs | 3,044 |
 | The same NV12 buffer: `Lock`, write, `Unlock` | 125 µs | 0 | 443 µs | 0 |
 
-Read on this machine: a new picture costs about 1.2 ms more than a reused one
-at 1080p and 5.4 ms at 2160p, nearly all of it one page fault per 4 KiB page;
-a new NV12 buffer costs about 0.3 ms and 1.0 ms more. The opaque fill that the
-row copy overwrites costs as much as the copy itself. An earlier run of the
-same build gave 1,359 µs and 462 µs for the new picture and the new buffer at
-1080p, so single figures vary by about 10 %. These are the costs of the
-operations alone, on a fast desktop processor; they do not say what reuse
-would save inside a recording, where the encoder runs on other threads at the
-same time. That is what the lab figures below answer.
+With the change, the same machine and the same conditions (one run; the
+operations measured before gave 1,314, 291, 290, 391 and 121 µs at 1080p in
+it, so single figures vary by about 10 to 15 %):
+
+| Operation | 1920 × 1080 | Faults | 3840 × 2160 | Faults |
+|---|---|---|---|---|
+| `MakeOpaque` (the third pass the readback made) | 124 µs | 0 | 483 µs | 0 |
+| `ResizeForOverwrite` on a reused picture | 0 µs | 0 | 0 µs | 0 |
+| `CopyOpaqueFrom` into a reused picture (a pooled frame) | 144 µs | 0 | 672 µs | 0 |
+| `CopyOpaqueFrom` into a new picture | 1,399 µs | 2,030 | 5,583 µs | 8,117 |
+
+Read on this machine: the readback of a 1080p frame wrote a new picture three
+times, about 1.7 ms (allocation, fill and release, copy, `MakeOpaque`), and
+writes a pooled picture once, about 0.15 ms; at 2160p about 6.5 ms against
+0.7 ms. The one-pass copy is not slower than `memcpy` here; it keeps the
+picture in the cache where the large `memcpy` does not. A new NV12 buffer
+costs about 0.3 ms more than a reused one at 1080p and 1.0 ms at 2160p. These
+are the costs of the operations alone, on a fast desktop processor; the lab
+figures say what they cost inside a recording.
 
 ### Lab figures
 
-To be filled from the lab Soak or probe run of `recording_frame_cost` (the
-lab's 1920 × 1080 display at 125 %) and of `frame_buffer_cost`.
+Before the change, the lab Soak run of `recording_frame_cost` (the lab's
+1920 × 1080 display at 125 %, 30 fps, Desktop Duplication): about 2,160 page
+faults per written frame, `region_copy_timing` about 6.7 ms on average, 0.7
+to 1.3 ms of process CPU time per frame, and 15 missed pacing slots in 286.
+About 2,030 of those faults are the new BGRA picture's pages, the 1.2 ms per
+frame the host measured for them is above the 1 ms threshold, and a readback
+that takes 6.7 ms on average at 30 fps leaves little room before a slot is
+missed. The BGRA picture meets the threshold.
+
+After the change: to be filled from the next lab Soak or probe run of
+`recording_frame_cost`. Expected, from the figures above: about 2,000 fewer
+page faults per frame (what remains is mostly the NV12 buffer), a
+`region_copy_timing` lower by at least the 1.2 ms of the new picture and its
+fill, `picture_allocations` of at most seven per recording, and fewer missed
+pacing slots. Expected, not measured.
+
+### What changed
+
+- **`BgraImage::ResizeForOverwrite`** sets the size and resizes the storage
+  without filling it: pixels already there keep their old values and added
+  ones are zero, so it is only for a caller that writes every pixel next. A
+  picture reused at its size is neither filled nor reallocated; growing past
+  the capacity drops the old pixels instead of copying them.
+  **`BgraImage::CopyOpaqueFrom`** resizes that way and copies 32bpp rows with
+  their pitch, making each pixel opaque in the same pass. The three places
+  that overwrite every pixel use it: the full-texture readback, the region
+  readback and the GDI blit. `Reset` and its opaque black stay where black
+  must remain: the canvas of a region across monitors, the picture of a
+  monitor that could not be read, the cropped snapshot and the cursor patch.
+- **A picture pool owned by the recording worker**
+  (`RecordingPicturePool`, `recording_capture_worker.h`). Every picture of a
+  recording has the region's size. `Acquire` hands out a picture, a free one
+  when there is one and otherwise a new one; it never blocks. The picture
+  goes back through the deleter of its `shared_ptr` when its last owner lets
+  it go, on whatever thread that is, never by looking at `use_count`. The
+  free list is guarded by a mutex, reserved to its cap so a return never
+  allocates, and capped at `RecordingPicturesAlive(capacity)`: the queue's
+  capacity plus `kCaptureWorkerHeldFrames` plus `kConsumerHeldFrames`, seven
+  with the default queue; a picture returned beyond the cap is freed. The
+  pictures share the ownership of the pool, so a picture released after
+  `Stop`, after `Release` or after the worker is gone is safe. `Start` opens
+  the pool and starts its counts again; `Stop` closes it, freeing the free
+  list and every picture returned later. A picture handed out as a frame is
+  `const` and is not written again until every frame that holds it is gone,
+  so ADR-005 rule 2 holds.
+- **The worker reads through `CaptureRegionImage`** into the pooled picture
+  instead of `CaptureRegionFrame`, with `RecordingFrameImageOptions`, the one
+  definition both use: one poll without waiting, the pointer when asked, and
+  `await_first_composed_frame`, so the 2026-11-09 amendment of ADR-004 holds.
+  The timing grid, the timestamps and durations, `NoNewFrame` and `Failed`
+  reusing `latest_pixels`, and the counters are unchanged; a picture the
+  capture did not fill goes back to the pool at the end of its slot.
+- **`AcquireFrame` reads into a provider-owned scratch picture** next to the
+  staging texture and swaps it with the caller's picture when a frame is
+  acquired, so `NoNewFrame` and `Failed` leave the caller's picture untouched
+  and the caller's storage becomes the next scratch. A black provisional
+  picture is still handed over and then overwritten by the GDI blit. With the
+  pool, a recording reuses the same storage frame after frame; a caller that
+  passes a new picture each time (the screenshot snapshot) gets one
+  allocation per capture, as before. `Release` frees the scratch.
+- `bounded_frame_payload_bytes` counts `RecordingPicturesAlive` from the same
+  header, and the session diagnostics report `picture_allocations` and
+  `peak_pictures_in_use`.
 
 ### The memory bound
 
-`bounded_frame_payload_bytes` in the session diagnostics counted the queue's
-capacity plus two BGRA pictures and one NV12 buffer: five pictures with the
-default queue of three. Up to seven can be alive at once when the content
-changes and the consumer is behind: three in the queue; two held by the
-capture worker (`kCaptureWorkerHeldFrames`: the latest picture, kept for reuse
-even after the full queue rejected it, and the new one being captured while
-the latest is still held); and two held by `ConsumerMain` while it writes (the
-pending frame and the frame just taken from the queue, whose timestamp sets
-the pending frame's duration). The bound now counts seven pictures.
-`recording_worker_foundations` checks the worker's two against the real
-worker: with nothing taken from the queue, the peak number of pictures alive
-is the queue's capacity plus two.
+Up to seven pictures can be alive at once when the content changes and the
+consumer is behind: three in the queue; two held by the capture worker
+(`kCaptureWorkerHeldFrames`: the latest picture, kept for reuse even after the
+full queue rejected it, and the new one being captured while the latest is
+still held); and two held by `ConsumerMain` while it writes
+(`kConsumerHeldFrames`: the pending frame and the frame just taken from the
+queue, whose timestamp sets the pending frame's duration). The bound counts
+seven pictures, and the pool keeps at most seven. `recording_worker_foundations`
+checks the worker's two against the real worker: with nothing taken from the
+queue, the most pictures in use at once is the queue's capacity plus two, and
+the pool made exactly that many.
 
 The NV12 figure stays one buffer, the one the writer converts into. Samples
 Media Foundation keeps after `WriteSample` (the sink writer's queue and the
 encoder's own, limited by the sink writer's throttling) are not Easnap's to
 bound and are not counted; a hardware encoder may hold several. The
-provider's own two region-sized buffers, the persistent Direct3D staging
-texture and the temporary GDI section of the fallback, are not frame payload
-and are not counted either.
+provider's own region-sized buffers, the persistent Direct3D staging texture,
+the scratch picture the readback goes through and the temporary GDI section
+of the fallback, are not frame payload and are not counted either.
 
-## Candidate fix, if the figures call for one
+### NV12 sample reuse, deferred
 
-From the 2026-11-09 research of this question; nothing of it is implemented.
-
-- **A pool of BGRA pictures owned by the capture worker.** Sized at Start for
-  the region and capped at the bound above; it hands out
-  `shared_ptr<const BgraImage>` whose deleter returns the picture to a
-  mutex-guarded free list in pool state the `shared_ptr`s share, so a picture
-  released after Stop or `Release` is still safe. It allocates when empty and
-  never blocks. The worker calls `CaptureRegionImage` into a pooled picture
-  instead of `CaptureRegionFrame`, and `AcquireFrame` reads into a
-  provider-owned scratch picture next to the staging texture and swaps it into
-  the output on success, so "no new frame leaves the output untouched" holds.
-  Pictures go back only through the deleter, never by `use_count`.
-- **A Reset that resizes without filling,** used only where every pixel is
-  overwritten (the full-texture and region readbacks and the GDI blit), while
-  the opaque-black Reset stays for the cross-monitor canvas and the cropped
-  snapshot. `MakeOpaque` can fold into the row copy.
-- **Tracked NV12 samples.** In `CoreWriteVideoFrame`, a free list of
-  `MFCreateTrackedSample` samples, each with one `MFCreateMemoryBuffer` of the
-  NV12 size, returned by a separate reference-counted callback object given
-  with `SetAllocator` before each `WriteSample`; the same contiguous buffer,
-  `SetCurrentLength`, sample time and duration, no attributes. Not
-  `MFCreateVideoSampleAllocatorEx`, whose 2D buffers have a pitch.
-- **Unchanged:** `CoreWriteVideoSample` (the native NV12 trim path), the audio
-  path, and the trim fallback writer's sample timing
-  (`mp4_trim_export_backend` and `media_foundation_h264_aac_mp4` keep their
-  `stts` entries and durations).
+A new NV12 buffer costs about 0.3 ms per frame at 1080p on the development PC,
+below the threshold on its own. Reusing it would mean tracked samples: in
+`CoreWriteVideoFrame`, a free list of `MFCreateTrackedSample` samples, each
+with one `MFCreateMemoryBuffer` of the NV12 size, returned by a separate
+reference-counted callback object given with `SetAllocator` before each
+`WriteSample`; the same contiguous buffer, `SetCurrentLength`, sample time and
+duration, no attributes; not `MFCreateVideoSampleAllocatorEx`, whose 2D
+buffers have a pitch. A hardware encoder may keep its input samples after
+`WriteSample`, the lab has only the software encoder, and the trim fallback
+writer goes through the same function, so the change would need a run on a
+physical GPU before it could ship. It is not done. It is reconsidered if the
+lab's after figures still miss pacing slots or a hardware encoder run shows
+the NV12 buffer's cost. `CoreWriteVideoSample` (the native NV12 trim path),
+the audio path and the encoder are not touched by this decision.
 
 ## Consequences
 
-- Before and after a fix are two lab runs of the same two tests on the same
-  image.
+- A recording of changing content allocates about seven pictures instead of
+  one per frame; a still recording, fewer. The pages of a pooled picture are
+  touched once.
 - The bound is 61,171,200 bytes at 1920 × 1080 and 244,684,800 bytes at
-  3840 × 2160 (seven pictures and one NV12 buffer). Today that peak is reached
-  only while the consumer is behind and is freed between frames; a pool full
-  to its cap would hold it for the whole recording.
-- A hardware encoder may keep its input samples after `WriteSample`. The lab has
-  only the software encoder, so tracked samples would need a run on a physical
-  GPU as well.
+  3840 × 2160 (seven pictures and one NV12 buffer). A pool full to its cap
+  holds the pictures from the moment the consumer first falls behind until
+  `Stop`, instead of freeing them between frames; the scratch picture adds
+  one region-sized buffer while the recording runs.
+- `CaptureRegionFrame` stays in `IRegionCaptureProvider` with the same
+  behaviour; production recording no longer calls it, and the recording-path
+  probe of `real_desktop_recording_session` and other tests do. The worker's
+  test providers implement `CaptureRegionImage`.
+- Before and after are two lab runs of the same two tests on the same image.
 - The test window's own painting is taken out of the CPU figure; the
   composition it causes runs in the Desktop Window Manager, outside the
   process.
 
 ## Not validated
 
-- `recording_frame_cost` was built and registered but not run: it needs the
-  visible desktop, so it runs in the lab.
-- No lab figure exists yet, so the threshold has not been applied.
+- The lab figures after the change: `recording_frame_cost` needs the visible
+  desktop and runs in the lab; it has not run with the pool.
+- The tests that read the real desktop (`real_desktop_recording_session`,
+  `recording_pause_stop_stress`, `island_capture_exclusion`, the Scrollshot
+  desktop tests) were built but not run on the host; they run in the lab.
+- A region across monitors, a rotated output and the GDI fallback were not
+  exercised with the pool on real displays.

@@ -225,14 +225,20 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   more than one row off (worst 3.07); two further expected failures (a
   textured fixed background, a bar that changes every frame) are confirmed.
   Fixing them needs an engine change and an amendment of ADR-027; not done.
-- **Per-frame recording allocations are measured, not fixed**
-  ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md), Proposed):
-  `frame_buffer_cost` and `recording_frame_cost`. On the development PC a
-  fresh frame image costs 1,503 µs against 304 µs when reused at 1080p
-  (6,620 against 1,189 µs at 4K) and an NV12 buffer 422 against 125 µs
-  (1,489 against 443 µs), about 1.5 ms per frame at 1080p. The memory bound
-  was corrected from 5 to 7 frames alive. The lab figures are pending and the
-  decision to change the code waits for them.
+- **Recorded frames reuse their pictures**
+  ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md), Accepted):
+  measured by `frame_buffer_cost` and `recording_frame_cost`; the lab Soak
+  run before the change gave about 2,160 page faults per frame and a 6.7 ms
+  region copy at 1080p30 on Desktop Duplication, with 15 of 286 pacing slots
+  missed. The recording worker now reads each frame into a picture from its
+  own pool (at most seven kept, returned by the `shared_ptr` deleter, safe
+  after Stop) through `CaptureRegionImage` with the same options as before,
+  and a readback that overwrites every pixel copies it once, made opaque,
+  without a fill (`ResizeForOverwrite`, `CopyOpaqueFrom`). On the development
+  PC a 1080p readback went from about 1.7 ms (new picture, fill, copy,
+  `MakeOpaque`) to 0.15 ms. The NV12 buffer is still new per frame: tracked
+  samples are deferred until a physical-GPU run. The lab figures after the
+  change are pending.
 - **An external video in the trim view: the media layer**
   ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md), Proposed):
   the support table, the probe with its classifier and the exporters, which
@@ -482,14 +488,11 @@ Open since v1.0.0:
 
 Open since the v1.0.1 review:
 
-- The capture path still allocates a frame image and an NV12 buffer per frame.
-  What that costs is measured: about 1.5 ms per frame at 1080p on the
-  development PC (fresh 1,503 µs against 304 µs reused). The fix is pending;
-  whether to reuse the buffers waits for the lab figures of
-  `recording_frame_cost` (Soak tier and `lab.ps1 probe`), which has not run
-  in the lab yet. `frame_buffer_cost` passed in the lab. The memory
-  bound in the session diagnostics now counts the seven pictures that can be
-  alive at once, not five
+- The writer still allocates an NV12 buffer per frame (about 0.3 ms at 1080p
+  on the development PC); reusing it waits for a run with a hardware encoder.
+  The recording's BGRA pictures are pooled; `recording_frame_cost` has not
+  run in the lab with the pool yet, and the tests that read the real desktop
+  were not run on the host for that change
   ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md)).
 - The repacking of a locked hardware surface was exercised only on the hosted
   runner's WARP adapter, not on a physical GPU with a software encoder.
@@ -533,9 +536,9 @@ On `feature/v1.3-findings`, in this order (the roadmap has the index):
 1. The validation of the external video feature
    ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md)): the lab
    run, the installer's "Open with" entries and the owner checklist.
-2. The decision on the per-frame buffers
-   ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md)), after the
-   Soak figures of `recording_frame_cost`.
+2. The lab figures of `recording_frame_cost` with the picture pool
+   ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md)), against
+   the Soak figures before it.
 3. The remaining editor costs: the first spotlight frame (about 50 ms in a
    tall image) and the blur closure (about 0.1 s per paint).
 4. The owner's checks of this branch's changes in the running application.

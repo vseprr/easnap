@@ -31,7 +31,16 @@ struct TimelineObservations {
     std::mutex mutex;
     std::condition_variable changed;
     std::size_t capture_count{0};
+    easnap::capture::RegionImageOptions options;
 };
+
+// Writes a 2 x 2 picture into the worker's pooled picture, as a capture of the
+// test region does: the whole picture, whatever it held before.
+void WritePicture(easnap::platform::BgraImage& out, uint32_t value) {
+    out.width = 2;
+    out.height = 2;
+    out.pixels.assign(4, value);
+}
 
 class TimelineCaptureProvider final : public easnap::capture::IRegionCaptureProvider {
 public:
@@ -42,31 +51,27 @@ public:
     bool CaptureRegion(const RECT&, bool, easnap::platform::BgraImage&) override { return false; }
 
     easnap::capture::RegionCaptureResult CaptureRegionFrame(
-        const RECT&, bool, easnap::media::MediaTime timestamp,
-        easnap::media::MediaTime duration, easnap::media::VideoFrame& out) override {
+        const RECT&, bool, easnap::media::MediaTime, easnap::media::MediaTime,
+        easnap::media::VideoFrame&) override {
+        return {};  // Unused by the recording worker; a default result is a failure.
+    }
+
+    easnap::capture::RegionCaptureResult CaptureRegionImage(
+        const RECT&, const easnap::capture::RegionImageOptions& options,
+        easnap::platform::BgraImage& out) override {
         std::size_t attempt = 0;
         {
             const std::scoped_lock lock(observations_->mutex);
             attempt = observations_->capture_count++;
+            observations_->options = options;
         }
         observations_->changed.notify_all();
         if ((attempt % 2) != 0) {
             return {easnap::capture::RegionCaptureStatus::NoNewFrame, {3, 0}};
         }
 
-        easnap::platform::BgraImage image;
-        image.width = 2;
-        image.height = 2;
-        image.pixels.assign(4, 0xff102030u);
-        out = easnap::media::VideoFrame{
-            std::make_shared<const easnap::platform::BgraImage>(std::move(image)),
-            timestamp, duration};
+        WritePicture(out, 0xff102030u);
         return {easnap::capture::RegionCaptureStatus::FrameAcquired, {2, 4}};
-    }
-
-    easnap::capture::RegionCaptureResult CaptureRegionImage(
-        const RECT&, const easnap::capture::RegionImageOptions&, easnap::platform::BgraImage&) override {
-        return {};  // Unused by the recording worker; a default result is a failure.
     }
 
     void Release() noexcept override {}
@@ -85,8 +90,14 @@ public:
     bool CaptureRegion(const RECT&, bool, easnap::platform::BgraImage&) override { return false; }
 
     easnap::capture::RegionCaptureResult CaptureRegionFrame(
-        const RECT&, bool, easnap::media::MediaTime timestamp,
-        easnap::media::MediaTime duration, easnap::media::VideoFrame& out) override {
+        const RECT&, bool, easnap::media::MediaTime, easnap::media::MediaTime,
+        easnap::media::VideoFrame&) override {
+        return {};  // Unused by the recording worker; a default result is a failure.
+    }
+
+    easnap::capture::RegionCaptureResult CaptureRegionImage(
+        const RECT&, const easnap::capture::RegionImageOptions&,
+        easnap::platform::BgraImage& out) override {
         std::size_t attempt = 0;
         {
             const std::scoped_lock lock(observations_->mutex);
@@ -108,19 +119,8 @@ public:
             return {easnap::capture::RegionCaptureStatus::NoNewFrame, {1, 0}};
         }
 
-        easnap::platform::BgraImage image;
-        image.width = 2;
-        image.height = 2;
-        image.pixels.assign(4, attempt == 0 ? 0xff102030u : 0xff405060u);
-        out = easnap::media::VideoFrame{
-            std::make_shared<const easnap::platform::BgraImage>(std::move(image)),
-            timestamp, duration};
+        WritePicture(out, attempt == 0 ? 0xff102030u : 0xff405060u);
         return {easnap::capture::RegionCaptureStatus::FrameAcquired, {2, 4}};
-    }
-
-    easnap::capture::RegionCaptureResult CaptureRegionImage(
-        const RECT&, const easnap::capture::RegionImageOptions&, easnap::platform::BgraImage&) override {
-        return {};  // Unused by the recording worker; a default result is a failure.
     }
 
     void Release() noexcept override {}
@@ -146,8 +146,14 @@ public:
     }
 
     easnap::capture::RegionCaptureResult CaptureRegionFrame(
-        const RECT&, bool, easnap::media::MediaTime,
-        easnap::media::MediaTime, easnap::media::VideoFrame&) override {
+        const RECT&, bool, easnap::media::MediaTime, easnap::media::MediaTime,
+        easnap::media::VideoFrame&) override {
+        return {};  // Unused by the recording worker; a default result is a failure.
+    }
+
+    easnap::capture::RegionCaptureResult CaptureRegionImage(
+        const RECT&, const easnap::capture::RegionImageOptions&,
+        easnap::platform::BgraImage&) override {
         if (throw_on_capture_) throw std::bad_alloc();
         {
             const std::scoped_lock lock(observations_->mutex);
@@ -162,11 +168,6 @@ public:
              0x8007000Eu},
             {easnap::capture::RegionCaptureFailureStage::GdiCreateDibSection,
              easnap::capture::RegionCaptureFailureCodeKind::Win32, 8u}};
-    }
-
-    easnap::capture::RegionCaptureResult CaptureRegionImage(
-        const RECT&, const easnap::capture::RegionImageOptions&, easnap::platform::BgraImage&) override {
-        return {};  // Unused by the recording worker; a default result is a failure.
     }
 
     void Release() noexcept override {}
@@ -190,8 +191,14 @@ public:
     bool CaptureRegion(const RECT&, bool, easnap::platform::BgraImage&) override { return false; }
 
     easnap::capture::RegionCaptureResult CaptureRegionFrame(
-        const RECT&, bool, easnap::media::MediaTime timestamp,
-        easnap::media::MediaTime duration, easnap::media::VideoFrame& out) override {
+        const RECT&, bool, easnap::media::MediaTime, easnap::media::MediaTime,
+        easnap::media::VideoFrame&) override {
+        return {};  // Unused by the recording worker; a default result is a failure.
+    }
+
+    easnap::capture::RegionCaptureResult CaptureRegionImage(
+        const RECT&, const easnap::capture::RegionImageOptions&,
+        easnap::platform::BgraImage& out) override {
         using easnap::capture::RegionCaptureFailureCodeKind;
         using easnap::capture::RegionCaptureFailureStage;
         using easnap::capture::RegionCaptureStatus;
@@ -236,19 +243,8 @@ public:
                 return result;
         }
 
-        easnap::platform::BgraImage image;
-        image.width = 2;
-        image.height = 2;
-        image.pixels.assign(4, 0xff102030u + static_cast<uint32_t>(attempt));
-        out = easnap::media::VideoFrame{
-            std::make_shared<const easnap::platform::BgraImage>(std::move(image)),
-            timestamp, duration};
+        WritePicture(out, 0xff102030u + static_cast<uint32_t>(attempt));
         return result;
-    }
-
-    easnap::capture::RegionCaptureResult CaptureRegionImage(
-        const RECT&, const easnap::capture::RegionImageOptions&, easnap::platform::BgraImage&) override {
-        return {};  // Unused by the recording worker; a default result is a failure.
     }
 
     void Release() noexcept override {}
@@ -258,55 +254,39 @@ private:
     std::shared_ptr<TimelineObservations> observations_;
 };
 
-struct PictureObservations {
-    TimelineObservations timeline;
-    std::vector<std::weak_ptr<const easnap::platform::BgraImage>> pictures;
-    std::size_t peak_alive{0};
-};
-
-// Every capture makes a new picture, as a recording of changing content does.
-// Asked for the next one, the provider counts the pictures still alive and the
-// one it is about to make: what the worker holds at that moment.
+// Every capture is a new picture, as in a recording of changing content.
 class NewPictureCaptureProvider final : public easnap::capture::IRegionCaptureProvider {
 public:
-    explicit NewPictureCaptureProvider(std::shared_ptr<PictureObservations> observations)
+    explicit NewPictureCaptureProvider(std::shared_ptr<TimelineObservations> observations)
         : observations_(std::move(observations)) {}
 
     bool CaptureDesktop(bool, easnap::capture::DesktopSnapshot&) override { return false; }
     bool CaptureRegion(const RECT&, bool, easnap::platform::BgraImage&) override { return false; }
 
     easnap::capture::RegionCaptureResult CaptureRegionFrame(
-        const RECT&, bool, easnap::media::MediaTime timestamp,
-        easnap::media::MediaTime duration, easnap::media::VideoFrame& out) override {
-        easnap::platform::BgraImage image;
-        image.width = 2;
-        image.height = 2;
-        image.pixels.assign(4, 0xff102030u);
-        auto picture = std::make_shared<const easnap::platform::BgraImage>(std::move(image));
-        {
-            const std::scoped_lock lock(observations_->timeline.mutex);
-            const auto alive = static_cast<std::size_t>(std::count_if(
-                observations_->pictures.begin(), observations_->pictures.end(),
-                [](const auto& earlier) { return !earlier.expired(); }));
-            observations_->peak_alive = (std::max)(observations_->peak_alive, alive + 1);
-            observations_->pictures.push_back(picture);
-            ++observations_->timeline.capture_count;
-        }
-        observations_->timeline.changed.notify_all();
-        out = easnap::media::VideoFrame{std::move(picture), timestamp, duration};
-        return {easnap::capture::RegionCaptureStatus::FrameAcquired, {2, 4}};
+        const RECT&, bool, easnap::media::MediaTime, easnap::media::MediaTime,
+        easnap::media::VideoFrame&) override {
+        return {};  // Unused by the recording worker; a default result is a failure.
     }
 
     easnap::capture::RegionCaptureResult CaptureRegionImage(
-        const RECT&, const easnap::capture::RegionImageOptions&, easnap::platform::BgraImage&) override {
-        return {};  // Unused by the recording worker; a default result is a failure.
+        const RECT&, const easnap::capture::RegionImageOptions&,
+        easnap::platform::BgraImage& out) override {
+        std::size_t attempt = 0;
+        {
+            const std::scoped_lock lock(observations_->mutex);
+            attempt = observations_->capture_count++;
+        }
+        observations_->changed.notify_all();
+        WritePicture(out, 0xff102030u + static_cast<uint32_t>(attempt));
+        return {easnap::capture::RegionCaptureStatus::FrameAcquired, {2, 4}};
     }
 
     void Release() noexcept override {}
     [[nodiscard]] const wchar_t* name() const override { return L"new-picture-test"; }
 
 private:
-    std::shared_ptr<PictureObservations> observations_;
+    std::shared_ptr<TimelineObservations> observations_;
 };
 
 bool WaitForCaptureCount(const std::shared_ptr<TimelineObservations>& observations,
@@ -451,6 +431,15 @@ void TestPauseExcludesWallClockFromTimeline() {
     CHECK(worker.queue_submission_timing().count == worker.accepted_frames());
     CHECK(worker.active_duration() < easnap::media::MediaTime{5'000'000});
     CHECK(worker.state() == easnap::capture::RecordingWorkerState::Stopped);
+
+    // Every frame is read as CaptureRegionFrame reads it: one poll, no
+    // waiting, and a duplication that has composed nothing yet answered
+    // through GDI instead of given up.
+    const std::scoped_lock lock(observations->mutex);
+    CHECK(!observations->options.include_cursor);
+    CHECK(observations->options.wait_milliseconds == 0);
+    CHECK(!observations->options.require_every_output);
+    CHECK(observations->options.await_first_composed_frame);
 }
 
 void TestStartupFailureReleasesBarrier() {
@@ -592,28 +581,101 @@ void TestFramesReadThroughGdiAreCounted() {
 // worker holds outside its queue (kCaptureWorkerHeldFrames). Nothing takes a
 // frame from the queue here: it fills, the newest picture is rejected and
 // kept as the latest, and the next one is captured while that one is held.
+// The pictures come from the worker's pool, which makes one only when every
+// earlier one is in use; the queued frames outlive the worker.
 void TestWorkerHoldsBoundedPictures() {
-    auto observations = std::make_shared<PictureObservations>();
-    const std::shared_ptr<TimelineObservations> timeline(observations,
-                                                         &observations->timeline);
-    auto provider = std::make_unique<NewPictureCaptureProvider>(observations);
-    easnap::media::FrameQueue<easnap::media::VideoFrame> queue(
-        easnap::capture::kDefaultVideoFrameQueueCapacity);
+    constexpr std::size_t kCapacity = easnap::capture::kDefaultVideoFrameQueueCapacity;
+    auto observations = std::make_shared<TimelineObservations>();
+    easnap::media::FrameQueue<easnap::media::VideoFrame> queue(kCapacity);
     easnap::media::RecordingOptions options;
     options.region = RECT{0, 0, 2, 2};
     options.include_cursor = false;
     options.target_frame_rate = easnap::capture::kMaximumTargetFrameRate;
 
-    easnap::capture::RecordingCaptureWorker worker(std::move(provider), options, queue);
-    CHECK(worker.Start());
-    CHECK(WaitForCaptureCount(timeline, easnap::capture::kDefaultVideoFrameQueueCapacity + 5));
-    worker.Stop();
+    {
+        auto provider = std::make_unique<NewPictureCaptureProvider>(observations);
+        easnap::capture::RecordingCaptureWorker worker(std::move(provider), options, queue);
+        CHECK(worker.Start());
+        CHECK(WaitForCaptureCount(observations, kCapacity + 5));
+        worker.Stop();
 
-    CHECK(worker.queue_full_rejections() >= 2);
-    CHECK(queue.size() == easnap::capture::kDefaultVideoFrameQueueCapacity);
-    const std::scoped_lock lock(observations->timeline.mutex);
-    CHECK(observations->peak_alive == easnap::capture::kDefaultVideoFrameQueueCapacity +
-                                          easnap::capture::kCaptureWorkerHeldFrames);
+        CHECK(worker.queue_full_rejections() >= 2);
+        CHECK(queue.size() == kCapacity);
+        CHECK(worker.peak_pictures_in_use() ==
+              kCapacity + easnap::capture::kCaptureWorkerHeldFrames);
+        CHECK(worker.picture_allocations() == worker.peak_pictures_in_use());
+        CHECK(worker.acquired_frames() > worker.picture_allocations());
+    }
+
+    // The worker is gone; the frames it queued still hold their pictures,
+    // which go back to a pool that only they keep alive.
+    std::vector<easnap::media::VideoFrame> frames;
+    while (auto frame = queue.try_pop()) {
+        frames.push_back(std::move(*frame));
+    }
+    CHECK(frames.size() == kCapacity);
+    for (std::size_t index = 0; index < frames.size(); ++index) {
+        CHECK(frames[index].image != nullptr);
+        if (frames[index].image != nullptr) {
+            CHECK(frames[index].image->pixels.size() == 4);
+        }
+        for (std::size_t earlier = 0; earlier < index; ++earlier) {
+            CHECK(frames[index].image != frames[earlier].image);
+        }
+    }
+    frames.clear();
+}
+
+// A picture goes back to the pool when its last owner lets it go, on any
+// thread; the pool keeps at most its capacity, hands a kept picture out
+// again without making one, and lives as long as a picture it handed out.
+void TestPicturePoolKeepsAtMostItsCapacity() {
+    using easnap::capture::RecordingPicturePool;
+    constexpr std::size_t kRetained = 2;
+    std::shared_ptr<RecordingPicturePool> pool = RecordingPicturePool::Create(kRetained);
+    const std::weak_ptr<RecordingPicturePool> observer = pool;
+    CHECK(pool->retained_capacity() == kRetained);
+
+    std::vector<std::shared_ptr<easnap::platform::BgraImage>> pictures;
+    for (std::size_t index = 0; index < kRetained + 2; ++index) {
+        pictures.push_back(pool->Acquire());
+        CHECK(pictures.back() != nullptr && pictures.back()->empty());
+        WritePicture(*pictures.back(), 0xff000000u + static_cast<uint32_t>(index));
+    }
+    CHECK(pool->pictures_in_use() == kRetained + 2);
+    CHECK(pool->peak_pictures_in_use() == kRetained + 2);
+    CHECK(pool->allocated_pictures() == kRetained + 2);
+    CHECK(pool->free_pictures() == 0);
+
+    pictures.clear();
+    CHECK(pool->pictures_in_use() == 0);
+    CHECK(pool->free_pictures() == kRetained);
+
+    // A kept picture keeps its storage and is handed out without a new one.
+    std::shared_ptr<const easnap::platform::BgraImage> reused = pool->Acquire();
+    CHECK(reused != nullptr && reused->pixels.size() == 4);
+    CHECK(pool->allocated_pictures() == kRetained + 2);
+    CHECK(pool->free_pictures() == kRetained - 1);
+
+    // Released on another thread, as the consumer releases a written frame.
+    std::thread consumer([picture = std::move(reused)]() mutable { picture.reset(); });
+    consumer.join();
+    CHECK(pool->free_pictures() == kRetained);
+
+    // Open starts the counts again from what is in use.
+    std::shared_ptr<easnap::platform::BgraImage> late = pool->Acquire();
+    pool->Open();
+    CHECK(pool->allocated_pictures() == 0);
+    CHECK(pool->peak_pictures_in_use() == 1);
+
+    // Close frees what the pool kept, and a picture returned after Close is
+    // freed too; the last picture keeps the pool alive, then frees it.
+    pool->Close();
+    CHECK(pool->free_pictures() == 0);
+    pool.reset();
+    CHECK(!observer.expired());
+    late.reset();
+    CHECK(observer.expired());
 }
 
 void TestCaptureFailureDiagnosticsRemainBounded() {
@@ -669,6 +731,7 @@ int main() {
     TestTransientCaptureFailuresReuseLatestFrame();
     TestFramesReadThroughGdiAreCounted();
     TestWorkerHoldsBoundedPictures();
+    TestPicturePoolKeepsAtMostItsCapacity();
     TestCaptureFailureDiagnosticsRemainBounded();
     std::printf("QUEUE_LAYOUT object=%zu slot=%zu video_frame=%zu\n",
                 sizeof(easnap::media::FrameQueue<easnap::media::VideoFrame>),

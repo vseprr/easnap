@@ -436,6 +436,39 @@ void BgraImage::Reset(int w, int h) {
     pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), 0xFF000000u);
 }
 
+void BgraImage::ResizeForOverwrite(int w, int h) {
+    width = std::max(0, w);
+    height = std::max(0, h);
+    const size_t count = static_cast<size_t>(width) * static_cast<size_t>(height);
+    if (count > pixels.capacity()) {
+        // Growing past the capacity would copy the old pixels into the new
+        // storage, only for the caller to overwrite them.
+        pixels.clear();
+    }
+    pixels.resize(count);
+}
+
+namespace {
+
+void CopyRowOpaque(uint32_t* __restrict target, const uint32_t* __restrict source,
+                   size_t count) noexcept {
+    for (size_t x = 0; x < count; ++x) {
+        target[x] = source[x] | 0xFF000000u;
+    }
+}
+
+}  // namespace
+
+void BgraImage::CopyOpaqueFrom(int w, int h, const void* source, size_t source_pitch) {
+    ResizeForOverwrite(w, h);
+    const auto* bytes = static_cast<const uint8_t*>(source);
+    for (int y = 0; y < height; ++y) {
+        // 32bpp rows from Direct3D and GDI start on four-byte boundaries.
+        const void* source_row = bytes + static_cast<size_t>(y) * source_pitch;
+        CopyRowOpaque(row(y), static_cast<const uint32_t*>(source_row), static_cast<size_t>(width));
+    }
+}
+
 void BgraImage::MakeOpaque() noexcept {
     for (uint32_t& pixel : pixels) {
         pixel |= 0xFF000000u;

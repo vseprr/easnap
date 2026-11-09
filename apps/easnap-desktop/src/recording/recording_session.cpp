@@ -26,9 +26,6 @@ constexpr media::MediaTime kMaximumAudioWriterLead{1'000'000};  // 100 ms
 // Pause/Stop/Abort callers that wait for the callback to drain.
 constexpr std::chrono::seconds kAudioGateStallLimit{10};
 constexpr std::chrono::milliseconds kAudioGateStallPoll{250};
-// Pictures ConsumerMain holds while it writes: the pending frame and the one
-// just taken from the queue, whose timestamp sets the pending frame's duration.
-constexpr uint64_t kConsumerHeldFrames = 2;
 
 std::wstring BoundedDiagnostic(std::wstring message) {
     if (message.size() > kMaximumDiagnosticCharacters) {
@@ -424,6 +421,8 @@ RecordingSessionDiagnostics RecordingSession::diagnostics() const noexcept {
         audio_backpressure_wait_timing_.snapshot();
     result.queue_capacity = frame_queue_.capacity();
     result.peak_queue_depth = frame_queue_.peak_size();
+    result.picture_allocations = capture_worker_->picture_allocations();
+    result.peak_pictures_in_use = capture_worker_->peak_pictures_in_use();
     result.bounded_frame_payload_bytes = BoundedFramePayloadBytes();
     result.maximum_audio_writer_lead_100ns =
         kMaximumAudioWriterLead.count();
@@ -1254,9 +1253,10 @@ uint64_t RecordingSession::BoundedFramePayloadBytes() const noexcept {
     // outside it (the latest, kept even when the full queue rejected it, and
     // the one being captured) and the two ConsumerMain holds while it writes
     // (the pending frame and the one just taken, whose timestamp ends it).
-    // With the default queue that is seven, not the five counted before.
-    const uint64_t bgra_frames = static_cast<uint64_t>(frame_queue_.capacity()) +
-                                 capture::kCaptureWorkerHeldFrames + kConsumerHeldFrames;
+    // With the default queue that is seven. The worker's picture pool keeps
+    // at most as many for reuse, so the bound holds for the whole recording.
+    const uint64_t bgra_frames =
+        static_cast<uint64_t>(capture::RecordingPicturesAlive(frame_queue_.capacity()));
     const uint64_t bgra_bytes = SaturatingMultiply(SaturatingMultiply(pixels, 4), bgra_frames);
     // One NV12 buffer: the one the writer converts the frame into. Samples
     // that Media Foundation keeps after WriteSample (the sink writer's queue
