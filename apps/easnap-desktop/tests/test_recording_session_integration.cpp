@@ -2071,9 +2071,8 @@ void TestRecordingFrameCost() {
         // Nearly every frame is a new picture; reused pictures cost nothing.
         // Printed, not asserted: a compositor that falls behind in a VM makes
         // the figures doubtful without making the recording wrong.
-        std::printf("RECORDING_FRAME_COST acquired_ratio=%.3f
-                    ",
-                            diagnostics.capture_attempts == 0
+        std::printf("RECORDING_FRAME_COST acquired_ratio=%.3f\n",
+                    diagnostics.capture_attempts == 0
                         ? 0.0
                         : static_cast<double>(diagnostics.acquired_frames) /
                               static_cast<double>(diagnostics.capture_attempts));
