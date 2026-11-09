@@ -87,6 +87,7 @@
     "gpuRequired": [],
     "captureTests": [
       "real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop",
+      "scrollshot_realistic_desktop",
       "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation",
       "trim_timeline_seek_stress", "trim_timeline_seek_soak", "mfplay_preview_startup",
       "island_capture_exclusion"
@@ -104,9 +105,9 @@
       "os": ["*"],
       "toolchain": ["*"],
       "locale": ["strings_catalog", "text_fits_in_every_language", "data_safety_questions"],
-      "display": ["real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop", "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation", "trim_timeline_seek_stress", "trim_timeline_seek_soak", "mfplay_preview_startup", "capture_overlay_interaction", "capture_island_placement", "island_capture_exclusion"],
+      "display": ["real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop", "scrollshot_realistic_desktop", "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation", "trim_timeline_seek_stress", "trim_timeline_seek_soak", "mfplay_preview_startup", "capture_overlay_interaction", "capture_island_placement", "island_capture_exclusion"],
       "scale": ["ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation", "capture_workspace_production", "capture_frame_interaction", "capture_island_placement", "text_fits_in_every_language", "scrollshot_workspace_production"],
-      "gpu": ["real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop", "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation", "trim_timeline_seek_stress", "trim_timeline_seek_soak", "mfplay_preview_startup", "media_foundation_h264_aac_mp4", "mp4_trim_export_backend", "gif_backend", "island_capture_exclusion"],
+      "gpu": ["real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop", "scrollshot_realistic_desktop", "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation", "trim_timeline_seek_stress", "trim_timeline_seek_soak", "mfplay_preview_startup", "media_foundation_h264_aac_mp4", "mp4_trim_export_backend", "gif_backend", "island_capture_exclusion"],
       "audio": ["wasapi_audio_capture", "mfplay_preview_audio_transport", "recording_pause_stop_stress", "media_foundation_h264_aac_mp4"],
       "cpu": ["trim_timeline_seek_stress", "recording_pause_stop_stress", "capture_frame_interaction"]
     }
@@ -117,6 +118,7 @@
     "setupCommands": ["build"],
     "tests": [
       "real_desktop_recording_session", "recording_pause_stop_stress", "scrollshot_real_desktop",
+      "scrollshot_realistic_desktop",
       "ui_modernization_native", "annotation_editing_native", "trim_endpoint_presentation",
       "trim_timeline_seek_stress", "trim_timeline_seek_soak", "mfplay_preview_startup",
       "wasapi_audio_capture", "island_capture_exclusion"

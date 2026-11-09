@@ -377,6 +377,21 @@ target_link_libraries(test_scrollshot_stitch PRIVATE easnap_project_options)
 add_test(NAME scrollshot_stitch_logic COMMAND test_scrollshot_stitch)
 set_tests_properties(scrollshot_stitch_logic PROPERTIES LABELS "unit;scrollshot" TIMEOUT 240)
 
+# A generated application with real text, pictures, late content and eased
+# scrolling, pictured at jittered moments and fed to the production engine
+# (ADR-041). Direct2D and DirectWrite on WARP; no window, desktop or capture.
+# Exits 77 where WARP, DirectWrite or one of its five fonts is missing.
+add_executable(test_scrollshot_realistic
+    test_scrollshot_realistic.cpp
+    scrollshot_realistic_app.cpp
+    ../src/scrollshot/stitch_engine.cpp)
+target_include_directories(test_scrollshot_realistic PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(test_scrollshot_realistic PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs bcrypt ole32 user32)
+add_test(NAME scrollshot_realistic_stitch COMMAND test_scrollshot_realistic)
+set_tests_properties(scrollshot_realistic_stitch PROPERTIES
+    LABELS "integration;scrollshot" TIMEOUT 240 SKIP_RETURN_CODE 77)
+
 # The capture session's worker, preview, notifications and stop barrier against
 # a scripted provider: no desktop is read and no window is shown.
 add_executable(test_scrollshot_session
@@ -684,6 +699,35 @@ add_test(NAME scrollshot_real_desktop COMMAND test_scrollshot_desktop)
 set_tests_properties(scrollshot_real_desktop PROPERTIES
     LABELS "integration;scrollshot;real-desktop-capture" TIMEOUT 90 SKIP_RETURN_CODE 77)
 
+# The generated application of scrollshot_realistic_stitch shown by a second
+# process in a flip-model swap chain, scrolled with real input through the
+# production workspace and session. An observer around the production
+# provider checks every placement against the published page (ADR-041).
+add_executable(test_scrollshot_realistic_desktop
+    test_scrollshot_realistic_desktop.cpp
+    scrollshot_realistic_app.cpp
+    ../src/capture/capture_provider.cpp
+    ../src/scrollshot/scrollshot_session.cpp
+    ../src/scrollshot/stitch_engine.cpp
+    ../src/ui/capture_workspace.cpp
+    ../src/ui/overlay.cpp
+    ../src/ui/island_layout.cpp
+    ../src/ui/capture_magnifier.cpp
+    ../src/ui/region_selector.cpp
+    ../src/ui/scrollshot_controls.cpp
+    ../src/ui/scrollshot_layout.cpp
+    ../src/ui/ui_theme.cpp
+    ../src/ui/native_controls.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_scrollshot_realistic_desktop PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_scrollshot_realistic_desktop PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
+add_test(NAME scrollshot_realistic_desktop COMMAND test_scrollshot_realistic_desktop)
+set_tests_properties(scrollshot_realistic_desktop PROPERTIES
+    LABELS "integration;scrollshot;real-desktop-capture" TIMEOUT 180 SKIP_RETURN_CODE 77)
+
 # The recording panel and the Scrollshot island over a window of one colour,
 # captured through the GDI blit and through Desktop Duplication: the island
 # never appears in the picture.
@@ -803,8 +847,8 @@ set_tests_properties(trim_flow_production PROPERTIES
     LABELS "integration;trim;recording;preview;isolated-desktop" TIMEOUT 180)
 
 foreach(ui_target test_region_selector test_redaction_renderer test_capture_overlay test_capture_workspace
-                  test_scrollshot_workspace test_scrollshot_desktop test_data_safety test_text_fit
-                  test_native_ui test_trim_flow)
+                  test_scrollshot_workspace test_scrollshot_desktop test_scrollshot_realistic_desktop
+                  test_data_safety test_text_fit test_native_ui test_trim_flow)
     target_link_libraries(${ui_target} PRIVATE uxtheme gdiplus oleacc dwmapi)
 endforeach()
 
@@ -879,7 +923,8 @@ set_tests_properties(annotation_editing_native PROPERTIES LABELS "integration;ed
 # The three capture_* tests left this list: they are message-driven and run on
 # a private desktop instead.
 set(interactive_desktop_tests
-    real_desktop_recording_session recording_pause_stop_stress scrollshot_real_desktop island_capture_exclusion
+    real_desktop_recording_session recording_pause_stop_stress scrollshot_real_desktop
+    scrollshot_realistic_desktop island_capture_exclusion
     ui_modernization_native annotation_editing_native trim_endpoint_presentation
     trim_timeline_seek_stress trim_timeline_seek_soak)
 set_tests_properties(${interactive_desktop_tests} PROPERTIES RUN_SERIAL TRUE)

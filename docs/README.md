@@ -56,7 +56,8 @@ not unfinished roadmap instructions.
   [shared configuration/completion](decisions/ADR-014-unified-recording-configuration-and-format-completion.md).
 - Scrollshot: [stitching engine](decisions/ADR-027-scrollshot-stitching-engine.md),
   [capture workspace](decisions/ADR-028-scrollshot-capture-workspace.md),
-  [editing an image larger than the screen](decisions/ADR-029-scrolled-and-zoomed-image-editing.md).
+  [editing an image larger than the screen](decisions/ADR-029-scrolled-and-zoomed-image-editing.md),
+  [a generated application for its tests](decisions/ADR-041-scrollshot-realistic-test-application.md).
 - Diagnostics and data safety: [log file and crash reports](decisions/ADR-030-log-file-and-crash-reports.md),
   [unsaved work survives exit, sign-out and crashes](decisions/ADR-031-unsaved-work-survives.md).
 - Shell and compatibility: [interface text in string tables](decisions/ADR-032-interface-text-in-string-tables.md),
