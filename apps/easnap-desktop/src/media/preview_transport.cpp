@@ -206,11 +206,13 @@ void PreviewTransport::Failed() noexcept {
 bool PreviewTransport::PlaybackClockContradicted(MediaTime native,
                                                  uint64_t now_ms) const noexcept {
     // The floor is the acknowledged target until a newer seek, natural end or
-    // reset. Pauses since then only make this bound looser, never wrong.
+    // reset. Pauses since then only make this bound looser, never wrong. The
+    // window keeps clock drift over long playback out of the comparison.
     if (!playback_position_floor_) return false;
     const uint64_t elapsed_ms = now_ms > playback_clock_origin_ms_
                                     ? now_ms - playback_clock_origin_ms_
                                     : 0;
+    if (elapsed_ms > static_cast<uint64_t>(clock_check_window.count())) return false;
     return native > *playback_position_floor_ +
                         std::chrono::milliseconds{static_cast<int64_t>(elapsed_ms)} +
                         clock_allowance;

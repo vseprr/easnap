@@ -1385,26 +1385,30 @@ void TestPreviewTransportReseeksContradictedPlaybackClock() {
     // Lab run 20261109-101913-full, mfplay_preview_stress_0, seed 6D2B79F5,
     // region 0. Automatic selected Out paused playback just past 8 s; the
     // human PlayFrom(In), Pause, Play then reached the helper as one
-    // PlayFrom(In). MFPlay completed Seek(In) and Play, yet its clock ran on
-    // from the Out pause: 8.1306962 s at the next snapshot. Millisecond times
-    // follow the parent's trace; the helper's own were not transmitted.
+    // PlayFrom(In). MFPlay reported the clock at In while paused and then
+    // played on from the Out pause: 8.1306962 s at the next snapshot. The
+    // parent's trace has these times: PauseAt sent 388'359, PlayFrom(In) sent
+    // 388'468, paused at In seen 388'578, 8.13 s seen 388'703. The helper's
+    // dispatch times were not transmitted; those below are illustrative,
+    // in that order. This replays the Seek-then-Play ordering; the trace also
+    // allows Pause, then a Seek completing while MFPlay reports Playing.
     const MediaTime in{10'000'000};
     const MediaTime out{80'000'000};
     PreviewTransport transport;
     transport.Reset(true);
     transport.RequestPauseAt(out);
-    CHECK(transport.TakeNext(388'359).type == PreviewTransportCommandType::Pause);
+    CHECK(transport.TakeNext(388'360).type == PreviewTransportCommandType::Pause);
     CHECK(transport.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
     auto command = transport.TakeNext(388'370);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == out);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
     transport.RequestPlayFrom(in);
-    command = transport.TakeNext(388'468);
+    command = transport.TakeNext(388'470);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == in);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
-    CHECK(transport.TakeNext(388'480).type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(388'578).type == PreviewTransportCommandType::Play);
     CHECK(transport.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
     CHECK(!transport.command_pending());
 
@@ -1414,9 +1418,9 @@ void TestPreviewTransportReseeksContradictedPlaybackClock() {
     CHECK(transport.ResolvePosition(stale_clock) == stale_clock);
     CHECK(PlanTrimPlaybackProgress(true, transport.ResolvePosition(stale_clock), out).action ==
           TrimPlaybackAction::PauseAt);
-    // It is 7.13 s ahead of In, 105 ms after Play was dispatched.
-    CHECK(transport.PlaybackClockContradicted(stale_clock, 388'585));
-    CHECK(transport.CheckPlaybackClock(stale_clock, 388'585) == PreviewClockCheck::Reseek);
+    // It is 7.13 s ahead of In, 125 ms after the illustrative Play dispatch.
+    CHECK(transport.PlaybackClockContradicted(stale_clock, 388'703));
+    CHECK(transport.CheckPlaybackClock(stale_clock, 388'703) == PreviewClockCheck::Reseek);
     CHECK(transport.play_requested());
     CHECK(transport.command_pending());
     CHECK(transport.position_pending());
@@ -1425,22 +1429,22 @@ void TestPreviewTransportReseeksContradictedPlaybackClock() {
                                    transport.ResolvePosition(stale_clock), out)
               .action == TrimPlaybackAction::None);
     // The running clock is quiesced before In is sought again, then played.
-    CHECK(transport.TakeNext(388'590).type == PreviewTransportCommandType::Pause);
+    CHECK(transport.TakeNext(388'710).type == PreviewTransportCommandType::Pause);
     CHECK(transport.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
-    command = transport.TakeNext(388'640);
+    command = transport.TakeNext(388'760);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == in);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
-    CHECK(transport.TakeNext(388'700).type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(388'820).type == PreviewTransportCommandType::Play);
     CHECK(transport.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
     const MediaTime honoured = in + milliseconds{150};
-    CHECK(!transport.PlaybackClockContradicted(honoured, 388'860));
-    CHECK(transport.CheckPlaybackClock(honoured, 388'860) == PreviewClockCheck::Consistent);
+    CHECK(!transport.PlaybackClockContradicted(honoured, 388'980));
+    CHECK(transport.CheckPlaybackClock(honoured, 388'980) == PreviewClockCheck::Consistent);
     CHECK(!transport.command_pending());
     CHECK(transport.ResolvePosition(honoured) == honoured);
     CHECK(PlanTrimPlaybackProgress(true, transport.ResolvePosition(honoured), out).action ==
           TrimPlaybackAction::None);
-    CHECK(transport.TakeNext(388'860).type == PreviewTransportCommandType::None);
+    CHECK(transport.TakeNext(388'980).type == PreviewTransportCommandType::None);
 }
 
 void TestPreviewPlaybackClockBound() {
@@ -1450,31 +1454,42 @@ void TestPreviewPlaybackClockBound() {
     const MediaTime target{20'000'000};
     const MediaTime allowance = PreviewTransport::clock_allowance;
 
-    // The bound runs from Play's dispatch, not from its callback: a late PLAY
-    // callback cannot make honest playback look ahead of its target.
-    PreviewTransport late_callback;
-    late_callback.RequestPlayFrom(target);
-    CHECK(late_callback.TakeNext(1'000).type == PreviewTransportCommandType::Seek);
-    CHECK(late_callback.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
-    CHECK(late_callback.TakeNext(1'010).type == PreviewTransportCommandType::Play);
-    CHECK(late_callback.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
+    // A paused seek and a later Play: the bound runs from the dispatch of the
+    // Play that resumed playback from the target, not from the Seek before it.
+    PreviewTransport resumed;
+    resumed.RequestPlayFrom(target);
+    CHECK(resumed.TakeNext(1'000).type == PreviewTransportCommandType::Seek);
+    CHECK(resumed.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
+    CHECK(resumed.TakeNext(2'000).type == PreviewTransportCommandType::Play);
+    CHECK(resumed.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
     const MediaTime limit = target + milliseconds{900} + allowance;
-    CHECK(!late_callback.PlaybackClockContradicted(limit, 1'910));
-    CHECK(late_callback.PlaybackClockContradicted(limit + MediaTime{1}, 1'910));
-    CHECK(late_callback.CheckPlaybackClock(limit, 1'910) == PreviewClockCheck::Consistent);
-    // An hour of playback stays within the bound. A clock behind the target
-    // is the capped final-frame case, which the floor already covers.
-    CHECK(!late_callback.PlaybackClockContradicted(target + milliseconds{3'600'000}, 3'601'010));
-    CHECK(!late_callback.PlaybackClockContradicted(target - milliseconds{40}, 1'020));
+    CHECK(!resumed.PlaybackClockContradicted(limit, 2'900));
+    CHECK(resumed.PlaybackClockContradicted(limit + MediaTime{1}, 2'900));
+    CHECK(resumed.CheckPlaybackClock(limit, 2'900) == PreviewClockCheck::Consistent);
+    // A clock behind the target is the capped final-frame case, which the
+    // floor already covers.
+    CHECK(!resumed.PlaybackClockContradicted(target - milliseconds{40}, 2'010));
     // Pausing and resuming without a seek keeps the target; the bound only grows.
-    late_callback.RequestPause();
-    CHECK(late_callback.TakeNext(5'000).type == PreviewTransportCommandType::Pause);
-    CHECK(late_callback.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
-    late_callback.RequestPlay();
-    CHECK(late_callback.TakeNext(9'000).type == PreviewTransportCommandType::Play);
-    CHECK(late_callback.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
-    CHECK(late_callback.CheckPlaybackClock(target + milliseconds{4'000}, 9'100) ==
+    resumed.RequestPause();
+    CHECK(resumed.TakeNext(2'200).type == PreviewTransportCommandType::Pause);
+    CHECK(resumed.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
+    resumed.RequestPlay();
+    CHECK(resumed.TakeNext(3'500).type == PreviewTransportCommandType::Play);
+    CHECK(resumed.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
+    CHECK(resumed.CheckPlaybackClock(target + milliseconds{200}, 3'600) ==
           PreviewClockCheck::Consistent);
+    // The check ends with its window, measured from the resuming dispatch:
+    // over long playback the audio device's clock can drift from the tick
+    // count by more than the allowance.
+    const MediaTime far_ahead = target + milliseconds{60'000};
+    const uint64_t window_end =
+        2'000 + static_cast<uint64_t>(PreviewTransport::clock_check_window.count());
+    CHECK(resumed.PlaybackClockContradicted(far_ahead, window_end));
+    CHECK(!resumed.PlaybackClockContradicted(far_ahead, window_end + 1));
+    CHECK(resumed.CheckPlaybackClock(far_ahead, window_end + 1) == PreviewClockCheck::Consistent);
+    // An hour of playback whose clock gained a second on the tick count.
+    CHECK(!resumed.PlaybackClockContradicted(target + milliseconds{3'601'000}, 2'000 + 3'600'000));
+    CHECK(!resumed.command_pending());
 
     // A seek that completes while MFPlay already plays starts the bound at
     // that Seek's dispatch.

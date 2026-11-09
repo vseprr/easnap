@@ -1168,8 +1168,11 @@ private:
                                          : std::nullopt;
         ::PropVariantClear(&position);
         const auto logical = transport_.ResolvePosition(native_position.value_or(MediaTime{-1}));
+        // While contradicted, snapshots publish the floor instead of logical.
+        const bool clock_contradicted =
+            native_position && transport_.PlaybackClockContradicted(*native_position, ::GetTickCount64());
         static_cast<void>(::swprintf_s(buffer, capacity,
-                                       L"[Preview] seq=%llu ms=%llu tid=%lu gen=%llu intent=%llu %s=%u hr=%08X cmd=%llu/%s target=%lld desired=%u actual=%u flight=%s age=%llu dispatch=%u pending=%lld logical=%lld position-pending=%u preview=%u header=%u native=%u/%08X pos=%lld/%08X override=%lld native-target=%lld\n",
+                                       L"[Preview] seq=%llu ms=%llu tid=%lu gen=%llu intent=%llu %s=%u hr=%08X cmd=%llu/%s target=%lld desired=%u actual=%u flight=%s age=%llu dispatch=%u pending=%lld logical=%lld clock-contradicted=%u floor=%lld position-pending=%u preview=%u header=%u native=%u/%08X pos=%lld/%08X override=%lld native-target=%lld\n",
                                        sequence, ::GetTickCount64(), ::GetCurrentThreadId(), player_generation_,
                                        intent_sequence_, kind, action, static_cast<unsigned>(result),
                                        command_sequence_, TransportCommandName(last_command_.type),
@@ -1179,7 +1182,9 @@ private:
                                                                                                    : ::GetTickCount64() - command_started_ms_,
                                        dispatch_call_active_ ? 1u : 0u,
                                        transport_.desired_position().value_or(MediaTime{-1}).count(),
-                                       logical.count(), transport_.position_pending() ? 1u : 0u,
+                                       logical.count(), clock_contradicted ? 1u : 0u,
+                                       transport_.playback_position_floor().value_or(MediaTime{-1}).count(),
+                                       transport_.position_pending() ? 1u : 0u,
                                        static_cast<unsigned>(state_), header_state,
                                        static_cast<unsigned>(native), static_cast<unsigned>(state_result),
                                        native_position.value_or(MediaTime{-1}).count(),
@@ -1353,9 +1358,9 @@ private:
         }
     }
 
-    // MFPlay has confirmed a paused Seek and the following Play, then advanced
-    // from its clock before that seek (lab run 20261109-101913-full). Returns
-    // true when repeated seeks were exhausted and recovery was requested.
+    // MFPlay has reported a seek complete, then played on from its clock before
+    // that seek (lab run 20261109-101913-full). Returns true when repeated
+    // seeks were exhausted and recovery was requested.
     bool ReconcilePlaybackClock(uint64_t now) noexcept {
         PreviewClockCheck check = PreviewClockCheck::Consistent;
         {

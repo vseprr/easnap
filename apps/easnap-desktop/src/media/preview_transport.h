@@ -73,6 +73,12 @@ public:
     /// command that resumed playback was dispatched. This allowance covers tick
     /// and clock granularity; a smaller contradiction is not detected.
     static constexpr MediaTime clock_allowance{std::chrono::milliseconds{500}};
+    /// The check applies only this long after that command was dispatched.
+    /// The observed fault showed at the first snapshot, about 125 ms after.
+    /// With audio, the native clock follows the audio device rather than the
+    /// tick count; a drift of 100-200 ppm would exceed clock_allowance after
+    /// 40-80 minutes, so an unbounded check would misfire on long playback.
+    static constexpr std::chrono::milliseconds clock_check_window{3'000};
     /// Times one requested position is sought again before the owner recovers.
     static constexpr unsigned clock_reseek_limit = 2;
 
@@ -101,11 +107,12 @@ public:
                std::optional<MediaTime> endpoint = std::nullopt) noexcept;
     void Failed() noexcept;
 
-    /// MFPlay has completed a paused Seek and the following Play, then run on
-    /// from its clock before that seek. True when the native clock is further
-    /// ahead of the acknowledged target than clock_allowance plus the time
-    /// since playback from it was dispatched. Such a clock is not a position:
-    /// the owner reports the target, pending, until CheckPlaybackClock acts.
+    /// MFPlay has reported a seek complete and then played on from its clock
+    /// before that seek. True when, within clock_check_window of the dispatch
+    /// that resumed playback from the acknowledged target, the native clock is
+    /// further ahead of that target than clock_allowance plus the time since
+    /// that dispatch. Such a clock is not a position: the owner reports the
+    /// target, pending, until CheckPlaybackClock acts.
     [[nodiscard]] bool PlaybackClockContradicted(MediaTime native,
                                                  uint64_t now_ms) const noexcept;
     /// Seeks a contradicted target again: Pause, Seek, then Play if Play is
