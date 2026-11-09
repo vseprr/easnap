@@ -379,6 +379,52 @@ changes), in the lab VM, by then at Windows 10 build 19045.6466:
   passed on the GDI fallback and the verdict marked it `VM-ok-but-fallback`,
   the provider's documented behaviour on a still desktop.
 
+## Validation of v1.3.0
+
+Prepared on `main` at `35268de` on 2026-11-09, after the merges of pull
+request #21 (the trim flow out of the coordinator and the screenshot shading
+fix, branch `feature/v1.3`) and pull request #22 (the audit findings, the
+external video feature and the preview clock check, branch
+`feature/v1.3-findings`). No release candidate was packaged: the owner
+checked the branch's build by hand and asked for a stable release. The
+[release notes](v1.3.0.md) summarize it. All runs in the 125 % lab image,
+each on the committed tree of that step; every capture test ran on Desktop
+Duplication or Windows Graphics Capture (`VM-ok`, no fallback).
+
+| Step | Run | Result |
+|---|---|---|
+| Trim flow S2 (`feature/v1.3`) | `20261108-201007-full`, `20261108-202202-soak` | Full 51 of 51, Soak 57 of 57 (`trim_timeline_seek_stress` on retry, pointer on the caption) |
+| Screenshot shading fix | `20261108-234453-full` | Full 51 of 51 |
+| Findings batch 1 (`4862bc7`) | `20261109-044659-full` | Full 51 of 51 |
+| Findings batch 2, V1 (`e048f3e`) | `20261109-095512-full` | Full 62 of 62 |
+| V2, picture pool (`c0ae38a`) | `20261109-101913-full` | 64 of 66: `mfplay_preview_stress_0` (the preview race, fixed below) and `scrollshot_realistic_desktop` (test oracle, corrected in `bd10347`) |
+| Oracle fix (`bd10347`) | `20261109-103322-soak` | 73 of 74: `scrollshot_realistic_desktop` on torn pictures, a real engine weakness ([ADR-027](../decisions/ADR-027-scrollshot-stitching-engine.md#known-weakness-2026-11-09)) |
+| Known-weakness contract (`21eae48`) | `20261109-110928-full` | Full 66 of 66 |
+| Preview clock check (`ee4ca12`) | `20261109-145341-full` | Full 66 of 66 |
+| Clock check window (`19f5ab0`) | `20261109-151309-full`, `20261109-171521-soak` | Full 66 of 66; Soak 74 of 74 (`trim_timeline_seek_stress` on retry, pointer on the caption; `scrollshot_realistic_desktop` on retry, five torn pictures and one with six differing rows) |
+| CI fix of the edit performance test (`aa6e6c1`) | `20261109-180105-standard` | Standard 56 of 56 |
+
+- **Hosted runner:** the Build run of pull request #22 failed on its first
+  commit in Release, Debug and under the sanitizer, all on
+  `scrollshot_edit_performance`: the runner's display is 1024 pixels wide,
+  so the image fits at 52 % and the test, which only zoomed out, never
+  reached the 67 % step; in Debug the blur closure costs 1.8 s per paint and
+  the test ran past 300 s. The test now zooms in either direction and the
+  Debug and sanitizer jobs leave it out
+  ([ADR-029](../decisions/ADR-029-scrolled-and-zoomed-image-editing.md)).
+  On `aa6e6c1` every job passed. CodeQL raised one alert
+  (`cpp/path-injection` in `external_video.cpp`: the user's chosen video is
+  opened with attribute access to learn the path Windows reaches it by);
+  it was dismissed as a false positive with that reason.
+- **The owner's check by hand** on the development PC (2026-11-09, two
+  displays at 125 %, a build of `feature/v1.3-findings`): the six sections
+  of the branch's checklist, including the external video feature with the
+  installer's "Open with" entries. No problem found. The packaged installer
+  of v1.3.0 was not installed by the owner before publication.
+- **Static checks:** every C++ file passes `scripts/format.ps1 -Check`;
+  clang-tidy without findings on the changed sources in every slice and in
+  the CI job; the hygiene check green.
+
 ## Validation of v1.2.0
 
 Prepared on the branch `feature/v1.2` on 2026-11-08; the release candidate

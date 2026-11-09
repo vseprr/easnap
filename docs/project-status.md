@@ -11,7 +11,9 @@ and the individual runs in the [validation records](releases/validation-history.
 
 ## Baseline
 
-- Latest stable release:
+- v1.3.0 is prepared on `main` after the merges of pull requests #21 and
+  #22 ([release notes](releases/v1.3.0.md)); its publication is recorded
+  here once the Release workflow has run. Latest published stable release:
   [v1.2.0](https://github.com/vseprr/easnap/releases/tag/v1.2.0), published on
   2026-11-08 from `main`, tag on the merge of pull request #19
   ([release notes](releases/v1.2.0.md)). The stable release before it was
@@ -40,7 +42,14 @@ and the individual runs in the [validation records](releases/validation-history.
   `island_capture_exclusion` drags those dialogs and reads the themed menu as
   the user sees them.
 
-## v1.3 (in progress)
+## v1.3.0
+
+Work toward v1.3 ran on the branch `feature/v1.3` (S2 of the coordinator
+split, merged by pull request #21) and then on `feature/v1.3-findings` (the
+2026-11-07 audit findings, the external video feature and the preview clock
+check, merged by pull request #22 on 2026-11-09). No release candidate was
+packaged: the owner checked the branch's build by hand on 2026-11-09 and asked
+for a stable release. Its notes are [v1.3.0](releases/v1.3.0.md).
 
 Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
 `main` at `68e34c5`.
