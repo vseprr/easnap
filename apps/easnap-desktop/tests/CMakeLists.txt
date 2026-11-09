@@ -61,6 +61,7 @@ add_executable(test_trim_workflow
     test_trim_workflow.cpp
     ../src/app/trim_workflow.cpp
     ../src/app/session_transitions.cpp
+    ../src/media/video_support.cpp
     ../src/media/preview_transport.cpp
     ../src/ui/trim_layout.cpp
     ../src/platform/platform_utils.cpp)
@@ -69,7 +70,7 @@ target_include_directories(test_trim_workflow PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
     "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
 target_link_libraries(test_trim_workflow PRIVATE easnap_project_options
-    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs mfuuid
     shlwapi comctl32 shell32 ole32 oleaut32 uuid
     user32 gdi32 advapi32 propsys)
 
@@ -258,10 +259,37 @@ add_test(NAME video_probe_asf COMMAND test_video_probe --asf)
 set_tests_properties(video_probe_asf PROPERTIES
     LABELS "integration;media;media-foundation;trim" TIMEOUT 120 SKIP_RETURN_CODE 77)
 
+# external_video_text is pure: the string for every probe answer and the name
+# a trimmed copy is offered under, in both languages. video_probe_job runs the
+# production probe job on its worker thread against a message-only window.
+add_executable(test_external_video
+    test_external_video.cpp
+    ../src/app/external_video.cpp
+    ../src/app/recording_workflow.cpp
+    ../src/media/video_support.cpp
+    ../src/media/video_probe.cpp
+    ../src/media/media_foundation_writer.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_external_video PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_external_video PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    mf mfplat mfuuid mfreadwrite
+    shlwapi comctl32 shell32 ole32 oleaut32 uuid
+    user32 gdi32 advapi32 propsys)
+add_test(NAME external_video_text COMMAND test_external_video)
+set_tests_properties(external_video_text PROPERTIES
+    LABELS "unit;trim;localization" TIMEOUT 30)
+add_test(NAME video_probe_job COMMAND test_external_video --probe-job)
+set_tests_properties(video_probe_job PROPERTIES
+    LABELS "integration;media;media-foundation;trim" TIMEOUT 120 SKIP_RETURN_CODE 77)
+
 add_executable(test_media_preview
     test_media_preview.cpp
     ../src/capture/capture_provider.cpp
     ../src/app/trim_workflow.cpp
+    ../src/media/video_support.cpp
     ../src/app/session_transitions.cpp
     ../src/media/preview_process.cpp
     ../src/media/preview_video_endpoint.cpp
@@ -754,6 +782,9 @@ add_executable(test_text_fit
     ../src/ui/trim_layout.cpp
     ../src/ui/timeline_accessibility.cpp
     ../src/app/trim_workflow.cpp
+    ../src/app/external_video.cpp
+    ../src/media/video_support.cpp
+    ../src/media/video_probe.cpp
     ../src/app/app_settings.cpp
     ../src/media/preview_process.cpp
     ../src/media/preview_transport.cpp
@@ -895,6 +926,7 @@ add_executable(test_native_ui
     ../src/app/app_settings.cpp
     ../src/app/recording_workflow.cpp
     ../src/app/trim_workflow.cpp
+    ../src/media/video_support.cpp
     ../src/app/session_transitions.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
@@ -947,6 +979,8 @@ add_executable(test_trim_flow
     test_trim_flow.cpp
     ../src/app/trim_flow.cpp
     ../src/app/trim_workflow.cpp
+    ../src/app/external_video.cpp
+    ../src/media/video_probe.cpp
     ../src/app/recording_completion.cpp
     ../src/app/recording_workflow.cpp
     ../src/app/session_transitions.cpp
@@ -973,7 +1007,7 @@ target_link_libraries(test_trim_flow PRIVATE easnap_project_options easnap_strin
 add_test(NAME trim_flow_production
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_trim_flow>)
 set_tests_properties(trim_flow_production PROPERTIES
-    LABELS "integration;trim;recording;preview;isolated-desktop" TIMEOUT 180)
+    LABELS "integration;trim;recording;preview;isolated-desktop" TIMEOUT 360)
 
 foreach(ui_target test_region_selector test_redaction_renderer test_capture_overlay test_capture_workspace
                   test_scrollshot_workspace test_scrollshot_desktop test_scrollshot_realistic_desktop

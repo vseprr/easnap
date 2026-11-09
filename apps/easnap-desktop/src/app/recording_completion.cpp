@@ -233,10 +233,16 @@ bool TrimArtifact::Matches(media::MediaTime requested_start,
            end > start;
 }
 
+bool TrimArtifact::Matches(media::MediaTime requested_start, media::MediaTime requested_end,
+                           media::RecordingFormat requested_format) const noexcept {
+    return Matches(requested_start, requested_end) && format == requested_format;
+}
+
 void TrimArtifact::Clear() noexcept {
     path.clear();
     start = media::MediaTime::zero();
     end = media::MediaTime::zero();
+    format = media::RecordingFormat::Mp4;
 }
 
 TrimCloseAction PlanTrimClose(bool discard_confirmed,
@@ -522,11 +528,17 @@ void RecordingCompletionController::Shutdown() {
     clipboard_path_.clear();
 }
 
-std::optional<std::wstring> ShowSaveRecordingDialog(
-    HWND owner, media::RecordingFormat format,
-    const std::wstring& suggested_file_name,
-    const std::wstring& initial_directory,
+namespace {
+
+/// The system Save dialog with one file type per format, `formats[selected]`
+/// chosen first. Returns the path and the format whose extension it carries.
+std::optional<SavedVideoChoice> RunSaveVideoDialog(
+    HWND owner, const media::RecordingFormat* formats, UINT count, UINT selected,
+    const std::wstring& suggested_file_name, const std::wstring& initial_directory,
     const SaveRecordingDialogText& text) {
+    if (count == 0 || count > 2 || selected >= count) {
+        return std::nullopt;
+    }
     ComPtr<IFileSaveDialog> dialog;
     HRESULT result = ::CoCreateInstance(CLSID_FileSaveDialog, nullptr,
                                         CLSCTX_INPROC_SERVER,
@@ -536,25 +548,26 @@ std::optional<std::wstring> ShowSaveRecordingDialog(
     }
     // Built for each dialog: the type name follows the active language. The
     // dialog copies the filter.
-    const COMDLG_FILTERSPEC mp4_filters[] = {
-        {text.mp4_type, L"*.mp4"},
-    };
-    const COMDLG_FILTERSPEC gif_filters[] = {
-        {text.gif_type, L"*.gif"},
-    };
-    const COMDLG_FILTERSPEC* filters =
-        format == media::RecordingFormat::Gif ? gif_filters : mp4_filters;
-    dialog->SetFileTypes(1, filters);
-    dialog->SetFileTypeIndex(1);
+    COMDLG_FILTERSPEC filters[2]{};
+    for (UINT index = 0; index < count; ++index) {
+        filters[index] = formats[index] == media::RecordingFormat::Gif
+                             ? COMDLG_FILTERSPEC{text.gif_type, L"*.gif"}
+                             : COMDLG_FILTERSPEC{text.mp4_type, L"*.mp4"};
+    }
+    dialog->SetFileTypes(count, filters);
+    dialog->SetFileTypeIndex(selected + 1);
     dialog->SetDefaultExtension(
-        format == media::RecordingFormat::Gif ? L"gif" : L"mp4");
+        formats[selected] == media::RecordingFormat::Gif ? L"gif" : L"mp4");
     dialog->SetTitle(text.title);
     dialog->SetFileName(suggested_file_name.c_str());
 
     DWORD options = 0;
     if (SUCCEEDED(dialog->GetOptions(&options))) {
+        // With a choice of types, the name must end in one of them: its
+        // extension is what tells which format was chosen.
         dialog->SetOptions(options | FOS_OVERWRITEPROMPT | FOS_PATHMUSTEXIST |
-                           FOS_FORCEFILESYSTEM | FOS_NOREADONLYRETURN);
+                           FOS_FORCEFILESYSTEM | FOS_NOREADONLYRETURN |
+                           (count > 1 ? FOS_STRICTFILETYPES : 0));
     }
     if (!initial_directory.empty()) {
         ComPtr<IShellItem> folder;
@@ -586,12 +599,47 @@ std::optional<std::wstring> ShowSaveRecordingDialog(
         raw_path == nullptr) {
         return std::nullopt;
     }
-    std::wstring path(raw_path);
+    SavedVideoChoice choice;
+    choice.path = raw_path;
     ::CoTaskMemFree(raw_path);
-    if (!IsValidRecordingDestination(path, format)) {
+    for (UINT index = 0; index < count; ++index) {
+        if (IsValidRecordingDestination(choice.path, formats[index])) {
+            choice.format = formats[index];
+            return choice;
+        }
+    }
+    return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<std::wstring> ShowSaveRecordingDialog(
+    HWND owner, media::RecordingFormat format,
+    const std::wstring& suggested_file_name,
+    const std::wstring& initial_directory,
+    const SaveRecordingDialogText& text) {
+    auto choice = RunSaveVideoDialog(owner, &format, 1, 0, suggested_file_name,
+                                     initial_directory, text);
+    if (!choice.has_value()) {
         return std::nullopt;
     }
-    return path;
+    return std::move(choice->path);
+}
+
+std::optional<SavedVideoChoice> ShowSaveVideoDialog(
+    HWND owner, bool mp4_allowed, media::RecordingFormat preferred,
+    const std::wstring& suggested_file_name, const std::wstring& initial_directory,
+    const SaveRecordingDialogText& text) {
+    if (!mp4_allowed) {
+        constexpr media::RecordingFormat kGifOnly = media::RecordingFormat::Gif;
+        return RunSaveVideoDialog(owner, &kGifOnly, 1, 0, suggested_file_name,
+                                  initial_directory, text);
+    }
+    constexpr media::RecordingFormat kBoth[2] = {media::RecordingFormat::Mp4,
+                                                 media::RecordingFormat::Gif};
+    return RunSaveVideoDialog(owner, kBoth, 2,
+                              preferred == media::RecordingFormat::Gif ? 1U : 0U,
+                              suggested_file_name, initial_directory, text);
 }
 
 }  // namespace easnap::app

@@ -1,6 +1,6 @@
 # ADR-040 — Opening an external video in the trim view
 
-**Status:** Proposed; only the media layer (support table, probe, exporters) is implemented  
+**Status:** Proposed; media layer and flow implemented, entry points pending (the tray entry is implemented; the command line, the hand-over and the installer entries are not)  
 **Date:** 2026-11-09
 
 ## Context
@@ -194,6 +194,63 @@ strings that say "recording kept" or "deleted" are neutral or have an external
 variant; new string IDs are 21300–21399 in both tables
 ([ADR-032](ADR-032-interface-text-in-string-tables.md)).
 
+#### As implemented by the flow slice (2026-11-09)
+
+The flow slice (`app/trim_flow`, `ui/trim_window`, `app/external_video`)
+follows the table above, with these differences and additions:
+
+- **The file on the clipboard is not in the work session.** Copy stages its
+  file in the completion controller's clipboard session, as for a recording:
+  the clipboard refers to that file after the flow has ended, so it cannot
+  live in a session the flow removes. It is never beside the source, never
+  recoverable, and is removed once the clipboard no longer refers to it. The
+  work session holds what the flow exports without a destination of its own.
+- **Reuse also needs the `.mp4` extension.** A `.mov` or `.m4v` with H.264 and
+  AAC is exported: copied under an `.mp4` name, a QuickTime file would be
+  labelled as what it is not, and the copy path accepts `.mp4` sources only.
+  The rule is `ExternalSourceIsReusable` in `app/trim_workflow`.
+- **Where the invariant is enforced.** `TrimFlow::MayMoveArtifact` is the one
+  place that lets a file be moved instead of copied: for an external video only
+  a file inside the flow's work session that is not the source by identity.
+  Save always copies (`PersistRecordingFile` stages a copy and renames the
+  copy); the access list is applied only to the clipboard session and its
+  file. The completion controller is unchanged. `trim_flow_production` wraps
+  the production completion backend and counts every move, access-list change
+  and overwrite whose path is the source by text or by identity; it must stay
+  zero, and the source's bytes, times and access list are compared after every
+  case. It also records the flow's calls to the store: the work session is
+  deleted at the end of every case, never released and never marked
+  recoverable.
+- **The source is checked again before Save and Copy.** Its identity, size and
+  modification time are compared with the probe's; a file that changed is
+  refused with its own message.
+- **Save opens in the video's folder**, under `<name> (trimmed)`; the type
+  chosen gives the format (the dialog insists on one of the two extensions).
+- **Close during an export** asks a question of its own (stop and close, or
+  keep exporting): there was no cancel-export question to reuse.
+- **A preview that fails** names the failure with "the video file is
+  unchanged" and does not offer to save the file as it is.
+- **Copy's menu** names its two items like the Save dialog's file types ("MP4
+  video", "Animated GIF").
+- **The probe result waits for dialogs.** When it arrives while a dialog or
+  menu of Easnap runs its own loop, it is taken a moment later; when a capture
+  has started meanwhile, it is dropped with a log line. Open video is off only
+  while the probe runs: a finished result whose message was lost is dropped by
+  the next Open video instead of keeping it off.
+- **A file inside Easnap's own data folder is refused** before the probe, with
+  its own sentence. Easnap deletes what is in its temporary sessions (the
+  clipboard session it replaces, stale-session cleanup, the store at exit), so
+  a recording reached through "Open data folder" must not become a file the
+  user believes is safe. The path and the folder are compared after both are
+  resolved to their final paths (short names, links and substituted drives
+  give the same answer); a network path is not opened for this, the probe
+  refuses it. The later entry points (`--open`, the hand-over) must use the
+  same check (`IsInsideEasnapFolder` in `app/external_video`).
+- **Media Foundation missing** has its own sentence, about videos, naming the
+  same remedy as Record's message (the Media Feature Pack from the optional
+  features in Windows Settings).
+- Strings: IDs 21300 to 21361, "External video" in `resources/string_ids.h`.
+
 ### Session states and pending work
 
 The state machine gains an `Idle → RecordingTrimming` edge, and `PendingWorkFor`
@@ -306,10 +363,33 @@ classifier tests (`video_support_table`), the probe tests (`video_probe_files`,
 `video_probe_asf`) without the long Soak file, and exporter cases for WMV,
 VC-1, `.mov`, `.m4v`, audio that ends early and a long video-only stretch
 (`mp4_trim_export_backend`, `gif_backend`). The probe tests wrote and probed
-about forty files in under five seconds. Nothing has run in the lab, and every
-item below that belongs to a later slice (installer list, argument parsing,
-hand-over, `trim_flow_production` cases, text fit, owner checklist) has not
-run.
+about forty files in under five seconds.
+
+The flow slice, on the host only (Windows 10 22H2, 2026-11-09, private
+desktops): the Fast tier 27 of 27, with `external_video_text` (the string of
+every answer, in both languages, and the trimmed name), the reuse rule and the
+external source in `trim_workflow_orchestration`, and the pending-work table
+for both source kinds in `session_state_transitions`; on the Standard tier
+`trim_flow_production` (402 checks: the seven opened-video cases below, Save's
+identity check through a hard link, another spelling and a copy, a file that
+changed after the check refused before Copy asks for a format, and a failed
+preview that closes without a question), `text_fits_in_every_language` (the
+trim window of both kinds; the GIF-only notice in the status line of the
+smallest and the opening window without a scroll bar; and, in each language,
+the refusal whose text wraps tallest at the dialog's text width among all
+eighteen refusal strings of this feature, measured with the dialog's font;
+only that one is shown, because a message dialog costs about two seconds on
+a private desktop: it was the Media Foundation sentence in both languages),
+`video_probe_job` (also a result whose message was lost, and a file in a real
+temporary session refused as inside Easnap's folder under three spellings),
+`strings_catalog`, `data_safety_questions`,
+`video_probe_files` and `mp4_trim_export_backend`. A Copy of 11 of the 12
+seconds as MP4 took about 0.55 s, three seconds as GIF about 0.9 s. Nothing
+has run in the lab. Not run anywhere: the tray entry, the Open and Save
+dialogs and the reason dialog in the running application; Exit, sign-out and
+a probe result held back by an open dialog, because no test compiles the
+coordinator; and the later slices (installer list, argument parsing,
+hand-over, owner checklist).
 
 - **Fast tier.** Table contents; the classifier from facts and HRESULTs,
   including protected and a missing codec extension; the installer list equals

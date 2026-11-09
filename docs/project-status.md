@@ -104,6 +104,26 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   with the slowest reply of the window at 31 to 47 ms. Not run: the lab, the
   desktop tiers, Exit and sign-out during an export, Scrollshot Copy and Save
   (no test compiles the coordinator) and the Save dialog paths.
+- **A video file opens in the trim view**
+  ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md)): the
+  media layer (one support table, the probe, both exporters widened) and the
+  flow. The tray has **Open video...**: a file dialog, the probe on a worker
+  thread (`app/external_video`), then the trim view or one sentence that says
+  why the file cannot open. `TrimFlow::Begin` takes a `TrimSource`; for an
+  opened video the flow works in a session of its own that is never marked or
+  kept, never moves, overwrites or secures the file (asserted by
+  `trim_flow_production`), refuses to save over it by file identity, asks MP4
+  or GIF per action and closes without a question unless it exports. A
+  file inside Easnap's own data folder is refused before the probe: Easnap
+  deletes what is there. A recording's flow is unchanged. `Idle -> RecordingTrimming` is a new edge and
+  `PendingWorkFor` takes the source kind. Validated on the development PC
+  (2026-11-09, private desktops): the Release build without warnings, the Fast
+  tier 27 of 27, the Standard tests listed in ADR-040's validation, clang-tidy
+  without findings on the changed sources. Not validated: the lab, the tray
+  entry and its dialogs in the running application, Exit and sign-out during
+  an opened video's export (no test compiles the coordinator). Not yet built:
+  `--open`, the hand-over from a second instance and the installer's "Open
+  with" entries.
 - **Recording stays in the coordinator**, decided after S2: its island
   belongs to the workspace while the region is configured, and what can fail
   is already in classes with tests
@@ -201,12 +221,6 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   (1,489 against 443 µs), about 1.5 ms per frame at 1080p. The memory bound
   was corrected from 5 to 7 frames alive. The lab figures are pending and the
   decision to change the code waits for them.
-- **An external video in the trim view: the media layer**
-  ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md), Proposed):
-  the support table, the probe with its classifier and the exporters, which
-  accept every table entry, are implemented and tested with files the writer
-  made, including a WMV. The flow, the window and the entry points (tray
-  "Open video", command line, Open with) are not implemented.
 - **Documentation tidy-up:** the ADR headers follow one style and the
   `test.ps1` parameters are in a table in [testing](testing.md).
 
@@ -498,9 +512,10 @@ post-v1 without a promised date.
 
 On `feature/v1.3-findings`, in this order (the roadmap has the index):
 
-1. The external video flow and entry points
-   ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md), slices V1
-   and V2).
+1. The external video entry points
+   ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md), slice V2:
+   the command line, the hand-over to a running instance and the installer's
+   "Open with" entries); the flow (V1) is implemented.
 2. The decision on the per-frame buffers
    ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md)), after the
    Soak figures of `recording_frame_cost`.

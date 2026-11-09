@@ -31,6 +31,8 @@ constexpr std::array<std::pair<SessionState, SessionState>, kSessionTransitionCo
     // goes on to trimming (StateAfterRecordingFinalization).
     {SessionState::RecordingFinalizing, SessionState::Idle},
     {SessionState::RecordingFinalizing, SessionState::RecordingTrimming},
+    // A video the user opened goes straight to trimming (ADR-040).
+    {SessionState::Idle, SessionState::RecordingTrimming},
     {SessionState::RecordingTrimming, SessionState::Idle},
     {SessionState::RecordingTrimming, SessionState::Exporting},
     {SessionState::Exporting, SessionState::RecordingTrimming},
@@ -72,7 +74,8 @@ bool IsSessionTransitionLegal(SessionState from, SessionState to) noexcept {
     return false;
 }
 
-PendingWork PendingWorkFor(SessionState state, bool image_at_risk, bool image_export_running) noexcept {
+PendingWork PendingWorkFor(SessionState state, bool image_at_risk, bool image_export_running,
+                           TrimSourceKind trim_source) noexcept {
     const PendingWork image = image_export_running ? PendingWork::Image : PendingWork::None;
     switch (state) {
         case SessionState::RecordingActive:
@@ -80,7 +83,8 @@ PendingWork PendingWorkFor(SessionState state, bool image_at_risk, bool image_ex
         case SessionState::RecordingFinalizing:
             return PendingWork::Recording;
         case SessionState::RecordingTrimming:
-            return PendingWork::UnsavedRecording;
+            // An opened video loses nothing; a pinned image may still be saving.
+            return trim_source == TrimSourceKind::External ? image : PendingWork::UnsavedRecording;
         case SessionState::Exporting:
             return PendingWork::Export;
         case SessionState::ScrollshotCapturing:

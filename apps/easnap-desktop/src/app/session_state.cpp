@@ -98,6 +98,8 @@ void CaptureCoordinator::Shutdown() {
         return;
     }
     StopRecordingForShutdown();
+    // A video being checked is not opened any more; its result is dropped.
+    video_probe_.Join();
     if (trim_flow_) {
         trim_flow_->CancelExportAndWait();
     }
@@ -152,7 +154,8 @@ PendingWork CaptureCoordinator::pending_work() const {
     }
     const bool image_at_risk = editor_ && editor_->visible() &&
                                (editor_->has_annotations() || editor_->document_mode());
-    return PendingWorkFor(state(), image_at_risk, platform::ImageExportActive());
+    return PendingWorkFor(state(), image_at_risk, platform::ImageExportActive(),
+                          trim_flow_ ? trim_flow_->source_kind() : TrimSourceKind::Owned);
 }
 
 HWND CaptureCoordinator::DialogOwner() const {
@@ -190,7 +193,11 @@ bool CaptureCoordinator::ConfirmExit() {
         case PendingWork::None: return true;
         case PendingWork::Recording: text = IDS_EXIT_RECORDING; break;
         case PendingWork::UnsavedRecording: text = IDS_EXIT_UNSAVED_RECORDING; break;
-        case PendingWork::Export: text = IDS_EXIT_EXPORT; break;
+        case PendingWork::Export:
+            // Exporting an opened video loses nothing but the export itself.
+            text = trim_flow_ && trim_flow_->source_kind() == TrimSourceKind::External ? IDS_EXIT_EXTERNAL_EXPORT
+                                                                                       : IDS_EXIT_EXPORT;
+            break;
         case PendingWork::Image: text = IDS_EXIT_IMAGE; break;
     }
     platform::LogMessage(L"Exit requested with unsaved work (state %d)", static_cast<int>(state()));
@@ -201,8 +208,11 @@ bool CaptureCoordinator::ConfirmExit() {
 const wchar_t* CaptureCoordinator::ShutdownBlockReason() const {
     switch (pending_work()) {
         case PendingWork::Recording: return strings::Get(IDS_SHUTDOWN_REASON_RECORDING);
-        case PendingWork::UnsavedRecording:
-        case PendingWork::Export: return strings::Get(IDS_SHUTDOWN_REASON_UNSAVED);
+        case PendingWork::UnsavedRecording: return strings::Get(IDS_SHUTDOWN_REASON_UNSAVED);
+        case PendingWork::Export:
+            return strings::Get(trim_flow_ && trim_flow_->source_kind() == TrimSourceKind::External
+                                    ? IDS_SHUTDOWN_REASON_EXTERNAL_EXPORT
+                                    : IDS_SHUTDOWN_REASON_UNSAVED);
         case PendingWork::Image: return strings::Get(IDS_SHUTDOWN_REASON_IMAGE);
         case PendingWork::None: break;
     }
@@ -231,7 +241,10 @@ void CaptureCoordinator::PrepareForSessionEnd() {
     if (trim_flow_) {
         trim_flow_->CancelExportAndWait();
     }
-    if (recording_session_ && temp_store_) {
+    // An opened video is the user's own file, not unsaved work: nothing is
+    // marked for it, and the next start never offers it (ADR-040).
+    const bool opened_video = trim_flow_ && trim_flow_->source_kind() == TrimSourceKind::External;
+    if (recording_session_ && temp_store_ && !opened_video) {
         const std::optional<media::TemporarySession> session = recording_session_->temporary_session();
         const bool finished =
             recording_session_->state() == recording::RecordingSessionState::Finalized &&
@@ -821,8 +834,11 @@ void CaptureCoordinator::FinishRecordingWorkflow(bool finalized) {
             session.has_value() && temp_store_) {
             static_cast<void>(temp_store_->MarkRecoverable(*session));
         }
-        trim_flow_->Begin(retained_path, recording_options_, recording_region_,
-                          recording_session_->temporary_session());
+        TrimSource source;
+        source.kind = TrimSourceKind::Owned;
+        source.path = retained_path;
+        source.region = recording_region_;
+        trim_flow_->Begin(source, recording_options_, recording_session_->temporary_session());
         return;
     }
 
@@ -843,6 +859,98 @@ void CaptureCoordinator::OnTrimExportCompleted(uint64_t export_generation) {
     if (trim_flow_) {
         trim_flow_->OnExportCompleted(export_generation);
     }
+}
+
+// --- Opening a video file (ADR-040) -------------------------------------------
+
+bool CaptureCoordinator::CanOpenVideo() const {
+    return initialized_ && state() == SessionState::Idle && !video_probe_.running();
+}
+
+void CaptureCoordinator::OpenVideo() {
+    if (!initialized_ || state() != SessionState::Idle || platform::ModalLoopActive() || ui::PopupActive()) {
+        return;
+    }
+    if (video_probe_.running()) {
+        ::MessageBeep(MB_ICONWARNING);  // One video is checked at a time.
+        return;
+    }
+    if (video_probe_.busy() && video_probe_.TryTake(video_probe_.generation()).has_value()) {
+        // Finished, but its message never came: dropped, so that a lost
+        // message cannot keep Open from working.
+        platform::LogMessage(L"[Probe] A probe result that was never delivered was dropped");
+    }
+    const OpenVideoDialogText text{strings::Get(IDS_OPEN_VIDEO_TITLE), strings::Get(IDS_OPEN_VIDEO_FILE_TYPE),
+                                   strings::Get(IDS_OPEN_VIDEO_ALL_FILES)};
+    // No owner: the hidden host window would pin the dialog to the corner of
+    // the primary display.
+    const std::optional<std::wstring> path = ShowOpenVideoDialog(nullptr, settings_.VideoStartDirectory(), text);
+    if (!path.has_value() || !initialized_ || state() != SessionState::Idle || video_probe_.busy()) {
+        return;
+    }
+    // Easnap deletes what is in its own folder: a recording left there must
+    // not become a file the user believes is safe (ADR-040).
+    if (IsInsideEasnapFolder(*path, platform::AppDataDirectory())) {
+        platform::LogMessage(L"[Probe] A video inside Easnap's data folder was not opened");
+        ui::ShowErrorMessage(
+            nullptr, strings::Format(IDS_VIDEO_REFUSED_EASNAP_FOLDER, {VideoFileDisplayName(*path)}).c_str());
+        return;
+    }
+    // The probe reads the file and may wait for the disk: never on this thread.
+    if (!video_probe_.Start(host_window_, kMsgVideoProbeCompleted, *path, kVideoProbeDeadline)) {
+        ui::ShowErrorMessage(nullptr, strings::Format(IDS_VIDEO_OPEN_FAILED, {VideoFileDisplayName(*path)}).c_str());
+        return;
+    }
+    platform::LogMessage(L"[Probe] Checking a video the user chose");
+}
+
+void CaptureCoordinator::OnVideoProbeTimer() { OnVideoProbeCompleted(video_probe_.generation()); }
+
+void CaptureCoordinator::OnVideoProbeCompleted(VideoProbeJob::Generation generation) {
+    if (!initialized_ || generation == 0 || generation != video_probe_.generation()) {
+        return;
+    }
+    // A dialog or menu of Easnap is running its own loop; its caller must find
+    // everything as it left it. The result waits a moment.
+    if (platform::ModalLoopActive() || ui::PopupActive()) {
+        if (host_window_ != nullptr) { ::SetTimer(host_window_, kTimerVideoProbeRetry, 100, nullptr); }
+        return;
+    }
+    if (host_window_ != nullptr) { ::KillTimer(host_window_, kTimerVideoProbeRetry); }
+    const std::optional<VideoProbeOutcome> outcome = video_probe_.TryTake(generation);
+    if (!outcome.has_value()) {
+        return;  // Still running, or taken already.
+    }
+    if (outcome->worker_exception) {
+        platform::LogMessage(L"[Probe] The video probe failed with an exception");
+    }
+    if (state() != SessionState::Idle) {
+        // A capture started while the file was checked; the user moved on.
+        platform::LogMessage(L"[Probe] A checked video was not opened: a session is active (%s)", ToString(state()));
+        return;
+    }
+    if (!outcome->result.ok) {
+        ui::ShowErrorMessage(nullptr, strings::Format(VideoRefusalMessageId(outcome->result),
+                                                      {VideoFileDisplayName(outcome->path)})
+                                          .c_str());
+        return;
+    }
+    BeginExternalTrim(*outcome);
+}
+
+void CaptureCoordinator::BeginExternalTrim(const VideoProbeOutcome& outcome) {
+    if (!trim_flow_) {
+        return;
+    }
+    // On the monitor the user is working on, as large as the video allows.
+    POINT cursor{};
+    ::GetCursorPos(&cursor);
+    const TrimSource source = MakeExternalTrimSource(outcome.path, outcome.result,
+                                                     platform::MonitorForPoint(cursor).work_area);
+    if (!RequestTransition(SessionState::RecordingTrimming)) {
+        return;
+    }
+    trim_flow_->Begin(source, ExternalTrimOptions(source), std::nullopt);
 }
 
 void CaptureCoordinator::OnClipboardChanged() {
@@ -1582,9 +1690,13 @@ void CaptureCoordinator::OnDisplayChanged() {
     if (IsRecordingState(state())) {
         // The capture provider rejects a region that left the virtual screen
         // and the worker would repeat the last frame until Stop. End the
-        // recording instead so the user keeps what was really captured.
+        // recording instead so the user keeps what was really captured. Once
+        // trimming, nothing is captured any more; an opened video never had
+        // a region.
+        const bool capturing = state() == SessionState::RecordingConfiguring ||
+                               state() == SessionState::RecordingActive || state() == SessionState::RecordingPaused;
         const RECT visible = platform::IntersectRects(recording_region_, platform::VirtualScreenBounds());
-        if (::EqualRect(&visible, &recording_region_) == FALSE) {
+        if (capturing && ::EqualRect(&visible, &recording_region_) == FALSE) {
             platform::LogMessage(L"The recording region left the desktop - ending the recording");
             if (state() == SessionState::RecordingActive || state() == SessionState::RecordingPaused) {
                 OnRecordingStop();

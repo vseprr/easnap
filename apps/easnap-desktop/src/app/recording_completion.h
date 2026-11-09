@@ -18,9 +18,14 @@ struct TrimArtifact final {
     std::wstring path;
     media::MediaTime start{0};
     media::MediaTime end{0};
+    /// What the file is. An external video can be exported as MP4 and as GIF,
+    /// so a cached result is reused only for the format it was made in.
+    media::RecordingFormat format{media::RecordingFormat::Mp4};
 
     [[nodiscard]] bool Matches(media::MediaTime requested_start,
                                media::MediaTime requested_end) const noexcept;
+    [[nodiscard]] bool Matches(media::MediaTime requested_start, media::MediaTime requested_end,
+                               media::RecordingFormat requested_format) const noexcept;
     void Clear() noexcept;
 };
 
@@ -155,5 +160,20 @@ struct SaveRecordingDialogText {
     const std::wstring& suggested_file_name,
     const std::wstring& initial_directory,
     const SaveRecordingDialogText& text = {});
+
+/// Where a video is saved and in which format.
+struct SavedVideoChoice final {
+    std::wstring path;
+    media::RecordingFormat format{media::RecordingFormat::Mp4};
+};
+
+/// The Save dialog of an external video (ADR-040): it offers the MP4 type
+/// unless `mp4_allowed` is false, and always the GIF type. The format follows
+/// the chosen type; `preferred` is selected first. `suggested_file_name` has
+/// no extension: the dialog adds the chosen type's.
+[[nodiscard]] std::optional<SavedVideoChoice> ShowSaveVideoDialog(
+    HWND owner, bool mp4_allowed, media::RecordingFormat preferred,
+    const std::wstring& suggested_file_name, const std::wstring& initial_directory,
+    const SaveRecordingDialogText& text);
 
 }  // namespace easnap::app

@@ -111,10 +111,16 @@ void TestStateNamesAndGroups() {
 }
 
 void TestSessionEntryAndCancellation() {
-    CHECK(easnap::app::kSessionTransitionCount == 35);
+    CHECK(easnap::app::kSessionTransitionCount == 36);
     CHECK(IsSessionTransitionLegal(SessionState::Idle, SessionState::RegionSelecting));
     CHECK(IsSessionTransitionLegal(SessionState::RegionSelecting, SessionState::Idle));
     CHECK(!IsSessionTransitionLegal(SessionState::Idle, SessionState::RecordingActive));
+    // A video the user opened goes from Idle straight to trimming (ADR-040),
+    // but never straight to an export or back into a recording.
+    CHECK(IsSessionTransitionLegal(SessionState::Idle, SessionState::RecordingTrimming));
+    CHECK(!IsSessionTransitionLegal(SessionState::Idle, SessionState::Exporting));
+    CHECK(!IsSessionTransitionLegal(SessionState::RecordingTrimming, SessionState::RecordingActive));
+    CHECK(!IsSessionTransitionLegal(SessionState::RecordingTrimming, SessionState::RecordingFinalizing));
 }
 
 void TestScreenshotBranch() {
@@ -536,12 +542,13 @@ void TestRecordingRegionAndElapsedFormatting() {
 
 }  // namespace
 
-/// What exiting would lose, for every state: the table the exit question and
-/// the shutdown block reason are chosen from. A copy or save running (from the
-/// session or a pin) is an image at risk unless a recording matters more.
+/// What exiting would lose, for every state and both kinds of video in the
+/// trim view: the table the exit question and the shutdown block reason are
+/// chosen from (ADR-031, ADR-040).
 void TestPendingWork() {
     using easnap::app::PendingWork;
     using easnap::app::PendingWorkFor;
+    using easnap::app::TrimSourceKind;
     struct Row {
         SessionState state;
         PendingWork plain;
@@ -566,12 +573,30 @@ void TestPendingWork() {
     };
     CHECK(sizeof(rows) / sizeof(rows[0]) == easnap::app::kSessionStateCount);
     for (const Row& row : rows) {
-        CHECK(PendingWorkFor(row.state, false, false) == row.plain);
-        CHECK(PendingWorkFor(row.state, true, false) == row.with_edits);
-        CHECK(PendingWorkFor(row.state, false, true) == row.exporting);
-        CHECK(PendingWorkFor(row.state, true, true) ==
+        CHECK(PendingWorkFor(row.state, false, false, TrimSourceKind::Owned) == row.plain);
+        CHECK(PendingWorkFor(row.state, true, false, TrimSourceKind::Owned) == row.with_edits);
+        CHECK(PendingWorkFor(row.state, false, true, TrimSourceKind::Owned) == row.exporting);
+        CHECK(PendingWorkFor(row.state, true, true, TrimSourceKind::Owned) ==
               (row.with_edits == PendingWork::None ? PendingWork::Image : row.with_edits));
     }
+    // An opened video is the user's own file: trimming it is never unsaved
+    // work, and only its export is pending. Every other state answers as before.
+    for (const Row& row : rows) {
+        const bool trimming = row.state == SessionState::RecordingTrimming;
+        for (const bool edits : {false, true}) {
+            for (const bool image_export : {false, true}) {
+                const PendingWork owned = PendingWorkFor(row.state, edits, image_export, TrimSourceKind::Owned);
+                const PendingWork external = PendingWorkFor(row.state, edits, image_export, TrimSourceKind::External);
+                if (trimming) {
+                    // A pinned image that is still being saved still counts.
+                    CHECK(external == (image_export ? PendingWork::Image : PendingWork::None));
+                } else {
+                    CHECK(external == owned);
+                }
+            }
+        }
+    }
+    CHECK(PendingWorkFor(SessionState::Exporting, false, false, TrimSourceKind::External) == PendingWork::Export);
 }
 
 /// What H.264 can hold: 36,864 macroblocks and 8,688 pixels on a side.

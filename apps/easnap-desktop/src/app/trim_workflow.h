@@ -8,10 +8,12 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 
 #include "app/session_transitions.h"
 #include "media/media_interfaces.h"
+#include "media/video_probe.h"
 
 namespace easnap::app {
 
@@ -84,6 +86,39 @@ struct TrimPlaybackDecision final {
 [[nodiscard]] bool IsFullTrimRange(media::MediaTime start,
                                    media::MediaTime end,
                                    media::MediaTime source_duration) noexcept;
+
+/// The video a trim flow opens (ADR-040).
+struct TrimSource final {
+    TrimSourceKind kind{TrimSourceKind::Owned};
+    /// Absolute path of the video.
+    std::wstring path;
+    /// Where and how large the window opens: the recorded region of a
+    /// recording; for an external video a rectangle of the video's size
+    /// centred on the monitor it opens on. The picture keeps its proportions.
+    RECT region{};
+    /// External only: volume, file identifier, size and modification time,
+    /// taken by the probe.
+    media::VideoFileIdentity identity;
+    /// External only: what the probe learned (duration, size, frame rate,
+    /// audio presence, subtypes, container).
+    media::VideoProbeFacts facts;
+    /// External only: false over the H.264 size limit, where GIF is the one
+    /// format that can be made.
+    bool mp4_allowed{true};
+};
+
+/// The source of a video the probe accepted, opened on the monitor whose work
+/// area is `work_area`.
+[[nodiscard]] TrimSource MakeExternalTrimSource(const std::wstring& path,
+                                                const media::VideoProbeResult& probe,
+                                                const RECT& work_area);
+
+/// True when a full-range Save or Copy of an external video may hand on the
+/// file itself instead of exporting it: an MP4 file (".mp4") with H.264 video,
+/// AAC audio or none, and no rotation (ADR-040). Anything else is exported, so
+/// the result is always an MP4 file Easnap itself would write.
+[[nodiscard]] bool ExternalSourceIsReusable(std::wstring_view path,
+                                            const media::VideoProbeFacts& facts) noexcept;
 
 enum class TrimTerminalAction { Save,
                                 Copy };

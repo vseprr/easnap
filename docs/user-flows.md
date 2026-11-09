@@ -340,6 +340,37 @@ A cancelled or failed export keeps the source available. Controls reflect the
 busy state while work is pending. Clipboard-referenced recording files survive
 normal cleanup so pasting remains possible after closing Easnap.
 
+## Opening a video file
+
+**Open video...** in the tray menu, offered while no capture is in progress,
+asks for a video file: MP4, MOV or M4V, WMV or ASF, or AVI. Easnap checks the
+file in the background and then opens it in the same trim view as a
+recording, or says in one message why it cannot: a kind of file or a format
+it does not open, a codec extension Windows lacks, a damaged or copy-protected
+file, sound without a picture, rotated, interlaced, 10-bit or HDR video or
+pixels that are not square (not yet), a file on a network drive or not stored
+on this PC, a file another program is using, a missing file, one Easnap may
+not read, or a file in Easnap's own data folder, where Easnap deletes its
+temporary recordings
+([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md)).
+
+Easnap never changes, moves or deletes the file itself. In its trim view:
+
+- The title names the file. The close button is **Close** and asks nothing,
+  unless an export runs; then it asks whether to stop it.
+- **Save** offers MP4 and GIF under the name "*name* (trimmed)", in the
+  video's folder. Saving over the video itself is refused, also under another
+  name of the same file.
+- **Copy** asks first: MP4 file or GIF.
+- The whole length as MP4 copies the file itself when it is an `.mp4` with
+  H.264 and AAC or no sound; anything else is exported.
+- A video larger than an MP4 can hold is offered as GIF only, and the window
+  says so.
+- When the preview fails, closing just closes.
+- If the file changes after it was opened, Save and Copy refuse and say so.
+- Exit asks only while an export runs; an opened video is never offered at the
+  next start.
+
 ## Keyboard reference
 
 | Context | Input | Action |
@@ -404,8 +435,9 @@ See [SECURITY.md](../SECURITY.md) for clipboard-file lifetime and reporting.
 ## Settings and the tray menu
 
 Easnap lives in the notification area. The first start on a computer says so
-once, with the shortcut. The menu of the icon offers **Capture**, **Include
-cursor**, **Appearance**, **Settings...**, **Open data folder**, **Check for
+once, with the shortcut. The menu of the icon offers **Capture**, **Open video...**
+([Opening a video file](#opening-a-video-file)), **Include cursor**,
+**Appearance**, **Settings...**, **Open data folder**, **Check for
 updates**, **About** and **Exit**.
 
 **Settings...** opens while no capture is in progress. Cancel changes nothing.
@@ -440,7 +472,9 @@ instead of starting on an older build.
 ### Exit, sign-out and unexpected endings
 
 Exit asks before work is lost: a recording that is running or not yet saved,
-an export in progress, a screenshot with annotations, a Scrollshot. "Stay" is
+an export in progress, a screenshot with annotations, a Scrollshot. A video
+file opened from the tray is not unsaved work; Exit asks only while it is
+being exported. "Stay" is
 the default answer. While one of Easnap's dialogs is open, Exit only sounds.
 
 A sign-out or shutdown in the same situations is held back by Windows with

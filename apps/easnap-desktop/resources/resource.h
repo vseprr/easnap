@@ -12,6 +12,7 @@
 #define IDM_TRAY_EXIT 40005
 #define IDM_TRAY_SETTINGS 40006
 #define IDM_TRAY_CHECK_UPDATES 40007
+#define IDM_TRAY_OPEN_VIDEO 40008
 
 // Hotkey identifiers -------------------------------------------------------
 #define IDH_EASNAP_CAPTURE 1

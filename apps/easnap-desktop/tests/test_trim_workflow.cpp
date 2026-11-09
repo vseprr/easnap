@@ -9,6 +9,9 @@
 #include <string>
 
 #include "app/trim_workflow.h"
+
+#include <mfapi.h>
+
 #include "media/preview_transport.h"
 #include "ui/trim_layout.h"
 
@@ -307,6 +310,91 @@ void TestTerminalActionMediaPlanning() {
               TrimTerminalAction::Copy, MediaTime{100}, MediaTime{900},
               duration, true, true, easnap::media::RecordingFormat::Gif) ==
           TrimMediaPreparation::ReuseTrimArtifact);
+}
+
+/// Which full-range Save or Copy of an opened video hands on the file itself
+/// (ADR-040): an ".mp4" with H.264, AAC or no audio and no rotation. Every
+/// other source is exported, whatever its container would also allow.
+void TestExternalSourceReuseRule() {
+    using easnap::app::ExternalSourceIsReusable;
+    easnap::media::VideoProbeFacts facts;
+    facts.container = easnap::media::VideoContainer::Mpeg4;
+    facts.has_video = true;
+    facts.video_subtype = MFVideoFormat_H264;
+    facts.has_audio = false;
+    CHECK(ExternalSourceIsReusable(L"C:\\Videos\\clip.mp4", facts));
+    CHECK(ExternalSourceIsReusable(L"C:\\Videos\\CLIP.MP4", facts));
+    facts.has_audio = true;
+    facts.audio_subtype = MFAudioFormat_AAC;
+    CHECK(ExternalSourceIsReusable(L"C:\\Videos\\clip.mp4", facts));
+
+    // The same picture under another name is exported, so that the copy is
+    // never an MPEG-4 file of another kind labelled ".mp4".
+    CHECK(!ExternalSourceIsReusable(L"C:\\Videos\\clip.mov", facts));
+    CHECK(!ExternalSourceIsReusable(L"C:\\Videos\\clip.m4v", facts));
+    CHECK(!ExternalSourceIsReusable(L"C:\\Videos\\clip.mp4.avi", facts));
+    CHECK(!ExternalSourceIsReusable(L"C:\\Videos.mp4\\clip", facts));
+
+    easnap::media::VideoProbeFacts other = facts;
+    other.audio_subtype = MFAudioFormat_MP3;
+    CHECK(!ExternalSourceIsReusable(L"C:\\clip.mp4", other));
+    other = facts;
+    other.audio_subtype = MFAudioFormat_PCM;
+    CHECK(!ExternalSourceIsReusable(L"C:\\clip.mp4", other));
+    other = facts;
+    other.video_subtype = MFVideoFormat_MJPG;
+    CHECK(!ExternalSourceIsReusable(L"C:\\clip.mp4", other));
+    other = facts;
+    other.rotation_degrees = 90;
+    CHECK(!ExternalSourceIsReusable(L"C:\\clip.mp4", other));
+    other.rotation_degrees = 360;  // A full turn shows the picture as it is.
+    CHECK(ExternalSourceIsReusable(L"C:\\clip.mp4", other));
+    other = facts;
+    other.container = easnap::media::VideoContainer::Avi;
+    CHECK(!ExternalSourceIsReusable(L"C:\\clip.mp4", other));
+    other = facts;
+    other.container.reset();
+    CHECK(!ExternalSourceIsReusable(L"C:\\clip.mp4", other));
+    other = facts;
+    other.has_video = false;
+    CHECK(!ExternalSourceIsReusable(L"C:\\clip.mp4", other));
+}
+
+/// An accepted video opens centred on the chosen monitor at its own size,
+/// keeps what the probe found, and allows MP4 unless the picture is over the
+/// H.264 limit.
+void TestExternalTrimSource() {
+    easnap::media::VideoProbeResult probe;
+    probe.ok = true;
+    probe.facts.width = 640;
+    probe.facts.height = 360;
+    probe.facts.has_video = true;
+    probe.facts.duration = MediaTime{120'000'000};
+    probe.facts.identity.volume_serial = 7;
+    probe.facts.identity.file_id[0] = 42;
+    probe.facts.identity.size_bytes = 1234;
+    const RECT work_area{1920, 0, 3840, 1040};
+    const easnap::app::TrimSource source =
+        easnap::app::MakeExternalTrimSource(L"D:\\clip.mp4", probe, work_area);
+    CHECK(source.kind == easnap::app::TrimSourceKind::External);
+    CHECK(source.path == L"D:\\clip.mp4");
+    CHECK(source.identity == probe.facts.identity);
+    CHECK(source.facts.duration == probe.facts.duration);
+    CHECK(source.mp4_allowed);
+    CHECK(source.region.right - source.region.left == 640);
+    CHECK(source.region.bottom - source.region.top == 360);
+    CHECK(source.region.left == 1920 + (1920 - 640) / 2);
+    CHECK(source.region.top == (1040 - 360) / 2);
+
+    probe.reason = easnap::media::VideoRefusal::TooLargeForMp4;
+    probe.facts.width = 8192;
+    probe.facts.height = 4320;
+    const easnap::app::TrimSource large =
+        easnap::app::MakeExternalTrimSource(L"D:\\large.mp4", probe, work_area);
+    CHECK(!large.mp4_allowed);
+    // Larger than the monitor, it is still centred on it: the window opens there.
+    CHECK((large.region.left + large.region.right) / 2 == (work_area.left + work_area.right) / 2);
+    CHECK((large.region.top + large.region.bottom) / 2 == (work_area.top + work_area.bottom) / 2);
 }
 
 void TestPreviewTransportSerializesAndCoalescesSeeks() {
@@ -1526,6 +1614,8 @@ int main() {
     TestPlaybackRestartsAndRangeReconciliation();
     TestActiveTimelineSeekPolicy();
     TestTerminalActionMediaPlanning();
+    TestExternalSourceReuseRule();
+    TestExternalTrimSource();
     TestPreviewTransportSerializesAndCoalescesSeeks();
     TestPreviewOrderingRegressions();
     TestPreviewCallbackPermutations();

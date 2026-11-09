@@ -413,6 +413,9 @@ void ShowTrayMenu(HWND hwnd) {
     const UINT capture_flags = coordinator.state() == SessionState::Idle ? MF_STRING : (MF_STRING | MF_GRAYED);
 
     ::AppendMenuW(menu, capture_flags, IDM_TRAY_CAPTURE, capture_item.c_str());
+    // A video is opened only while idle, and one at a time (ADR-040).
+    ::AppendMenuW(menu, coordinator.CanOpenVideo() ? MF_STRING : (MF_STRING | MF_GRAYED), IDM_TRAY_OPEN_VIDEO,
+                  strings::Get(IDS_TRAY_OPEN_VIDEO));
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING | (coordinator.settings().capture_cursor ? MF_CHECKED : MF_UNCHECKED),
                   IDM_TRAY_CAPTURE_CURSOR, strings::Get(IDS_SHELL_TRAY_INCLUDE_CURSOR));
@@ -448,6 +451,9 @@ void OnTrayCommand(HWND hwnd, UINT command) {
     switch (command) {
         case IDM_TRAY_CAPTURE:
             coordinator.OnGlobalHotkey();
+            break;
+        case IDM_TRAY_OPEN_VIDEO:
+            coordinator.OpenVideo();
             break;
         case IDM_TRAY_CAPTURE_CURSOR:
             coordinator.settings().capture_cursor = !coordinator.settings().capture_cursor;
@@ -536,6 +542,10 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             coordinator.OnTrimExportCompleted(static_cast<uint64_t>(wparam));
             return 0;
 
+        case easnap::app::kMsgVideoProbeCompleted:
+            coordinator.OnVideoProbeCompleted(static_cast<UINT_PTR>(wparam));
+            return 0;
+
         case easnap::app::kMsgScrollshotProgress:
             coordinator.OnScrollshotProgress(static_cast<uint64_t>(wparam));
             return 0;
@@ -573,6 +583,10 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
         case WM_TIMER:
             if (wparam == easnap::app::kTimerDeferredCleanup) {
                 coordinator.OnDeferredCleanup();
+                return 0;
+            }
+            if (wparam == easnap::app::kTimerVideoProbeRetry) {
+                coordinator.OnVideoProbeTimer();
                 return 0;
             }
             break;

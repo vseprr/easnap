@@ -9,6 +9,7 @@
 #include "native_test_monitor.h"
 #include "scrollshot_synthetic.h"
 
+#include "app/external_video.h"
 #include "app/recording_workflow.h"
 #include "editor/screenshot_editor.h"
 #include "strings/strings.h"
@@ -20,6 +21,7 @@
 #include "ui/settings_dialog.h"
 #include "ui/trim_layout.h"
 #include "ui/trim_window.h"
+#include "ui/ui_theme.h"
 
 #include <commctrl.h>
 
@@ -337,8 +339,9 @@ void Notices(const RECT& region) {
 /// The trim window opened on a file that does not exist: it shows its preview
 /// error and starts no preview process. Cancel export takes the place of Save
 /// while a trim is exported. Every state is checked at the opening size and at
-/// the smallest size the window allows, where its button cells are narrowest.
-void TrimWindow(const RECT& region) {
+/// the smallest size the window allows, where its button cells are narrowest,
+/// for a recording (Discard) and for an opened video (Close, ADR-040).
+void TrimWindow(const RECT& region, const ui::TrimWindow::Source& source, const char* kind) {
     constexpr int kCancelExport = 103;  // The button's identifier in trim_window.cpp.
     struct State {
         bool exporting;
@@ -346,10 +349,15 @@ void TrimWindow(const RECT& region) {
         const char* name;
     };
     ui::TrimWindow trim({});
-    const bool opened = trim.Open(L"easnap-text-fit-missing.mp4", region);
+    const bool opened = trim.Open(L"easnap-text-fit-missing.mp4", region, source);
     CHECK(opened);
     if (!opened) { return; }
     CHECK(trim.preview_failed());
+    wchar_t close[64]{};
+    ::GetWindowTextW(::GetDlgItem(trim.hwnd(), IDCANCEL), close, ARRAYSIZE(close));
+    CHECK(std::wstring(close) == strings::Get(source.kind == app::TrimSourceKind::External
+                                                  ? IDS_EXTERNAL_TRIM_CLOSE_BUTTON
+                                                  : IDS_TRIM_DISCARD_BUTTON));
     for (const bool smallest : {false, true}) {
         const UINT dpi = ::GetDpiForWindow(trim.hwnd());
         if (smallest) {
@@ -362,7 +370,8 @@ void TrimWindow(const RECT& region) {
         for (const State& state : {State{false, false, "editing"}, State{true, false, "exporting"},
                                    State{true, true, "cancelling"}}) {
             trim.SetExporting(state.exporting, state.cancelling);
-            const std::string surface = std::string(smallest ? "trim at its smallest, " : "trim, ") + state.name;
+            const std::string surface =
+                std::string(smallest ? "trim at its smallest, " : "trim, ") + kind + ", " + state.name;
             const HWND cancel = ::GetDlgItem(trim.hwnd(), kCancelExport);
             RECT cell{};
             ::GetClientRect(cancel, &cell);
@@ -371,8 +380,121 @@ void TrimWindow(const RECT& region) {
             CHECK(CheckFits(trim.hwnd(), surface.c_str()) >= 8);
         }
         trim.SetExporting(false);
+        if (source.kind == app::TrimSourceKind::External && !source.mp4_allowed) {
+            // A video too large for MP4 says so in the status line, a read-only
+            // EDIT under the timeline that grows with its text: shown whole,
+            // without a scroll bar, also at the smallest size.
+            trim.SetStatus(strings::Get(IDS_EXTERNAL_GIF_ONLY_NOTICE));
+            HWND status = ::FindWindowExW(trim.hwnd(), nullptr, L"EDIT", nullptr);
+            CHECK(status != nullptr && ::IsWindowVisible(status) != FALSE);
+            const bool whole = status != nullptr && (::GetWindowLongPtrW(status, GWL_STYLE) & WS_VSCROLL) == 0;
+            if (!whole) {
+                ++failed;
+                std::fprintf(stderr, "FAIL [%s] trim%s, %s: the GIF-only notice needs a scroll bar\n", g_language,
+                             smallest ? " at its smallest" : "", kind);
+            } else {
+                ++passed;
+            }
+            trim.SetStatus(L"");
+        }
     }
     trim.Destroy();
+}
+
+/// Why an opened video cannot open, in the message dialog that tells it. The
+/// dialog grows with its text, so the answer whose text wraps tallest at the
+/// dialog's text width, naming a file with a long name, is the one that could
+/// need a scroll bar: it is shown and must show whole. Every answer the
+/// production mapping can give is measured, and the refusal of a file in
+/// Easnap's own folder, which Open video gives before the probe. (A dialog
+/// costs about two seconds on a private desktop, so only the tallest is shown.)
+void VideoRefusalDialog() {
+    using media::VideoNotSupportedYetCause;
+    using media::VideoRefusal;
+    std::vector<UINT> ids{IDS_VIDEO_REFUSED_EASNAP_FOLDER};
+    const auto add = [&](VideoRefusal reason, VideoNotSupportedYetCause cause) {
+        media::VideoProbeResult result;
+        result.reason = reason;
+        result.not_supported_yet = cause;
+        const UINT id = app::VideoRefusalMessageId(result);
+        if (std::find(ids.begin(), ids.end(), id) == ids.end()) { ids.push_back(id); }
+    };
+    for (const VideoRefusal reason :
+         {VideoRefusal::None, VideoRefusal::MediaFoundationUnavailable, VideoRefusal::UnsupportedExtension,
+          VideoRefusal::FormatNotSupported, VideoRefusal::NeedsCodecExtension, VideoRefusal::Damaged,
+          VideoRefusal::Protected, VideoRefusal::NoVideo, VideoRefusal::NetworkOrOffline, VideoRefusal::InUse,
+          VideoRefusal::NotFound, VideoRefusal::NoAccess, VideoRefusal::Timeout}) {
+        add(reason, VideoNotSupportedYetCause::None);
+    }
+    for (const VideoNotSupportedYetCause cause :
+         {VideoNotSupportedYetCause::None, VideoNotSupportedYetCause::Rotation, VideoNotSupportedYetCause::PixelAspect,
+          VideoNotSupportedYetCause::Interlaced, VideoNotSupportedYetCause::HighBitDepth}) {
+        add(VideoRefusal::NotSupportedYet, cause);
+    }
+    CHECK(ids.size() == 18);
+    // Only the strings of this feature: none is borrowed from another one.
+    for (const UINT id : ids) { CHECK(id >= IDS_VIDEO_OPEN_FAILED && id <= IDS_LAST); }
+
+    // Measured as the dialog lays it out: its body font, 480 DIPs wide less
+    // its 24 DIP margins, on the monitor under the cursor where it opens.
+    POINT cursor{};
+    ::GetCursorPos(&cursor);
+    const float scale = platform::MonitorForPoint(cursor).scale();
+    HDC dc = ::CreateCompatibleDC(nullptr);
+    HFONT font = ui::theme::CreateUiFont(14, scale, false);
+    const HGDIOBJ previous = ::SelectObject(dc, font);
+    const int width = ui::theme::Scaled(480, scale) - ui::theme::Scaled(48, scale);
+    // A long, ordinary name: words the text can wrap between.
+    const std::wstring name = L"Family holiday at the seaside, second week, edited for the grandparents.mp4";
+    std::wstring tallest;
+    UINT tallest_id = 0;
+    LONG tallest_height = 0;
+    for (const UINT id : ids) {
+        std::wstring text = strings::Format(id, {name});
+        RECT measured{0, 0, width, 0};
+        ::DrawTextW(dc, text.c_str(), -1, &measured, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+        if (measured.bottom > tallest_height) {
+            tallest_height = measured.bottom;
+            tallest = std::move(text);
+            tallest_id = id;
+        }
+    }
+    ::SelectObject(dc, previous);
+    ::DeleteObject(font);
+    ::DeleteDC(dc);
+    std::printf("MEASURE [%s] the tallest video refusal is %u: %ld px high at %d px wide\n", g_language, tallest_id,
+                tallest_height, width);
+
+    static int examined = 0;
+    static bool scrolled = false;
+    examined = 0;
+    scrolled = true;
+    ::SetTimer(nullptr, 0, 20, [](HWND, UINT, UINT_PTR timer, DWORD) {
+        HWND dialog = nullptr;
+        ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM value) -> BOOL {
+            wchar_t class_name[32]{};
+            ::GetClassNameW(window, class_name, ARRAYSIZE(class_name));
+            if (::lstrcmpW(class_name, L"#32770") == 0 && ::IsWindowVisible(window)) {
+                *reinterpret_cast<HWND*>(value) = window;
+                return FALSE;
+            }
+            return TRUE; }, reinterpret_cast<LPARAM>(&dialog));
+        if (dialog == nullptr) { return; }
+        ::KillTimer(nullptr, timer);
+        examined = CheckFits(dialog, "video refusal");
+        HWND body = ::FindWindowExW(dialog, nullptr, L"EDIT", nullptr);
+        scrolled = body == nullptr || (::GetWindowLongPtrW(body, GWL_STYLE) & WS_VSCROLL) != 0;
+        ::SendMessageW(dialog, WM_CLOSE, 0, 0);
+    });
+    ui::ShowErrorMessage(nullptr, tallest.c_str());
+    CHECK(examined >= 1);  // The OK button.
+    if (scrolled) {
+        ++failed;
+        std::fprintf(stderr, "FAIL [%s] video refusal %u does not show whole: \"%s\"\n", g_language, tallest_id,
+                     Utf8(tallest).c_str());
+    } else {
+        ++passed;
+    }
 }
 
 }  // namespace
@@ -399,7 +521,13 @@ int main() {
             ModeBar(monitor);
             Settings();
             Notices(region);
-            TrimWindow(region);
+            TrimWindow(region, {}, "recording");
+            ui::TrimWindow::Source opened_video;
+            opened_video.kind = app::TrimSourceKind::External;
+            opened_video.file_name = L"Family holiday at the seaside, second week.mp4";
+            opened_video.mp4_allowed = false;
+            TrimWindow(region, opened_video, "opened video");
+            VideoRefusalDialog();
         }
     }
     platform::GraphicsEnvironment::Get().Shutdown();

@@ -8,7 +8,9 @@
 #include <optional>
 #include <string>
 
+#include "app/session_transitions.h"
 #include "app/trim_workflow.h"
+#include "media/media_interfaces.h"
 #include "media/media_preview.h"
 #include "ui/timeline_accessibility.h"
 
@@ -26,14 +28,33 @@ public:
         std::function<void()> on_status_tick;
     };
 
+    /// What the window says about the video it shows (ADR-040).
+    struct Source final {
+        app::TrimSourceKind kind{app::TrimSourceKind::Owned};
+        /// External: the file's name, shown in the title.
+        std::wstring file_name;
+        /// External: false over the H.264 size limit. The Copy menu then
+        /// offers GIF only, and a ready preview says why.
+        bool mp4_allowed{true};
+    };
+
     explicit TrimWindow(Callbacks callbacks);
     ~TrimWindow();
 
     TrimWindow(const TrimWindow&) = delete;
     TrimWindow& operator=(const TrimWindow&) = delete;
 
+    /// Opens the window for the recording at `source_path`: its close button
+    /// discards.
     [[nodiscard]] bool Open(const std::wstring& source_path,
                             const RECT& source_region);
+    /// Opens the window for `source_path` as `source` describes it: an
+    /// external video's close button only closes.
+    [[nodiscard]] bool Open(const std::wstring& source_path,
+                            const RECT& source_region, const Source& source);
+    /// The Copy button's menu of formats for an external video, under that
+    /// button: MP4 file or GIF. Nothing when it is dismissed or cannot open.
+    [[nodiscard]] std::optional<media::RecordingFormat> ChooseCopyFormat();
     void SetExporting(bool exporting, bool cancelling = false);
     void SetExportProgress(float progress);
     /// Returns to editing with one coherent layout after a retained-window result.
@@ -106,6 +127,7 @@ private:
     [[nodiscard]] int TimelineTrackWidth(HWND hwnd) const noexcept;
 
     Callbacks callbacks_;
+    Source source_;
     std::unique_ptr<media::IMediaPreview> preview_;
     app::TrimRangeModel range_;
     RECT source_region_{};

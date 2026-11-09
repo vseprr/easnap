@@ -1,11 +1,14 @@
 #include "app/trim_workflow.h"
 
+#include <mfapi.h>
+
 #include <algorithm>
 #include <limits>
 #include <new>
 #include <system_error>
 #include <utility>
 
+#include "media/video_support.h"
 #include "platform/platform_utils.h"
 
 namespace easnap::app {
@@ -151,6 +154,39 @@ bool IsFullTrimRange(media::MediaTime start, media::MediaTime end,
                      media::MediaTime source_duration) noexcept {
     return source_duration > media::MediaTime::zero() &&
            start == media::MediaTime::zero() && end == source_duration;
+}
+
+TrimSource MakeExternalTrimSource(const std::wstring& path,
+                                  const media::VideoProbeResult& probe,
+                                  const RECT& work_area) {
+    TrimSource source;
+    source.kind = TrimSourceKind::External;
+    source.path = path;
+    source.identity = probe.facts.identity;
+    source.facts = probe.facts;
+    source.mp4_allowed = probe.reason != media::VideoRefusal::TooLargeForMp4;
+    // Centred on the work area: the window opens on that monitor, and the
+    // rectangle's proportions are the picture's.
+    const LONG width = static_cast<LONG>((std::max)(probe.facts.width, 1u));
+    const LONG height = static_cast<LONG>((std::max)(probe.facts.height, 1u));
+    const LONG center_x = work_area.left + (work_area.right - work_area.left) / 2;
+    const LONG center_y = work_area.top + (work_area.bottom - work_area.top) / 2;
+    source.region = RECT{center_x - width / 2, center_y - height / 2,
+                         center_x - width / 2 + width, center_y - height / 2 + height};
+    return source;
+}
+
+bool ExternalSourceIsReusable(std::wstring_view path,
+                              const media::VideoProbeFacts& facts) noexcept {
+    // A QuickTime ".mov" or an ".m4v" is MPEG-4 too, but handing it on under
+    // an ".mp4" name would label it as what it is not; it is exported.
+    const std::wstring_view extension = media::VideoFileExtension(path);
+    const bool mp4_file = ::CompareStringOrdinal(extension.data(), static_cast<int>(extension.size()),
+                                                 L".mp4", 4, TRUE) == CSTR_EQUAL;
+    return mp4_file && facts.container == media::VideoContainer::Mpeg4 && facts.has_video &&
+           facts.video_subtype == MFVideoFormat_H264 &&
+           (!facts.has_audio || facts.audio_subtype == MFAudioFormat_AAC) &&
+           facts.rotation_degrees % 360u == 0;
 }
 
 TrimMediaPreparation PlanTrimMediaPreparation(

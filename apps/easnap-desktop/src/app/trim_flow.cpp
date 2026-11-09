@@ -1,9 +1,10 @@
-// Easnap - the trimming and completion of one finished recording (ADR-039).
+// Easnap - the trimming and completion of one video (ADR-039, ADR-040).
 #include "app/trim_flow.h"
 
 #include <new>
 #include <utility>
 
+#include "app/external_video.h"
 #include "app/recording_workflow.h"
 #include "platform/platform_utils.h"
 #include "strings/strings.h"
@@ -44,30 +45,31 @@ const wchar_t* ExportFailureStageName(
 }
 
 // One whole sentence per stage: where the stage stands in the sentence differs
-// between languages.
+// between languages. An external video has its own sentences, which do not
+// speak of a recording that was kept.
 UINT GifExportFailureMessageId(
-    media::TrimExportFailureStage stage) noexcept {
+    media::TrimExportFailureStage stage, bool external) noexcept {
     switch (stage) {
         case media::TrimExportFailureStage::SourceOpen:
         case media::TrimExportFailureStage::SourceValidation:
-            return IDS_SESSION_GIF_FAILED_READING;
+            return external ? IDS_EXTERNAL_GIF_FAILED_READING : IDS_SESSION_GIF_FAILED_READING;
         case media::TrimExportFailureStage::MediaTypeNegotiation:
-            return IDS_SESSION_GIF_FAILED_PREPARING;
+            return external ? IDS_EXTERNAL_GIF_FAILED_PREPARING : IDS_SESSION_GIF_FAILED_PREPARING;
         case media::TrimExportFailureStage::VideoDecode:
         case media::TrimExportFailureStage::DecodedFrameAccess:
-            return IDS_SESSION_GIF_FAILED_DECODING;
+            return external ? IDS_EXTERNAL_GIF_FAILED_DECODING : IDS_SESSION_GIF_FAILED_DECODING;
         case media::TrimExportFailureStage::SourceReset:
-            return IDS_SESSION_GIF_FAILED_FINAL_PASS;
+            return external ? IDS_EXTERNAL_GIF_FAILED_FINAL_PASS : IDS_SESSION_GIF_FAILED_FINAL_PASS;
         case media::TrimExportFailureStage::PaletteQuantization:
-            return IDS_SESSION_GIF_FAILED_PALETTE;
+            return external ? IDS_EXTERNAL_GIF_FAILED_PALETTE : IDS_SESSION_GIF_FAILED_PALETTE;
         case media::TrimExportFailureStage::GifEncoding:
-            return IDS_SESSION_GIF_FAILED_ENCODING;
+            return external ? IDS_EXTERNAL_GIF_FAILED_ENCODING : IDS_SESSION_GIF_FAILED_ENCODING;
         case media::TrimExportFailureStage::StagingWrite:
-            return IDS_SESSION_GIF_FAILED_WRITING;
+            return external ? IDS_EXTERNAL_GIF_FAILED_WRITING : IDS_SESSION_GIF_FAILED_WRITING;
         case media::TrimExportFailureStage::Publication:
-            return IDS_SESSION_GIF_FAILED_PUBLISHING;
+            return external ? IDS_EXTERNAL_GIF_FAILED_PUBLISHING : IDS_SESSION_GIF_FAILED_PUBLISHING;
         default:
-            return IDS_SESSION_GIF_FAILED_CONVERTING;
+            return external ? IDS_EXTERNAL_GIF_FAILED_CONVERTING : IDS_SESSION_GIF_FAILED_CONVERTING;
     }
 }
 
@@ -84,9 +86,35 @@ void LogTrimExportFailure(const media::TrimExportFailure& failure) {
     }
 }
 
-std::wstring GifExportFailureMessage(
-    media::TrimExportFailureStage stage) {
-    return strings::Get(GifExportFailureMessageId(stage));
+/// True when `path` lies inside `directory`, compared as full paths without
+/// regard to case.
+bool PathInsideDirectory(const std::wstring& path, const std::wstring& directory) {
+    const auto full = [](const std::wstring& value) {
+        std::wstring result(MAX_PATH, L'\0');
+        DWORD length = ::GetFullPathNameW(value.c_str(), static_cast<DWORD>(result.size()), result.data(), nullptr);
+        if (length >= result.size()) {
+            result.resize(length);
+            length = ::GetFullPathNameW(value.c_str(), static_cast<DWORD>(result.size()), result.data(), nullptr);
+        }
+        result.resize(length < result.size() ? length : 0);
+        return result;
+    };
+    std::wstring inner = full(path);
+    std::wstring outer = full(directory);
+    while (!outer.empty() && (outer.back() == L'\\' || outer.back() == L'/')) {
+        outer.pop_back();
+    }
+    if (inner.empty() || outer.empty() || inner.size() <= outer.size() + 1 ||
+        (inner[outer.size()] != L'\\' && inner[outer.size()] != L'/')) {
+        return false;
+    }
+    return ::CompareStringOrdinal(inner.c_str(), static_cast<int>(outer.size()), outer.c_str(),
+                                  static_cast<int>(outer.size()), TRUE) == CSTR_EQUAL;
+}
+
+SaveRecordingDialogText ExternalSaveDialogText() {
+    return {strings::Get(IDS_EXTERNAL_SAVE_DIALOG_TITLE), strings::Get(IDS_SHELL_FILE_TYPE_MP4),
+            strings::Get(IDS_SHELL_FILE_TYPE_GIF)};
 }
 
 }  // namespace
@@ -136,8 +164,14 @@ void TrimFlow::Destroy() {
         trim_window_.reset();
     }
     trim_export_.reset();
+    // A recording's session stays for whoever decides about it. An external
+    // video's work session holds nothing but Easnap's own results.
+    if (external() && session_.has_value() && temp_store_ != nullptr &&
+        !temp_store_->DeleteSession(*session_)) {
+        platform::LogMessage(L"[Trim] The work session of an opened video could not be removed");
+    }
     session_.reset();
-    trim_source_path_.clear();
+    source_ = TrimSource{};
     trim_artifact_.Clear();
 }
 
@@ -161,13 +195,91 @@ bool TrimFlow::ProcessDialogMessage(MSG& message) const {
     return window_visible() && trim_window_->ProcessDialogMessage(message);
 }
 
-void TrimFlow::Begin(const std::wstring& source_path, const media::RecordingOptions& options, const RECT& region,
+bool TrimFlow::EnsureExportController(media::RecordingFormat format) {
+    if (trim_export_ && export_controller_format_ == format) {
+        return true;
+    }
+    try {
+        auto exporter = format == media::RecordingFormat::Gif ? media::CreateGifExporter()
+                                                              : media::CreateMp4TrimExporter();
+        if (!exporter) {
+            return false;
+        }
+        // Only replaced between actions: no export of the old one is running.
+        trim_export_ = std::make_unique<TrimExportController>(
+            std::move(exporter), [this] {
+                if (host_window_ != nullptr &&
+                    ::PostMessageW(
+                        host_window_, kMsgTrimExportCompleted,
+                        static_cast<WPARAM>(trim_export_generation_.load(
+                            std::memory_order_acquire)),
+                        0) == FALSE) {
+                    platform::LogMessage(
+                        L"[Trim] Could not post export completion notification");
+                }
+            });
+    } catch (...) {
+        platform::LogMessage(L"[Trim] The export controller could not be created");
+        return false;
+    }
+    export_controller_format_ = format;
+    return true;
+}
+
+media::RecordingOptions TrimFlow::ExportOptions(media::RecordingFormat format) const {
+    media::RecordingOptions options = recording_options_;
+    options.format = format;
+    return options;
+}
+
+std::wstring TrimFlow::TemporaryResultDirectory() const {
+    if (external()) {
+        return session_.has_value() ? session_->directory : std::wstring{};
+    }
+    return platform::DirectoryOf(source_.path);
+}
+
+bool TrimFlow::SourceReusable() const {
+    return !external() || ExternalSourceIsReusable(source_.path, source_.facts);
+}
+
+bool TrimFlow::MayMoveArtifact(const std::wstring& path) const {
+    if (path.empty() || path == source_.path) {
+        return false;
+    }
+    if (!external()) {
+        return true;  // Every file a recording's trim made is its own.
+    }
+    // The opened video is never handed to code that moves, deletes or secures
+    // files: only what the flow made in its own work session may move.
+    return session_.has_value() && PathInsideDirectory(path, session_->directory) &&
+           !IsSameFile(path, source_.identity);
+}
+
+bool TrimFlow::ExternalSourceUnchanged() {
+    const std::optional<media::VideoFileIdentity> now = ReadVideoFileIdentity(source_.path);
+    if (now.has_value() && *now == source_.identity) {
+        return true;
+    }
+    platform::LogMessage(L"[Trim] The opened video changed or disappeared after it was checked");
+    if (trim_window_) {
+        trim_window_->SetStatus(strings::Get(IDS_EXTERNAL_SOURCE_CHANGED), true);
+    }
+    return false;
+}
+
+void TrimFlow::Begin(const TrimSource& source, const media::RecordingOptions& options,
                      std::optional<media::TemporarySession> session) {
-    if (state() != SessionState::RecordingTrimming || source_path.empty()) {
+    if (state() != SessionState::RecordingTrimming || source.path.empty()) {
         return;
     }
-    // Before anything that can throw: a failed start still keeps the recording.
-    session_ = std::move(session);
+    source_.kind = source.kind;
+    if (source.kind == TrimSourceKind::Owned) {
+        // Before anything that can throw: a failed start still keeps the recording.
+        session_ = std::move(session);
+    } else if (session.has_value()) {
+        platform::LogMessage(L"[Trim] An opened video came with a session; it is not used");
+    }
 
     try {
         if (trim_window_) {
@@ -175,12 +287,16 @@ void TrimFlow::Begin(const std::wstring& source_path, const media::RecordingOpti
             trim_window_.reset();
         }
         trim_window_retired_ = false;
-        trim_source_path_ = source_path;
+        source_ = source;
         recording_options_ = options;
         trim_artifact_.Clear();
         pending_trim_action_ = PendingTrimAction::None;
         pending_save_destination_.clear();
         trim_close_pending_ = false;
+        if (external()) {
+            // Never beside the user's file, never offered for recovery.
+            session_ = temp_store_ != nullptr ? temp_store_->CreateSession() : std::nullopt;
+        }
 
         ui::TrimWindow::Callbacks window_callbacks;
         window_callbacks.on_save =
@@ -197,33 +313,34 @@ void TrimFlow::Begin(const std::wstring& source_path, const media::RecordingOpti
         trim_window_ =
             std::make_unique<ui::TrimWindow>(std::move(window_callbacks));
 
-        auto exporter = recording_options_.format == media::RecordingFormat::Gif
-                            ? media::CreateGifExporter()
-                            : media::CreateMp4TrimExporter();
-        if (!exporter) {
+        const media::RecordingFormat first_format =
+            external() && !source_.mp4_allowed ? media::RecordingFormat::Gif : recording_options_.format;
+        if (!EnsureExportController(first_format)) {
             throw std::bad_alloc{};
         }
-        trim_export_ = std::make_unique<TrimExportController>(
-            std::move(exporter), [this] {
-                if (host_window_ != nullptr &&
-                    ::PostMessageW(
-                        host_window_, kMsgTrimExportCompleted,
-                        static_cast<WPARAM>(trim_export_generation_.load(
-                            std::memory_order_acquire)),
-                        0) == FALSE) {
-                    platform::LogMessage(
-                        L"[Trim] Could not post export completion notification");
-                }
-            });
     } catch (...) {
         platform::LogMessage(L"The trim view could not be created");
         trim_window_.reset();
         trim_export_.reset();
     }
 
-    if (!trim_window_ || !trim_export_ ||
-        !trim_window_->Open(trim_source_path_, region)) {
+    ui::TrimWindow::Source window_source;
+    window_source.kind = source_.kind;
+    window_source.mp4_allowed = source_.mp4_allowed;
+    if (external()) {
+        window_source.file_name = VideoFileDisplayName(source_.path);
+    }
+    const bool work_session_ready = !external() || session_.has_value();
+    if (!trim_window_ || !trim_export_ || !work_session_ready ||
+        !trim_window_->Open(source_.path, source_.region, window_source)) {
         platform::LogMessage(L"The trim view could not be opened");
+        if (external()) {
+            // Nothing of the user's was touched; there is only this to say.
+            ui::ShowErrorMessage(host_window_,
+                                 strings::Format(IDS_VIDEO_OPEN_FAILED, {window_source.file_name}).c_str());
+            FinishTrimWorkflow(true);
+            return;
+        }
         // The next start offers the recording only if it carries the marker;
         // marking is repeated here because its first attempt may have failed.
         const bool offered_later = session_.has_value() && temp_store_ && temp_store_->MarkRecoverable(*session_);
@@ -231,7 +348,7 @@ void TrimFlow::Begin(const std::wstring& source_path, const media::RecordingOpti
             ui::ShowErrorMessage(host_window_, strings::Get(IDS_RECORDING_KEPT_FOR_RECOVERY));
         } else {
             ui::ShowErrorMessage(host_window_,
-                                 strings::Format(IDS_RECORDING_KEPT_UNTIL_NEXT_START, {trim_source_path_}).c_str());
+                                 strings::Format(IDS_RECORDING_KEPT_UNTIL_NEXT_START, {source_.path}).c_str());
         }
         FinishTrimWorkflow(false);
         return;
@@ -241,12 +358,39 @@ void TrimFlow::Begin(const std::wstring& source_path, const media::RecordingOpti
 
 void TrimFlow::OnTrimSaveRequested(media::MediaTime start,
                                    media::MediaTime end) {
-    const auto destination = ShowSaveRecordingDialog(
-        trim_window_ != nullptr ? trim_window_->hwnd() : host_window_,
-        recording_options_.format,
-        platform::TimestampedFileName(
-            L"Easnap", RecordingFileExtension(recording_options_.format)),
-        settings_.VideoStartDirectory(), RecordingSaveDialogText());
+    const HWND owner = trim_window_ != nullptr ? trim_window_->hwnd() : host_window_;
+    std::optional<std::wstring> destination;
+    media::RecordingFormat format = recording_options_.format;
+    if (external()) {
+        if (!ExternalSourceUnchanged()) {
+            return;
+        }
+        // Beside the original by default, under a name that says what it is.
+        auto choice = ShowSaveVideoDialog(
+            owner, source_.mp4_allowed,
+            source_.mp4_allowed ? recording_options_.format : media::RecordingFormat::Gif,
+            TrimmedVideoFileName(source_.path), platform::DirectoryOf(source_.path), ExternalSaveDialogText());
+        if (!choice.has_value() || state() != SessionState::RecordingTrimming) {
+            return;
+        }
+        // Compared by what the file is, not by how its path is written: a
+        // hard link or another spelling of the same file is refused too.
+        if (IsSameFile(choice->path, source_.identity)) {
+            platform::LogMessage(L"[Trim] Save over the opened video itself was refused");
+            if (trim_window_) {
+                trim_window_->SetStatus(strings::Get(IDS_EXTERNAL_SAVE_IS_SOURCE), true);
+            }
+            return;
+        }
+        destination = std::move(choice->path);
+        format = choice->format;
+    } else {
+        destination = ShowSaveRecordingDialog(
+            owner, recording_options_.format,
+            platform::TimestampedFileName(
+                L"Easnap", RecordingFileExtension(recording_options_.format)),
+            settings_.VideoStartDirectory(), RecordingSaveDialogText());
+    }
     if (!destination.has_value()) {
         return;
     }
@@ -254,47 +398,61 @@ void TrimFlow::OnTrimSaveRequested(media::MediaTime start,
         trim_window_ != nullptr ? trim_window_->range().source_duration()
                                 : media::MediaTime::zero();
     const bool source_available =
-        !ExistingFileDataPath(trim_source_path_).empty();
+        !ExistingFileDataPath(source_.path).empty() && SourceReusable();
     const bool artifact_available =
-        trim_artifact_.Matches(start, end) &&
+        trim_artifact_.Matches(start, end, format) &&
         !ExistingFileDataPath(trim_artifact_.path).empty();
     if (PlanTrimMediaPreparation(
             TrimTerminalAction::Save, start, end, duration,
-            source_available, artifact_available, recording_options_.format) ==
+            source_available, artifact_available, format) ==
         TrimMediaPreparation::ReuseFinalizedSource) {
-        trim_artifact_.path = trim_source_path_;
+        trim_artifact_.path = source_.path;
         trim_artifact_.start = start;
         trim_artifact_.end = end;
+        trim_artifact_.format = format;
     }
     const DWORD attributes = ::GetFileAttributesW(destination->c_str());
-    BeginTrimAction(PendingTrimAction::Save, start, end, *destination,
+    BeginTrimAction(PendingTrimAction::Save, start, end, format, *destination,
                     attributes != INVALID_FILE_ATTRIBUTES);
 }
 
 void TrimFlow::OnTrimCopyRequested(media::MediaTime start,
                                    media::MediaTime end) {
+    media::RecordingFormat format = recording_options_.format;
+    if (external()) {
+        if (!ExternalSourceUnchanged() || trim_window_ == nullptr) {
+            return;
+        }
+        // An opened video is copied as the format the user picks now.
+        const std::optional<media::RecordingFormat> chosen = trim_window_->ChooseCopyFormat();
+        if (!chosen.has_value() || state() != SessionState::RecordingTrimming) {
+            return;
+        }
+        format = *chosen;
+    }
     const media::MediaTime duration =
         trim_window_ != nullptr ? trim_window_->range().source_duration()
                                 : media::MediaTime::zero();
     const bool source_available =
-        !ExistingFileDataPath(trim_source_path_).empty();
+        !ExistingFileDataPath(source_.path).empty() && SourceReusable();
     const bool artifact_available =
-        trim_artifact_.Matches(start, end) &&
+        trim_artifact_.Matches(start, end, format) &&
         !ExistingFileDataPath(trim_artifact_.path).empty();
     if (PlanTrimMediaPreparation(
             TrimTerminalAction::Copy, start, end, duration,
-            source_available, artifact_available, recording_options_.format) ==
+            source_available, artifact_available, format) ==
         TrimMediaPreparation::ReuseFinalizedSource) {
-        trim_artifact_.path = trim_source_path_;
+        trim_artifact_.path = source_.path;
         trim_artifact_.start = start;
         trim_artifact_.end = end;
+        trim_artifact_.format = format;
     }
-    BeginTrimAction(PendingTrimAction::Copy, start, end);
+    BeginTrimAction(PendingTrimAction::Copy, start, end, format);
 }
 
 void TrimFlow::BeginTrimAction(
     PendingTrimAction action, media::MediaTime start, media::MediaTime end,
-    std::wstring save_destination, bool replace_existing) {
+    media::RecordingFormat format, std::wstring save_destination, bool replace_existing) {
     if (state() != SessionState::RecordingTrimming || action == PendingTrimAction::None ||
         start < media::MediaTime::zero() || end <= start) {
         return;
@@ -302,24 +460,25 @@ void TrimFlow::BeginTrimAction(
     pending_trim_action_ = action;
     pending_trim_start_ = start;
     pending_trim_end_ = end;
+    pending_format_ = format;
     pending_save_destination_ = std::move(save_destination);
     pending_save_replace_ = replace_existing;
     pending_trim_action_started_ms_ = ::GetTickCount64();
 
-    if (trim_artifact_.Matches(start, end) &&
+    if (trim_artifact_.Matches(start, end, format) &&
         !ExistingFileDataPath(trim_artifact_.path).empty()) {
         if (action == PendingTrimAction::Copy &&
             recording_completion_ != nullptr &&
             !recording_completion_->IsPreparedClipboardArtifact(
                 trim_artifact_.path)) {
-            const bool allow_move = trim_artifact_.path != trim_source_path_;
             const auto staged = recording_completion_->StageClipboardArtifact(
-                trim_artifact_.path, recording_options_.format, allow_move);
+                trim_artifact_.path, format, MayMoveArtifact(trim_artifact_.path));
             if (!staged.has_value()) {
                 pending_trim_action_ = PendingTrimAction::None;
                 if (trim_window_) {
                     trim_window_->SetStatus(
-                        strings::Get(IDS_SESSION_TRIM_COPY_PREPARE_FAILED),
+                        strings::Get(TextFor(IDS_SESSION_TRIM_COPY_PREPARE_FAILED,
+                                             IDS_EXTERNAL_COPY_PREPARE_FAILED)),
                         true);
                 }
                 return;
@@ -331,106 +490,106 @@ void TrimFlow::BeginTrimAction(
     }
     if (action == PendingTrimAction::Copy && recording_completion_ != nullptr) {
         const auto destination =
-            recording_completion_->PrepareClipboardDestination(
-                recording_options_.format);
+            recording_completion_->PrepareClipboardDestination(format);
         if (!destination.has_value()) {
             pending_trim_action_ = PendingTrimAction::None;
             if (trim_window_) {
                 trim_window_->SetStatus(
-                    strings::Get(IDS_SESSION_TRIM_COPY_PREPARE_FAILED),
+                    strings::Get(TextFor(IDS_SESSION_TRIM_COPY_PREPARE_FAILED,
+                                         IDS_EXTERNAL_COPY_PREPARE_FAILED)),
                     true);
             }
             return;
         }
-        StartTrimExport(start, end, *destination, true);
+        StartTrimExport(start, end, format, *destination, true);
         return;
     }
     if (action == PendingTrimAction::Save &&
         !pending_save_destination_.empty()) {
         if (recording_completion_ == nullptr ||
             !recording_completion_->IsAllowedSaveDestination(
-                pending_save_destination_, recording_options_.format,
+                pending_save_destination_, format,
                 pending_save_replace_)) {
             pending_trim_action_ = PendingTrimAction::None;
             if (trim_window_) {
                 trim_window_->SetStatus(
-                    strings::Get(IDS_SESSION_TRIM_SAVE_DESTINATION_UNAVAILABLE),
+                    strings::Get(TextFor(IDS_SESSION_TRIM_SAVE_DESTINATION_UNAVAILABLE,
+                                         IDS_EXTERNAL_SAVE_DESTINATION_UNAVAILABLE)),
                     true);
             }
             return;
         }
-        StartTrimExport(start, end, pending_save_destination_, false, true,
+        StartTrimExport(start, end, format, pending_save_destination_, false, true,
                         pending_save_replace_);
         return;
     }
-    StartTrimExport(start, end);
+    StartTrimExport(start, end, format);
 }
 
 void TrimFlow::StartTrimExport(media::MediaTime start,
                                media::MediaTime end,
+                               media::RecordingFormat format,
                                std::wstring destination_path,
                                bool destination_is_clipboard,
                                bool destination_is_save,
                                bool replace_existing) {
     if (state() != SessionState::RecordingTrimming || !trim_export_ ||
-        trim_source_path_.empty() || start < media::MediaTime::zero() ||
+        source_.path.empty() || start < media::MediaTime::zero() ||
         end <= start) {
         return;
     }
 
-    const std::wstring directory = platform::DirectoryOf(trim_source_path_);
+    const std::wstring directory = TemporaryResultDirectory();
     if (destination_path.empty() && directory.empty()) {
         if (trim_window_) {
             trim_window_->SetStatus(
-                strings::Get(IDS_SESSION_TRIM_TEMP_LOCATION_UNAVAILABLE),
+                strings::Get(TextFor(IDS_SESSION_TRIM_TEMP_LOCATION_UNAVAILABLE,
+                                     IDS_EXTERNAL_TEMP_LOCATION_UNAVAILABLE)),
                 true);
         }
         return;
     }
 
+    const auto abandon = [&](UINT owned_message, UINT external_message) {
+        if (trim_window_) {
+            trim_window_->SetStatus(strings::Get(TextFor(owned_message, external_message)), true);
+        }
+        pending_trim_action_ = PendingTrimAction::None;
+        pending_save_destination_.clear();
+        if (destination_is_clipboard && recording_completion_ != nullptr) {
+            recording_completion_->AbandonPreparedClipboardArtifact();
+        }
+    };
+    if (!EnsureExportController(format)) {
+        abandon(IDS_SESSION_TRIM_EXPORT_START_FAILED, IDS_EXTERNAL_EXPORT_START_FAILED);
+        return;
+    }
+
     TrimExportRequest request;
-    request.source_path = trim_source_path_;
+    request.source_path = source_.path;
     const uint64_t generation =
         trim_export_generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
     request.destination_path = destination_path.empty()
                                    ? directory + L"\\trimmed-" +
                                          std::to_wstring(generation) + L"." +
-                                         RecordingFileExtension(
-                                             recording_options_.format)
+                                         RecordingFileExtension(format)
                                    : std::move(destination_path);
     request.start = start;
     request.end = end;
-    request.options = recording_options_;
+    request.options = ExportOptions(format);
     request.replace_existing = replace_existing;
     if (!trim_export_->Start(std::move(request))) {
-        if (trim_window_) {
-            trim_window_->SetStatus(
-                strings::Get(IDS_SESSION_TRIM_EXPORT_START_FAILED),
-                true);
-        }
-        pending_trim_action_ = PendingTrimAction::None;
-        pending_save_destination_.clear();
-        if (destination_is_clipboard && recording_completion_ != nullptr) {
-            recording_completion_->AbandonPreparedClipboardArtifact();
-        }
+        abandon(IDS_SESSION_TRIM_EXPORT_START_FAILED, IDS_EXTERNAL_EXPORT_START_FAILED);
         return;
     }
     if (!RequestTransition(SessionState::Exporting)) {
         trim_export_->CancelAndWait();
-        if (trim_window_) {
-            trim_window_->SetStatus(
-                strings::Get(IDS_SESSION_TRIM_EXPORT_STATE_CHANGED),
-                true);
-        }
-        pending_trim_action_ = PendingTrimAction::None;
-        pending_save_destination_.clear();
-        if (destination_is_clipboard && recording_completion_ != nullptr) {
-            recording_completion_->AbandonPreparedClipboardArtifact();
-        }
+        abandon(IDS_SESSION_TRIM_EXPORT_STATE_CHANGED, IDS_SESSION_TRIM_EXPORT_STATE_CHANGED);
         return;
     }
     trim_export_start_ = start;
     trim_export_end_ = end;
+    trim_export_format_ = format;
     trim_export_to_clipboard_ = destination_is_clipboard;
     trim_export_to_save_ = destination_is_save;
     trim_close_pending_ = false;
@@ -455,6 +614,10 @@ void TrimFlow::OnTrimWindowClosed() {
         state() != SessionState::Exporting) {
         return;
     }
+    if (external()) {
+        CloseExternalVideo();
+        return;
+    }
     // Without a preview nothing can be trimmed and Save is off, but the
     // recording itself is complete. Closing then offers to save it as it is.
     if (state() == SessionState::RecordingTrimming && trim_window_ != nullptr && trim_window_->preview_failed()) {
@@ -470,6 +633,30 @@ void TrimFlow::OnTrimWindowClosed() {
     }
     const TrimCloseAction action =
         PlanTrimClose(discard, state() == SessionState::Exporting);
+    if (action == TrimCloseAction::CancelExportThenDiscard) {
+        trim_close_pending_ = true;
+        OnTrimExportCancel();
+    } else if (action == TrimCloseAction::DiscardNow) {
+        FinishTrimWorkflow(true);
+    }
+}
+
+void TrimFlow::CloseExternalVideo() {
+    // Nothing of the user's can be lost: the file stays as it is, with a
+    // preview or without one.
+    if (state() == SessionState::RecordingTrimming) {
+        FinishTrimWorkflow(true);
+        return;
+    }
+    // Only an export in progress would be lost, and only its own result.
+    const bool stop = ui::ConfirmDestructive(
+        trim_window_ != nullptr ? trim_window_->hwnd() : host_window_,
+        strings::Get(IDS_EXTERNAL_CLOSE_EXPORT_TEXT), strings::Get(IDS_EXTERNAL_CLOSE_EXPORT_TITLE),
+        strings::Get(IDS_EXTERNAL_CLOSE_EXPORT_CONFIRM), strings::Get(IDS_EXTERNAL_CLOSE_EXPORT_KEEP));
+    if (state() != SessionState::RecordingTrimming && state() != SessionState::Exporting) {
+        return;  // The export finished and closed the session while the question was open.
+    }
+    const TrimCloseAction action = PlanTrimClose(stop, state() == SessionState::Exporting);
     if (action == TrimCloseAction::CancelExportThenDiscard) {
         trim_close_pending_ = true;
         OnTrimExportCancel();
@@ -508,7 +695,7 @@ void TrimFlow::SaveUntrimmedRecording() {
     if (state() != SessionState::RecordingTrimming || !destination.has_value()) {
         return;
     }
-    if (::CopyFileW(trim_source_path_.c_str(), destination->c_str(), FALSE) == FALSE) {
+    if (::CopyFileW(source_.path.c_str(), destination->c_str(), FALSE) == FALSE) {
         platform::LogMessage(L"Saving a recording without a preview failed (error %lu)", ::GetLastError());
         // The recording stays open here; a normal exit would delete it, so the
         // message must not promise an offer at the next start.
@@ -565,6 +752,15 @@ void TrimFlow::OnExportCompleted(uint64_t export_generation) {
     if (!trim_window_) {
         return;
     }
+    const auto forget_action = [this] {
+        if (trim_export_to_clipboard_ && recording_completion_ != nullptr) {
+            recording_completion_->AbandonPreparedClipboardArtifact();
+        }
+        trim_export_to_clipboard_ = false;
+        trim_export_to_save_ = false;
+        pending_trim_action_ = PendingTrimAction::None;
+        pending_save_destination_.clear();
+    };
     switch (snapshot.status) {
         case TrimExportStatus::Succeeded:
             if (trim_export_to_save_) {
@@ -582,52 +778,35 @@ void TrimFlow::OnExportCompleted(uint64_t export_generation) {
             trim_artifact_.path = snapshot.result_path;
             trim_artifact_.start = trim_export_start_;
             trim_artifact_.end = trim_export_end_;
+            trim_artifact_.format = trim_export_format_;
             trim_window_->SetExportProgress(1.0f);
             CompletePendingTrimAction();
             if (trim_window_ && trim_window_->visible() && trim_window_->exporting()) {
                 trim_window_->SetExportResult(
-                    strings::Get(IDS_SESSION_TRIM_ACTION_FAILED), true);
+                    strings::Get(TextFor(IDS_SESSION_TRIM_ACTION_FAILED, IDS_EXTERNAL_ACTION_FAILED)), true);
             }
             break;
         case TrimExportStatus::Cancelled:
-            if (trim_export_to_clipboard_ && recording_completion_ != nullptr) {
-                recording_completion_->AbandonPreparedClipboardArtifact();
-            }
-            trim_export_to_clipboard_ = false;
-            trim_export_to_save_ = false;
-            pending_trim_action_ = PendingTrimAction::None;
-            pending_save_destination_.clear();
+            forget_action();
             trim_window_->SetExportResult(
-                strings::Get(IDS_SESSION_TRIM_EXPORT_CANCELLED));
+                strings::Get(TextFor(IDS_SESSION_TRIM_EXPORT_CANCELLED, IDS_EXTERNAL_EXPORT_CANCELLED)));
             break;
         case TrimExportStatus::Failed:
             LogTrimExportFailure(snapshot.failure);
-            if (trim_export_to_clipboard_ && recording_completion_ != nullptr) {
-                recording_completion_->AbandonPreparedClipboardArtifact();
-            }
-            trim_export_to_clipboard_ = false;
-            trim_export_to_save_ = false;
-            pending_trim_action_ = PendingTrimAction::None;
-            pending_save_destination_.clear();
-            if (recording_options_.format == media::RecordingFormat::Gif) {
+            forget_action();
+            if (trim_export_format_ == media::RecordingFormat::Gif) {
                 trim_window_->SetExportResult(
-                    GifExportFailureMessage(snapshot.failure.stage), true);
+                    strings::Get(GifExportFailureMessageId(snapshot.failure.stage, external())), true);
             } else {
                 trim_window_->SetExportResult(
-                    strings::Get(IDS_SESSION_TRIM_EXPORT_FAILED),
+                    strings::Get(TextFor(IDS_SESSION_TRIM_EXPORT_FAILED, IDS_EXTERNAL_EXPORT_FAILED)),
                     true);
             }
             break;
         default:
-            if (trim_export_to_clipboard_ && recording_completion_ != nullptr) {
-                recording_completion_->AbandonPreparedClipboardArtifact();
-            }
-            trim_export_to_clipboard_ = false;
-            trim_export_to_save_ = false;
-            pending_trim_action_ = PendingTrimAction::None;
-            pending_save_destination_.clear();
+            forget_action();
             trim_window_->SetExportResult(
-                strings::Get(IDS_SESSION_TRIM_EXPORT_ENDED),
+                strings::Get(TextFor(IDS_SESSION_TRIM_EXPORT_ENDED, IDS_EXTERNAL_EXPORT_ENDED)),
                 true);
             break;
     }
@@ -636,7 +815,7 @@ void TrimFlow::OnExportCompleted(uint64_t export_generation) {
 void TrimFlow::CompletePendingTrimAction() {
     if (state() != SessionState::RecordingTrimming ||
         pending_trim_action_ == PendingTrimAction::None ||
-        !trim_artifact_.Matches(pending_trim_start_, pending_trim_end_) ||
+        !trim_artifact_.Matches(pending_trim_start_, pending_trim_end_, pending_format_) ||
         ExistingFileDataPath(trim_artifact_.path).empty() ||
         recording_completion_ == nullptr) {
         return;
@@ -646,12 +825,14 @@ void TrimFlow::CompletePendingTrimAction() {
     if (action == PendingTrimAction::Save) {
         const std::wstring destination = pending_save_destination_;
         pending_save_destination_.clear();
+        // Save copies: the file it reads from, the opened video included,
+        // stays where and what it is.
         if (!recording_completion_->Save(trim_artifact_.path, destination,
-                                         recording_options_.format,
+                                         pending_format_,
                                          pending_save_replace_)) {
             if (trim_window_) {
                 trim_window_->SetExportResult(
-                    strings::Get(IDS_SESSION_TRIM_SAVE_FAILED),
+                    strings::Get(TextFor(IDS_SESSION_TRIM_SAVE_FAILED, IDS_EXTERNAL_SAVE_FAILED)),
                     true);
             }
             return;
@@ -667,19 +848,18 @@ void TrimFlow::CompletePendingTrimAction() {
     pending_save_destination_.clear();
     if (!recording_completion_->IsPreparedClipboardArtifact(
             trim_artifact_.path)) {
-        const bool allow_move = trim_artifact_.path != trim_source_path_;
         const auto staged = recording_completion_->StageClipboardArtifact(
-            trim_artifact_.path, recording_options_.format, allow_move);
+            trim_artifact_.path, pending_format_, MayMoveArtifact(trim_artifact_.path));
         if (staged.has_value()) {
             trim_artifact_.path = *staged;
         }
     }
     if (!recording_completion_->PublishClipboardArtifact(host_window_,
                                                          trim_artifact_.path,
-                                                         recording_options_.format)) {
+                                                         pending_format_)) {
         if (trim_window_) {
             trim_window_->SetExportResult(
-                strings::Get(IDS_SESSION_TRIM_COPY_FAILED),
+                strings::Get(TextFor(IDS_SESSION_TRIM_COPY_FAILED, IDS_EXTERNAL_COPY_FAILED)),
                 true);
         }
         return;
@@ -691,6 +871,7 @@ void TrimFlow::CompletePendingTrimAction() {
 }
 
 void TrimFlow::FinishTrimWorkflow(bool delete_active_session) {
+    const bool opened_video = external();
     if (state() == SessionState::Exporting && trim_export_) {
         trim_export_->CancelAndWait();
     }
@@ -706,21 +887,31 @@ void TrimFlow::FinishTrimWorkflow(bool delete_active_session) {
         trim_window_retired_ = true;
     }
     trim_export_.reset();
-    services_.release_recording();
+    if (!opened_video) {
+        services_.release_recording();  // An opened video has no recording to release.
+    }
     if (recording_completion_ != nullptr) {
         recording_completion_->AbandonPreparedClipboardArtifact();
     }
-    if (delete_active_session && active_session.has_value() &&
-        recording_completion_ != nullptr &&
-        !recording_completion_->Discard(*active_session)) {
-        platform::LogMessage(
-            L"Temporary recording cleanup was deferred because a file remained in use");
+    if (opened_video) {
+        // The work session holds only what the flow made; it never stays.
+        if (active_session.has_value() && temp_store_ != nullptr &&
+            !temp_store_->DeleteSession(*active_session)) {
+            platform::LogMessage(L"[Trim] The work session of an opened video could not be removed");
+        }
+    } else {
+        if (delete_active_session && active_session.has_value() &&
+            recording_completion_ != nullptr &&
+            !recording_completion_->Discard(*active_session)) {
+            platform::LogMessage(
+                L"Temporary recording cleanup was deferred because a file remained in use");
+        }
+        if (!delete_active_session && active_session.has_value() && temp_store_) {
+            // Kept for the next start: no longer owned, so exit does not delete it.
+            static_cast<void>(temp_store_->ReleaseSession(*active_session));
+        }
     }
-    if (!delete_active_session && active_session.has_value() && temp_store_) {
-        // Kept for the next start: no longer owned, so exit does not delete it.
-        static_cast<void>(temp_store_->ReleaseSession(*active_session));
-    }
-    trim_source_path_.clear();
+    source_ = TrimSource{};
     trim_artifact_.Clear();
     pending_trim_action_ = PendingTrimAction::None;
     pending_save_destination_.clear();

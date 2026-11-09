@@ -12,6 +12,7 @@
 
 #include "app/session_transitions.h"
 #include "app/app_settings.h"
+#include "app/external_video.h"
 #include "app/recording_completion.h"
 #include "app/recording_finalizer.h"
 #include "app/trim_flow.h"
@@ -58,9 +59,13 @@ inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
 // WM_APP + 15 is platform::kMsgImageExportCompleted, in platform/image_export.h.
 /// Posted when a save of the settings failed and the user may be told now.
 inline constexpr UINT kMsgSettingsNotSaved = WM_APP + 16;
+// WM_APP + 18 is kMsgVideoProbeCompleted, in app/external_video.h.
 /// Timer on the host window: retired windows are destroyed once no dialog of
 /// theirs is running its own message loop any more.
 inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
+/// Timer on the host window: a checked video waits until no dialog of
+/// Easnap's runs its own message loop any more.
+inline constexpr UINT_PTR kTimerVideoProbeRetry = 0xEA51;
 
 /// The session lifecycle; session_transitions.cpp lists the legal transitions.
 ///
@@ -69,6 +74,7 @@ inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
 ///     -> ScreenshotEditing -> ScreenshotExporting -> Idle
 ///     -> RecordingConfiguring -> RecordingActive <-> RecordingPaused
 ///     -> RecordingFinalizing -> RecordingTrimming -> Exporting -> Idle
+///     -> RecordingTrimming, for a video file the user opened (ADR-040)
 ///     -> ScrollshotConfiguring -> ScrollshotCapturing -> ScrollshotReview
 ///        -> Idle, or -> ScreenshotEditing to annotate the stitched image
 ///
@@ -110,6 +116,15 @@ public:
     void OnRecordingFinalized(RecordingFinalizer::Generation generation);
     /// Handles kMsgTrimExportCompleted on the UI thread.
     void OnTrimExportCompleted(uint64_t export_generation);
+    /// Tray "Open video...": asks for a file and checks it on a worker
+    /// thread. Only while idle and while no other video is being checked.
+    void OpenVideo();
+    [[nodiscard]] bool CanOpenVideo() const;
+    /// Handles kMsgVideoProbeCompleted: opens the checked video in the trim
+    /// view, or says why it cannot open.
+    void OnVideoProbeCompleted(VideoProbeJob::Generation generation);
+    /// Handles kTimerVideoProbeRetry.
+    void OnVideoProbeTimer();
     /// Handles WM_CLIPBOARDUPDATE for clipboard-backed recording cleanup.
     void OnClipboardChanged();
     /// Handles kMsgScrollshotProgress on the UI thread.
@@ -186,6 +201,8 @@ private:
     void BeginRecordingFinalization();
     void FinishRecordingWorkflow(bool finalized);
     void StopRecordingForShutdown();
+    /// Opens a video the probe accepted in the trim view.
+    void BeginExternalTrim(const VideoProbeOutcome& outcome);
 
     enum class ScrollshotAction { Start,
                                   Help,
@@ -264,6 +281,8 @@ private:
     std::vector<platform::MonitorInfo> session_monitors_;
     media::RecordingOptions recording_options_{};
     RecordingFinalizer recording_finalizer_;
+    /// Checks a video the user chose before the trim view opens it.
+    VideoProbeJob video_probe_;
     /// Trimming and completion of the finished recording; created by Initialize.
     std::unique_ptr<TrimFlow> trim_flow_;
 
