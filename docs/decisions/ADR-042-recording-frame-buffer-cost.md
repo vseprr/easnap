@@ -1,7 +1,7 @@
 # ADR-042 — What a recorded frame's buffers cost
 
-**Status:** Accepted (BGRA pool and no-fill resize implemented; NV12 sample
-reuse deferred)  
+**Status:** Accepted (BGRA pool and no-fill resize implemented and validated
+in the lab; NV12 sample reuse deferred)  
 **Date:** 2026-11-09
 
 ## Context
@@ -133,12 +133,39 @@ frame the host measured for them is above the 1 ms threshold, and a readback
 that takes 6.7 ms on average at 30 fps leaves little room before a slot is
 missed. The BGRA picture meets the threshold.
 
-After the change: to be filled from the next lab Soak or probe run of
-`recording_frame_cost`. Expected, from the figures above: about 2,000 fewer
-page faults per frame (what remains is mostly the NV12 buffer), a
-`region_copy_timing` lower by at least the 1.2 ms of the new picture and its
-fill, `picture_allocations` of at most seven per recording, and fewer missed
-pacing slots. Expected, not measured.
+After the change, the lab Soak run `20261109-103322-soak` (tree `bd10347`,
+the same image and the same three recordings; the run before it was
+`20261109-054120-soak`):
+
+| `recording_frame_cost`, 1080p30, Desktop Duplication | Before | After |
+|---|---|---|
+| Page faults per written frame | about 2,160 | 862 |
+| BGRA pictures allocated per recording | one per frame | 2 (`picture_allocations`), at most 2 in use (`peak_pictures`) |
+| `region_copy_timing` | 6.7 ms on average | 5.7 to 6.1 ms (median of each recording) |
+| `writer_submission_timing` | 5.7 ms on average | 5.8 to 6.0 ms |
+| Process CPU time per frame | 667 to 1,311 µs | 106 to 708 µs |
+| Missed pacing slots | 14 to 20 of 286 (median 15) | 6 to 14 of about 290 |
+
+`frame_buffer_cost` in the same run, in the VM, 1920 × 1080:
+
+| Operation | Time | Faults |
+|---|---|---|
+| `BgraImage::Reset` on a new image | 1,633 µs | 2,030 |
+| `BgraImage::Reset` on the same image | 295 µs | 0 |
+| `CopyOpaqueFrom` into a new picture | 1,854 µs | 2,030 |
+| `CopyOpaqueFrom` into a reused picture | 156 µs | 0 |
+
+What the after figures say. The pool made two pictures per recording, not
+one per frame, and about 1,300 page faults per frame are gone; the 862 that
+remain are close to the 762 the host measured for the new NV12 buffer of
+each frame. The process spends roughly half the CPU time per frame or less,
+and fewer pacing slots are missed. The region copy fell by 0.6 to 1.0 ms,
+less than the 1.2 ms expected, and the two figures are not the same
+statistic (an average before, medians after); a copy into a pooled picture
+takes 0.16 ms in the VM, so most of the remaining 5.8 ms is the readback
+itself, not the picture. The writer, which this decision does not touch,
+stayed at about 5.9 ms. The decision is validated in the lab: the CPU time
+and the missed slots met the threshold set in advance.
 
 ### What changed
 
@@ -224,14 +251,18 @@ buffers have a pitch. A hardware encoder may keep its input samples after
 writer goes through the same function, so the change would need a run on a
 physical GPU before it could ship. It is not done. It is reconsidered if the
 lab's after figures still miss pacing slots or a hardware encoder run shows
-the NV12 buffer's cost. `CoreWriteVideoSample` (the native NV12 trim path),
-the audio path and the encoder are not touched by this decision.
+the NV12 buffer's cost. The after figures still miss 6 to 14 slots of about
+290; in those recordings the region copy and the writer take about 5.8 and
+5.9 ms of each frame, against about 0.3 ms for a new NV12 buffer on the
+development PC, so the deferral stands until a hardware-encoder run on a
+physical GPU. `CoreWriteVideoSample` (the native NV12 trim path), the audio
+path and the encoder are not touched by this decision.
 
 ## Consequences
 
-- A recording of changing content allocates about seven pictures instead of
-  one per frame; a still recording, fewer. The pages of a pooled picture are
-  touched once.
+- A recording of changing content allocates at most seven pictures instead
+  of one per frame (two in the lab's recordings); a still recording, fewer.
+  The pages of a pooled picture are touched once.
 - The bound is 61,171,200 bytes at 1920 × 1080 and 244,684,800 bytes at
   3840 × 2160 (seven pictures and one NV12 buffer). A pool full to its cap
   holds the pictures from the moment the consumer first falls behind until
@@ -248,10 +279,13 @@ the audio path and the encoder are not touched by this decision.
 
 ## Not validated
 
-- The lab figures after the change: `recording_frame_cost` needs the visible
-  desktop and runs in the lab; it has not run with the pool.
+- A physical GPU and a hardware encoder: the after figures come from the
+  lab's VM, which has neither.
 - The tests that read the real desktop (`real_desktop_recording_session`,
   `recording_pause_stop_stress`, `island_capture_exclusion`, the Scrollshot
-  desktop tests) were built but not run on the host; they run in the lab.
+  desktop tests) were built but not run on the host. With the pool they
+  passed in the lab runs `20261109-101913-full` and `20261109-103322-soak`,
+  apart from `scrollshot_realistic_desktop`
+  ([ADR-041](ADR-041-scrollshot-realistic-test-application.md#validation)).
 - A region across monitors, a rotated output and the GDI fallback were not
   exercised with the pool on real displays.

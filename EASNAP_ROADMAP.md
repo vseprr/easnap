@@ -42,20 +42,26 @@ first slice is S2 of the coordinator split.
 
 In this order (details in [project status](docs/project-status.md#next-slice)):
 
-1. The external video feature on `feature/v1.3-findings`: its validation
-   (lab run, installer "Open with", owner checklist of
-   [ADR-040](docs/decisions/ADR-040-external-video-in-the-trim-view.md)).
-2. The lab figures of the recording's picture pool
-   ([ADR-042](docs/decisions/ADR-042-recording-frame-buffer-cost.md)) against
-   the Soak figures before it; NV12 sample reuse waits for a hardware-encoder
-   run.
-3. The remaining editor costs (first spotlight frame, blur closure) and the
-   Scrollshot fractional scroll offsets, which need an engine change and an
-   ADR-027 amendment.
-4. The owner's checks of the branch, then the other v1.3 candidates under
-   [other deferred work](#other-deferred-work), one bounded slice each.
-   Recording stays in the coordinator
-   ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md#recording-decided-after-s2)).
+1. The Scrollshot engine amendment for pictures torn between two presents
+   ([ADR-027](docs/decisions/ADR-027-scrollshot-stitching-engine.md#known-weakness-2026-11-09)),
+   seen in the lab; until then `scrollshot_realistic_desktop` reports torn
+   input as `KNOWN_WEAKNESS`
+   ([ADR-041](docs/decisions/ADR-041-scrollshot-realistic-test-application.md#validation)).
+2. The preview transport race: a quick Play, Pause and Play after a stop at
+   Out can resume at the old pause point (one failure in 30 lab runs).
+3. The owner's checks: the external video feature (installer "Open with",
+   owner checklist of
+   [ADR-040](docs/decisions/ADR-040-external-video-in-the-trim-view.md)) and
+   the branch's other changes.
+4. The remaining editor costs (first spotlight frame, blur closure).
+
+Then the other v1.3 candidates under [other deferred work](#other-deferred-work),
+one bounded slice each; the Scrollshot fractional scroll offsets need an
+engine change of their own. Recording stays in the coordinator
+([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md#recording-decided-after-s2)).
+The recording's picture pool is validated in the lab
+([ADR-042](docs/decisions/ADR-042-recording-frame-buffer-cost.md)); NV12
+sample reuse waits for a hardware-encoder run.
 
 Open on the owner's side: the host Full run for the writer fix, since the host
 desktop is used only when the owner asks. Not covered yet: Windows 11, an N

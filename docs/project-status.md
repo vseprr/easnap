@@ -225,6 +225,20 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   more than one row off (worst 3.07); two further expected failures (a
   textured fixed background, a bar that changes every frame) are confirmed.
   Fixing them needs an engine change and an amendment of ADR-027; not done.
+  Torn pictures in the lab: in the Soak run `20261109-103322-soak` the
+  desktop test showed pictures composed of two presents (picture 55 between
+  offsets 1,868 and 2,068; on the retry picture 62 between 1,859 and 1,868,
+  followed by placements 66 rows too low and a height of 4,605 against
+  4,539), collected as PNG. The engine accepts such a picture on the
+  agreement of the whole picture: a known weakness, recorded in
+  [ADR-027](decisions/ADR-027-scrollshot-stitching-engine.md#known-weakness-2026-11-09),
+  whose fix is the next Scrollshot slice. The desktop test therefore keeps
+  every exactness check on clean input, and when every picture with no match
+  is torn it prints `KNOWN_WEAKNESS` with the figures and asserts only the
+  exact bar, the shadow engine equal to the session, the session following
+  to the end and at most three GDI pictures; a picture with no match that is
+  not torn keeps the whole contract. The conditional contract has not run in
+  the lab yet.
 - **Recorded frames reuse their pictures**
   ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md), Accepted):
   measured by `frame_buffer_cost` and `recording_frame_cost`; the lab Soak
@@ -236,9 +250,15 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   and a readback that overwrites every pixel copies it once, made opaque,
   without a fill (`ResizeForOverwrite`, `CopyOpaqueFrom`). On the development
   PC a 1080p readback went from about 1.7 ms (new picture, fill, copy,
-  `MakeOpaque`) to 0.15 ms. The NV12 buffer is still new per frame: tracked
-  samples are deferred until a physical-GPU run. The lab figures after the
-  change are pending.
+  `MakeOpaque`) to 0.15 ms. Validated in the lab Soak run
+  `20261109-103322-soak`: page faults per frame 862 (before about 2,160),
+  two pictures allocated per recording (before one per frame), the region
+  copy 5.7 to 6.1 ms (medians; before 6.7 ms on average), process CPU time
+  106 to 708 µs per frame (before 667 to 1,311), 6 to 14 pacing slots of
+  about 290 missed (before 14 to 20), the writer unchanged at 5.8 to 6.0 ms;
+  in the VM a copy into a reused picture takes 156 µs against 1,854 µs into
+  a new one. The NV12 buffer is still new per frame: tracked samples are
+  deferred until a hardware-encoder run on a physical GPU.
 - **An external video in the trim view: the media layer**
   ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md), Proposed):
   the support table, the probe with its classifier and the exporters, which
@@ -341,6 +361,20 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   `image_export_job` and `frame_buffer_cost`), both with no retry and no
   fallback: every capture test on Desktop Duplication, `trim_endpoint_presentation`
   on Windows Graphics Capture.
+- v1.3 on `feature/v1.3-findings`, later runs (2026-11-09, lab): Soak 67 of
+  68 at `b9b3f77` (`20261109-054120-soak`) failed only
+  `scrollshot_realistic_desktop`, which led to the fixes of its oracle
+  ([ADR-041](decisions/ADR-041-scrollshot-realistic-test-application.md#validation)).
+  Full 62 of 62 at `e048f3e` (`20261109-095512-full`), no retry, includes the
+  media layer of ADR-040 and the editor's damage rectangles;
+  `scrollshot_real_desktop` read through GDI that time (`VM-ok-but-fallback`).
+  Full 64 of 66 at `c0ae38a` (`20261109-101913-full`): `mfplay_preview_stress_0`
+  failed once on the preview-transport race (Known limitations), and
+  `scrollshot_realistic_desktop` failed before its oracle fix. Soak 73 of 74
+  at `bd10347` (`20261109-103322-soak`): only `scrollshot_realistic_desktop`
+  failed, on pictures torn between two presents, with the evidence collected;
+  `mfplay_preview_stress_0`, `_1` and `_2` passed, and `recording_frame_cost`
+  measured the picture pool (ADR-042).
 - The runs, including the ones that failed, and those of earlier versions are
   in the [validation records](releases/validation-history.md#validation-of-v120).
 
@@ -388,9 +422,9 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   session messages were sent to the application by hand).
 - A second reader of the Turkish text, which was read in the running
   application.
-- **v1.3:** the media layer of ADR-040 (`6643e97`) and the editor's damage
-  rectangles (`b9b3f77`) are in no lab run yet; the Soak run of this branch is
-  pending; the owner's checks of the changes in the running application are
+- **v1.3:** the conditional contract of `scrollshot_realistic_desktop` (torn
+  input reported as a known weakness) has not run in the lab yet; the
+  owner's checks of the changes in the running application are
   pending (the settings notice, the crash report, Exit and sign-out during an
   export, the trim window at its new minimum width).
 
@@ -423,13 +457,25 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   change and an amendment of
   [ADR-027](decisions/ADR-027-scrollshot-stitching-engine.md); not in v1.3 so
   far ([ADR-041](decisions/ADR-041-scrollshot-realistic-test-application.md)).
-- A Scrollshot picture torn between two presents is placed on agreement of
-  the whole picture; the part that disagrees is appended and later placements
-  shift. Offline it is the only reproduction of the too-tall images of
-  `scrollshot_realistic_desktop` in the lab Soak run `20261109-054120-soak`;
-  that the lab's pictures were torn is not shown yet. An engine change with an
-  amendment of ADR-027, not made
-  ([ADR-041](decisions/ADR-041-scrollshot-realistic-test-application.md#validation)).
+- Desktop Duplication can hand Scrollshot a picture composed of two presents
+  (rows from two scroll positions). The engine places it when the whole
+  picture agrees with the canvas by 55 %, writes the rows that disagree, and
+  later placements can shift by a constant distance, so the image comes out
+  too tall; nothing in the session's progress shows it. Shown in the lab
+  Soak run `20261109-103322-soak`: pictures torn between offsets 1,868 and
+  2,068 (no placement shifted, 278 rows unlike the page) and between 1,859
+  and 1,868 (later placements 66 rows too low, 4,605 rows against 4,539).
+  The fix is an amendment of
+  [ADR-027](decisions/ADR-027-scrollshot-stitching-engine.md#known-weakness-2026-11-09)
+  (agreement in each part of the overlap, appended rows provisional until a
+  second picture agrees, a contiguous contradiction refused as `Ambiguous`),
+  not made ([ADR-041](decisions/ADR-041-scrollshot-realistic-test-application.md#validation)).
+- After the trim preview stops at the Out point, a quick Play, Pause and Play
+  can resume at that old pause point instead of the In point and stop again
+  at once: the preview helper confirms both seeks, but playback resumes from
+  the old pause clock. A pre-existing race in the preview transport,
+  seen once in 30 lab runs (`mfplay_preview_stress_0`, run
+  `20261109-101913-full`); not fixed.
 - A window that is open when the language changes keeps its text; only the
   Settings dialog can be open then, and it closes.
 - The mode island's home now starts below a taskbar docked at the top
@@ -540,15 +586,21 @@ post-v1 without a promised date.
 
 On `feature/v1.3-findings`, in this order (the roadmap has the index):
 
-1. The validation of the external video feature
-   ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md)): the lab
-   run, the installer's "Open with" entries and the owner checklist.
-2. The lab figures of `recording_frame_cost` with the picture pool
-   ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md)), against
-   the Soak figures before it.
-3. The remaining editor costs: the first spotlight frame (about 50 ms in a
+1. The Scrollshot engine amendment for pictures composed of two presents
+   ([ADR-027](decisions/ADR-027-scrollshot-stitching-engine.md#known-weakness-2026-11-09)):
+   agreement in each part of the overlap, appended rows provisional until a
+   second picture agrees, a contiguous contradiction refused as `Ambiguous`.
+   `scrollshot_realistic_desktop` then shows whether torn input still needs
+   its `KNOWN_WEAKNESS` path.
+2. The preview transport race (Known limitations): after a seek, the first
+   Play that resumes far past the requested point is corrected, with Fast
+   coverage.
+3. The owner's checks: the external video feature
+   ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md): the
+   installer's "Open with" entries and the owner checklist) and this
+   branch's other changes in the running application.
+4. The remaining editor costs: the first spotlight frame (about 50 ms in a
    tall image) and the blur closure (about 0.1 s per paint).
-4. The owner's checks of this branch's changes in the running application.
 
 The Scrollshot fractional-offset finding waits for an engine change and its
 own decision. Package-manager submissions remain the owner's step

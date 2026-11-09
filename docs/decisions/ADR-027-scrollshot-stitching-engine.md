@@ -2,6 +2,10 @@
 
 **Status:** Accepted
 **Date:** 2026-10-12
+**Amended:** 2026-11-09 — known weakness recorded: a picture composed of two
+presents is accepted on whole-picture agreement and can shift later
+placements ([ADR-041](ADR-041-scrollshot-realistic-test-application.md));
+the amendment that fixes it is pending
 
 ## Context
 
@@ -136,3 +140,21 @@ Known boundaries, all reported rather than guessed:
 - Before the first motion reveals the fixed bands, a jump inside a page whose
   fixed header holds more than half of the detailed rows would be taken for an
   unmoved viewport.
+
+### Known weakness (2026-11-09)
+
+Unlike the boundaries above, this one is not reported. Desktop Duplication
+can hand over a picture composed of two presents of a scrolling page: rows
+from one scroll position above rows from another. Step 5 scores the picture
+as a whole, so when most of it agrees with the canvas it reaches 55 % and is
+placed; the rows that disagree are written as content, and later placements
+can shift by a constant distance, leaving the image too tall. The lab showed
+it in run `20261109-103322-soak` of `scrollshot_realistic_desktop`: pictures
+torn between offsets 1,868 and 2,068 and between 1,859 and 1,868, the second
+followed by placements 66 rows too low
+([ADR-041](ADR-041-scrollshot-realistic-test-application.md#validation)).
+The decisions and thresholds above are unchanged. The amendment that fixes
+it is pending: a placed picture must agree with the canvas in each part of
+its overlap, appended rows stay provisional until a second picture agrees,
+and a contiguous band that contradicts the canvas makes the picture
+`Ambiguous`.
