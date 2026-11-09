@@ -77,8 +77,15 @@ BOOL CALLBACK MonitorEnumProc(HMONITOR monitor, HDC, LPRECT, LPARAM data) {
     return TRUE;
 }
 
-bool WriteEncodedImage(const BgraImage& image, ImageFormat format, IStream* stream) {
-    auto* wic = GraphicsEnvironment::Get().wic_factory();
+/// Rows written per call: a cancelled export stops between two bands.
+constexpr int kEncodeBandRows = 256;
+
+bool Cancelled(const std::atomic<bool>* cancel) noexcept {
+    return cancel != nullptr && cancel->load(std::memory_order_acquire);
+}
+
+bool WriteEncodedImage(IWICImagingFactory* wic, const BgraImage& image, ImageFormat format, IStream* stream,
+                       const std::atomic<bool>* cancel) {
     if (wic == nullptr || stream == nullptr || image.empty()) {
         return false;
     }
@@ -107,7 +114,8 @@ bool WriteEncodedImage(const BgraImage& image, ImageFormat format, IStream* stre
     if (FAILED(hr)) {
         return false;
     }
-    hr = frame->SetSize(static_cast<UINT>(image.width), static_cast<UINT>(image.height));
+    const UINT width = static_cast<UINT>(image.width);
+    hr = frame->SetSize(width, static_cast<UINT>(image.height));
     if (FAILED(hr)) {
         return false;
     }
@@ -120,37 +128,40 @@ bool WriteEncodedImage(const BgraImage& image, ImageFormat format, IStream* stre
         return false;
     }
 
-    if (::IsEqualGUID(pixel_format, GUID_WICPixelFormat32bppBGRA)) {
-        const UINT stride = static_cast<UINT>(image.stride_bytes());
-        const UINT size = stride * static_cast<UINT>(image.height);
-        hr = frame->WritePixels(static_cast<UINT>(image.height), stride, size,
-                                reinterpret_cast<BYTE*>(const_cast<uint32_t*>(image.pixels.data())));
-    } else {
+    // Successive writes add rows to the frame, so the image goes in bands: a
+    // cancelled export stops after the band being encoded, and a converted
+    // format never needs a second copy of the whole image.
+    const bool direct = ::IsEqualGUID(pixel_format, GUID_WICPixelFormat32bppBGRA) != FALSE;
+    const UINT stride = static_cast<UINT>(image.stride_bytes());
+    for (int top = 0; top < image.height && SUCCEEDED(hr); top += kEncodeBandRows) {
+        if (Cancelled(cancel)) {
+            return false;
+        }
+        const UINT rows = static_cast<UINT>((std::min)(kEncodeBandRows, image.height - top));
+        auto* band = reinterpret_cast<BYTE*>(const_cast<uint32_t*>(image.row(top)));
+        if (direct) {
+            hr = frame->WritePixels(rows, stride, stride * rows, band);
+            continue;
+        }
         // Convert to the format the encoder negotiated.
         ComPtr<IWICBitmap> source;
-        hr = wic->CreateBitmapFromMemory(static_cast<UINT>(image.width), static_cast<UINT>(image.height),
-                                         GUID_WICPixelFormat32bppBGRA, static_cast<UINT>(image.stride_bytes()),
-                                         static_cast<UINT>(image.pixels.size() * sizeof(uint32_t)),
-                                         reinterpret_cast<BYTE*>(const_cast<uint32_t*>(image.pixels.data())),
+        hr = wic->CreateBitmapFromMemory(width, rows, GUID_WICPixelFormat32bppBGRA, stride, stride * rows, band,
                                          &source);
-        if (FAILED(hr)) {
-            return false;
-        }
         ComPtr<IWICFormatConverter> converter;
-        hr = wic->CreateFormatConverter(&converter);
-        if (FAILED(hr)) {
-            return false;
+        if (SUCCEEDED(hr)) { hr = wic->CreateFormatConverter(&converter); }
+        if (SUCCEEDED(hr)) {
+            hr = converter->Initialize(source.Get(), pixel_format, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                       WICBitmapPaletteTypeCustom);
         }
-        hr = converter->Initialize(source.Get(), pixel_format, WICBitmapDitherTypeNone, nullptr, 0.0,
-                                   WICBitmapPaletteTypeCustom);
-        if (FAILED(hr)) {
-            return false;
-        }
-        hr = frame->WriteSource(converter.Get(), nullptr);
+        WICRect rect{0, 0, static_cast<INT>(width), static_cast<INT>(rows)};
+        if (SUCCEEDED(hr)) { hr = frame->WriteSource(converter.Get(), &rect); }
     }
 
     if (FAILED(hr)) {
         LogHresult(L"WIC WritePixels", hr);
+        return false;
+    }
+    if (Cancelled(cancel)) {
         return false;
     }
     hr = frame->Commit();
@@ -167,7 +178,7 @@ bool WriteEncodedImage(const BgraImage& image, ImageFormat format, IStream* stre
 
 /// The image as clipboard memory in CF_DIB, or null. The caller owns it until
 /// SetClipboardData accepts it.
-HGLOBAL MakeClipboardDib(const BgraImage& image) {
+HGLOBAL MakeClipboardDib(const BgraImage& image, const std::atomic<bool>* cancel) {
     // 32bpp BI_RGB DIB: the format virtually every Windows application accepts.
     const size_t pixel_bytes = image.pixels.size() * sizeof(uint32_t);
     const size_t total = sizeof(BITMAPINFOHEADER) + pixel_bytes;
@@ -193,30 +204,44 @@ HGLOBAL MakeClipboardDib(const BgraImage& image) {
     auto* const rows = reinterpret_cast<uint32_t*>(header + 1);
     const size_t row_bytes = static_cast<size_t>(image.width) * sizeof(uint32_t);
     for (int y = 0; y < image.height; ++y) {
+        if (y % kEncodeBandRows == 0 && Cancelled(cancel)) {
+            ::GlobalUnlock(memory);
+            ::GlobalFree(memory);
+            return nullptr;
+        }
         std::memcpy(rows + static_cast<size_t>(image.height - 1 - y) * image.width, image.row(y), row_bytes);
     }
     ::GlobalUnlock(memory);
     return memory;
 }
 
-/// The image encoded as PNG in clipboard memory, or null. Encoding a tall
-/// image takes seconds, so it happens before the clipboard is opened.
-HGLOBAL MakeClipboardPng(const BgraImage& image) {
-    std::vector<uint8_t> bytes;
-    if (!EncodeImage(image, ImageFormat::Png, bytes) || bytes.empty()) {
+/// The image encoded as PNG in clipboard memory, or null. The encoder writes
+/// straight into the memory the clipboard receives.
+HGLOBAL MakeClipboardPng(IWICImagingFactory* factory, const BgraImage& image, const std::atomic<bool>* cancel) {
+    ComPtr<IStream> stream;
+    const HRESULT hr = ::CreateStreamOnHGlobal(nullptr, FALSE, &stream);
+    if (FAILED(hr)) {
+        LogHresult(L"CreateStreamOnHGlobal", hr);
         return nullptr;
     }
-    HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes.size());
-    if (memory == nullptr) {
-        return nullptr;
+    bool encoded = WriteEncodedImage(factory, image, ImageFormat::Png, stream.Get(), cancel);
+    if (encoded) {
+        // The memory can be larger than what was written, and readers of the
+        // clipboard take its size for the size of the PNG.
+        STATSTG stat{};
+        encoded = SUCCEEDED(stream->Stat(&stat, STATFLAG_NONAME)) && stat.cbSize.QuadPart != 0 &&
+                  SUCCEEDED(stream->SetSize(stat.cbSize));
     }
-    void* target = ::GlobalLock(memory);
-    if (target == nullptr) {
+    // The stream does not free its memory; it is handed out or freed here.
+    HGLOBAL memory = nullptr;
+    if (FAILED(::GetHGlobalFromStream(stream.Get(), &memory))) {
+        memory = nullptr;
+    }
+    stream.Reset();
+    if (!encoded && memory != nullptr) {
         ::GlobalFree(memory);
-        return nullptr;
+        memory = nullptr;
     }
-    std::memcpy(target, bytes.data(), bytes.size());
-    ::GlobalUnlock(memory);
     return memory;
 }
 
@@ -821,7 +846,7 @@ bool EncodeImage(const BgraImage& image, ImageFormat format, std::vector<uint8_t
         LogHresult(L"CreateStreamOnHGlobal", hr);
         return false;
     }
-    if (!WriteEncodedImage(image, format, stream.Get())) {
+    if (!WriteEncodedImage(GraphicsEnvironment::Get().wic_factory(), image, format, stream.Get(), nullptr)) {
         return false;
     }
 
@@ -846,7 +871,15 @@ bool EncodeImage(const BgraImage& image, ImageFormat format, std::vector<uint8_t
 }
 
 bool SaveImage(const BgraImage& image, const std::wstring& path) {
-    if (!GraphicsEnvironment::Get().EnsureInitialized() || path.empty()) {
+    if (!GraphicsEnvironment::Get().EnsureInitialized()) {
+        return false;
+    }
+    return SaveImage(GraphicsEnvironment::Get().wic_factory(), image, path, nullptr);
+}
+
+bool SaveImage(IWICImagingFactory* factory, const BgraImage& image, const std::wstring& path,
+               const std::atomic<bool>* cancel) {
+    if (factory == nullptr || path.empty()) {
         return false;
     }
     // The destination always comes from the system picker, so the path is
@@ -857,18 +890,18 @@ bool SaveImage(const BgraImage& image, const std::wstring& path) {
     ::swprintf_s(suffix, L".easnap-%08lx%016llx.tmp", ::GetCurrentProcessId(), ::GetTickCount64());
     const std::wstring staged = path + suffix;
     ComPtr<IStream> stream;
-    HRESULT hr = ::SHCreateStreamOnFileEx(staged.c_str(), STGM_CREATE | STGM_WRITE | STGM_SHARE_EXCLUSIVE,
-                                          FILE_ATTRIBUTE_NORMAL, TRUE, nullptr, &stream);
+    const HRESULT hr = ::SHCreateStreamOnFileEx(staged.c_str(), STGM_CREATE | STGM_WRITE | STGM_SHARE_EXCLUSIVE,
+                                                FILE_ATTRIBUTE_NORMAL, TRUE, nullptr, &stream);
     if (FAILED(hr)) {
         LogHresult(L"SHCreateStreamOnFileEx", hr);
         return false;
     }
-    const bool encoded = WriteEncodedImage(image, FormatFromPath(path), stream.Get()) &&
+    const bool encoded = WriteEncodedImage(factory, image, FormatFromPath(path), stream.Get(), cancel) &&
                          SUCCEEDED(stream->Commit(STGC_DEFAULT));
     stream.Reset();
-    if (!encoded ||
+    if (!encoded || Cancelled(cancel) ||
         ::MoveFileExW(staged.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) == FALSE) {
-        if (encoded) {
+        if (encoded && !Cancelled(cancel)) {
             LogMessage(L"SaveImage could not replace the destination: %lu", ::GetLastError());
         }
         ::DeleteFileW(staged.c_str());  // Never leave a partial export behind.
@@ -877,33 +910,68 @@ bool SaveImage(const BgraImage& image, const std::wstring& path) {
     return true;
 }
 
-bool CopyImageToClipboard(HWND owner, const BgraImage& image) {
+ClipboardImage::~ClipboardImage() { Reset(); }
+
+ClipboardImage::ClipboardImage(ClipboardImage&& other) noexcept : dib_(other.dib_), png_(other.png_) {
+    other.dib_ = nullptr;
+    other.png_ = nullptr;
+}
+
+ClipboardImage& ClipboardImage::operator=(ClipboardImage&& other) noexcept {
+    if (this != &other) {
+        Reset();
+        dib_ = other.dib_;
+        png_ = other.png_;
+        other.dib_ = nullptr;
+        other.png_ = nullptr;
+    }
+    return *this;
+}
+
+void ClipboardImage::Reset() noexcept {
+    if (dib_ != nullptr) { ::GlobalFree(dib_); }
+    if (png_ != nullptr) { ::GlobalFree(png_); }
+    dib_ = nullptr;
+    png_ = nullptr;
+}
+
+ClipboardImage PrepareClipboardImage(IWICImagingFactory* factory, const BgraImage& image,
+                                     const std::atomic<bool>* cancel) {
+    ClipboardImage prepared;
     if (image.empty()) {
-        return false;
+        return prepared;
     }
     // Both formats are ready before the clipboard opens: other applications
     // cannot use the clipboard while it is open, and a tall PNG takes seconds.
-    // CF_DIB is the reliable baseline; PNG is offered for apps that want it.
-    HGLOBAL dib = MakeClipboardDib(image);
-    if (dib == nullptr) {
-        LogMessage(L"Clipboard image memory could not be allocated");
+    prepared.dib_ = MakeClipboardDib(image, cancel);
+    if (prepared.dib_ == nullptr) {
+        if (!Cancelled(cancel)) { LogMessage(L"Clipboard image memory could not be allocated"); }
+        return prepared;
+    }
+    prepared.png_ = MakeClipboardPng(factory, image, cancel);
+    if (Cancelled(cancel)) {
+        prepared.Reset();
+    }
+    return prepared;
+}
+
+bool PublishClipboardImage(HWND owner, ClipboardImage& image) {
+    if (image.empty()) {
         return false;
     }
-    HGLOBAL png = MakeClipboardPng(image);
     if (::OpenClipboard(owner) == FALSE) {
         LogMessage(L"OpenClipboard failed (error %lu)", ::GetLastError());
-        ::GlobalFree(dib);
-        if (png != nullptr) { ::GlobalFree(png); }
         return false;
     }
     bool ok = false;
     if (::EmptyClipboard() != FALSE) {
         static const UINT png_format = ::RegisterClipboardFormatW(L"PNG");
+        HGLOBAL dib = image.dib_;
+        HGLOBAL png = image.png_;
+        image.dib_ = nullptr;
+        image.png_ = nullptr;
         ok = PutClipboardMemory(CF_DIB, dib);
-        static_cast<void>(PutClipboardMemory(png_format, png));
-    } else {
-        ::GlobalFree(dib);
-        if (png != nullptr) { ::GlobalFree(png); }
+        if (png != nullptr) { static_cast<void>(PutClipboardMemory(png_format, png)); }
     }
     ::CloseClipboard();
     return ok;

@@ -66,7 +66,10 @@ enum class PendingWork {
 
 /// `image_at_risk` tells whether the image being edited carries work: a plain
 /// screenshot without annotations can be taken again and does not count.
-[[nodiscard]] PendingWork PendingWorkFor(SessionState state, bool image_at_risk) noexcept;
+/// `image_export_running`: an image is being copied or saved, from the
+/// session or from a pin; it counts unless a recording matters more.
+[[nodiscard]] PendingWork PendingWorkFor(SessionState state, bool image_at_risk,
+                                         bool image_export_running) noexcept;
 
 /// Whether the user is told now that the settings could not be saved: once
 /// per run, and only while no session and none of the application's dialogs

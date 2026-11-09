@@ -72,7 +72,8 @@ bool IsSessionTransitionLegal(SessionState from, SessionState to) noexcept {
     return false;
 }
 
-PendingWork PendingWorkFor(SessionState state, bool image_at_risk) noexcept {
+PendingWork PendingWorkFor(SessionState state, bool image_at_risk, bool image_export_running) noexcept {
+    const PendingWork image = image_export_running ? PendingWork::Image : PendingWork::None;
     switch (state) {
         case SessionState::RecordingActive:
         case SessionState::RecordingPaused:
@@ -86,15 +87,15 @@ PendingWork PendingWorkFor(SessionState state, bool image_at_risk) noexcept {
         case SessionState::ScrollshotReview:
             return PendingWork::Image;
         case SessionState::ScreenshotEditing:
-            return image_at_risk ? PendingWork::Image : PendingWork::None;
+            return image_at_risk ? PendingWork::Image : image;
         case SessionState::Idle:
         case SessionState::RegionSelecting:
         case SessionState::ScreenshotExporting:
         case SessionState::RecordingConfiguring:
         case SessionState::ScrollshotConfiguring:
-            return PendingWork::None;
+            return image;
     }
-    return PendingWork::None;
+    return image;
 }
 
 bool ShouldTellSettingsNotSaved(SessionState state, bool dialog_open, bool already_told) noexcept {

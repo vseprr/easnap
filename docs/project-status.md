@@ -89,6 +89,21 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   shading split. The lab VM shows no shift either way, so there it only shows
   that nothing else changed: lab Full (run `20261108-234453-full`), 51 of 51
   with no retry, `scrollshot_real_desktop` on Desktop Duplication as before.
+- **Copying and saving an image no longer freeze the window**
+  ([ADR-031](decisions/ADR-031-unsaved-work-survives.md#copying-and-saving-a-finished-image-amended-2026-11-09)):
+  the editor, pins and the Scrollshot island encode and write on a worker
+  (`platform/image_export`), one export per process; the window stays busy
+  and refuses changes until the result arrives. Exit is refused and a sign-out
+  held back while one runs; at session end a save is waited for and a copy
+  cancelled. Validated on the development PC (2026-11-09): the Release build
+  without warnings, the Fast tier, and the Standard tests
+  `capture_workspace_production`, `capture_export_responsiveness`,
+  `scrollshot_workspace_production`, `pinned_images_native`,
+  `data_safety_questions`, `text_fits_in_every_language` on private desktops.
+  The responsiveness test copied 1920 x 12,000 pixels of noise in 3.1 to 3.9 s
+  with the slowest reply of the window at 31 to 47 ms. Not run: the lab, the
+  desktop tiers, Exit and sign-out during an export, Scrollshot Copy and Save
+  (no test compiles the coordinator) and the Save dialog paths.
 - **Recording stays in the coordinator**, decided after S2: its island
   belongs to the workspace while the region is configured, and what can fail
   is already in classes with tests
@@ -251,10 +266,12 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
 ## Known limitations and unresolved risks
 
 - Scrollshot is manual and vertical; the image only grows downwards. Copying
-  and saving a very tall image run on the UI thread; the PNG for the clipboard
-  is encoded before the clipboard is opened, so other applications can use the
-  clipboard meanwhile (v1.2 branch). At the 48-million-pixel
-  limit, editing holds two buffers of about 190 MB and an export a third.
+  and saving run on a worker, but the composite of an annotated image and
+  stopping a Scrollshot capture still run on the UI thread, unmeasured for a
+  tall image. A copy reaches the clipboard when its worker has finished and
+  replaces what was copied meanwhile. At the 48-million-pixel limit, editing
+  holds two buffers of about 190 MB and an export a third and the clipboard
+  memory.
 - A recording that is still being written when Easnap stops cannot be
   recovered; a recovered recording is the untrimmed MP4. A recording that
   starts on a still desktop reads its first picture through GDI and asks

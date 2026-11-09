@@ -263,12 +263,13 @@ void ModeBar(const platform::MonitorInfo& monitor) {
     overlay.Destroy();
 }
 
-/// The notices draw their own text. The copied and saved notices take one
-/// line; a status notice may wrap, but never beyond its window.
+/// The notices draw their own text. The copied, saved and progress notices
+/// take one line; a status notice may wrap, but never beyond its window.
 void Notices(const RECT& region) {
     enum class Kind { Copied,
                       Saved,
-                      Status };
+                      Status,
+                      Progress };
     struct Notice {
         Kind kind;
         std::wstring text;
@@ -280,14 +281,27 @@ void Notices(const RECT& region) {
         {Kind::Status, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE), false},
         {Kind::Status, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED), false},
         {Kind::Status, strings::Get(IDS_EDITOR_NOTICE_PIN_FAILED), false},
+        // While a copy or save runs (the editor and pins).
+        {Kind::Progress, strings::Get(IDS_SCROLLSHOT_STATUS_COPYING), true},
+        {Kind::Progress, strings::Get(IDS_SCROLLSHOT_STATUS_SAVING), true},
     };
     for (const Notice& notice : notices) {
         if (notice.kind == Kind::Copied) {
             ui::ShowCaptureCopiedNotice(region);
         } else if (notice.kind == Kind::Saved) {
             ui::ShowCaptureSavedNotice(region);
-        } else {
+        } else if (notice.kind == Kind::Status) {
             ui::ShowCaptureStatusNotice(region, notice.text);
+        } else {
+            // It appears after a moment: wait for it, with a deadline.
+            const HWND progress = ui::ShowCaptureProgressNotice(region, notice.text);
+            CHECK(progress != nullptr && !::IsWindowVisible(progress));
+            const ULONGLONG deadline = ::GetTickCount64() + 5000;
+            while (progress != nullptr && !::IsWindowVisible(progress) && ::GetTickCount64() < deadline) {
+                ::MsgWaitForMultipleObjects(0, nullptr, FALSE, 50, QS_ALLINPUT);
+                MSG message{};
+                while (::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) { ::DispatchMessageW(&message); }
+            }
         }
         const std::vector<HWND> windows = ThreadWindows(L"EasnapCaptureCopiedNotice");
         CHECK(windows.size() == 1);

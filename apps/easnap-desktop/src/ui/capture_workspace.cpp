@@ -56,6 +56,11 @@ bool InsideThreshold(POINT point, POINT origin, LONG width, LONG height) noexcep
     return ::PtInRect(&box, point) != FALSE;
 }
 constexpr UINT kNoticeTextFormat = DT_WORDBREAK | DT_CENTER | DT_NOPREFIX;
+/// A notice's timers: the end of its life, and the moment a progress notice appears.
+constexpr UINT_PTR kNoticeExpireTimer = 1;
+constexpr UINT_PTR kNoticeAppearTimer = 2;
+/// Work that ends sooner shows no progress notice at all.
+constexpr UINT kProgressNoticeDelayMs = 300;
 std::wstring NoticeText(HWND hwnd) {
     std::wstring text(static_cast<size_t>(std::max(0, ::GetWindowTextLengthW(hwnd))) + 1, L'\0');
     text.resize(static_cast<size_t>(std::max(0, ::GetWindowTextW(hwnd, text.data(), static_cast<int>(text.size())))));
@@ -108,6 +113,11 @@ LRESULT CALLBACK NoticeProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         ::EndPaint(hwnd, &paint);
         return 0;
     }
+    if (message == WM_TIMER && wparam == kNoticeAppearTimer) {
+        ::KillTimer(hwnd, kNoticeAppearTimer);
+        ::ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        return 0;
+    }
     if (message == WM_TIMER) {
         ::DestroyWindow(hwnd);
         return 0;
@@ -153,7 +163,10 @@ BYTE ModeToolbarOpacity(uint64_t elapsed_ms) noexcept {
     return static_cast<BYTE>(std::lround(255.0 * (1.0 - t * t * (3.0 - 2.0 * t))));
 }
 namespace {
-void ShowCaptureNotice(const RECT& region, const std::wstring& text, bool status) {
+enum class NoticeKind { Done,
+                        Status,
+                        Progress };
+HWND ShowCaptureNotice(const RECT& region, const std::wstring& text, NoticeKind kind) {
     static const bool registered = [] {
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(wc);
@@ -162,7 +175,8 @@ void ShowCaptureNotice(const RECT& region, const std::wstring& text, bool status
         wc.lpszClassName = L"EasnapCaptureCopiedNotice";
         return ::RegisterClassExW(&wc) != 0;
     }();
-    if (!registered) { return; }
+    if (!registered) { return nullptr; }
+    const bool status = kind == NoticeKind::Status;
     const auto monitor = platform::MonitorForRect(region);
     const float scale = monitor.scale();
     // The notice is at least its usual size and grows with a longer text,
@@ -178,19 +192,40 @@ void ShowCaptureNotice(const RECT& region, const std::wstring& text, bool status
                                     monitor.work_area.left + (platform::RectWidth(monitor.work_area) - width) / 2,
                                     monitor.work_area.bottom - height - theme::Scaled(24.0f, monitor.scale()),
                                     width, height, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-    if (notice) {
-        static_cast<void>(ExcludeFromCapture(notice));
-        RoundWindow(notice);
-        ::SetWindowLongPtrW(notice, GWLP_USERDATA, status);
-        if (::SetTimer(notice, 1, status ? 4000 : 1400, nullptr)) {
-            ::ShowWindow(notice, SW_SHOWNOACTIVATE);
-        } else {
+    if (notice == nullptr) { return nullptr; }
+    static_cast<void>(ExcludeFromCapture(notice));
+    RoundWindow(notice);
+    // A finished export reads in the success colour; anything else in the text colour.
+    ::SetWindowLongPtrW(notice, GWLP_USERDATA, kind != NoticeKind::Done);
+    if (kind == NoticeKind::Progress) {
+        // Shown a moment later, and removed by its owner instead of a timer.
+        if (::SetTimer(notice, kNoticeAppearTimer, kProgressNoticeDelayMs, nullptr) == 0) {
             ::DestroyWindow(notice);
+            return nullptr;
         }
+        return notice;
     }
+    if (::SetTimer(notice, kNoticeExpireTimer, status ? 4000 : 1400, nullptr) == 0) {
+        ::DestroyWindow(notice);
+        return nullptr;
+    }
+    ::ShowWindow(notice, SW_SHOWNOACTIVATE);
+    return notice;
 }
 } // namespace
-void ShowCaptureCopiedNotice(const RECT& region) { ShowCaptureNotice(region, strings::Get(IDS_NOTICE_COPIED), false); }
-void ShowCaptureSavedNotice(const RECT& region) { ShowCaptureNotice(region, strings::Get(IDS_NOTICE_SAVED), false); }
-void ShowCaptureStatusNotice(const RECT& region, const std::wstring& text) { ShowCaptureNotice(region, text, true); }
+void ShowCaptureCopiedNotice(const RECT& region) {
+    static_cast<void>(ShowCaptureNotice(region, strings::Get(IDS_NOTICE_COPIED), NoticeKind::Done));
+}
+void ShowCaptureSavedNotice(const RECT& region) {
+    static_cast<void>(ShowCaptureNotice(region, strings::Get(IDS_NOTICE_SAVED), NoticeKind::Done));
+}
+void ShowCaptureStatusNotice(const RECT& region, const std::wstring& text) {
+    static_cast<void>(ShowCaptureNotice(region, text, NoticeKind::Status));
+}
+HWND ShowCaptureProgressNotice(const RECT& region, const std::wstring& text) {
+    return ShowCaptureNotice(region, text, NoticeKind::Progress);
+}
+void CloseCaptureNotice(HWND notice) noexcept {
+    if (notice != nullptr && ::IsWindow(notice) != FALSE) { ::DestroyWindow(notice); }
+}
 } // namespace easnap::ui

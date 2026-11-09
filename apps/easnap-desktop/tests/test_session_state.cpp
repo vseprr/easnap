@@ -537,7 +537,8 @@ void TestRecordingRegionAndElapsedFormatting() {
 }  // namespace
 
 /// What exiting would lose, for every state: the table the exit question and
-/// the shutdown block reason are chosen from.
+/// the shutdown block reason are chosen from. A copy or save running (from the
+/// session or a pin) is an image at risk unless a recording matters more.
 void TestPendingWork() {
     using easnap::app::PendingWork;
     using easnap::app::PendingWorkFor;
@@ -545,26 +546,31 @@ void TestPendingWork() {
         SessionState state;
         PendingWork plain;
         PendingWork with_edits;
+        PendingWork exporting;
     };
     const Row rows[] = {
-        {SessionState::Idle, PendingWork::None, PendingWork::None},
-        {SessionState::RegionSelecting, PendingWork::None, PendingWork::None},
-        {SessionState::ScreenshotEditing, PendingWork::None, PendingWork::Image},
-        {SessionState::ScreenshotExporting, PendingWork::None, PendingWork::None},
-        {SessionState::RecordingConfiguring, PendingWork::None, PendingWork::None},
-        {SessionState::RecordingActive, PendingWork::Recording, PendingWork::Recording},
-        {SessionState::RecordingPaused, PendingWork::Recording, PendingWork::Recording},
-        {SessionState::RecordingFinalizing, PendingWork::Recording, PendingWork::Recording},
-        {SessionState::RecordingTrimming, PendingWork::UnsavedRecording, PendingWork::UnsavedRecording},
-        {SessionState::Exporting, PendingWork::Export, PendingWork::Export},
-        {SessionState::ScrollshotConfiguring, PendingWork::None, PendingWork::None},
-        {SessionState::ScrollshotCapturing, PendingWork::Image, PendingWork::Image},
-        {SessionState::ScrollshotReview, PendingWork::Image, PendingWork::Image},
+        {SessionState::Idle, PendingWork::None, PendingWork::None, PendingWork::Image},
+        {SessionState::RegionSelecting, PendingWork::None, PendingWork::None, PendingWork::Image},
+        {SessionState::ScreenshotEditing, PendingWork::None, PendingWork::Image, PendingWork::Image},
+        {SessionState::ScreenshotExporting, PendingWork::None, PendingWork::None, PendingWork::Image},
+        {SessionState::RecordingConfiguring, PendingWork::None, PendingWork::None, PendingWork::Image},
+        {SessionState::RecordingActive, PendingWork::Recording, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingPaused, PendingWork::Recording, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingFinalizing, PendingWork::Recording, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingTrimming, PendingWork::UnsavedRecording, PendingWork::UnsavedRecording,
+         PendingWork::UnsavedRecording},
+        {SessionState::Exporting, PendingWork::Export, PendingWork::Export, PendingWork::Export},
+        {SessionState::ScrollshotConfiguring, PendingWork::None, PendingWork::None, PendingWork::Image},
+        {SessionState::ScrollshotCapturing, PendingWork::Image, PendingWork::Image, PendingWork::Image},
+        {SessionState::ScrollshotReview, PendingWork::Image, PendingWork::Image, PendingWork::Image},
     };
     CHECK(sizeof(rows) / sizeof(rows[0]) == easnap::app::kSessionStateCount);
     for (const Row& row : rows) {
-        CHECK(PendingWorkFor(row.state, false) == row.plain);
-        CHECK(PendingWorkFor(row.state, true) == row.with_edits);
+        CHECK(PendingWorkFor(row.state, false, false) == row.plain);
+        CHECK(PendingWorkFor(row.state, true, false) == row.with_edits);
+        CHECK(PendingWorkFor(row.state, false, true) == row.exporting);
+        CHECK(PendingWorkFor(row.state, true, true) ==
+              (row.with_edits == PendingWork::None ? PendingWork::Image : row.with_edits));
     }
 }
 

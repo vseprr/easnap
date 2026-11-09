@@ -152,7 +152,7 @@ PendingWork CaptureCoordinator::pending_work() const {
     }
     const bool image_at_risk = editor_ && editor_->visible() &&
                                (editor_->has_annotations() || editor_->document_mode());
-    return PendingWorkFor(state(), image_at_risk);
+    return PendingWorkFor(state(), image_at_risk, platform::ImageExportActive());
 }
 
 HWND CaptureCoordinator::DialogOwner() const {
@@ -175,8 +175,9 @@ bool CaptureCoordinator::ConfirmExit() {
     }
     // One of the application's dialogs or menus is running its own message
     // loop. Its caller is on the stack and must find its objects when it
-    // returns, so the application cannot be taken down from here.
-    if (platform::ModalLoopActive() || ui::PopupActive()) {
+    // returns, so the application cannot be taken down from here. An image
+    // being copied or saved finishes first: it takes seconds at most.
+    if (platform::ModalLoopActive() || ui::PopupActive() || platform::ImageExportActive()) {
         ::MessageBeep(MB_ICONWARNING);
         if (HWND active = ::GetActiveWindow()) {
             FLASHWINFO flash{sizeof(flash), active, FLASHW_CAPTION, 3, 0};
@@ -214,6 +215,11 @@ void CaptureCoordinator::PrepareForSessionEnd() {
     }
     platform::LogMessage(L"The Windows session is ending (state %d)", static_cast<int>(state()));
     PersistSettings(IfNotSaved::LogOnly);
+    // An image being saved lands complete, without a staged file left; a copy
+    // is cancelled. Their results still arrive should the session go on.
+    if (editor_) { editor_->SettleExportForSessionEnd(); }
+    if (pins_) { pins_->SettleExportsForSessionEnd(); }
+    scrollshot_export_.SettleForSessionEnd();
     // A recording that is still running is closed, so that there is a file to
     // offer again. Windows allows a few seconds for this.
     if (recording_finalizer_.has_worker()) {
@@ -1055,8 +1061,8 @@ void CaptureCoordinator::UpdateScrollshotStatus() {
         return;
     }
     const bool capturing = state() == SessionState::ScrollshotCapturing && scrollshot_session_ != nullptr;
-    int width = scrollshot_image_.width;
-    int height = scrollshot_image_.height;
+    int width = scrollshot_image_ ? scrollshot_image_->width : 0;
+    int height = scrollshot_image_ ? scrollshot_image_->height : 0;
     UINT message = capturing ? IDS_SCROLLSHOT_STATUS_SCROLL : IDS_SCROLLSHOT_STATUS_READY;
     bool warning = false;
     bool following = true;
@@ -1135,14 +1141,14 @@ bool CaptureCoordinator::StopScrollshotCapture() {
         scrollshot_controls_->SetPreview(preview);
     }
     const uint32_t fallback_frames = scrollshot_session_->progress().fallback_frames;
-    scrollshot_image_ = scrollshot_session_->TakeResult();
+    scrollshot_image_ = std::make_shared<platform::BgraImage>(scrollshot_session_->TakeResult());
     scrollshot_session_.reset();
     if (scrollshot_notice_ == ScrollshotNotice::Stopping || scrollshot_notice_ == ScrollshotNotice::WheelBlocked) {
         scrollshot_notice_ = ScrollshotNotice::None;
     }
     RequestTransition(SessionState::ScrollshotReview);
     if (overlay_) { overlay_->StopScrollshotCapture(); }
-    if (scrollshot_image_.empty()) {
+    if (scrollshot_image_->empty()) {
         // Only memory exhaustion while composing the result leads here.
         platform::LogMessage(L"Scrollshot stopped without an image");
         ui::ShowErrorMessage(host_window_, strings::Get(IDS_SCROLLSHOT_START_FAILED));
@@ -1150,7 +1156,7 @@ bool CaptureCoordinator::StopScrollshotCapture() {
         EndSession();
         return false;
     }
-    platform::LogMessage(L"Scrollshot stopped: %d x %d", scrollshot_image_.width, scrollshot_image_.height);
+    platform::LogMessage(L"Scrollshot stopped: %d x %d", scrollshot_image_->width, scrollshot_image_->height);
     if (fallback_frames != 0) {
         platform::LogMessage(L"Scrollshot read %u of its pictures through the GDI fallback", fallback_frames);
     }
@@ -1164,25 +1170,15 @@ void CaptureCoordinator::CopyScrollshot() {
     }
     scrollshot_busy_ = true;
     if (scrollshot_controls_) { scrollshot_controls_->SetBusy(true); }
+    // Stopping waits for the stitch worker on this thread; the copy itself
+    // runs on a worker of its own.
     const HCURSOR previous_cursor = ::SetCursor(::LoadCursorW(nullptr, IDC_WAIT));
-    bool copied = false;
-    if (StopScrollshotCapture()) {
-        // Encoding a tall image takes a moment on this thread.
-        ShowScrollshotNotice(ScrollshotNotice::Copying);
-        // A very tall image can exceed what the clipboard accepts. The image
-        // stays, and the status points to Save.
-        copied = platform::CopyImageToClipboard(host_window_, scrollshot_image_);
-        scrollshot_notice_ = copied ? ScrollshotNotice::None : ScrollshotNotice::CopyFailed;
-    }
+    const bool stopped = StopScrollshotCapture();
     ::SetCursor(previous_cursor);
-    scrollshot_busy_ = false;
-    if (copied) {
-        platform::LogMessage(L"Scrollshot copied to the clipboard");
-        ui::ShowCaptureCopiedNotice(scrollshot_region_);
-        RequestTransition(SessionState::Idle);
-        EndSession();
-        return;
+    if (stopped && StartScrollshotExport(platform::ImageExportTarget::Clipboard, {}, false)) {
+        return;  // Busy until OnImageExportCompleted.
     }
+    scrollshot_busy_ = false;
     if (IsScrollshotState(state())) {
         if (scrollshot_controls_) { scrollshot_controls_->SetBusy(false); }
         UpdateScrollshotStatus();
@@ -1198,53 +1194,114 @@ void CaptureCoordinator::SaveScrollshot() {
         scrollshot_busy_ = false;
         return;
     }
-    // The preview is topmost and must not cover the system dialog.
-    if (scrollshot_controls_ && scrollshot_controls_->preview_hwnd() != nullptr) {
-        ::ShowWindow(scrollshot_controls_->preview_hwnd(), SW_HIDE);
+    // Busy through the dialog and the write: no second action starts inside them.
+    if (scrollshot_controls_) { scrollshot_controls_->SetBusy(true); }
+    if (StartScrollshotSave(true)) {
+        return;  // Busy until OnImageExportCompleted.
     }
+    if (initialized_ && state() == SessionState::ScrollshotReview) {
+        scrollshot_busy_ = false;  // Cancelled: the island and the image stay.
+        if (scrollshot_controls_) { scrollshot_controls_->SetBusy(false); }
+        UpdateScrollshotStatus();
+    }
+}
+
+bool CaptureCoordinator::StartScrollshotSave(bool allow_quick) {
     HWND owner = scrollshot_controls_ && scrollshot_controls_->hwnd() != nullptr ? scrollshot_controls_->hwnd()
                                                                                  : host_window_;
-    // Quick save: straight into the chosen folder. If that cannot be written,
-    // the dialog below still offers every other place.
-    if (settings_.quick_save_images && !settings_.image_folder.empty()) {
-        const std::wstring quick =
-            platform::UniqueFilePath(settings_.image_folder, platform::TimestampedFileName(L"Easnap", L"png"));
-        ShowScrollshotNotice(ScrollshotNotice::Saving);
-        if (!quick.empty() && platform::SaveImage(scrollshot_image_, quick)) {
-            scrollshot_busy_ = false;
-            platform::LogMessage(L"Scrollshot saved without a dialog");
-            ui::ShowCaptureSavedNotice(scrollshot_region_);
-            RequestTransition(SessionState::Idle);
-            EndSession();
-            return;
+    bool dialog = false;
+    auto destination = ui::ChooseImageDestination(owner, &settings_, allow_quick, [&] {
+        dialog = true;
+        // The preview is topmost and must not cover the system dialog.
+        if (scrollshot_controls_ && scrollshot_controls_->preview_hwnd() != nullptr) {
+            ::ShowWindow(scrollshot_controls_->preview_hwnd(), SW_HIDE);
         }
-        scrollshot_notice_ = ScrollshotNotice::None;
-        UpdateScrollshotStatus();
-    }
-    const auto destination = platform::ShowSaveImageDialog(
-        owner, platform::TimestampedFileName(L"Easnap", L"png"), settings_.ImageStartDirectory(),
-        ui::SaveImageDialogLabels());
-    scrollshot_busy_ = false;
+    });
     if (!initialized_ || state() != SessionState::ScrollshotReview) {
-        return;  // The session ended while the dialog was open.
+        return false;  // The session ended while the dialog was open.
     }
-    if (scrollshot_controls_) { scrollshot_controls_->SetFrame(scrollshot_region_); }
-    if (!destination.has_value()) {
-        return;  // Cancelled: the island and the image stay.
+    if (dialog && scrollshot_controls_) { scrollshot_controls_->SetFrame(scrollshot_region_); }
+    return destination.has_value() &&
+           StartScrollshotExport(platform::ImageExportTarget::File, std::move(destination->path), destination->quick);
+}
+
+bool CaptureCoordinator::StartScrollshotExport(platform::ImageExportTarget target, std::wstring path, bool quick) {
+    if (!scrollshot_image_ || scrollshot_image_->empty()) {
+        return false;
     }
-    const HCURSOR previous_cursor = ::SetCursor(::LoadCursorW(nullptr, IDC_WAIT));
-    ShowScrollshotNotice(ScrollshotNotice::Saving);
-    const bool saved = platform::SaveImage(scrollshot_image_, *destination);
-    ::SetCursor(previous_cursor);
-    if (!saved) {
-        scrollshot_notice_ = ScrollshotNotice::SaveFailed;
-        UpdateScrollshotStatus();
+    platform::ImageExportRequest request{scrollshot_image_, target, path};
+    if (!scrollshot_export_.Start(host_window_, platform::kMsgImageExportCompleted, std::move(request))) {
+        ::MessageBeep(MB_ICONWARNING);  // Another export of Easnap is still running.
+        return false;
+    }
+    scrollshot_save_path_ = std::move(path);
+    scrollshot_save_quick_ = quick;
+    ShowScrollshotNotice(target == platform::ImageExportTarget::Clipboard ? ScrollshotNotice::Copying
+                                                                          : ScrollshotNotice::Saving);
+    return true;
+}
+
+void CaptureCoordinator::OnImageExportCompleted(platform::ImageExportJob::Generation generation) {
+    std::optional<platform::ImageExportResult> result = scrollshot_export_.TryTake(generation);
+    if (!result) {
+        return;  // From an export the session dropped.
+    }
+    const ui::ImageSaveDestination destination{std::move(scrollshot_save_path_), scrollshot_save_quick_};
+    scrollshot_save_path_.clear();
+    scrollshot_save_quick_ = false;
+    if (!initialized_ || state() != SessionState::ScrollshotReview) {
+        return;  // Nothing changes a session under its export; only its end drops it.
+    }
+    const bool copy = result->target == platform::ImageExportTarget::Clipboard;
+    const bool succeeded = result->status == platform::ImageExportStatus::Succeeded &&
+                           (!copy || platform::PublishClipboardImage(host_window_, result->clipboard));
+    if (succeeded) {
+        if (copy) {
+            platform::LogMessage(L"Scrollshot copied to the clipboard");
+            ui::ShowCaptureCopiedNotice(scrollshot_region_);
+        } else {
+            ui::RecordImageSaved(&settings_, destination);
+            platform::LogMessage(destination.quick ? L"Scrollshot saved without a dialog" : L"Scrollshot saved");
+            if (destination.quick) { ui::ShowCaptureSavedNotice(scrollshot_region_); }
+        }
+        RequestTransition(SessionState::Idle);
+        EndSession();
         return;
     }
-    settings_.last_image_directory = platform::DirectoryOf(*destination);
-    platform::LogMessage(L"Scrollshot saved");
-    RequestTransition(SessionState::Idle);
-    EndSession();
+    if (!copy && result->status == platform::ImageExportStatus::Failed && destination.quick) {
+        // The screenshots folder could not be written: the dialog offers
+        // every other place for the same image.
+        scrollshot_notice_ = ScrollshotNotice::None;
+        UpdateScrollshotStatus();
+        if (StartScrollshotSave(false)) {
+            return;
+        }
+        if (!initialized_ || state() != SessionState::ScrollshotReview) {
+            return;
+        }
+    } else if (result->status == platform::ImageExportStatus::Cancelled) {
+        scrollshot_notice_ = ScrollshotNotice::None;
+    } else {
+        // A very tall image can exceed what the clipboard accepts. The image
+        // stays, and the status points to Save.
+        scrollshot_notice_ = copy ? ScrollshotNotice::CopyFailed : ScrollshotNotice::SaveFailed;
+    }
+    scrollshot_busy_ = false;
+    if (scrollshot_controls_) { scrollshot_controls_->SetBusy(false); }
+    UpdateScrollshotStatus();
+    AfterSessionExport();
+}
+
+bool CaptureCoordinator::SessionExportRunning() const {
+    return scrollshot_export_.running() || (editor_ && editor_->exporting());
+}
+
+void CaptureCoordinator::AfterSessionExport() {
+    if (!recheck_display_after_export_) {
+        return;
+    }
+    recheck_display_after_export_ = false;
+    OnDisplayChanged();
 }
 
 void CaptureCoordinator::EditScrollshot() {
@@ -1295,7 +1352,7 @@ void CaptureCoordinator::EditScrollshot() {
     }
 
     std::unique_ptr<editor::ScreenshotEditor> editor = CreateEditor();
-    if (!editor->OpenDocument(scrollshot_image_, area, scrollshot_region_.left, &settings_,
+    if (!editor->OpenDocument(*scrollshot_image_, area, scrollshot_region_.left, &settings_,
                               overlay_->panel_owner_window())) {
         // The editor takes the image only when it opened: nothing is lost.
         ui::ShowErrorMessage(scrollshot_controls_ ? scrollshot_controls_->hwnd() : host_window_,
@@ -1310,7 +1367,7 @@ void CaptureCoordinator::EditScrollshot() {
         return;
     }
     if (!RequestTransition(SessionState::ScreenshotEditing)) {
-        scrollshot_image_ = editor->TakeImage();
+        *scrollshot_image_ = editor->TakeImage();
         return;
     }
     if (scrollshot_controls_) { scrollshot_controls_->Hide(); }
@@ -1331,7 +1388,7 @@ void CaptureCoordinator::DiscardScrollshot() {
         return;
     }
     // More than the first picture means the user has scrolled for it.
-    const int height = scrollshot_session_ ? scrollshot_height_ : scrollshot_image_.height;
+    const int height = scrollshot_session_ ? scrollshot_height_ : (scrollshot_image_ ? scrollshot_image_->height : 0);
     if (state() != SessionState::ScrollshotConfiguring && height > platform::RectHeight(scrollshot_region_)) {
         scrollshot_busy_ = true;
         const bool discard = ConfirmDiscardImage(DialogOwner(), true);
@@ -1357,7 +1414,7 @@ void CaptureCoordinator::ShowScrollshotHelp() {
 void CaptureCoordinator::StopScrollshotForShutdown() {
     // Destroying the session stops and joins its worker.
     scrollshot_session_.reset();
-    scrollshot_image_ = {};
+    scrollshot_image_.reset();
 }
 
 void CaptureCoordinator::OpenEditor(const RECT& region) {
@@ -1399,6 +1456,7 @@ std::unique_ptr<editor::ScreenshotEditor> CaptureCoordinator::CreateEditor() {
     };
     callbacks.on_view_changed = [this](const editor::ImageView& view) { PublishDocumentView(view); };
     callbacks.keep_clear = [this] { return overlay_ ? overlay_->mode_island_rect() : RECT{}; };
+    callbacks.on_export_ended = [this] { AfterSessionExport(); };
     return std::make_unique<editor::ScreenshotEditor>(std::move(callbacks));
 }
 
@@ -1414,6 +1472,15 @@ void CaptureCoordinator::PublishDocumentView(const editor::ImageView& view) {
 }
 
 void CaptureCoordinator::OnOverlayCancelled() {
+    if (SessionExportRunning()) {
+        // Refused like the editor's own ways out: the session ends with its
+        // export, or stays when that fails. The overlay also cancels on a
+        // display change, which is looked at again then.
+        ::MessageBeep(MB_ICONWARNING);
+        recheck_display_after_export_ = true;
+        platform::LogMessage(L"Cancel refused: the image is being copied or saved");
+        return;
+    }
     RequestTransition(SessionState::Idle);
     EndSession();
 }
@@ -1442,6 +1509,12 @@ bool SameDisplayLayout(const std::vector<platform::MonitorInfo>& before,
 
 void CaptureCoordinator::OnDisplayChanged() {
     if (state() == SessionState::Idle) {
+        return;
+    }
+    if (SessionExportRunning()) {
+        // The image is being copied or saved: the session must not change
+        // under it. Looked at again when the export has ended.
+        recheck_display_after_export_ = true;
         return;
     }
     if (state() == SessionState::ScrollshotCapturing || state() == SessionState::ScrollshotReview) {
@@ -1481,7 +1554,7 @@ void CaptureCoordinator::OnDisplayChanged() {
             OnOverlayCancelled();
             return;
         }
-        scrollshot_image_ = std::move(image);
+        scrollshot_image_ = std::make_shared<platform::BgraImage>(std::move(image));
         session_monitors_ = platform::EnumerateMonitors();
         scrollshot_notice_ = ScrollshotNotice::DisplayChanged;
         if (overlay_) { overlay_->Hide(); }
@@ -1608,9 +1681,14 @@ void CaptureCoordinator::EndSession() {
         scrollshot_controls_->Hide();
         scrollshot_controls_retired_ = true;
     }
-    // Ending the session ends any capture still running and drops its image.
+    // Ending the session ends any capture still running and drops its image,
+    // and a copy or save of it (only Shutdown ends a session during one).
     scrollshot_session_.reset();
-    scrollshot_image_ = {};
+    scrollshot_export_.Discard();
+    scrollshot_image_.reset();
+    scrollshot_save_path_.clear();
+    scrollshot_save_quick_ = false;
+    recheck_display_after_export_ = false;
     scrollshot_notice_ = ScrollshotNotice::None;
     scrollshot_busy_ = false;
     if (trim_flow_) {

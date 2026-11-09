@@ -17,6 +17,7 @@
 #include "app/trim_flow.h"
 #include "capture/capture_provider.h"
 #include "media/media_interfaces.h"
+#include "platform/image_export.h"
 #include "platform/platform_utils.h"
 
 namespace easnap::ui {
@@ -54,6 +55,7 @@ inline constexpr UINT kMsgRecordingFinalized = WM_APP + 12;
 /// Posted by a Scrollshot capture worker when its progress changed. WPARAM
 /// carries the capture's generation; pixels never travel in the message.
 inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
+// WM_APP + 15 is platform::kMsgImageExportCompleted, in platform/image_export.h.
 /// Posted when a save of the settings failed and the user may be told now.
 inline constexpr UINT kMsgSettingsNotSaved = WM_APP + 16;
 /// Timer on the host window: retired windows are destroyed once no dialog of
@@ -112,6 +114,8 @@ public:
     void OnClipboardChanged();
     /// Handles kMsgScrollshotProgress on the UI thread.
     void OnScrollshotProgress(uint64_t generation);
+    /// Handles platform::kMsgImageExportCompleted: a Scrollshot copy or save ended.
+    void OnImageExportCompleted(platform::ImageExportJob::Generation generation);
     /// Enables native Tab/Enter/Esc navigation in recording/trim surfaces.
     [[nodiscard]] bool ProcessDialogMessage(MSG& message) const;
 
@@ -216,6 +220,19 @@ private:
     bool StopScrollshotCapture();
     void CopyScrollshot();
     void SaveScrollshot();
+    /// Chooses where the stitched image goes (quick save or the dialog) and
+    /// starts writing it. False when the dialog was cancelled, the session
+    /// ended meanwhile or nothing started.
+    bool StartScrollshotSave(bool allow_quick);
+    /// Copies or saves the stitched image on a worker; the island stays busy
+    /// until OnImageExportCompleted.
+    bool StartScrollshotExport(platform::ImageExportTarget target, std::wstring path, bool quick);
+    /// The session's image is being copied or saved: the session must not
+    /// change under it.
+    [[nodiscard]] bool SessionExportRunning() const;
+    /// An export of the session ended and the session stayed. A display
+    /// change or cancel deferred meanwhile is looked at now.
+    void AfterSessionExport();
     void EditScrollshot();
     void DiscardScrollshot();
     void ShowScrollshotHelp();
@@ -251,7 +268,15 @@ private:
     std::unique_ptr<TrimFlow> trim_flow_;
 
     /// The stitched image once capture has stopped, until an action takes it.
-    platform::BgraImage scrollshot_image_;
+    /// Shared with a copy or save running on `scrollshot_export_`.
+    std::shared_ptr<platform::BgraImage> scrollshot_image_;
+    platform::ImageExportJob scrollshot_export_;
+    /// Where the running save writes, and whether quick save chose it.
+    std::wstring scrollshot_save_path_;
+    bool scrollshot_save_quick_{false};
+    /// A display change or cancel arrived while the session's image was
+    /// being exported; it is looked at when the export has ended.
+    bool recheck_display_after_export_{false};
     RECT scrollshot_region_{};
     uint64_t scrollshot_generation_{0};
     int scrollshot_height_{0};

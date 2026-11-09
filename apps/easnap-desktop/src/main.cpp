@@ -544,6 +544,9 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             // Asked again: a session or a dialog may have opened since the post.
             if (coordinator.SettingsNoticeDue()) { TellSettingsNotSaved(); }
             return 0;
+        case easnap::platform::kMsgImageExportCompleted:
+            coordinator.OnImageExportCompleted(static_cast<UINT_PTR>(wparam));
+            return 0;
 
         case WM_CLIPBOARDUPDATE:
             coordinator.OnClipboardChanged();

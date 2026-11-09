@@ -491,6 +491,7 @@ set_tests_properties(pin_layout_logic PROPERTIES LABELS "unit;ui;layout;pin" TIM
 add_executable(test_pinned_images
     test_pinned_images.cpp
     ../src/ui/pinned_images.cpp
+    ../src/platform/image_export.cpp
     ../src/ui/pin_layout.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/ui_theme.cpp
@@ -505,6 +506,22 @@ add_test(NAME pinned_images_native
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_pinned_images>)
 set_tests_properties(pinned_images_native PROPERTIES
     LABELS "integration;ui;pin;clipboard;isolated-desktop" TIMEOUT 60)
+
+# Copying and saving a finished image on a worker (ADR-031): the result and
+# its generation through a message-only window, files that decode back to the
+# same pixels, no staged file after a failure, cancellation within a deadline
+# and a result that stays after Wait. Nothing reaches the clipboard.
+add_executable(test_image_export
+    test_image_export.cpp
+    ../src/platform/image_export.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_image_export PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_image_export PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+add_test(NAME image_export_job COMMAND test_image_export)
+set_tests_properties(image_export_job PROPERTIES LABELS "unit;export" TIMEOUT 60)
 
 # The log file through the production sink, and crash reports from a second
 # process that installs the production handler and fails on purpose.
@@ -588,6 +605,7 @@ add_executable(test_capture_workspace
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/app/recording_workflow.cpp
@@ -606,6 +624,13 @@ add_test(NAME capture_frame_interaction
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_workspace> --frame-performance)
 set_tests_properties(capture_frame_interaction PROPERTIES
     LABELS "integration;workspace;overlay;performance;isolated-desktop" TIMEOUT 30)
+
+# Copying a tall image in the editor leaves its window answering: a probe
+# thread measures how long the window takes to reply while the encode runs.
+add_test(NAME capture_export_responsiveness
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_workspace> --export-responsiveness)
+set_tests_properties(capture_export_responsiveness PROPERTIES
+    LABELS "integration;workspace;clipboard;editor;performance;isolated-desktop" TIMEOUT 120)
 
 # The mode island, the tools island and the recording panel as production
 # windows: never over each other, and the mode island hidden while the frame
@@ -630,6 +655,7 @@ add_executable(test_scrollshot_workspace
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/platform/platform_utils.cpp)
@@ -657,6 +683,7 @@ add_executable(test_text_fit
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/app/recording_workflow.cpp
@@ -692,6 +719,7 @@ add_executable(test_data_safety
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/ui/settings_dialog.cpp
@@ -771,6 +799,7 @@ add_executable(test_island_capture
     test_island_capture.cpp
     ../src/capture/capture_provider.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/ui/capture_workspace.cpp
@@ -812,6 +841,7 @@ add_executable(test_native_ui
     ../src/ui/trim_layout.cpp
     ../src/ui/timeline_accessibility.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/media/preview_process.cpp

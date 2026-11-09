@@ -117,6 +117,8 @@ set(EASNAP_SOURCES
     src/recording/audio_timeline.cpp
     src/platform/diagnostics.h
     src/platform/diagnostics.cpp
+    src/platform/image_export.h
+    src/platform/image_export.cpp
     src/platform/startup_entry.h
     src/platform/startup_entry.cpp
     src/ui/settings_dialog.h

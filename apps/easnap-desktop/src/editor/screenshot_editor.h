@@ -27,7 +27,9 @@
 #include "app/session_state.h"
 #include "editor/image_viewport.h"
 #include "editor/redaction_renderer.h"
+#include "platform/image_export.h"
 #include "platform/platform_utils.h"
+#include "ui/native_controls.h"
 
 namespace easnap::editor {
 
@@ -168,6 +170,9 @@ public:
         /// An area in desktop pixels that the islands never cover: the mode
         /// island while modes can still be switched. Empty when there is none.
         std::function<RECT()> keep_clear;
+        /// A copy or save ended and the editor stayed open: it failed, was
+        /// cancelled, or its Save dialog was closed.
+        std::function<void()> on_export_ended;
     };
 
     explicit ScreenshotEditor(Callbacks callbacks);
@@ -220,7 +225,17 @@ public:
     /// Composite after finishing a text edit that is still open, without
     /// treating that commit as a reason to complete the session.
     [[nodiscard]] platform::BgraImage CompositeCommitted();
+    /// Starts copying the finished image to the clipboard on a worker. The
+    /// editor closes as an export once the copy is on the clipboard; a
+    /// failure leaves it open with a notice. False when the copy could not
+    /// start.
     bool CompleteCopy();
+    /// A copy or save is running. The image cannot change and the editor
+    /// cannot close until it ends; only the end of the session drops it.
+    [[nodiscard]] bool exporting() const noexcept { return exporting_; }
+    /// Windows is ending the session: a save running is waited for, a copy
+    /// is cancelled. Its result still arrives as a message.
+    void SettleExportForSessionEnd() noexcept { export_job_.SettleForSessionEnd(); }
     /// Pin to screen: hands the finished image to `Callbacks::on_pin` and
     /// closes as an export. False, with a notice, when it could not be pinned.
     bool CompletePin();
@@ -319,8 +334,21 @@ private:
     /// Brings the derived blur/pixelation and spotlight pixels up to date with
     /// the effect list. Only the final composite reaches the clipboard or file.
     void RebuildRedactedBase();
-    bool CopyToClipboard();
+    /// Chooses where to save (quick save or the dialog, on this thread) and
+    /// starts writing the file on a worker. False when nothing was started.
     bool SaveToFile();
+    /// The Save dialog's destination, with the islands that would cover the
+    /// dialog put away while it is open.
+    [[nodiscard]] std::optional<ui::ImageSaveDestination> ChooseSaveDestination(bool allow_quick);
+    bool StartExport(platform::ImageExportTarget target, std::shared_ptr<const platform::BgraImage> image,
+                     ui::ImageSaveDestination destination);
+    /// Handles kMsgImageExportCompleted: publishes a copy, reports a save and
+    /// closes, or keeps the image after a failure.
+    void OnExportCompleted(platform::ImageExportJob::Generation generation);
+    /// Leaves the busy state of a running export.
+    void EndExport();
+    /// A command that would change or end the image while it is exported.
+    static void RefuseWhileExporting();
 
     Callbacks callbacks_;
     app::AppSettings* settings_{nullptr};
@@ -389,6 +417,13 @@ private:
     uint64_t redaction_revision_{UINT64_MAX};
     bool visible_{false};
     bool closed_reported_{false};
+    /// A copy or save running on `export_job_`, of `export_image_`.
+    bool exporting_{false};
+    platform::ImageExportJob export_job_;
+    std::shared_ptr<const platform::BgraImage> export_image_;
+    ui::ImageSaveDestination export_destination_;
+    /// "Copying..." or "Saving..." while the export lasts.
+    HWND export_notice_{nullptr};
 };
 
 }  // namespace easnap::editor

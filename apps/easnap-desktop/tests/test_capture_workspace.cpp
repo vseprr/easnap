@@ -7,8 +7,10 @@
 #include "ui/overlay.h"
 #include "ui/recording_controls.h"
 #include "editor/screenshot_editor.h"
+#include "temp_folder.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <chrono>
 #include <future>
@@ -197,6 +199,26 @@ void PointerPolicy() {
     CHECK(previous == 0 && ui::ModeToolbarOpacity(UINT64_MAX) == 0);
 }
 
+/// Runs this thread's messages until `done` holds or the deadline passes. A
+/// copy or save runs on a worker and reports back with a message.
+template <typename Condition>
+bool PumpUntil(Condition done, DWORD timeout_ms = 30000) {
+    const ULONGLONG deadline = ::GetTickCount64() + timeout_ms;
+    MSG message{};
+    while (!done()) {
+        if (::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE) != FALSE) {
+            ::TranslateMessage(&message);
+            ::DispatchMessageW(&message);
+            continue;
+        }
+        const ULONGLONG now = ::GetTickCount64();
+        if (now >= deadline) { return false; }
+        ::MsgWaitForMultipleObjects(0, nullptr, FALSE, static_cast<DWORD>(std::min<ULONGLONG>(deadline - now, 100)),
+                                    QS_ALLINPUT);
+    }
+    return true;
+}
+
 void SelectTool(editor::ScreenshotEditor& editor, editor::ToolId tool) {
     HWND button = ::GetDlgItem(editor.hwnd(), 2000 + static_cast<int>(tool));
     CHECK(button && (::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE));
@@ -333,7 +355,10 @@ void EditorAndCompletion() {
     CHECK(attempts == 0 && editor.revision() == 0);
     CHECK(editor.Composite().pixels == expected.pixels);
     editor.ImagePointer(WM_LBUTTONUP, {140, 130});
-    CHECK(attempts == 1 && closed == 1 && copied && !editor.visible());
+    // The copy runs on a worker; the editor closes when it is on the clipboard.
+    CHECK(attempts == 1 && editor.exporting() && editor.visible() && closed == 0);
+    CHECK(PumpUntil([&] { return closed != 0; }));
+    CHECK(attempts == 1 && closed == 1 && copied && !editor.visible() && !editor.exporting());
     CHECK(::IsClipboardFormatAvailable(CF_DIB));
     CHECK(::IsClipboardFormatAvailable(::RegisterClipboardFormatW(L"PNG")));
     CHECK(::OpenClipboard(nullptr));
@@ -362,7 +387,8 @@ void EditorAndCompletion() {
     CHECK(editor.Composite().pixels == annotated.pixels);
     editor.SetRegion(expanded);
     CHECK(editor.Composite().pixels == annotated.pixels);
-    CHECK(editor.CompleteCopy() && closed == 1 && !editor.visible());
+    CHECK(editor.CompleteCopy());
+    CHECK(PumpUntil([&] { return closed != 0; }) && closed == 1 && !editor.visible());
     editor.Destroy();
 
     // No tool use: cancel acquires nothing; explicit copy acquires once.
@@ -371,7 +397,8 @@ void EditorAndCompletion() {
     CHECK(acquisitions == 0 && closed == 1 && !copied);
     editor.Destroy();
     open();
-    CHECK(editor.CompleteCopy() && acquisitions == 1 && closed == 1 && copied);
+    CHECK(editor.CompleteCopy() && acquisitions == 1);
+    CHECK(PumpUntil([&] { return closed != 0; }) && closed == 1 && copied);
     editor.Destroy();
 
     // Pin to screen (ADR-038): the island's Pin button acquires once, hands
@@ -446,12 +473,15 @@ void EditorAndCompletion() {
     });
     CHECK(locked_result.get());
     Draw(editor, {-80, 0}, {100, 100});
+    // The clipboard is still held when the prepared copy is to be put on it.
+    CHECK(PumpUntil([&] { return !editor.exporting(); }));
     CHECK(attempts == 1 && editor.visible() && closed == 0 && editor.revision() == 1);
     release.set_value();
     holder.join();
     Draw(editor, {-70, 10}, {110, 110});
     CHECK(attempts == 1 && editor.revision() == 2 && editor.visible());
-    CHECK(editor.CompleteCopy() && closed == 1 && !editor.visible());
+    CHECK(editor.CompleteCopy());
+    CHECK(PumpUntil([&] { return closed != 0; }) && closed == 1 && !editor.visible());
     editor.Destroy();
 
     // Enter, explicit Copy and cancellation use their actual text commit rules.
@@ -472,10 +502,37 @@ void EditorAndCompletion() {
         } else {
             ::SendMessageW(editor.hwnd(), WM_CLOSE, 0, 0);
         }
+        CHECK(PumpUntil([&] { return closed != 0; }));
         CHECK(closed == 1 && !editor.visible() && copied == (completion != 2));
         CHECK(attempts == (completion != 2 ? 1 : 0));
         editor.Destroy();
     }
+
+    // Quick save writes into the screenshots folder on a worker. While it
+    // runs, Copy, Save and Pin are off and nothing closes the editor; then
+    // it closes as an export and leaves no staged file.
+    test::TempFolder folder(L"easnap-editor-quick-save");
+    CHECK(folder.ok());
+    settings.quick_save_images = true;
+    settings.image_folder = folder.path();
+    settings.last_image_directory.clear();
+    open();
+    ::SendMessageW(::GetDlgItem(editor.hwnd(), 2405), BM_CLICK, 0, 0);
+    CHECK(acquisitions == 1 && editor.exporting() && editor.visible() && closed == 0);
+    CHECK(!::IsWindowEnabled(::GetDlgItem(editor.hwnd(), 2404)) && !::IsWindowEnabled(::GetDlgItem(editor.hwnd(), 2405)) &&
+          !::IsWindowEnabled(::GetDlgItem(editor.hwnd(), 2409)));
+    ::SendMessageW(editor.hwnd(), WM_CLOSE, 0, 0);
+    editor.Keyboard(WM_KEYDOWN, VK_ESCAPE, 0);
+    CHECK(!editor.CompleteCopy() && !editor.CompletePin() && editor.visible() && closed == 0);
+    CHECK(PumpUntil([&] { return closed != 0; }) && closed == 1 && copied && !editor.exporting());
+    const std::vector<std::wstring> saved = folder.Files(L"Easnap*.png");
+    CHECK(saved.size() == 1 && folder.StagedFiles() == 0 && settings.last_image_directory.empty());
+    if (saved.size() == 1) {
+        platform::BgraImage decoded;
+        CHECK(test::DecodeImageFile(folder.File(saved.front().c_str()), decoded));
+        CHECK(decoded.width == 320 && decoded.height == 220 && decoded.pixels == expected.pixels);
+    }
+    editor.Destroy();
 }
 
 // Click the existing brush-size controls at 96 DPI with an unwrapped island.
@@ -498,7 +555,10 @@ void LockedToolCompletion() {
         ui::OverlayController::Callbacks overlay_callbacks;
         overlay_callbacks.uses_annotation_tool = [&] { return active && active->uses_annotation_tool(); };
         overlay_callbacks.on_image_pointer = [&](UINT message, POINT pt) { active->ImagePointer(message, pt); };
-        overlay_callbacks.on_screenshot_complete = [&] { ++attempts; copied = active->CompleteCopy(); };
+        overlay_callbacks.on_screenshot_complete = [&] {
+            ++attempts;
+            static_cast<void>(active->CompleteCopy());
+        };
         ui::OverlayController overlay(overlay_callbacks);
         host = &overlay;
         editor::ScreenshotEditor::Callbacks editor_callbacks;
@@ -511,7 +571,10 @@ void LockedToolCompletion() {
             host->FixScreenshot();
             return true;
         };
-        editor_callbacks.on_closed = [&](bool) { overlay.Hide(); };
+        editor_callbacks.on_closed = [&](bool exported) {
+            copied = exported;
+            overlay.Hide();
+        };
         editor::ScreenshotEditor editor(editor_callbacks);
         active = &editor;
         CHECK(overlay.Show(snapshot, point));
@@ -557,6 +620,7 @@ void LockedToolCompletion() {
         ::SendMessageW(input, WM_LBUTTONDBLCLK, 0, location);
         CHECK(attempts == 0);
         ::SendMessageW(input, WM_LBUTTONUP, 0, location);
+        CHECK(PumpUntil([&] { return !editor.exporting(); }));
         if (holder.joinable()) {
             CHECK(attempts == 1 && !copied && editor.visible() && overlay.workspace().screenshot_fixed());
             CHECK(editor.Composite().pixels == expected.pixels);
@@ -566,6 +630,7 @@ void LockedToolCompletion() {
             ::SendMessageW(input, WM_LBUTTONUP, 0, location);
             ::SendMessageW(input, WM_LBUTTONDBLCLK, 0, location);
             ::SendMessageW(input, WM_LBUTTONUP, 0, location);
+            CHECK(PumpUntil([&] { return !editor.exporting(); }));
         }
         CHECK(attempts == (tool == editor::ToolId::Rectangle ? 2 : 1) && copied && !editor.visible());
         CHECK(::IsClipboardFormatAvailable(CF_DIB));
@@ -1340,6 +1405,156 @@ void IslandPlacement() {
     editor.Destroy();
     overlay.Destroy();
 }
+/// Copying a tall image leaves the editor answering (ADR-031). A probe thread
+/// that creates no window, so it shares no input queue with the editor,
+/// sends WM_NULL with a 500 ms deadline and times each reply while the PNG
+/// is encoded on the export worker. 500 ms keeps a wide margin over the few
+/// milliseconds a free UI thread needs, even in a slow virtual machine, and
+/// stays far below the seconds a synchronous encode of this image blocked.
+/// The composite before the export stays on the UI thread; it is timed and
+/// reported, not limited.
+void ExportResponsiveness() {
+    using Clock = std::chrono::steady_clock;
+    constexpr int kWidth = 1920;
+    constexpr int kHeight = 12000;
+    constexpr UINT kProbeDeadlineMs = 500;
+    // Noise does not compress, so the encode lasts long enough to measure.
+    platform::BgraImage image;
+    image.Reset(kWidth, kHeight);
+    uint32_t state = 0x2545F491u;
+    for (uint32_t& pixel : image.pixels) {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        pixel = 0xff000000u | (state & 0x00ffffffu);
+    }
+    const auto monitors = platform::EnumerateMonitors();
+    CHECK(!monitors.empty());
+    if (monitors.empty()) { return; }
+    RECT area = monitors.front().work_area;
+    ::InflateRect(&area, -40, -40);
+    app::AppSettings settings;
+    int closed = 0;
+    bool exported = false;
+    editor::ScreenshotEditor::Callbacks callbacks;
+    callbacks.on_closed = [&](bool value) {
+        ++closed;
+        exported = value;
+    };
+    editor::ScreenshotEditor editor(callbacks);
+    CHECK(editor.OpenDocument(image, area, area.left, &settings, nullptr));
+    CHECK(editor.document_mode() && editor.visible());
+    const HWND target = editor.hwnd();
+    // In Easnap the graphics device and the redacted base exist once the
+    // image has been shown; here one composite makes them.
+    CHECK(!editor.Composite().empty());
+
+    struct Probe {
+        std::atomic<bool> armed{false};
+        std::atomic<unsigned> warmup{0};
+        std::atomic<unsigned> replies{0};
+        std::atomic<unsigned> replies_while_exporting{0};
+        std::atomic<unsigned> missed{0};
+        std::atomic<ULONGLONG> slowest_ms{0};
+        std::atomic<bool> exporting{false};
+        std::atomic<bool> done{false};
+    } probe;
+    const HANDLE stop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    CHECK(stop != nullptr);
+    const HDESK desktop = ::GetThreadDesktop(::GetCurrentThreadId());
+    std::thread prober([&] {
+        // On the editor's desktop, without a window and without
+        // AttachThreadInput: the deadline of each send holds.
+        ::SetThreadDesktop(desktop);
+        while (::WaitForSingleObject(stop, 20) == WAIT_TIMEOUT) {
+            const bool armed = probe.armed.load();
+            DWORD_PTR ignored = 0;
+            const ULONGLONG before = ::GetTickCount64();
+            const LRESULT replied =
+                ::SendMessageTimeoutW(target, WM_NULL, 0, 0, SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT, kProbeDeadlineMs, &ignored);
+            const ULONGLONG elapsed = ::GetTickCount64() - before;
+            if (!armed) {
+                if (replied != 0) { ++probe.warmup; }
+                continue;
+            }
+            if (elapsed > probe.slowest_ms.load()) { probe.slowest_ms.store(elapsed); }
+            if (replied == 0) {
+                ++probe.missed;
+            } else {
+                ++probe.replies;
+                if (probe.exporting.load()) { ++probe.replies_while_exporting; }
+            }
+        }
+        probe.done.store(true);
+    });
+    CHECK(PumpUntil([&] { return probe.warmup.load() >= 3; }, 10000));
+
+    const Clock::time_point started = Clock::now();
+    CHECK(editor.CompleteCopy());
+    const long long composite_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
+    CHECK(editor.exporting());
+    probe.exporting.store(true);
+    probe.armed.store(true);
+    bool refusals_checked = false;
+    const bool finished = PumpUntil([&] {
+        probe.exporting.store(editor.exporting());
+        if (!refusals_checked && editor.exporting() && probe.replies_while_exporting.load() >= 3) {
+            refusals_checked = true;
+            CHECK(::IsHungAppWindow(target) == FALSE);
+            // A second Ctrl+C and a close request during the encode are refused.
+            std::array<BYTE, 256> keys{};
+            keys[VK_CONTROL] = 0x80;
+            ::SetKeyboardState(keys.data());
+            editor.Keyboard(WM_KEYDOWN, 'C', 0);
+            keys.fill(0);
+            ::SetKeyboardState(keys.data());
+            ::SendMessageW(target, WM_CLOSE, 0, 0);
+            CHECK(editor.exporting() && editor.visible() && closed == 0);
+            CHECK(!::IsWindowEnabled(::GetDlgItem(target, 2404)) && !::IsWindowEnabled(::GetDlgItem(target, 2405)) &&
+                  !::IsWindowEnabled(::GetDlgItem(target, 2409)));
+        }
+        return closed != 0;
+    },
+                                    90000);
+    const long long total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count();
+    probe.exporting.store(false);
+    // The probe stops while this thread still answers: a send in flight
+    // would otherwise wait out its deadline against the join.
+    ::SetEvent(stop);
+    CHECK(PumpUntil([&] { return probe.done.load(); }, 5000));
+    prober.join();
+    ::CloseHandle(stop);
+
+    std::printf("MEASURE export_responsiveness: copy of %d x %d on the clipboard after %lld ms (composite and start "
+                "on the UI thread %lld ms); %u replies (%u during the export), %u missed, slowest reply %llu ms\n",
+                kWidth, kHeight, total_ms, composite_ms, probe.replies.load(), probe.replies_while_exporting.load(),
+                probe.missed.load(), probe.slowest_ms.load());
+    CHECK(finished && closed == 1 && exported && !editor.visible());
+    CHECK(refusals_checked);
+    CHECK(probe.missed.load() == 0 && probe.slowest_ms.load() < kProbeDeadlineMs);
+    CHECK(probe.replies_while_exporting.load() >= 3);
+
+    // What the clipboard holds: the whole image as a bottom-up 32-bit DIB, and a PNG.
+    CHECK(::IsClipboardFormatAvailable(CF_DIB));
+    const UINT png_format = ::RegisterClipboardFormatW(L"PNG");
+    CHECK(::IsClipboardFormatAvailable(png_format));
+    if (::OpenClipboard(nullptr)) {
+        HGLOBAL dib = ::GetClipboardData(CF_DIB);
+        const auto* header = dib ? static_cast<const BITMAPINFOHEADER*>(::GlobalLock(dib)) : nullptr;
+        CHECK(header && header->biWidth == kWidth && header->biHeight == kHeight && header->biBitCount == 32);
+        CHECK(dib && ::GlobalSize(dib) >= sizeof(BITMAPINFOHEADER) + static_cast<SIZE_T>(kWidth) * kHeight * 4);
+        if (header) { ::GlobalUnlock(dib); }
+        HGLOBAL png = ::GetClipboardData(png_format);
+        const auto* bytes = png ? static_cast<const BYTE*>(::GlobalLock(png)) : nullptr;
+        CHECK(bytes && ::GlobalSize(png) > 8 && bytes[0] == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G');
+        if (bytes) { ::GlobalUnlock(png); }
+        ::CloseClipboard();
+    } else {
+        CHECK(false);
+    }
+    editor.Destroy();
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1352,6 +1567,29 @@ int main(int argc, char** argv) {
         platform::GraphicsEnvironment::Get().Shutdown();
         ::CoUninitialize();
         std::printf("Island placement: %d passed, %d failed\n", passed, failed);
+        return failed ? 1 : 0;
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--export-responsiveness") {
+        std::thread responsiveness([] {
+            PrivateDesktop desktop;
+            if (!desktop.Open()) {
+                std::fprintf(stderr, "Private clipboard desktop creation failed: %lu\n", ::GetLastError());
+                ++failed;
+                return;
+            }
+            ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            ExportResponsiveness();
+            platform::GraphicsEnvironment::Get().Shutdown();
+            ::CoUninitialize();
+            // The Copied notice closes on its own timer; end it before leaving the desktop.
+            ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM) -> BOOL {
+                wchar_t name[64]{};
+                ::GetClassNameW(window, name, 64);
+                if (std::wstring_view(name) == L"EasnapCaptureCopiedNotice") { ::DestroyWindow(window); }
+                return TRUE; }, 0);
+        });
+        responsiveness.join();
+        std::printf("Export responsiveness: %d passed, %d failed\n", passed, failed);
         return failed ? 1 : 0;
     }
     if (argc > 1 && std::string_view(argv[1]) == "--frame-performance") {
