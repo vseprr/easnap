@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Easnap
-    VERSION 1.2.0
+    VERSION 1.3.0
     DESCRIPTION "Easnap - Windows 10 screen capture and recording tool"
     HOMEPAGE_URL "https://github.com/vseprr/easnap"
     LANGUAGES CXX)
