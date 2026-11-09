@@ -355,11 +355,13 @@ bool RecordingSession::Stop() {
         return false;
     }
     state_.store(RecordingSessionState::Finalized, std::memory_order_release);
-    platform::LogMessage(L"Recording session finalized (%llu video, %llu audio, %llu queue-full)",
+    platform::LogMessage(L"Recording session finalized (%llu video, %llu audio, %llu queue-full, "
+                         L"%llu through the GDI fallback)",
                          static_cast<unsigned long long>(capture_worker_->accepted_frames()),
                          static_cast<unsigned long long>(written_audio_packets_.value()),
                          static_cast<unsigned long long>(
-                             capture_worker_->queue_full_rejections()));
+                             capture_worker_->queue_full_rejections()),
+                         static_cast<unsigned long long>(capture_worker_->fallback_frames()));
     return true;
 }
 
@@ -386,6 +388,7 @@ RecordingSessionDiagnostics RecordingSession::diagnostics() const noexcept {
     RecordingSessionDiagnostics result;
     result.capture_attempts = capture_worker_->capture_attempts();
     result.acquired_frames = capture_worker_->acquired_frames();
+    result.fallback_frames = capture_worker_->fallback_frames();
     result.no_new_frames = capture_worker_->no_new_frames();
     result.reused_frames = capture_worker_->reused_frames();
     result.failure_reused_frames = capture_worker_->failure_reused_frames();

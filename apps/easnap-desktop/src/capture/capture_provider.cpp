@@ -368,6 +368,10 @@ public:
         BgraImage image;
         RegionImageOptions options;
         options.include_cursor = include_cursor;
+        // A recording usually starts on a desktop that stands still. Its first
+        // black picture comes from GDI and the next frame asks duplication
+        // again; nothing waits inside a frame.
+        options.await_first_composed_frame = true;
         RegionCaptureResult result = CaptureRecordingRegion(region, options, image);
         if (result.status != RegionCaptureStatus::FrameAcquired) {
             return result;

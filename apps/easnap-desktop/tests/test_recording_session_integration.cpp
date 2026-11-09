@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -50,34 +51,6 @@ void Check(bool condition, const char* expression, const char* file, int line) {
 // True when the pause/stop stress found no audio endpoint at all: its
 // video-only cycles ran, but the audio sources it exists to cover did not.
 bool g_stress_audio_skipped = false;
-
-// Reports which capture path the production provider takes for `region` on
-// this machine. The recording sessions use the same provider and the same
-// Duplication-first, GDI-second decision, so a lab run can tell a pass on
-// the fallback path from a pass on the path the development PC uses.
-void ReportCapturePathProbe(const RECT& region) {
-    auto provider = easnap::capture::CreateRegionCaptureProvider();
-    if (!provider) {
-        std::printf("EASNAP_CAPTURE_PATH=Unknown (no capture provider)\n");
-        return;
-    }
-    easnap::platform::BgraImage image;
-    const bool captured = provider->CaptureRegion(region, false, image);
-    const wchar_t* name = provider->name();
-    const bool duplication = std::wcscmp(name, L"DXGI Desktop Duplication") == 0;
-    // This test writes stdout with both printf and wprintf; whichever came
-    // first fixed the stream's orientation, and a write of the other kind is
-    // silently dropped. Follow the orientation the stream already has.
-    const wchar_t* path = captured ? (duplication ? L"Duplication" : L"GDI") : L"Unknown";
-    if (std::fwide(stdout, 0) > 0) {
-        std::wprintf(L"EASNAP_CAPTURE_PATH=%ls (provider probe: %ls, captured=%d)\n", path, name,
-                     captured ? 1 : 0);
-    } else {
-        std::printf("EASNAP_CAPTURE_PATH=%ls (provider probe: %ls, captured=%d)\n", path, name,
-                    captured ? 1 : 0);
-    }
-    provider->Release();
-}
 
 class MediaFoundationRuntime final {
 public:
@@ -699,7 +672,7 @@ public:
 
     bool Start(const RECT& region, bool animate) {
         region_ = region;
-        animate_ = animate;
+        animate_.store(animate, std::memory_order_release);
         try {
             thread_ = std::thread(&VisibleTestSurface::ThreadMain, this);
         } catch (...) {
@@ -708,6 +681,11 @@ public:
         std::unique_lock lock(mutex_);
         ready_.wait(lock, [this] { return initialized_; });
         return window_ != nullptr;
+    }
+
+    // Starts or stops repainting; it takes effect within one repaint interval.
+    void SetAnimating(bool animate) noexcept {
+        animate_.store(animate, std::memory_order_release);
     }
 
     void Stop() noexcept {
@@ -794,7 +772,7 @@ private:
 
         ::ShowWindow(window, SW_SHOWNOACTIVATE);
         ::UpdateWindow(window);
-        DrawFrame(window, animate_ ? 1u : 9u);
+        DrawFrame(window, animate_.load(std::memory_order_acquire) ? 1u : 9u);
 
         uint32_t frame_index = 2;
         while (!stop_.load(std::memory_order_acquire)) {
@@ -803,11 +781,12 @@ private:
                 ::TranslateMessage(&message);
                 ::DispatchMessageW(&message);
             }
-            if (animate_) {
+            const bool animate = animate_.load(std::memory_order_acquire);
+            if (animate) {
                 DrawFrame(window, frame_index++);
             }
             std::unique_lock lock(mutex_);
-            changed_.wait_for(lock, std::chrono::milliseconds(animate_ ? 40 : 100),
+            changed_.wait_for(lock, std::chrono::milliseconds(animate ? 40 : 100),
                               [this] { return stop_.load(std::memory_order_acquire); });
         }
         ::DestroyWindow(window);
@@ -816,7 +795,7 @@ private:
     }
 
     RECT region_{};
-    bool animate_{false};
+    std::atomic<bool> animate_{false};
     std::atomic<bool> stop_{false};
     std::mutex mutex_;
     std::condition_variable ready_;
@@ -826,13 +805,153 @@ private:
     bool initialized_{false};
 };
 
+void PrintProbeLine(const wchar_t* text) {
+    // This test writes stdout with both printf and wprintf; whichever came
+    // first fixed the stream's orientation, and a write of the other kind is
+    // silently dropped. Follow the orientation the stream already has.
+    if (std::fwide(stdout, 0) > 0) {
+        std::wprintf(L"%ls\n", text);
+    } else {
+        std::printf("%ls\n", text);
+    }
+}
+
+// Reads `region` as a recording does (`CaptureRegionFrame`) and reports which
+// path delivered it; true when Desktop Duplication did. Each try gives a fresh
+// provider its first frame on a desktop that has stood still, then repaints a
+// test window over the region until Desktop Duplication delivers a frame. The
+// lab reads the EASNAP_CAPTURE_PATH line: Duplication only for a frame without
+// a primary failure, so a pass on the GDI fallback is told apart from a pass
+// on the path the development PC uses. COM and the graphics must be started.
+//
+// A duplication that has composed nothing yet answers with a black frame
+// (often the first, or the one after a first answer that came too late); that
+// picture comes through GDI. The repaint after it must come through Desktop
+// Duplication: the provider asks it again instead of reading through GDI for
+// the rest of the recording. The tries go on until such a black frame appears.
+bool ProbeRecordingCapturePath(const RECT& region) {
+    using Clock = std::chrono::steady_clock;
+    using namespace std::chrono_literals;
+    namespace capture = easnap::capture;
+    constexpr int kTries = 5;
+    constexpr auto kStill = 400ms;  // As in island_capture_exclusion.
+    constexpr auto kRepaintDeadline = 3s;
+    constexpr auto kFramePeriod = 33ms;  // The cadence of a 30-fps recording.
+
+    // A region across monitors is read through GDI by design, without a
+    // primary failure; only a region on one monitor shows the path.
+    bool on_one_monitor = false;
+    for (const easnap::platform::MonitorInfo& monitor : easnap::platform::EnumerateMonitors()) {
+        const RECT overlap = easnap::platform::IntersectRects(region, monitor.bounds);
+        on_one_monitor = on_one_monitor || ::EqualRect(&overlap, &region) != FALSE;
+    }
+    if (!on_one_monitor) {
+        PrintProbeLine(L"EASNAP_CAPTURE_PATH=GDI (recording path probe: the region spans monitors)");
+        return false;
+    }
+
+    struct Try {
+        bool captured{false};
+        bool blank_frame{false};  // A black duplicated frame came through GDI.
+        bool delivered{false};    // A frame came through Desktop Duplication.
+    };
+    VisibleTestSurface surface;
+    const bool surface_started = surface.Start(region, false);
+    CHECK(surface_started);
+    const auto run_try = [&](bool still) {
+        Try result;
+        surface.SetAnimating(!still);
+        if (still) {
+            // Not a synchronisation: the case under test is a desktop that
+            // has stood still when the duplication is made.
+            std::this_thread::sleep_for(kStill);
+        }
+        auto provider = capture::CreateRegionCaptureProvider();
+        if (provider == nullptr) {
+            return result;
+        }
+        easnap::media::VideoFrame frame;
+        const auto read = [&] {
+            const capture::RegionCaptureResult answer = provider->CaptureRegionFrame(
+                region, false, easnap::media::MediaTime{}, easnap::media::MediaTime{}, frame);
+            if (answer.status != capture::RegionCaptureStatus::FrameAcquired) {
+                return;
+            }
+            result.captured = true;
+            result.blank_frame = result.blank_frame ||
+                                 answer.primary_failure.stage ==
+                                     capture::RegionCaptureFailureStage::DuplicationBlankFrame;
+            result.delivered = answer.primary_failure.stage == capture::RegionCaptureFailureStage::None;
+        };
+        read();
+        surface.SetAnimating(true);
+        const auto deadline = Clock::now() + kRepaintDeadline;
+        while (!result.delivered && Clock::now() < deadline) {
+            std::this_thread::sleep_for(kFramePeriod);
+            read();
+        }
+        provider->Release();
+        return result;
+    };
+
+    bool captured = false;
+    bool duplication = false;
+    int tries = 0;
+    int blank_frame_try = 0;
+    bool asked_again = false;
+    while (surface_started && tries < kTries && blank_frame_try == 0) {
+        const Try result = run_try(true);
+        ++tries;
+        captured = captured || result.captured;
+        duplication = duplication || result.delivered;
+        if (result.blank_frame) {
+            blank_frame_try = tries;
+            asked_again = result.delivered;
+        } else if (!result.delivered) {
+            break;  // Desktop Duplication delivers nothing here.
+        }
+    }
+    if (blank_frame_try != 0 && !asked_again) {
+        // A desktop whose duplication returns only black is the case the GDI
+        // fallback exists for (ADR-004), not a provider that stopped asking.
+        const Try control = run_try(false);
+        captured = captured || control.captured;
+        duplication = duplication || control.delivered;
+    }
+    surface.Stop();
+
+    wchar_t line[256]{};
+    const wchar_t* path = duplication ? L"Duplication" : captured ? L"GDI"
+                                                                  : L"Unknown";
+    std::swprintf(line, std::size(line), L"EASNAP_CAPTURE_PATH=%ls (recording path probe, %d tries)",
+                  path, tries);
+    PrintProbeLine(line);
+    if (blank_frame_try != 0 && duplication) {
+        std::swprintf(line, std::size(line),
+                      L"Blank frame on the recording path in try %d; the repaint came through "
+                      L"Desktop Duplication: %ls",
+                      blank_frame_try, asked_again ? L"yes" : L"no");
+        CHECK(asked_again);
+    } else if (blank_frame_try != 0) {
+        std::swprintf(line, std::size(line),
+                      L"Blank frame on the recording path in try %d; Desktop Duplication "
+                      L"delivers nothing here, asking again not checked",
+                      blank_frame_try);
+    } else {
+        std::swprintf(line, std::size(line),
+                      L"No blank frame on the recording path in %d tries; asking Desktop "
+                      L"Duplication again not checked",
+                      tries);
+    }
+    PrintProbeLine(line);
+    return duplication;
+}
+
 void TestRealDesktopRecordingSession() {
     using Clock = std::chrono::steady_clock;
     using namespace std::chrono_literals;
 
     const RECT region = ModestPrimaryMonitorRegion();
-    // Printed first: CTest keeps only the head of a long test output.
-    ReportCapturePathProbe(region);
     const UINT32 width = static_cast<UINT32>(region.right - region.left);
     const UINT32 height = static_cast<UINT32>(region.bottom - region.top);
     CHECK(width >= 2 && height >= 2);
@@ -845,6 +964,11 @@ void TestRealDesktopRecordingSession() {
     if (FAILED(inspection_runtime.result())) {
         return;
     }
+    // The provider's graphics need COM. Probed before COM was started, the
+    // path read as GDI on every machine.
+    CHECK(easnap::platform::GraphicsEnvironment::Get().EnsureInitialized());
+    // Printed first: CTest keeps only the head of a long test output.
+    const bool duplication_available = ProbeRecordingCapturePath(region);
 
     wchar_t temporary_path[MAX_PATH]{};
     const DWORD temporary_length =
@@ -969,6 +1093,14 @@ void TestRealDesktopRecordingSession() {
             CHECK(diagnostics.queue_full_rejections == 0);
             CHECK(diagnostics.capture_failures == 0);
             CHECK(diagnostics.failure_reused_frames == 0);
+            CHECK(diagnostics.fallback_frames <= diagnostics.acquired_frames);
+            if (!show_surface && duplication_available) {
+                // Where Desktop Duplication works, only what is taken before
+                // the first composed frame comes through GDI: the first frame
+                // and perhaps the one after it, not the whole recording of a
+                // desktop that stands still (as for scrollshot_real_desktop).
+                CHECK(diagnostics.fallback_frames <= 3);
+            }
             CHECK(diagnostics.capture_failure_diagnostics.count <=
                   easnap::capture::kCaptureFailureDiagnosticCapacity);
             CHECK(diagnostics.capture_failure_diagnostics.count +
@@ -1157,7 +1289,8 @@ void TestRealDesktopRecordingSession() {
                 L"last_audio_end_100ns=%llu audio_packets=%llu audio_queue=%zu/%zu "
                 L"audio_capture_failures=%llu audio_overruns=%llu "
                 L"attempts=%llu "
-                L"acquired=%llu no_new=%llu reused=%llu failure_reused=%llu "
+                L"acquired=%llu fallback_frames=%llu no_new=%llu reused=%llu "
+                L"failure_reused=%llu "
                 L"video_capture_failures=%llu "
                 L"pacing_missed=%llu queue_full=%llu accepted=%llu written=%llu "
                 L"peak_queue=%zu queue_capacity=%zu bounded_frame_bytes=%llu "
@@ -1190,6 +1323,7 @@ void TestRealDesktopRecordingSession() {
                     diagnostics.audio_capture.buffer_overruns),
                 static_cast<unsigned long long>(diagnostics.capture_attempts),
                 static_cast<unsigned long long>(diagnostics.acquired_frames),
+                static_cast<unsigned long long>(diagnostics.fallback_frames),
                 static_cast<unsigned long long>(diagnostics.no_new_frames),
                 static_cast<unsigned long long>(diagnostics.reused_frames),
                 static_cast<unsigned long long>(
@@ -1635,7 +1769,7 @@ void TestPauseStopStress() {
     auto store = media::CreateTemporarySessionStore();
     auto collector = media::CreateTemporarySessionStore();
     const auto screen = platform::VirtualScreenBounds();
-    ReportCapturePathProbe({screen.left, screen.top, screen.left + 160, screen.top + 120});
+    ProbeRecordingCapturePath({screen.left, screen.top, screen.left + 160, screen.top + 120});
     auto probe = media::CreateWasapiAudioCaptureProvider();
     constexpr media::AudioSource sources[]{media::AudioSource::None,
                                            media::AudioSource::SystemAudio, media::AudioSource::Microphone,

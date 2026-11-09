@@ -155,6 +155,7 @@ bool RecordingCaptureWorker::Start() {
     failed_.store(false, std::memory_order_relaxed);
     capture_attempts_.Reset();
     acquired_frames_.Reset();
+    fallback_frames_.Reset();
     no_new_frames_.Reset();
     reused_frames_.Reset();
     failure_reused_frames_.Reset();
@@ -370,6 +371,10 @@ void RecordingCaptureWorker::CaptureLoop() {
         if (capture_result.status == RegionCaptureStatus::FrameAcquired &&
             frame.image != nullptr && !frame.image->empty()) {
             acquired_frames_.Increment();
+            if (capture_result.primary_failure.stage != RegionCaptureFailureStage::None) {
+                // Counted, not logged: an expected fallback gets no line per frame.
+                fallback_frames_.Increment();
+            }
             latest_pixels = frame.image;
             have_sample = true;
         } else if (capture_result.status == RegionCaptureStatus::NoNewFrame) {

@@ -3,7 +3,8 @@
 **Status:** Accepted
 **Date:** 2026-10-13
 **Amended:** 2026-10-30 — right-click in a locked Scrollshot requests Discard;
-2026-11-08 — a screenshot splits the shading as well
+2026-11-08 — a screenshot splits the shading as well; 2026-11-09 — recording
+awaits the first composed frame as well
 
 ## Context
 
@@ -87,8 +88,10 @@ black and read everything through GDI from then on. With
 frame yet": that one picture is read through GDI and duplication is asked
 again. In practice the first picture comes through GDI and every later one
 through duplication, which also lets the worker wait for the desktop to change
-instead of polling. Both paths return the same pixels. Recording keeps the
-earlier rule.
+instead of polling. Both paths return the same pixels. Recording applies the
+same rule since 2026-11-09: its first picture of a still desktop comes through
+GDI and the next frame asks duplication again; it polls once per frame and
+does not wait for the desktop to change.
 
 ### The first picture comes before the lock
 
@@ -196,9 +199,9 @@ path.
   of the content the user sees. It is not in the image.
 - The shortcuts depend on focus. This is stated in the help text rather than
   solved with a keyboard hook.
-- A recording that starts on a still desktop is read through GDI for its whole
-  length, as before. The option above would lift that; it has not been applied
-  to recording.
+- Until 2026-11-09 a recording that started on a still desktop was read
+  through GDI for its whole length. Recording now sets the option above too;
+  only the pictures taken before the first composed frame come through GDI.
 
 ## Validation
 

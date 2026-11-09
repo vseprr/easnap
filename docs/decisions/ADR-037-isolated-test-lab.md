@@ -202,10 +202,14 @@ was the first to carry the recording tests' capture-path line, printed at the
 start of each test because CTest keeps only the head of a long output:
 `recording_pause_stop_stress` reported Duplication, while
 `real_desktop_recording_session` reported GDI, so the verdict marked it
-`VM-ok-but-fallback`. That is the provider's documented behaviour on a still
-desktop (no new Duplication frame, GDI for the picture), observed on a desktop
-nobody touches; it is exactly the caveat this ADR asks the runner to surface,
-not a VM limitation.
+`VM-ok-but-fallback`. That was read at the time as the provider's documented
+behaviour on a still desktop. Corrected 2026-11-09: the mark came from the
+test's own capture-path probe, which ran before COM was initialised, so the
+graphics environment could not start and the probe reported the GDI fallback;
+the recording itself asked Duplication on every frame (the counters of run
+`20261108-234453-full` show `no_new` answers and a non-zero minimum
+acquisition time, which only the Duplication branch produces). The probe now
+runs after COM and graphics start and reports the recording path itself.
 
 ### Why `trim_timeline_seek_stress` failed its pointer check (2026-10-30)
 

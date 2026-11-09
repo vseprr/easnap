@@ -117,7 +117,8 @@ struct RegionImageOptions {
     /// black surface. With this set, such a picture is read through GDI and
     /// duplication is asked again next time, instead of the output being
     /// given up for the life of the provider. For a capture that starts on a
-    /// desktop that is standing still.
+    /// desktop that is standing still: recording (`CaptureRegionFrame`) and
+    /// Scrollshot set it.
     bool await_first_composed_frame{false};
 };
 

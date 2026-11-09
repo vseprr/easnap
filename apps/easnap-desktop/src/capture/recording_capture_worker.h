@@ -128,6 +128,10 @@ public:
     [[nodiscard]] RecordingWorkerState state() const noexcept;
     [[nodiscard]] uint64_t capture_attempts() const noexcept { return capture_attempts_.value(); }
     [[nodiscard]] uint64_t acquired_frames() const noexcept { return acquired_frames_.value(); }
+    /// Acquired frames that Desktop Duplication could not deliver and the GDI
+    /// blit read instead (a primary failure is reported). A region across
+    /// monitors is read through GDI by design and is not counted.
+    [[nodiscard]] uint64_t fallback_frames() const noexcept { return fallback_frames_.value(); }
     [[nodiscard]] uint64_t no_new_frames() const noexcept { return no_new_frames_.value(); }
     [[nodiscard]] uint64_t reused_frames() const noexcept { return reused_frames_.value(); }
     [[nodiscard]] uint64_t failure_reused_frames() const noexcept {
@@ -182,6 +186,7 @@ private:
 
     SaturatingCounter capture_attempts_;
     SaturatingCounter acquired_frames_;
+    SaturatingCounter fallback_frames_;
     SaturatingCounter no_new_frames_;
     SaturatingCounter reused_frames_;
     SaturatingCounter failure_reused_frames_;

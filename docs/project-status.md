@@ -257,8 +257,15 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   limit, editing holds two buffers of about 190 MB and an export a third.
 - A recording that is still being written when Easnap stops cannot be
   recovered; a recovered recording is the untrimmed MP4. A recording that
-  starts on a still desktop is read through GDI for its whole length;
-  Scrollshot no longer is, recording has not had the same remedy.
+  starts on a still desktop reads its first picture through GDI and asks
+  Desktop Duplication again from the next frame, as Scrollshot does
+  (2026-11-09; covered on a real desktop by the lab tests
+  `real_desktop_recording_session` and `recording_pause_stop_stress`, not run
+  yet). The earlier `VM-ok-but-fallback` mark of
+  `real_desktop_recording_session` came from the test's own probe, which ran
+  before COM was started and so always read GDI; the recordings of run
+  `20261108-234453-full` asked Desktop Duplication on every frame. The probe
+  now reads as a recording does.
 - A window that is open when the language changes keeps its text; only the
   Settings dialog can be open then, and it closes.
 - The mode island's home now starts below a taskbar docked at the top

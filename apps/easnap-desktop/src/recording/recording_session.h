@@ -89,6 +89,9 @@ struct SilenceWriteDiagnostic {
 struct RecordingSessionDiagnostics {
     uint64_t capture_attempts{0};
     uint64_t acquired_frames{0};
+    /// Acquired frames read through the GDI fallback because Desktop
+    /// Duplication could not deliver them.
+    uint64_t fallback_frames{0};
     uint64_t no_new_frames{0};
     uint64_t reused_frames{0};
     uint64_t accepted_frames{0};

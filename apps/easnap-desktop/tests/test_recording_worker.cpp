@@ -179,6 +179,85 @@ private:
     bool throw_on_capture_{false};
 };
 
+// Answers as the production provider does around the GDI fallback: a picture
+// read through GDI reports why Desktop Duplication could not deliver it.
+class FallbackCaptureProvider final : public easnap::capture::IRegionCaptureProvider {
+public:
+    explicit FallbackCaptureProvider(std::shared_ptr<TimelineObservations> observations)
+        : observations_(std::move(observations)) {}
+
+    bool CaptureDesktop(bool, easnap::capture::DesktopSnapshot&) override { return false; }
+    bool CaptureRegion(const RECT&, bool, easnap::platform::BgraImage&) override { return false; }
+
+    easnap::capture::RegionCaptureResult CaptureRegionFrame(
+        const RECT&, bool, easnap::media::MediaTime timestamp,
+        easnap::media::MediaTime duration, easnap::media::VideoFrame& out) override {
+        using easnap::capture::RegionCaptureFailureCodeKind;
+        using easnap::capture::RegionCaptureFailureStage;
+        using easnap::capture::RegionCaptureStatus;
+        std::size_t attempt = 0;
+        {
+            const std::scoped_lock lock(observations_->mutex);
+            attempt = observations_->capture_count++;
+        }
+        observations_->changed.notify_all();
+
+        constexpr uint32_t kWaitTimeout = 0x887A0027u;  // DXGI_ERROR_WAIT_TIMEOUT
+        constexpr uint32_t kAccessLost = 0x887A0026u;   // DXGI_ERROR_ACCESS_LOST
+        easnap::capture::RegionCaptureResult result;
+        switch (attempt) {
+            case 0:  // Nothing composed yet: the black picture was replaced by GDI.
+                result.status = RegionCaptureStatus::FrameAcquired;
+                result.primary_failure = {RegionCaptureFailureStage::DuplicationBlankFrame,
+                                          RegionCaptureFailureCodeKind::None, 0};
+                break;
+            case 1:  // An idle desktop reports no new frame; nothing was read.
+                result.status = RegionCaptureStatus::NoNewFrame;
+                result.primary_failure = {RegionCaptureFailureStage::DuplicationAcquire,
+                                          RegionCaptureFailureCodeKind::HResult, kWaitTimeout};
+                return result;
+            case 2:  // Desktop Duplication delivered the picture.
+                result.status = RegionCaptureStatus::FrameAcquired;
+                break;
+            case 3:  // Both paths failed: a capture failure, not a fallback frame.
+                result.status = RegionCaptureStatus::Failed;
+                result.primary_failure = {RegionCaptureFailureStage::DuplicationAcquire,
+                                          RegionCaptureFailureCodeKind::HResult, kAccessLost};
+                result.fallback_failure = {RegionCaptureFailureStage::GdiBitBlt,
+                                           RegionCaptureFailureCodeKind::Win32, 5u};
+                return result;
+            case 4:  // Duplication lost its access; GDI read the picture.
+                result.status = RegionCaptureStatus::FrameAcquired;
+                result.primary_failure = {RegionCaptureFailureStage::DuplicationAcquire,
+                                          RegionCaptureFailureCodeKind::HResult, kAccessLost};
+                break;
+            default:
+                result.status = RegionCaptureStatus::NoNewFrame;
+                return result;
+        }
+
+        easnap::platform::BgraImage image;
+        image.width = 2;
+        image.height = 2;
+        image.pixels.assign(4, 0xff102030u + static_cast<uint32_t>(attempt));
+        out = easnap::media::VideoFrame{
+            std::make_shared<const easnap::platform::BgraImage>(std::move(image)),
+            timestamp, duration};
+        return result;
+    }
+
+    easnap::capture::RegionCaptureResult CaptureRegionImage(
+        const RECT&, const easnap::capture::RegionImageOptions&, easnap::platform::BgraImage&) override {
+        return {};  // Unused by the recording worker; a default result is a failure.
+    }
+
+    void Release() noexcept override {}
+    [[nodiscard]] const wchar_t* name() const override { return L"fallback-test"; }
+
+private:
+    std::shared_ptr<TimelineObservations> observations_;
+};
+
 bool WaitForCaptureCount(const std::shared_ptr<TimelineObservations>& observations,
                          std::size_t minimum) {
     using namespace std::chrono_literals;
@@ -436,6 +515,28 @@ void TestTransientCaptureFailuresReuseLatestFrame() {
     }
 }
 
+void TestFramesReadThroughGdiAreCounted() {
+    auto observations = std::make_shared<TimelineObservations>();
+    auto provider = std::make_unique<FallbackCaptureProvider>(observations);
+    easnap::media::FrameQueue<easnap::media::VideoFrame> queue(16);
+    easnap::media::RecordingOptions options;
+    options.region = RECT{0, 0, 2, 2};
+    options.include_cursor = false;
+    options.target_frame_rate = 30;
+
+    easnap::capture::RecordingCaptureWorker worker(std::move(provider), options, queue);
+    CHECK(worker.Start());
+    CHECK(WaitForCaptureCount(observations, 6));
+    worker.Stop();
+
+    // Only a picture that arrived through GDI counts: not an idle answer, not
+    // a duplicated picture and not a capture that failed on both paths.
+    CHECK(worker.acquired_frames() == 3);
+    CHECK(worker.fallback_frames() == 2);
+    CHECK(worker.capture_failures() == 1);
+    CHECK(worker.no_new_frames() >= 2);
+}
+
 void TestCaptureFailureDiagnosticsRemainBounded() {
     auto observations = std::make_shared<TimelineObservations>();
     auto provider =
@@ -487,6 +588,7 @@ int main() {
     TestRapidPauseKeepsFramesInsideActiveTimeline();
     TestStartupFailureReleasesBarrier();
     TestTransientCaptureFailuresReuseLatestFrame();
+    TestFramesReadThroughGdiAreCounted();
     TestCaptureFailureDiagnosticsRemainBounded();
     std::printf("QUEUE_LAYOUT object=%zu slot=%zu video_frame=%zu\n",
                 sizeof(easnap::media::FrameQueue<easnap::media::VideoFrame>),
