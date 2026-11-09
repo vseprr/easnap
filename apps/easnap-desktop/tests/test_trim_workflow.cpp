@@ -40,6 +40,10 @@ void Check(bool condition, const char* expression, const char* file, int line) {
 
 #define CHECK(expr) Check((expr), #expr, __FILE__, __LINE__)
 
+// Transport orderings that never consult the playback clock dispatch at an
+// arbitrary time; the clock checks below supply real dispatch times.
+constexpr uint64_t kUntimed = 0;
+
 struct ExportProbe final {
     std::mutex mutex;
     std::condition_variable changed;
@@ -401,23 +405,23 @@ void TestPreviewTransportSerializesAndCoalescesSeeks() {
     easnap::media::PreviewTransport transport;
     transport.Reset(false);
     transport.RequestPlayFrom(MediaTime{100});
-    auto command = transport.TakeNext();
+    auto command = transport.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == MediaTime{100});
 
     transport.RequestPlayFrom(MediaTime{300});
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
-    command = transport.TakeNext();
+    command = transport.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == MediaTime{300});
 
     // A stale/unmatched callback cannot release the active seek.
     CHECK(!transport.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Paused));
     CHECK(transport.in_flight() == PreviewTransportCommandType::Seek);
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(transport.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
     CHECK(transport.playing());
     CHECK(!transport.command_pending());
@@ -429,7 +433,7 @@ void TestPreviewOrderingRegressions() {
     PreviewTransport stopped;
     stopped.Reset(true);
     stopped.RequestPauseAt(MediaTime{900});
-    CHECK(stopped.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(stopped.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     stopped.Ended(PreviewNativeState::Stopped);
     CHECK(stopped.in_flight() == PreviewTransportCommandType::Pause);
 
@@ -437,26 +441,26 @@ void TestPreviewOrderingRegressions() {
     PreviewTransport toggled;
     toggled.Reset(true);
     toggled.RequestPause();
-    CHECK(toggled.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(toggled.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     toggled.RequestPlayFrom(MediaTime{200});
     CHECK(toggled.ReconcilePauseWhileStopped());
     CHECK(toggled.play_requested());
-    CHECK(toggled.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(toggled.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
 
     // An unowned Play event during a paused seek must not invent playback.
     PreviewTransport stale;
     stale.RequestPlayFrom(MediaTime{200});
-    CHECK(stale.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(stale.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     CHECK(!stale.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Paused));
     CHECK(!stale.playing());
     CHECK(stale.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
-    CHECK(stale.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(stale.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
 
     // This is the old TrimWindow timer boundary: after TakeNext consumes the
     // In target, only the old native Out position is visible to progress policy.
     PreviewTransport timer;
     timer.RequestPlayFrom(MediaTime{200});
-    CHECK(timer.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(timer.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     const MediaTime displayed = timer.ResolvePosition(MediaTime{900});
     CHECK(displayed == MediaTime{200});
     CHECK(easnap::app::PlanTrimPlaybackProgress(timer.play_requested(), displayed,
@@ -481,7 +485,7 @@ void TestPreviewCallbackPermutations() {
                 PreviewTransport transport;
                 transport.Reset(true);
                 transport.RequestPauseAt(MediaTime{900});
-                CHECK(transport.TakeNext().type == PreviewTransportCommandType::Pause);
+                CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
                 if (terminal_slot == 0) transport.Ended(PreviewNativeState::Stopped);
                 transport.RequestPlayFrom(MediaTime{200});
                 transport.RequestPause();
@@ -494,7 +498,7 @@ void TestPreviewCallbackPermutations() {
                                              PreviewNativeState::Paused));
                 }
                 if (terminal_slot == 2) transport.Ended(PreviewNativeState::Stopped);
-                auto command = transport.TakeNext();
+                auto command = transport.TakeNext(kUntimed);
                 CHECK(command.type == PreviewTransportCommandType::Seek);
                 CHECK(command.position == MediaTime{200});
                 CHECK(!transport.Complete(PreviewTransportCommandType::Play,
@@ -511,7 +515,7 @@ void TestPreviewCallbackPermutations() {
                 CHECK(transport.Complete(PreviewTransportCommandType::Seek,
                                          PreviewNativeState::Paused));
                 if (last_play) {
-                    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+                    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
                     // A historical PAUSE cannot claim the newer native Play is
                     // paused, or complete that Play's callback slot.
                     CHECK(!transport.Complete(PreviewTransportCommandType::Pause,
@@ -533,11 +537,11 @@ void TestPreviewCallbackPermutations() {
 
     PreviewTransport stopped_seek;
     stopped_seek.RequestPlayFrom(MediaTime{200});
-    CHECK(stopped_seek.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(stopped_seek.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     CHECK(stopped_seek.Complete(PreviewTransportCommandType::Seek,
                                 PreviewNativeState::Stopped));
     CHECK(stopped_seek.ResolvePosition(MediaTime{900}) == MediaTime{200});
-    CHECK(stopped_seek.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(stopped_seek.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(stopped_seek.Complete(PreviewTransportCommandType::Play,
                                 PreviewNativeState::Playing));
     CHECK(stopped_seek.ResolvePosition(MediaTime{215}) == MediaTime{215});
@@ -548,7 +552,7 @@ void TestPreviewCallbackPermutations() {
 
     PreviewTransport paused_endpoint;
     paused_endpoint.RequestPauseAt(MediaTime{900});
-    CHECK(paused_endpoint.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(paused_endpoint.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     paused_endpoint.Ended(PreviewNativeState::Stopped);
     CHECK(paused_endpoint.Complete(PreviewTransportCommandType::Seek,
                                    PreviewNativeState::Paused));
@@ -570,7 +574,7 @@ void TestGeneratedPreviewOrderings() {
         MediaTime last_position{500};
         bool wanted = false;
         const auto dispatch = [&] {
-            const auto command = transport.TakeNext();
+            const auto command = transport.TakeNext(kUntimed);
             if (outstanding.type != PreviewTransportCommandType::None) {
                 CHECK(command.type == PreviewTransportCommandType::None);
             } else if (command.type != PreviewTransportCommandType::None) {
@@ -659,11 +663,11 @@ void TestPreviewLogicalEndWaitsForRealSeekCompletion() {
     endpoint.RequestPauseAt(MediaTime{900});
     CHECK(endpoint.position_pending());
     CHECK(endpoint.position_override() == MediaTime{900});
-    CHECK(endpoint.TakeNext().type == PreviewTransportCommandType::Pause);
-    CHECK(endpoint.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(endpoint.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
+    CHECK(endpoint.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(endpoint.Complete(PreviewTransportCommandType::Pause,
                             PreviewNativeState::Paused));
-    auto command = endpoint.TakeNext();
+    auto command = endpoint.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == MediaTime{900});
     // The adapter uses the measured last video sample as its native target.
@@ -671,7 +675,7 @@ void TestPreviewLogicalEndWaitsForRealSeekCompletion() {
     CHECK(endpoint.ResolvePosition(MediaTime{880}) == MediaTime{900});
     CHECK(endpoint.position_pending());
     CHECK(endpoint.command_pending());
-    CHECK(endpoint.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(endpoint.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(!endpoint.Complete(PreviewTransportCommandType::Pause,
                              PreviewNativeState::Paused));
     CHECK(endpoint.in_flight() == PreviewTransportCommandType::Seek);
@@ -684,12 +688,12 @@ void TestPreviewLogicalEndWaitsForRealSeekCompletion() {
     CHECK(endpoint.ResolvePosition(MediaTime{880}) == MediaTime{900});
 
     endpoint.RequestPlayFrom(MediaTime{200});
-    command = endpoint.TakeNext();
+    command = endpoint.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == MediaTime{200});
     CHECK(endpoint.Complete(PreviewTransportCommandType::Seek,
                             PreviewNativeState::Paused));
-    CHECK(endpoint.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(endpoint.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(endpoint.Complete(PreviewTransportCommandType::Play,
                             PreviewNativeState::Playing));
     CHECK(!endpoint.ended());
@@ -698,17 +702,17 @@ void TestPreviewLogicalEndWaitsForRealSeekCompletion() {
     // An endpoint request cannot retire an unrelated owned Seek, and newest
     // restart intent can supersede it while the endpoint Seek is pending.
     endpoint.RequestSeek(MediaTime{450});
-    CHECK(endpoint.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(endpoint.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     CHECK(endpoint.play_requested());
     CHECK(endpoint.Complete(PreviewTransportCommandType::Pause,
                             PreviewNativeState::Paused));
-    CHECK(endpoint.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(endpoint.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     endpoint.RequestPauseAt(MediaTime{900});
-    CHECK(endpoint.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(endpoint.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(endpoint.in_flight() == PreviewTransportCommandType::Seek);
     CHECK(endpoint.Complete(PreviewTransportCommandType::Seek,
                             PreviewNativeState::Paused));
-    command = endpoint.TakeNext();
+    command = endpoint.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == MediaTime{900});
     endpoint.RequestPlayFrom(MediaTime{100});
@@ -716,12 +720,12 @@ void TestPreviewLogicalEndWaitsForRealSeekCompletion() {
     endpoint.RequestPlay();
     CHECK(endpoint.Complete(PreviewTransportCommandType::Seek,
                             PreviewNativeState::Paused));
-    command = endpoint.TakeNext();
+    command = endpoint.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == MediaTime{100});
     CHECK(endpoint.Complete(PreviewTransportCommandType::Seek,
                             PreviewNativeState::Paused));
-    CHECK(endpoint.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(endpoint.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(endpoint.Complete(PreviewTransportCommandType::Play,
                             PreviewNativeState::Playing));
     CHECK(endpoint.play_requested());
@@ -735,16 +739,16 @@ void TestPreviewPlaybackPositionFloor() {
     const MediaTime earlier_target{10000000};
     transport.Reset(true);
     transport.RequestSeek(tail_target);
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     CHECK(transport.play_requested());
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(transport.Complete(PreviewTransportCommandType::Pause,
                              PreviewNativeState::Paused));
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek,
                              PreviewNativeState::Paused));
     CHECK(transport.position_override() == tail_target);
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(transport.Complete(PreviewTransportCommandType::Play,
                              PreviewNativeState::Playing));
     CHECK(!transport.position_pending());
@@ -757,7 +761,7 @@ void TestPreviewPlaybackPositionFloor() {
     // Pausing before the native clock catches up must not move the logical
     // playhead back outside the requested selected interval.
     transport.RequestPause();
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     CHECK(transport.Complete(PreviewTransportCommandType::Pause,
                              PreviewNativeState::Paused));
     CHECK(transport.ResolvePosition(last_video_sample) == tail_target);
@@ -767,14 +771,14 @@ void TestPreviewPlaybackPositionFloor() {
     // A newer backwards seek owns its own position immediately. Neither the
     // old floor nor an unmatched callback can hide that newer target.
     transport.RequestSeek(earlier_target);
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     CHECK(!transport.Complete(PreviewTransportCommandType::Play,
                               PreviewNativeState::Paused));
     CHECK(transport.ResolvePosition(last_video_sample) == earlier_target);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek,
                              PreviewNativeState::Paused));
     transport.RequestPlay();
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(transport.Complete(PreviewTransportCommandType::Play,
                              PreviewNativeState::Playing));
     CHECK(transport.ResolvePosition(earlier_target) == earlier_target);
@@ -785,14 +789,14 @@ void TestPreviewPlaybackPositionFloor() {
     CHECK(transport.ResolvePosition(MediaTime::zero()) == MediaTime::zero());
 
     transport.RequestPlayFrom(tail_target);
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek,
                              PreviewNativeState::Paused));
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(transport.Complete(PreviewTransportCommandType::Play,
                              PreviewNativeState::Playing));
     transport.RequestPause();
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     transport.Ended(PreviewNativeState::Stopped);
     CHECK(transport.ResolvePosition(MediaTime::zero()) == tail_target);
     transport.RequestPlayFrom(earlier_target);
@@ -801,7 +805,7 @@ void TestPreviewPlaybackPositionFloor() {
     CHECK(transport.ResolvePosition(MediaTime::zero()) == earlier_target);
     CHECK(transport.Complete(PreviewTransportCommandType::Pause,
                              PreviewNativeState::Paused));
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek,
                              PreviewNativeState::Playing));
     CHECK(transport.ResolvePosition(MediaTime::zero()) == earlier_target);
@@ -810,13 +814,13 @@ void TestPreviewPlaybackPositionFloor() {
 
     transport.Reset(true);
     transport.RequestSeek(tail_target);
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     CHECK(transport.Complete(PreviewTransportCommandType::Pause,
                              PreviewNativeState::Paused));
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek,
                              PreviewNativeState::Paused));
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(transport.Complete(PreviewTransportCommandType::Play,
                              PreviewNativeState::Playing));
     transport.Reset();
@@ -835,10 +839,10 @@ void TestMissingEndpointSeekCompletionPreservesOwnership() {
     const MediaTime in{10000000};
     transport.Reset(true);
     transport.RequestPauseAt(out);
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     CHECK(transport.Complete(PreviewTransportCommandType::Pause,
                              PreviewNativeState::Paused));
-    const auto command = transport.TakeNext();
+    const auto command = transport.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == out);
     const auto observe = [&](uint64_t now) {
@@ -853,7 +857,7 @@ void TestMissingEndpointSeekCompletionPreservesOwnership() {
     CHECK(observe(2099) == PreviewLivenessFailure::None);
     CHECK(observe(2100) == PreviewLivenessFailure::CommandTimeout);
     CHECK(transport.in_flight() == PreviewTransportCommandType::Seek);
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(transport.play_requested());
     CHECK(transport.ResolvePosition(out) == in);
 
@@ -865,7 +869,7 @@ void TestMissingEndpointSeekCompletionPreservesOwnership() {
     liveness.Reset(8);
     transport.RequestSeek(restart_position);
     if (restart_playing) transport.RequestPlay();
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     CHECK(liveness.Observe(2101, 8, 60, transport.in_flight(), true, false,
                            MediaTime::zero(), true) == PreviewLivenessFailure::None);
     CHECK(liveness.Observe(99999, 7, 59, PreviewTransportCommandType::Seek,
@@ -874,7 +878,7 @@ void TestMissingEndpointSeekCompletionPreservesOwnership() {
                            MediaTime::zero(), true) == PreviewLivenessFailure::None);
     CHECK(transport.Complete(PreviewTransportCommandType::Seek,
                              PreviewNativeState::Paused));
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(transport.Complete(PreviewTransportCommandType::Play,
                              PreviewNativeState::Playing));
     CHECK(transport.ResolvePosition(in + MediaTime{1000}) == in + MediaTime{1000});
@@ -969,15 +973,15 @@ void TestPreviewLivenessCompletedSeeksBetweenPolls() {
             seed = seed * 1664525u + 1013904223u;
             const MediaTime target{2'000'000 + static_cast<int64_t>(seed % 43'000'000u)};
             transport.RequestSeek(target);
-            CHECK(transport.TakeNext().type == PreviewTransportCommandType::Pause);
+            CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
             ++sequence;
             CHECK(transport.Complete(PreviewTransportCommandType::Pause,
                                      PreviewNativeState::Paused));
-            CHECK(transport.TakeNext().type == PreviewTransportCommandType::Seek);
+            CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
             ++sequence;
             CHECK(transport.Complete(PreviewTransportCommandType::Seek,
                                      PreviewNativeState::Paused));
-            CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+            CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
             ++sequence;
             CHECK(transport.Complete(PreviewTransportCommandType::Play,
                                      PreviewNativeState::Playing));
@@ -1017,13 +1021,13 @@ void TestPreviewLivenessCompletedSeeksBetweenPolls() {
     easnap::media::PreviewTransport transport;
     transport.Reset();
     transport.RequestPlayFrom(MediaTime{20'000'000});
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     monitor.Reset(3);
     CHECK(monitor.Observe(0, 3, 20, transport.in_flight(), true, false,
                           MediaTime{20'000'000}, true) == PreviewLivenessFailure::None);
     for (uint64_t now = 100; now < PreviewLiveness::timeout_ms; now += 100) {
         transport.RequestPlayFrom(MediaTime{static_cast<int64_t>(now) * 10'000});
-        CHECK(transport.TakeNext().type == idle);
+        CHECK(transport.TakeNext(kUntimed).type == idle);
         CHECK(monitor.Observe(now, 3, 20, transport.in_flight(), true, false,
                               MediaTime{static_cast<int64_t>(now) * 10'000}, true) ==
               PreviewLivenessFailure::None);
@@ -1069,7 +1073,7 @@ void TestTimedPreviewIntentConvergence() {
             bool applied = false;
             std::optional<unsigned> ended_at;
             const auto dispatch = [&] {
-                const auto command = transport.TakeNext();
+                const auto command = transport.TakeNext(now);
                 if (outstanding.type != PreviewTransportCommandType::None) {
                     CHECK(command.type == PreviewTransportCommandType::None);
                 } else if (command.type != PreviewTransportCommandType::None) {
@@ -1229,27 +1233,27 @@ void TestPreviewTransportRecoversAcrossPendingPause() {
     easnap::media::PreviewTransport active_seek;
     active_seek.Reset(true);
     active_seek.RequestSeek(MediaTime{450});
-    CHECK(active_seek.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(active_seek.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     active_seek.RequestPause();
     active_seek.RequestPlay();
-    CHECK(active_seek.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(active_seek.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(active_seek.Complete(PreviewTransportCommandType::Pause,
                                PreviewNativeState::Paused));
-    CHECK(active_seek.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(active_seek.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     CHECK(active_seek.Complete(PreviewTransportCommandType::Seek,
                                PreviewNativeState::Paused));
-    CHECK(active_seek.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(active_seek.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(active_seek.Complete(PreviewTransportCommandType::Play,
                                PreviewNativeState::Playing));
-    CHECK(active_seek.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(active_seek.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(active_seek.playing());
 
     easnap::media::PreviewTransport moved_out;
     moved_out.Reset(true);
     moved_out.RequestPauseAt(MediaTime{500});
-    CHECK(moved_out.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(moved_out.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     CHECK(moved_out.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
-    auto out_command = moved_out.TakeNext();
+    auto out_command = moved_out.TakeNext(kUntimed);
     CHECK(out_command.type == PreviewTransportCommandType::Seek);
     CHECK(out_command.position == MediaTime{500});
     CHECK(moved_out.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
@@ -1259,18 +1263,18 @@ void TestPreviewTransportRecoversAcrossPendingPause() {
     easnap::media::PreviewTransport transport;
     transport.Reset(true);
     transport.RequestPause();
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
 
     // Play at Out while Pause is still asynchronous: seek is deferred until
     // PAUSE completes, then Play is deferred until POSITION_SET completes.
     transport.RequestPlayFrom(MediaTime{125});
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(transport.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
-    auto command = transport.TakeNext();
+    auto command = transport.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == MediaTime{125});
     CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(transport.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
     CHECK(transport.playing());
 }
@@ -1284,13 +1288,13 @@ void TestPreviewNaturalEndKeepsLogicalPosition() {
     CHECK(!transport.command_pending());
     CHECK(transport.ResolvePosition(MediaTime::zero()) == MediaTime{900});
     transport.RequestPlayFrom(MediaTime{200});
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Seek);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Seek);
     transport.Ended(PreviewNativeState::Stopped, MediaTime{900});
     CHECK(transport.position_pending());
     CHECK(transport.play_requested());
     CHECK(transport.ResolvePosition(MediaTime::zero()) == MediaTime{200});
     CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(transport.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
     transport.Ended(PreviewNativeState::Playing, MediaTime{900});
     CHECK(transport.play_requested());
@@ -1307,25 +1311,25 @@ void TestPreviewTransportKeepsRestartAcrossLateEndedEvent() {
     easnap::media::PreviewTransport transport;
     transport.Reset(true);
     transport.RequestPauseAt(MediaTime{900});
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     transport.RequestPlayFrom(MediaTime{200});
 
     // EndOfPresentation from the old playback can arrive after the user has
     // already requested restart. It must not erase the queued In seek.
     transport.Ended(PreviewNativeState::Stopped);
     CHECK(transport.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
-    auto command = transport.TakeNext();
+    auto command = transport.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == MediaTime{200});
     CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
-    CHECK(transport.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(transport.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
 }
 
 void TestPreviewTransportReconcilesStoppedPauseRace() {
     easnap::media::PreviewTransport direct_pause;
     direct_pause.Reset(true);
     direct_pause.RequestPause();
-    CHECK(direct_pause.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(direct_pause.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     CHECK(direct_pause.ReconcilePauseWhileStopped());
     CHECK(!direct_pause.playing());
     CHECK(!direct_pause.play_requested());
@@ -1335,16 +1339,16 @@ void TestPreviewTransportReconcilesStoppedPauseRace() {
     easnap::media::PreviewTransport pause_at_out;
     pause_at_out.Reset(true);
     pause_at_out.RequestPauseAt(MediaTime{900});
-    CHECK(pause_at_out.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(pause_at_out.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
 
     // STOP/PLAYBACK_ENDED is only an observation. The Pause callback still owns
     // the command slot, so its late failure cannot be misattributed to Seek.
     pause_at_out.Ended(PreviewNativeState::Stopped);
     CHECK(!pause_at_out.playing());
     CHECK(pause_at_out.in_flight() == PreviewTransportCommandType::Pause);
-    CHECK(pause_at_out.TakeNext().type == PreviewTransportCommandType::None);
+    CHECK(pause_at_out.TakeNext(kUntimed).type == PreviewTransportCommandType::None);
     CHECK(pause_at_out.ReconcilePauseWhileStopped());
-    auto command = pause_at_out.TakeNext();
+    auto command = pause_at_out.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == MediaTime{900});
 
@@ -1357,19 +1361,198 @@ void TestPreviewTransportReconcilesStoppedPauseRace() {
 
     // The reconciled transport remains reusable for repeated restart/Out cycles.
     pause_at_out.RequestPlayFrom(MediaTime{100});
-    command = pause_at_out.TakeNext();
+    command = pause_at_out.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(pause_at_out.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
-    CHECK(pause_at_out.TakeNext().type == PreviewTransportCommandType::Play);
+    CHECK(pause_at_out.TakeNext(kUntimed).type == PreviewTransportCommandType::Play);
     CHECK(pause_at_out.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
     pause_at_out.RequestPauseAt(MediaTime{700});
-    CHECK(pause_at_out.TakeNext().type == PreviewTransportCommandType::Pause);
+    CHECK(pause_at_out.TakeNext(kUntimed).type == PreviewTransportCommandType::Pause);
     CHECK(pause_at_out.ReconcilePauseWhileStopped());
-    command = pause_at_out.TakeNext();
+    command = pause_at_out.TakeNext(kUntimed);
     CHECK(command.type == PreviewTransportCommandType::Seek);
     CHECK(command.position == MediaTime{700});
     CHECK(pause_at_out.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
     CHECK(!pause_at_out.command_pending());
+}
+
+void TestPreviewTransportReseeksContradictedPlaybackClock() {
+    using easnap::app::PlanTrimPlaybackProgress;
+    using easnap::app::TrimPlaybackAction;
+    using easnap::media::PreviewClockCheck;
+    using easnap::media::PreviewTransport;
+    using std::chrono::milliseconds;
+    // Lab run 20261109-101913-full, mfplay_preview_stress_0, seed 6D2B79F5,
+    // region 0. Automatic selected Out paused playback just past 8 s; the
+    // human PlayFrom(In), Pause, Play then reached the helper as one
+    // PlayFrom(In). MFPlay completed Seek(In) and Play, yet its clock ran on
+    // from the Out pause: 8.1306962 s at the next snapshot. Millisecond times
+    // follow the parent's trace; the helper's own were not transmitted.
+    const MediaTime in{10'000'000};
+    const MediaTime out{80'000'000};
+    PreviewTransport transport;
+    transport.Reset(true);
+    transport.RequestPauseAt(out);
+    CHECK(transport.TakeNext(388'359).type == PreviewTransportCommandType::Pause);
+    CHECK(transport.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
+    auto command = transport.TakeNext(388'370);
+    CHECK(command.type == PreviewTransportCommandType::Seek);
+    CHECK(command.position == out);
+    CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
+    transport.RequestPlayFrom(in);
+    command = transport.TakeNext(388'468);
+    CHECK(command.type == PreviewTransportCommandType::Seek);
+    CHECK(command.position == in);
+    CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
+    CHECK(transport.TakeNext(388'480).type == PreviewTransportCommandType::Play);
+    CHECK(transport.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
+    CHECK(!transport.command_pending());
+
+    // Taken as a position, that clock is settled playback past Out: the
+    // selected-Out policy paused at once and the final Play never played.
+    const MediaTime stale_clock{81'306'962};
+    CHECK(transport.ResolvePosition(stale_clock) == stale_clock);
+    CHECK(PlanTrimPlaybackProgress(true, transport.ResolvePosition(stale_clock), out).action ==
+          TrimPlaybackAction::PauseAt);
+    // It is 7.13 s ahead of In, 105 ms after Play was dispatched.
+    CHECK(transport.PlaybackClockContradicted(stale_clock, 388'585));
+    CHECK(transport.CheckPlaybackClock(stale_clock, 388'585) == PreviewClockCheck::Reseek);
+    CHECK(transport.play_requested());
+    CHECK(transport.command_pending());
+    CHECK(transport.position_pending());
+    CHECK(transport.ResolvePosition(stale_clock) == in);
+    CHECK(PlanTrimPlaybackProgress(transport.play_requested() && !transport.position_pending(),
+                                   transport.ResolvePosition(stale_clock), out)
+              .action == TrimPlaybackAction::None);
+    // The running clock is quiesced before In is sought again, then played.
+    CHECK(transport.TakeNext(388'590).type == PreviewTransportCommandType::Pause);
+    CHECK(transport.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
+    command = transport.TakeNext(388'640);
+    CHECK(command.type == PreviewTransportCommandType::Seek);
+    CHECK(command.position == in);
+    CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
+    CHECK(transport.TakeNext(388'700).type == PreviewTransportCommandType::Play);
+    CHECK(transport.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
+    const MediaTime honoured = in + milliseconds{150};
+    CHECK(!transport.PlaybackClockContradicted(honoured, 388'860));
+    CHECK(transport.CheckPlaybackClock(honoured, 388'860) == PreviewClockCheck::Consistent);
+    CHECK(!transport.command_pending());
+    CHECK(transport.ResolvePosition(honoured) == honoured);
+    CHECK(PlanTrimPlaybackProgress(true, transport.ResolvePosition(honoured), out).action ==
+          TrimPlaybackAction::None);
+    CHECK(transport.TakeNext(388'860).type == PreviewTransportCommandType::None);
+}
+
+void TestPreviewPlaybackClockBound() {
+    using easnap::media::PreviewClockCheck;
+    using easnap::media::PreviewTransport;
+    using std::chrono::milliseconds;
+    const MediaTime target{20'000'000};
+    const MediaTime allowance = PreviewTransport::clock_allowance;
+
+    // The bound runs from Play's dispatch, not from its callback: a late PLAY
+    // callback cannot make honest playback look ahead of its target.
+    PreviewTransport late_callback;
+    late_callback.RequestPlayFrom(target);
+    CHECK(late_callback.TakeNext(1'000).type == PreviewTransportCommandType::Seek);
+    CHECK(late_callback.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
+    CHECK(late_callback.TakeNext(1'010).type == PreviewTransportCommandType::Play);
+    CHECK(late_callback.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
+    const MediaTime limit = target + milliseconds{900} + allowance;
+    CHECK(!late_callback.PlaybackClockContradicted(limit, 1'910));
+    CHECK(late_callback.PlaybackClockContradicted(limit + MediaTime{1}, 1'910));
+    CHECK(late_callback.CheckPlaybackClock(limit, 1'910) == PreviewClockCheck::Consistent);
+    // An hour of playback stays within the bound. A clock behind the target
+    // is the capped final-frame case, which the floor already covers.
+    CHECK(!late_callback.PlaybackClockContradicted(target + milliseconds{3'600'000}, 3'601'010));
+    CHECK(!late_callback.PlaybackClockContradicted(target - milliseconds{40}, 1'020));
+    // Pausing and resuming without a seek keeps the target; the bound only grows.
+    late_callback.RequestPause();
+    CHECK(late_callback.TakeNext(5'000).type == PreviewTransportCommandType::Pause);
+    CHECK(late_callback.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
+    late_callback.RequestPlay();
+    CHECK(late_callback.TakeNext(9'000).type == PreviewTransportCommandType::Play);
+    CHECK(late_callback.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
+    CHECK(late_callback.CheckPlaybackClock(target + milliseconds{4'000}, 9'100) ==
+          PreviewClockCheck::Consistent);
+
+    // A seek that completes while MFPlay already plays starts the bound at
+    // that Seek's dispatch.
+    PreviewTransport playing_seek;
+    playing_seek.RequestPlayFrom(target);
+    CHECK(playing_seek.TakeNext(2'000).type == PreviewTransportCommandType::Seek);
+    CHECK(playing_seek.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Playing));
+    CHECK(playing_seek.TakeNext(2'300).type == PreviewTransportCommandType::None);
+    CHECK(!playing_seek.PlaybackClockContradicted(target + milliseconds{300} + allowance, 2'300));
+    CHECK(playing_seek.PlaybackClockContradicted(target + milliseconds{301} + allowance, 2'300));
+
+    // Without an acknowledged seek target there is nothing to contradict:
+    // playback from the first frame, a pending seek and a paused seek.
+    PreviewTransport unsought;
+    unsought.RequestPlay();
+    CHECK(unsought.TakeNext(0).type == PreviewTransportCommandType::Play);
+    CHECK(unsought.Complete(PreviewTransportCommandType::Play, PreviewNativeState::Playing));
+    CHECK(unsought.CheckPlaybackClock(MediaTime{90'000'000}, 1) == PreviewClockCheck::Consistent);
+    unsought.RequestPauseAt(target);
+    CHECK(!unsought.PlaybackClockContradicted(MediaTime{90'000'000}, 2));
+    CHECK(unsought.TakeNext(2).type == PreviewTransportCommandType::Pause);
+    CHECK(unsought.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
+    CHECK(unsought.TakeNext(3).type == PreviewTransportCommandType::Seek);
+    CHECK(unsought.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
+    CHECK(unsought.CheckPlaybackClock(MediaTime{90'000'000}, 4) == PreviewClockCheck::Consistent);
+    CHECK(unsought.ResolvePosition(MediaTime{90'000'000}) == target);
+}
+
+void TestPreviewPlaybackClockReseekLimit() {
+    using easnap::media::PreviewClockCheck;
+    using easnap::media::PreviewTransport;
+    using easnap::media::PreviewTransportCommand;
+    const MediaTime target{10'000'000};
+    const MediaTime stale{80'000'000};
+    PreviewTransport transport;
+    uint64_t now = 100;
+    // Every command completes as MFPlay reports it: Pause and Seek paused,
+    // Play playing. The native clock alone ignores each seek.
+    const auto converge = [&] {
+        for (PreviewTransportCommand command = transport.TakeNext(now);
+             command.type != PreviewTransportCommandType::None;
+             command = transport.TakeNext(now)) {
+            now += 10;
+            CHECK(transport.Complete(command.type,
+                                     command.type == PreviewTransportCommandType::Play
+                                         ? PreviewNativeState::Playing
+                                         : PreviewNativeState::Paused));
+        }
+        CHECK(!transport.command_pending());
+        CHECK(transport.playing());
+    };
+    transport.RequestPlayFrom(target);
+    converge();
+    for (unsigned attempt = 0; attempt < PreviewTransport::clock_reseek_limit; ++attempt) {
+        CHECK(transport.CheckPlaybackClock(stale, now) == PreviewClockCheck::Reseek);
+        CHECK(transport.ResolvePosition(stale) == target);
+        CHECK(transport.TakeNext(now).type == PreviewTransportCommandType::Pause);
+        CHECK(transport.Complete(PreviewTransportCommandType::Pause, PreviewNativeState::Paused));
+        const auto command = transport.TakeNext(now);
+        CHECK(command.type == PreviewTransportCommandType::Seek);
+        CHECK(command.position == target);
+        CHECK(transport.Complete(PreviewTransportCommandType::Seek, PreviewNativeState::Paused));
+        converge();
+    }
+    // The backend ignored every repeated seek: the owner must recover it. The
+    // contradiction remains visible and the target remains the position.
+    CHECK(transport.CheckPlaybackClock(stale, now) == PreviewClockCheck::Exhausted);
+    CHECK(transport.PlaybackClockContradicted(stale, now));
+    CHECK(transport.playback_position_floor() == target);
+    CHECK(transport.TakeNext(now).type == PreviewTransportCommandType::None);
+
+    // A newer requested position has an attempt budget of its own.
+    transport.RequestSeek(target);
+    converge();
+    CHECK(transport.CheckPlaybackClock(stale, now) == PreviewClockCheck::Reseek);
+    transport.Failed();
+    CHECK(!transport.PlaybackClockContradicted(stale, now));
+    CHECK(!transport.command_pending());
 }
 
 void CheckLayout(int width, int height, float scale) {
@@ -1630,6 +1813,9 @@ int main() {
     TestPreviewNaturalEndKeepsLogicalPosition();
     TestPreviewTransportKeepsRestartAcrossLateEndedEvent();
     TestPreviewTransportReconcilesStoppedPauseRace();
+    TestPreviewTransportReseeksContradictedPlaybackClock();
+    TestPreviewPlaybackClockBound();
+    TestPreviewPlaybackClockReseekLimit();
     TestTrimLayoutContainmentAcrossDpiAndResize();
     TestTrimLayoutAcrossDisplayMatrix();
     TestSuccessfulExportAndDuplicatePrevention();

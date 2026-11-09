@@ -267,6 +267,16 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   (above).
 - **Documentation tidy-up:** the ADR headers follow one style and the
   `test.ps1` parameters are in a table in [testing](testing.md).
+- **The trim preview checks its clock against the seek**
+  ([ADR-010](decisions/ADR-010-trim-view-ownership-and-orchestration.md),
+  amended 2026-11-09), for the race under Known limitations. After a seek,
+  `PreviewTransport` records when the command that resumed playback was
+  dispatched; a native clock further ahead of the target than that time plus
+  500 ms is not shown as the position, and the helper's monitor seeks the
+  target again, twice at most, before it asks the parent for a new helper.
+  Validated: the Fast tier on the development PC (30 of 30), where
+  `trim_workflow_orchestration` replays the lab trace and fails 37 assertions
+  with the check disabled. Not validated: the MFPlay preview tests in the lab.
 
 ## v1.2.0
 
@@ -471,11 +481,13 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   second picture agrees, a contiguous contradiction refused as `Ambiguous`),
   not made ([ADR-041](decisions/ADR-041-scrollshot-realistic-test-application.md#validation)).
 - After the trim preview stops at the Out point, a quick Play, Pause and Play
-  can resume at that old pause point instead of the In point and stop again
-  at once: the preview helper confirms both seeks, but playback resumes from
-  the old pause clock. A pre-existing race in the preview transport,
-  seen once in 30 lab runs (`mfplay_preview_stress_0`, run
-  `20261109-101913-full`); not fixed.
+  could resume at that old pause point instead of the In point and stop again
+  at once (`mfplay_preview_stress_0`, run `20261109-101913-full`, once in 30
+  lab runs). MFPlay completed Seek(In) and Play, then ran from its clock
+  before the seek; why is unknown, because the helper sends only the last
+  2,048 characters of its trace. The helper now checks the clock against the
+  seek and seeks again (v1.3 above); that has not run in the lab yet. It does
+  not detect a contradiction under 500 ms, or a clock left behind the target.
 - A window that is open when the language changes keeps its text; only the
   Settings dialog can be open then, and it closes.
 - The mode island's home now starts below a taskbar docked at the top
@@ -592,9 +604,10 @@ On `feature/v1.3-findings`, in this order (the roadmap has the index):
    second picture agrees, a contiguous contradiction refused as `Ambiguous`.
    `scrollshot_realistic_desktop` then shows whether torn input still needs
    its `KNOWN_WEAKNESS` path.
-2. The preview transport race (Known limitations): after a seek, the first
-   Play that resumes far past the requested point is corrected, with Fast
-   coverage.
+2. The lab check of the preview clock correction (v1.3 above): Full, then
+   Soak, with `mfplay_preview_stress_0`, `_1` and `_2`, the transport and
+   audio-transport preview tests, `trim_flow_production` and
+   `trim_timeline_seek_stress`.
 3. The owner's checks: the external video feature
    ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md): the
    installer's "Open with" entries and the owner checklist) and this

@@ -47,8 +47,12 @@ In this order (details in [project status](docs/project-status.md#next-slice)):
    seen in the lab; until then `scrollshot_realistic_desktop` reports torn
    input as `KNOWN_WEAKNESS`
    ([ADR-041](docs/decisions/ADR-041-scrollshot-realistic-test-application.md#validation)).
-2. The preview transport race: a quick Play, Pause and Play after a stop at
-   Out can resume at the old pause point (one failure in 30 lab runs).
+2. The lab check of the preview transport fix: a quick Play, Pause and Play
+   after a stop at Out could resume at the old pause point (one failure in 30
+   lab runs); the helper now checks the native clock against the seek and
+   seeks again
+   ([ADR-010](docs/decisions/ADR-010-trim-view-ownership-and-orchestration.md)),
+   validated on the Fast tier only.
 3. The owner's checks: the external video feature (installer "Open with",
    owner checklist of
    [ADR-040](docs/decisions/ADR-040-external-video-in-the-trim-view.md)) and

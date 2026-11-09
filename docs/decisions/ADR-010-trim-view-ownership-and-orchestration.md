@@ -3,6 +3,7 @@
 **Status:** Accepted  
 **Date:** 2026-08-31  
 **Amended:** 2026-10-13 — owner-lifetime check of the recording island recorded  
+**Amended:** 2026-11-09 — a native clock that contradicts the acknowledged seek is sought again  
 **Updated:** 2026-11-08 (decision 1 amended by [ADR-039](ADR-039-coordinator-trim-flow.md))
 
 Known limitation: transient redraw artifacts while the trim window is resized or
@@ -171,6 +172,28 @@ could therefore detect a missing callback but not retire the player.
    playback cannot move the logical cursor before selected In. Subsequent
    position advancement uses the native clock, and a newer seek replaces the
    floor.
+   Amended 2026-11-09: completion of a Seek and of the following Play does
+   not prove that playback runs from the target. In lab run
+   `20261109-101913-full` (`mfplay_preview_stress_0`, seed 6D2B79F5) a
+   PlayFrom(In), Pause and Play after the automatic pause at selected Out
+   reached the helper as one PlayFrom(In). MFPlay completed Seek(In) and Play
+   and reported 1.0 s while paused, yet its clock then ran on from the Out
+   pause: 8.13 s at the next snapshot. The selected-Out policy took that for
+   the position and paused at once. At rate 1 the native clock can run ahead
+   of the acknowledged target by no more than the real time since the command
+   that resumed playback was dispatched. `PreviewTransport` keeps that
+   dispatch time and allows 500 ms more for tick and clock granularity. A
+   clock beyond the bound is never published as the position: the snapshot
+   reports the target, with the position and a command pending. The helper's
+   100 ms monitor then seeks the target again (Pause, Seek, then Play while
+   Play is still the newest intent), at most twice per requested position; a
+   third contradiction requests recovery as `SeekNotHonoured`, which the
+   parent handles like any native liveness failure. Not covered: a
+   contradiction smaller than 500 ms, and a clock behind the target, which the
+   floor treats as a capped final-frame seek; no lost forward seek has been
+   observed. Why MFPlay resumed from the old clock is unknown: each snapshot
+   carries only the last 2,048 characters (about five lines) of the helper's
+   trace, and those covered a later seek.
    The helper's 100 ms monitor detects a command outstanding for two seconds,
    requested playback without native clock progress, or stable unwanted Play.
    `PreviewLiveness::Observe` consumes ordered observations from the current
@@ -240,7 +263,7 @@ could therefore detect a missing callback but not retire the player.
 | Preview state | Projection of observed transport state, with explicit end/failure |
 | Logical position during seek | Newest requested target; pending remains explicit |
 | Acknowledged paused/stopped position | Successful seek target or natural duration until another intent |
-| Advancing position | Native `GetPosition`, floored at the newest logical playback start |
+| Advancing position | Native `GetPosition`, floored at the newest logical playback start; a clock ahead of that start by more than the time since its dispatch plus 500 ms is replaced by the start, pending, and sought again |
 | Native terminal seek target | Exact greatest video PTS, or decoded PTS before exclusive Out; logical target stays independent |
 | Callback authority | Current native generation on the helper STA |
 | Snapshot authority | Current owned process/pipe generation and acknowledged intent |
@@ -288,3 +311,9 @@ Shutdown (see Context); confirmed process retirement is therefore part of the co
   deterministic transport/health regression failed 510 assertions and 12 held
   timeline gestures failed 24 same-coordinate move/release assertions; after
   them the regression passed 210,363 of 210,363 assertions.
+- 2026-11-09, clock check (development PC, Fast tier):
+  `trim_workflow_orchestration` replays the transport side of the lab trace
+  above. With the check disabled, its three new tests fail 37 assertions,
+  among them the selected-Out policy pausing on the 8.13 s clock; with it,
+  212,799 of 212,799 assertions pass. The MFPlay preview tests have not yet
+  run in the lab with the check.
