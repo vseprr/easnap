@@ -4,6 +4,8 @@
 #include <cwchar>
 #include <limits>
 
+#include "media/video_support.h"
+
 namespace easnap::app {
 
 bool IsSupportedRecordingAudioSource(media::AudioSource source) noexcept {
@@ -96,14 +98,8 @@ RecordingControlPolicy RecordingControlsForState(SessionState state) noexcept {
 }
 
 bool RecordingRegionFitsH264(const RECT& region) noexcept {
-    constexpr int64_t kMaximumMacroblocks = 36864;
-    constexpr int64_t kMaximumSide = 8688;
-    const int64_t width = static_cast<int64_t>(region.right) - region.left;
-    const int64_t height = static_cast<int64_t>(region.bottom) - region.top;
-    if (width <= 0 || height <= 0 || width > kMaximumSide || height > kMaximumSide) {
-        return false;
-    }
-    return ((width + 15) / 16) * ((height + 15) / 16) <= kMaximumMacroblocks;
+    return media::FrameFitsH264(static_cast<int64_t>(region.right) - region.left,
+                                static_cast<int64_t>(region.bottom) - region.top);
 }
 
 RECT MakeRecordingRegionEncoderCompatible(const RECT& region) noexcept {

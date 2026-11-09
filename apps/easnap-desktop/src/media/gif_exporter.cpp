@@ -1,6 +1,7 @@
 #include "media/mf_video_aperture.h"
 // Easnap - finalized-MP4 adapter for the presentation-independent GIF encoder.
 #include "media/gif_encoder.h"
+#include "media/video_support.h"
 
 #include <algorithm>
 #include <cstring>
@@ -404,9 +405,12 @@ private:
             if (SUCCEEDED(native_type->GetGUID(MF_MT_MAJOR_TYPE, &major)) &&
                 SUCCEEDED(native_type->GetGUID(MF_MT_SUBTYPE, &subtype)) &&
                 major == MFMediaType_Video) {
-                if (subtype != MFVideoFormat_H264) {
+                const VideoContainerSupport* container =
+                    FindVideoContainerForPath(source_path_);
+                if (container == nullptr ||
+                    !IsVideoSubtypeAllowed(container->container, subtype)) {
                     SetError(TrimExportFailureStage::SourceValidation,
-                             L"The GIF source video stream is not H.264");
+                             L"The GIF source video codec is not in the support table");
                     return false;
                 }
                 result = ::MFGetAttributeSize(native_type.Get(), MF_MT_FRAME_SIZE,
@@ -427,7 +431,7 @@ private:
         if (!found_video) {
             SetError(describe ? TrimExportFailureStage::SourceValidation
                               : TrimExportFailureStage::SourceReset,
-                     L"The GIF source MP4 has no H.264 video stream");
+                     L"The GIF source has no video stream");
             return false;
         }
         if (!describe &&
@@ -668,9 +672,10 @@ private:
     bool end_of_stream_{false};
 };
 
-bool IsAbsoluteMp4Path(const std::wstring& path) noexcept {
+/// A source is any file the support table opens (ADR-040).
+bool IsAbsoluteSupportedVideoPath(const std::wstring& path) noexcept {
     return !path.empty() && ::PathIsRelativeW(path.c_str()) == FALSE &&
-           _wcsicmp(::PathFindExtensionW(path.c_str()), L".mp4") == 0;
+           FindVideoContainerForPath(path) != nullptr;
 }
 
 bool ExportOnWorker(const std::wstring& source_path,
@@ -688,18 +693,18 @@ bool ExportOnWorker(const std::wstring& source_path,
         failure.detail = L"Starting Media Foundation for GIF export failed";
         return false;
     }
-    if (!IsAbsoluteMp4Path(source_path)) {
-        LogFailure(L"The GIF source must be an absolute .mp4 path");
+    if (!IsAbsoluteSupportedVideoPath(source_path)) {
+        LogFailure(L"The GIF source must be an absolute path of a supported video");
         failure.stage = TrimExportFailureStage::SourceValidation;
-        failure.detail = L"The GIF source must be an absolute .mp4 path";
+        failure.detail = L"The GIF source must be an absolute path of a supported video";
         return false;
     }
     const DWORD attributes = ::GetFileAttributesW(source_path.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES ||
         (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
-        LogFailure(L"The GIF source MP4 does not exist or is not a file");
+        LogFailure(L"The GIF source video does not exist or is not a file");
         failure.stage = TrimExportFailureStage::SourceValidation;
-        failure.detail = L"The GIF source MP4 does not exist or is not a file";
+        failure.detail = L"The GIF source video does not exist or is not a file";
         return false;
     }
     if (options.format != RecordingFormat::Gif) {

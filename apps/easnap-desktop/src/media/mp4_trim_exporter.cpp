@@ -26,6 +26,7 @@
 
 #include "media/media_foundation_writer.h"
 #include "media/mf_d3d_device.h"
+#include "media/video_support.h"
 
 namespace easnap::media {
 namespace {
@@ -34,6 +35,11 @@ using Microsoft::WRL::ComPtr;
 
 constexpr int64_t kMediaTimeUnitsPerSecond = 10'000'000;
 constexpr DWORD kMaximumSourceStreams = 32;
+/// Frames per silence packet, as a recording writes them (ADR-007).
+constexpr uint64_t kSilencePacketFrames = 1024;
+/// How far silence may trail the video once the source audio has ended: the
+/// recording's limit (ADR-007, decision 7).
+constexpr MediaTime kSilenceLagBehindVideo{7'500'000};
 
 class MediaFoundationRuntime final {
 public:
@@ -133,6 +139,12 @@ bool IsAbsoluteMp4Path(const std::wstring& path) noexcept {
            _wcsicmp(::PathFindExtensionW(path.c_str()), L".mp4") == 0;
 }
 
+/// A source is any file the support table opens (ADR-040).
+bool IsAbsoluteSupportedVideoPath(const std::wstring& path) noexcept {
+    return !path.empty() && ::PathIsRelativeW(path.c_str()) == FALSE &&
+           FindVideoContainerForPath(path) != nullptr;
+}
+
 std::optional<std::wstring> NormalizedAbsolutePath(const std::wstring& path) {
     const DWORD required = ::GetFullPathNameW(path.c_str(), 0, nullptr, nullptr);
     if (required == 0) {
@@ -149,15 +161,15 @@ std::optional<std::wstring> NormalizedAbsolutePath(const std::wstring& path) {
 bool ValidatePaths(const std::wstring& source_path,
                    const std::wstring& destination_path,
                    bool replace_existing) {
-    if (!IsAbsoluteMp4Path(source_path) || !IsAbsoluteMp4Path(destination_path)) {
-        LogFailure(L"Source and destination must be absolute .mp4 paths");
+    if (!IsAbsoluteSupportedVideoPath(source_path) || !IsAbsoluteMp4Path(destination_path)) {
+        LogFailure(L"The source must be an absolute path of a supported video and the destination an absolute .mp4 path");
         return false;
     }
 
     const DWORD source_attributes = ::GetFileAttributesW(source_path.c_str());
     if (source_attributes == INVALID_FILE_ATTRIBUTES ||
         (source_attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
-        LogFailure(L"The source MP4 does not exist or is not a file");
+        LogFailure(L"The source video does not exist or is not a file");
         return false;
     }
     const DWORD destination_attributes =
@@ -245,9 +257,9 @@ std::optional<MediaTime> ReadPresentationDuration(IMFSourceReader* reader) {
     return duration;
 }
 
-bool DiscoverStreams(IMFSourceReader* reader, DWORD& video_stream,
-                     std::optional<DWORD>& audio_stream, UINT32& display_width,
-                     UINT32& display_height) {
+bool DiscoverStreams(IMFSourceReader* reader, VideoContainer container,
+                     DWORD& video_stream, std::optional<DWORD>& audio_stream,
+                     UINT32& display_width, UINT32& display_height) {
     bool found_video = false;
     bool found_audio = false;
     for (DWORD stream = 0; stream < kMaximumSourceStreams; ++stream) {
@@ -267,8 +279,8 @@ bool DiscoverStreams(IMFSourceReader* reader, DWORD& video_stream,
             continue;
         }
         if (major_type == MFMediaType_Video && !found_video) {
-            if (subtype != MFVideoFormat_H264) {
-                LogFailure(L"The source video stream is not H.264");
+            if (!IsVideoSubtypeAllowed(container, subtype)) {
+                LogFailure(L"The source video codec is not in the support table");
                 return false;
             }
             if (FAILED(::MFGetAttributeSize(type.Get(), MF_MT_FRAME_SIZE,
@@ -280,8 +292,8 @@ bool DiscoverStreams(IMFSourceReader* reader, DWORD& video_stream,
             video_stream = stream;
             found_video = true;
         } else if (major_type == MFMediaType_Audio && !found_audio) {
-            if (subtype != MFAudioFormat_AAC) {
-                LogFailure(L"The source audio stream is not AAC");
+            if (!IsAudioSubtypeAllowed(container, subtype)) {
+                LogFailure(L"The source audio codec is not in the support table");
                 return false;
             }
             audio_stream = stream;
@@ -289,7 +301,7 @@ bool DiscoverStreams(IMFSourceReader* reader, DWORD& video_stream,
         }
     }
     if (!found_video) {
-        LogFailure(L"The source MP4 has no H.264 video stream");
+        LogFailure(L"The source has no video stream");
         return false;
     }
     return true;
@@ -297,7 +309,41 @@ bool DiscoverStreams(IMFSourceReader* reader, DWORD& video_stream,
 
 bool ReadDecodedVideoFormat(SourceDescription& source, bool native_nv12);
 
-bool ConfigureVideoDecoder(SourceDescription& source, bool native_nv12) {
+/// The writer declares BT.709 studio-range video. Decoded NV12 goes to the
+/// encoder unchanged only when it is that; any other picture is converted
+/// through RGB by the reader's video processor and the writer. H.264 that
+/// declares nothing keeps the path every recording takes; another codec that
+/// declares nothing is BT.601, as the standard-definition codecs of the
+/// support table are.
+bool DecodedNv12IsBt709(const SourceDescription& source) {
+    ComPtr<IMFMediaType> native_type;
+    ComPtr<IMFMediaType> decoded_type;
+    GUID subtype{};
+    if (FAILED(source.reader->GetNativeMediaType(source.video_stream, 0, &native_type)) ||
+        FAILED(native_type->GetGUID(MF_MT_SUBTYPE, &subtype)) ||
+        FAILED(source.reader->GetCurrentMediaType(source.video_stream, &decoded_type))) {
+        return false;
+    }
+    const UINT32 declared_matrix = ::MFGetAttributeUINT32(native_type.Get(), MF_MT_YUV_MATRIX,
+                                                          MFVideoTransferMatrix_Unknown);
+    const UINT32 declared_range = ::MFGetAttributeUINT32(
+        native_type.Get(), MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_Unknown);
+    const UINT32 matrix =
+        ::MFGetAttributeUINT32(decoded_type.Get(), MF_MT_YUV_MATRIX, declared_matrix);
+    const UINT32 range =
+        ::MFGetAttributeUINT32(decoded_type.Get(), MF_MT_VIDEO_NOMINAL_RANGE, declared_range);
+    if (range == MFNominalRange_0_255) {
+        return false;
+    }
+    if (matrix != MFVideoTransferMatrix_Unknown) {
+        return matrix == MFVideoTransferMatrix_BT709;
+    }
+    return subtype == MFVideoFormat_H264;
+}
+
+/// `needs_rgb` is set when native NV12 decoding works but its colours differ
+/// from what the writer declares.
+bool ConfigureVideoDecoder(SourceDescription& source, bool native_nv12, bool& needs_rgb) {
     ComPtr<IMFMediaType> decoded_type;
     HRESULT result = ::MFCreateMediaType(&decoded_type);
     if (SUCCEEDED(result)) {
@@ -314,12 +360,21 @@ bool ConfigureVideoDecoder(SourceDescription& source, bool native_nv12) {
     }
     if (FAILED(result)) {
         LogFailure(native_nv12
-                       ? L"Configuring native NV12 H.264 video decoding"
-                       : L"Configuring incremental RGB32 H.264 video decoding",
+                       ? L"Configuring native NV12 video decoding"
+                       : L"Configuring incremental RGB32 video decoding",
                    result);
         return false;
     }
-    return ReadDecodedVideoFormat(source, native_nv12);
+    if (!ReadDecodedVideoFormat(source, native_nv12)) {
+        return false;
+    }
+    if (native_nv12 && !DecodedNv12IsBt709(source)) {
+        platform::LogMessage(
+            L"[Trim] The decoded picture is not BT.709; converting its colours through RGB");
+        needs_rgb = true;
+        return false;
+    }
+    return true;
 }
 
 bool ReadDecodedVideoFormat(SourceDescription& source, bool native_nv12) {
@@ -410,7 +465,7 @@ bool ConfigureAudioDecoder(SourceDescription& source) {
                                                     decoded_type.Get());
     }
     if (FAILED(result)) {
-        LogFailure(L"Configuring incremental AAC audio decoding", result);
+        LogFailure(L"Configuring incremental float audio decoding", result);
         return false;
     }
 
@@ -456,9 +511,11 @@ bool ConfigureAudioDecoder(SourceDescription& source) {
     return true;
 }
 
+/// `needs_rgb` is set when the native NV12 path cannot keep the colours; see
+/// DecodedNv12IsBt709.
 std::optional<SourceDescription> OpenSource(
     const std::wstring& source_path, IMFDXGIDeviceManager* device_manager,
-    bool native_nv12) {
+    bool native_nv12, bool& needs_rgb) {
     ComPtr<IMFAttributes> attributes;
     HRESULT result = ::MFCreateAttributes(&attributes, 5);
     if (SUCCEEDED(result)) {
@@ -490,10 +547,12 @@ std::optional<SourceDescription> OpenSource(
         return std::nullopt;
     }
 
+    const VideoContainerSupport* container = FindVideoContainerForPath(source_path);
     const auto duration = ReadPresentationDuration(source.reader.Get());
-    if (!duration.has_value() ||
-        !DiscoverStreams(source.reader.Get(), source.video_stream,
-                         source.audio_stream, source.width, source.height)) {
+    if (container == nullptr || !duration.has_value() ||
+        !DiscoverStreams(source.reader.Get(), container->container,
+                         source.video_stream, source.audio_stream, source.width,
+                         source.height)) {
         return std::nullopt;
     }
     source.duration = *duration;
@@ -510,7 +569,7 @@ std::optional<SourceDescription> OpenSource(
         LogFailure(L"Selecting the source MP4 media streams", result);
         return std::nullopt;
     }
-    if (!ConfigureVideoDecoder(source, native_nv12) ||
+    if (!ConfigureVideoDecoder(source, native_nv12, needs_rgb) ||
         !ConfigureAudioDecoder(source)) {
         return std::nullopt;
     }
@@ -1010,6 +1069,47 @@ bool ProcessAudioSample(IMFSample* sample, int64_t source_time,
     return true;
 }
 
+/// Continues the audio track with decoded-format silence from
+/// `last_audio_end` to at least `target`, in packets of 1024 frames timed from
+/// a cumulative frame count so that no rounding gap opens between them
+/// (ADR-007). `silence` is the reused packet buffer.
+template <typename Writer>
+bool WriteSilenceUpTo(const AudioFormat& format, MediaTime target, Writer& writer,
+                      MediaTime& last_audio_end, std::vector<uint8_t>& silence,
+                      StageAccumulator& stages) {
+    if (target <= last_audio_end) {
+        return true;
+    }
+    const uint32_t block_align = format.block_align();
+    const uint64_t total_frames =
+        MediaTimeToFramesCeiling((target - last_audio_end).count(), format.sample_rate);
+    if (block_align == 0 || total_frames == 0) {
+        LogFailure(L"The silence that continues the audio track has no valid format");
+        return false;
+    }
+    // Zero bytes are silence in the decoded float format.
+    silence.resize(static_cast<std::size_t>(kSilencePacketFrames) * block_align, 0);
+    const MediaTime origin = last_audio_end;
+    for (uint64_t written = 0; written < total_frames;) {
+        const uint64_t frames = (std::min)(kSilencePacketFrames, total_frames - written);
+        const int64_t packet_start = FramesToMediaTime(written, format.sample_rate);
+        const int64_t packet_end = FramesToMediaTime(written + frames, format.sample_rate);
+        const MediaChunk packet{silence.data(), static_cast<std::size_t>(frames) * block_align,
+                                origin + MediaTime{packet_start},
+                                MediaTime{packet_end - packet_start}, false, false};
+        const auto encode_started = DiagnosticsClock::now();
+        const bool wrote = writer.WriteAudioPacket(packet);
+        stages.encode_submit += DiagnosticsClock::now() - encode_started;
+        if (!wrote) {
+            LogFailure(writer.last_error().c_str());
+            return false;
+        }
+        written += frames;
+        last_audio_end = origin + MediaTime{packet_end};
+    }
+    return true;
+}
+
 template <typename Writer>
 bool TranscodeInterval(SourceDescription& source, MediaTime start, MediaTime end,
                        Writer& writer,
@@ -1024,6 +1124,10 @@ bool TranscodeInterval(SourceDescription& source, MediaTime start, MediaTime end
     float last_progress = 0.0f;
     bool video_started = false;
     bool audio_started = false;
+    // Silence continues the audio track once the source audio has ended
+    // inside the interval, or holds none of it.
+    std::vector<uint8_t> silence;
+    bool silence_written = false;
 
     while (!video_done || !audio_done) {
         DWORD actual_stream = 0;
@@ -1083,6 +1187,23 @@ bool TranscodeInterval(SourceDescription& source, MediaTime start, MediaTime end
                     if (!processed) {
                         return false;
                     }
+                    // With the audio ended, nothing can arrive behind this
+                    // frame. Silence keeps the track at most 750 ms behind the
+                    // video, as in a recording, so the sink writer never waits
+                    // for audio through a long stretch of video alone.
+                    if (source.audio_stream.has_value() && audio_done &&
+                        last_video_end - kSilenceLagBehindVideo > last_audio_end) {
+                        if (!silence_written) {
+                            platform::LogMessage(
+                                L"[Trim] The source audio has ended; silence continues the audio track");
+                        }
+                        if (!WriteSilenceUpTo(source.audio_format,
+                                              last_video_end - kSilenceLagBehindVideo, writer,
+                                              last_audio_end, silence, stages)) {
+                            return false;
+                        }
+                        silence_written = true;
+                    }
                 }
             } else if (is_audio) {
                 audio_started = true;
@@ -1119,9 +1240,17 @@ bool TranscodeInterval(SourceDescription& source, MediaTime start, MediaTime end
         LogFailure(L"The requested interval contains no decodable video frames");
         return false;
     }
-    if (source.audio_stream.has_value() && audio_packets_written == 0) {
-        LogFailure(L"The requested interval contains no decodable audio frames");
-        return false;
+    if (source.audio_stream.has_value() && (audio_packets_written == 0 || silence_written)) {
+        // The source has an audio track but the interval holds none of it,
+        // or the audio ended inside it: the track continues as silence to
+        // the end of the exported video, as a recording fills a stretch
+        // without captured audio (ADR-007). Audio that ends within 750 ms of
+        // the video, as a recording's does, is left as it is.
+        if (audio_packets_written == 0 && !silence_written) {
+            platform::LogMessage(L"[Trim] The interval holds no source audio; its audio track is silence");
+        }
+        return WriteSilenceUpTo(source.audio_format, last_video_end, writer, last_audio_end,
+                                silence, stages);
     }
     return true;
 }
@@ -1174,8 +1303,9 @@ bool ExportOnWorker(const std::wstring& source_path,
         }
         static_cast<void>(::DeleteFileW(staging_path->c_str()));
     };
+    bool needs_rgb = false;
     const auto try_native_path = [&](IMFDXGIDeviceManager* manager) {
-        source = OpenSource(source_path, manager, true);
+        source = OpenSource(source_path, manager, true, needs_rgb);
         if (!source.has_value()) {
             return false;
         }
@@ -1185,13 +1315,13 @@ bool ExportOnWorker(const std::wstring& source_path,
 
     bool native_path =
         d3d_device != nullptr && try_native_path(d3d_device->manager());
-    if (!native_path) {
+    if (!native_path && !needs_rgb) {
         source.reset();
         nv12_writer.reset();
         native_path = try_native_path(nullptr);
     }
     if (!native_path) {
-        source = OpenSource(source_path, nullptr, false);
+        source = OpenSource(source_path, nullptr, false, needs_rgb);
     }
     if (!source.has_value()) {
         return false;
@@ -1228,7 +1358,7 @@ bool ExportOnWorker(const std::wstring& source_path,
         platform::LogMessage(
             L"[Trim] Native NV12 sink negotiation failed; retrying the bounded BGRA fallback");
         abandon_staging();
-        source = OpenSource(source_path, nullptr, false);
+        source = OpenSource(source_path, nullptr, false, needs_rgb);
         native_path = false;
         if (!source.has_value()) {
             return false;

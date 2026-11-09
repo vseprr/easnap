@@ -1,6 +1,6 @@
 # ADR-040 — Opening an external video in the trim view
 
-**Status:** Proposed; nothing in this record is implemented yet  
+**Status:** Proposed; only the media layer (support table, probe, exporters) is implemented  
 **Date:** 2026-11-09
 
 ## Context
@@ -63,10 +63,19 @@ Contents in v1:
 | `.wmv`, `.asf` | ASF | WMV3, WVC1 (VC-1) | WMA v8/v9, or none |
 | `.avi` | AVI | H.264; MPEG-4 Part 2; MJPEG | AAC, MP3, PCM, or none |
 
-These are the combinations the table allows and the tests cover (see
-Validation). A subtype that Windows can decode but the table does not list for
-that container is refused as "format not supported"; widening the table is one
-edit plus one test file.
+These are the combinations the table allows. Test files exist only for H.264
+with AAC or no audio in `.mp4`, `.m4v` and `.mov`, and for WMV3 and VC-1 with
+WMA v8 or no audio in `.wmv` and `.asf` (see Validation). The AVI row, MPEG-4
+Part 2 (MP4V, M4S2) and MJPEG video, and MP3, PCM and WMA v9 audio have no test
+file: Windows has no encoder for them to write one. They are covered by the
+table and classifier tests only. A subtype that Windows can decode but the
+table does not list for that container is refused as "format not supported";
+widening the table is one edit plus one test file.
+
+The table compares the subtype the Windows media source reports. An AVI whose
+video carries another FourCC, such as XVID, DIVX, DX50, avc1 or X264, is
+refused as "format not supported" in v1 unless Windows reports it as one of
+the table's subtypes; which aliases Windows maps was not checked.
 
 Deliberately not in v1: `.mkv`, `.webm`, HEVC, VP9 and AV1. The table names
 them so the probe can answer "format not supported" instead of "unknown".
@@ -78,7 +87,11 @@ Windows decoder is missing, the answer is "needs a Windows codec extension".
 The probe runs on a worker thread inside `Easnap.exe`. It opens the file with
 the Source Reader on a handle Easnap opened itself, with a deadline of 5
 seconds, and posts the result to the host window. The trim view opens only
-after a successful probe. A helper-process probe (a new packet in the preview
+after a successful probe. The deadline is checked between steps only: opening
+the file, opening the source and a single `ReadSample` are not bounded by it,
+so a caller that must not wait longer stops waiting itself. A step that fails
+after the deadline is classified by its HRESULT, and a file whose every step
+succeeded is accepted however late the last step ended. A helper-process probe (a new packet in the preview
 helper protocol) would keep a parser crash out of `Easnap.exe`; it is recorded
 as a later option, not part of v1.
 
@@ -102,6 +115,7 @@ What the user is told:
 | Too large for MP4 | Over the H.264 size limit; GIF is still allowed and the message says so. |
 | Network or offline file | Copy the file to this PC first. |
 | In use | Another program is using the file. |
+| Media Foundation missing | Windows N without the Media Feature Pack; the same answer Record gives ([ADR-034](ADR-034-media-foundation-on-first-use.md)). Added by the media-layer slice: the first check had no answer. |
 
 The mapping from a result to a reason is one pure function over the probe's
 facts and an HRESULT, so it is tested in the Fast tier without a file. The
@@ -109,11 +123,11 @@ HRESULT mapping:
 
 | Result | Reason |
 |---|---|
-| `MF_E_UNSUPPORTED_BYTESTREAM_TYPE` (0xC00D36C4), `MF_E_INVALID_FILE_FORMAT` (0xC00D36BE) on a supported extension | Damaged or not a video |
+| `MF_E_UNSUPPORTED_BYTESTREAM_TYPE` (0xC00D36C4), `MF_E_INVALID_FILE_FORMAT` (0xC00D36BE) on a supported extension; any other failure to open | Damaged or not a video |
 | No `MFMediaType_Video` stream | No video |
 | Subtype not in the table | Format not supported |
 | Subtype in the table, `SetCurrentMediaType` returns `MF_E_TOPO_CODEC_NOT_FOUND` (0xC00D5212) or `MF_E_INVALIDMEDIATYPE` | Needs a Windows codec extension |
-| `MF_SD_PROTECTED`, `MFRequireProtectedEnvironment`, `MF_E_DRM_UNSUPPORTED` (0xC00D3700), `MF_E_LICENSE_*` | Protected |
+| `MF_SD_PROTECTED` on any stream (what `MFRequireProtectedEnvironment` checks; that function lives in `mf.dll`, which Easnap does not import), `MF_E_DRM_UNSUPPORTED` (0xC00D3700), `MF_E_LICENSE_*` | Protected |
 | First-frame decode fails with `MF_E_INVALID_STREAM_DATA` | Damaged or unreadable |
 | `ERROR_SHARING_VIOLATION` (0x80070020) from `CreateFileW` | In use |
 | `ERROR_FILE_NOT_FOUND`, `ERROR_PATH_NOT_FOUND`, `ERROR_ACCESS_DENIED` | Own wording: "file not found" or "no access" |
@@ -123,6 +137,13 @@ The wording of the last two rows: "The file could not be found." and "Easnap
 is not allowed to read this file." The HRESULT values are verified against
 real files in the probe tests; a value that turns out to differ is corrected
 here.
+
+Verified on Windows 10 22H2 (`video_probe_files`, 2026-11-09): random bytes
+with `.mp4` give `MF_E_UNSUPPORTED_BYTESTREAM_TYPE`; an MP4 cut in half gives
+`MF_E_INVALID_POSITION` (0xC00D36E5), damaged; a file opened elsewhere without
+sharing, or for writing, gives 0x80070020; a missing file 0x80070002. An H.264
+file declares "mixed" interlacing in its type, so the probe takes interlacing
+from the first decoded frame (`MFSampleExtension_Interlaced`).
 
 Rotation, a pixel aspect other than 1:1, interlaced video and 10-bit or HDR
 profiles are refused because nothing in the exporters handles them: they would
@@ -184,10 +205,25 @@ and `Export` while exporting. No new state is added for external videos.
 ### Export behaviour
 
 Both exporters decode every table entry through the Source Reader, asking for
-NV12 video and float audio. Two behaviours change:
+NV12 video and float audio. The MP4 writer declares BT.709 studio-range video,
+so decoded NV12 goes to the encoder unchanged only when it is that, or when it
+is H.264 that declares nothing (every recording); any other picture, such as
+WMV, VC-1 or other standard-definition video in BT.601, is decoded to RGB32 and
+converted by the writer. Passed on unchanged, a BT.601 WMV came out with a mean
+error of 7.1 per colour channel against its own decoded frame; through RGB the
+error is 1.4 (`mp4_trim_export_backend`, 2026-11-09). Two behaviours change:
 
 - An interval that holds no audio, in a file that has an audio track, exports
-  silence or no audio track instead of failing (the MP4 exporter fails today).
+  an audio track of silence instead of failing. Once the source audio has
+  ended, silence in 1,024-frame packets follows each video frame as it is
+  written, at most 750 ms behind it, and completes the track to the end of the
+  video, as a recording fills a gap
+  ([ADR-007](ADR-007-av-mux-and-active-time-audio.md)). Written only at the
+  end, the silence came too late: a 31-second stretch of video alone stalled
+  inside the sink writer and did not finish in 90 seconds; interleaved, the
+  same export takes 0.5 seconds. Audio that ends within 750 ms of the video, as
+  a recording's does, is left as it is. A gap in the middle of the source
+  audio, after which audio resumes, is not filled and remains a stall risk.
 - The bitrate default stays the one in `RecordingOptions` (8 Mbps). A
   high-quality source is re-encoded at that rate; this is a known quality limit.
 
@@ -264,7 +300,16 @@ There is no drag-and-drop in v1.
 
 ## Validation
 
-Nothing below has been run; this is the plan the implementation slices follow.
+This is the plan the implementation slices follow. What has run so far, on
+the host only (Windows 10 22H2, 2026-11-09, media-layer slice): the table and
+classifier tests (`video_support_table`), the probe tests (`video_probe_files`,
+`video_probe_asf`) without the long Soak file, and exporter cases for WMV,
+VC-1, `.mov`, `.m4v`, audio that ends early and a long video-only stretch
+(`mp4_trim_export_backend`, `gif_backend`). The probe tests wrote and probed
+about forty files in under five seconds. Nothing has run in the lab, and every
+item below that belongs to a later slice (installer list, argument parsing,
+hand-over, `trim_flow_production` cases, text fit, owner checklist) has not
+run.
 
 - **Fast tier.** Table contents; the classifier from facts and HRESULTs,
   including protected and a missing codec extension; the installer list equals

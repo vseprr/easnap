@@ -7,19 +7,26 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "media/media_foundation_writer.h"
 #include "media/temp_session.h"
 #include "platform/platform_utils.h"
+#include "sink_writer_fixture.h"
 
 namespace {
 
@@ -41,6 +48,10 @@ constexpr double kPictureErrorLimit = 12.0;
 
 int g_pass = 0;
 int g_fail = 0;
+// Log lines that say the exporter left the recording path: a decoded picture
+// converted through RGB, or silence written into the audio track.
+std::atomic<int> g_colour_conversions{0};
+std::atomic<int> g_silence_fills{0};
 
 void Check(bool condition, const char* expression, const char* file, int line) {
     if (condition) {
@@ -157,7 +168,10 @@ easnap::media::RecordingOptions TestOptions(bool audio) {
     return options;
 }
 
-bool CreateSourceMp4(const std::wstring& path, bool with_audio) {
+/// `audio_frames` limits the audio to the first that many video frames' time,
+/// for a source whose audio ends before its video.
+bool CreateSourceMp4(const std::wstring& path, bool with_audio,
+                     uint64_t audio_frames = kFrameCount) {
     auto writer = easnap::media::CreateMediaFoundationWriter();
     if (writer == nullptr) {
         return false;
@@ -201,7 +215,7 @@ bool CreateSourceMp4(const std::wstring& path, bool with_audio) {
             return false;
         }
 
-        if (with_audio) {
+        if (with_audio && frame_index < audio_frames) {
             const uint64_t first_audio_frame =
                 frame_index * kAudioFramesPerVideoFrame;
             for (uint64_t offset = 0; offset < kAudioFramesPerVideoFrame; ++offset) {
@@ -417,8 +431,9 @@ Mp4Inspection InspectMp4(const std::wstring& path) {
     return inspection;
 }
 
-/// Decodes the first video frame of `path` at its display size.
-bool DecodeFirstFrame(const std::wstring& path, easnap::platform::BgraImage& image) {
+/// Decodes the video frame of `path` shown at `at`, at its display size.
+bool DecodeFrameAt(const std::wstring& path, MediaTime at,
+                   easnap::platform::BgraImage& image) {
     ComPtr<IMFAttributes> attributes;
     HRESULT result = ::MFCreateAttributes(&attributes, 1);
     if (SUCCEEDED(result)) {
@@ -456,13 +471,14 @@ bool DecodeFirstFrame(const std::wstring& path, easnap::platform::BgraImage& ima
     }
     for (;;) {
         DWORD flags = 0;
+        LONGLONG time = 0;
         ComPtr<IMFSample> sample;
-        result = reader->ReadSample(stream, 0, nullptr, &flags, nullptr, &sample);
+        result = reader->ReadSample(stream, 0, nullptr, &flags, &time, &sample);
         if (FAILED(result) ||
             (flags & (MF_SOURCE_READERF_ERROR | MF_SOURCE_READERF_ENDOFSTREAM)) != 0) {
             return false;
         }
-        if (sample == nullptr) {
+        if (sample == nullptr || time < at.count() - kSecond / kFrameRate / 2) {
             continue;
         }
         ComPtr<IMFMediaBuffer> buffer;
@@ -527,6 +543,10 @@ double MeanChannelError(const easnap::platform::BgraImage& actual,
     return samples > 0 ? static_cast<double>(total) / samples : 0.0;
 }
 
+bool DecodeFirstFrame(const std::wstring& path, easnap::platform::BgraImage& image) {
+    return DecodeFrameAt(path, MediaTime{0}, image);
+}
+
 /// A trim must carry the picture itself: a decoder buffer padded beyond the
 /// display size, or a misplaced chroma plane, shows up as a large error here.
 void CheckTrimmedPicture(const std::wstring& trimmed_path, MediaTime start) {
@@ -556,6 +576,26 @@ void CheckTrimmedPicture(const std::wstring& trimmed_path, MediaTime start) {
         }
     }
     std::printf("trimmed picture error: whole %.2f, bottom rows %.2f\n", whole, bottom);
+    CHECK(whole < kPictureErrorLimit);
+    CHECK(bottom < kPictureErrorLimit);
+}
+
+/// The same for a source whose own coding already changed the pattern: the
+/// trim's first frame is compared with the source frame it was made from.
+void CheckTrimmedPictureAgainstSource(const std::wstring& trimmed_path,
+                                      const std::wstring& source_path, MediaTime start) {
+    easnap::platform::BgraImage trimmed;
+    easnap::platform::BgraImage source;
+    CHECK(DecodeFirstFrame(trimmed_path, trimmed));
+    CHECK(DecodeFrameAt(source_path, start, source));
+    if (trimmed.empty() || source.empty()) {
+        return;
+    }
+    const double whole = MeanChannelError(trimmed, source, 0, static_cast<int>(kHeight));
+    const double bottom = MeanChannelError(trimmed, source, static_cast<int>(kHeight) - 8,
+                                           static_cast<int>(kHeight));
+    std::printf("trimmed picture error against the source frame: whole %.2f, bottom rows %.2f\n",
+                whole, bottom);
     CHECK(whole < kPictureErrorLimit);
     CHECK(bottom < kPictureErrorLimit);
 }
@@ -807,16 +847,243 @@ void TestMp4TrimExporter() {
     CHECK(FingerprintFile(av_source) == av_source_before);
 }
 
+// Sources that are not Easnap recordings (ADR-040): another extension of the
+// table, WMV and VC-1 with WMA sound, and audio that ends before the video.
+void TestExternalSources() {
+    MediaFoundationRuntime runtime;
+    CHECK(SUCCEEDED(runtime.result()));
+    auto store = easnap::media::CreateTemporarySessionStore();
+    const auto session = store != nullptr ? store->CreateSession() : std::nullopt;
+    CHECK(session.has_value());
+    auto exporter = easnap::media::CreateMp4TrimExporter();
+    CHECK(exporter != nullptr);
+    if (FAILED(runtime.result()) || !session.has_value() || exporter == nullptr) {
+        return;
+    }
+    constexpr int64_t kVideoTolerance = 2 * kSecond / kFrameRate;
+    constexpr int64_t kAvTolerance = 1'000'000;
+    const MediaTime start{kSecond};
+    const MediaTime end{3 * kSecond};
+
+    // Audio for the first second of four. An interval after it used to fail;
+    // it now exports with a silent audio track that ends with the video.
+    const std::wstring short_audio = session->directory + L"\\short-audio.mp4";
+    CHECK(CreateSourceMp4(short_audio, true, kFrameRate));
+    const auto short_audio_before = FingerprintFile(short_audio);
+    const std::wstring after_audio = session->directory + L"\\after-audio.mp4";
+    CHECK(exporter->Export(short_audio, after_audio, MediaTime{2 * kSecond},
+                           MediaTime{3 * kSecond}, TestOptions(true), {}));
+    const Mp4Inspection after_inspection = InspectMp4(after_audio);
+    CHECK(after_inspection.valid);
+    CHECK(after_inspection.has_audio);
+    CHECK(after_inspection.first_audio_time >= 0);
+    CHECK(after_inspection.first_audio_time <= 2 * 1024ll * kSecond / kAudioSampleRate);
+    CheckDurationNear(after_inspection, MediaTime{kSecond}, kAvTolerance);
+    CHECK(std::abs(after_inspection.video_end - after_inspection.audio_end) <= kAvTolerance);
+    CheckTrimmedPicture(after_audio, MediaTime{2 * kSecond});
+    // An interval in which the audio ends keeps the audio it has.
+    const std::wstring across_end = session->directory + L"\\across-audio-end.mp4";
+    CHECK(exporter->Export(short_audio, across_end, MediaTime{kSecond / 2}, end,
+                           TestOptions(true), {}));
+    const Mp4Inspection across_inspection = InspectMp4(across_end);
+    CHECK(across_inspection.valid);
+    CHECK(across_inspection.has_audio);
+    CheckDurationNear(across_inspection, end - MediaTime{kSecond / 2}, kAvTolerance);
+    CHECK(std::abs(across_inspection.video_end - across_inspection.audio_end) <= kAvTolerance);
+    CHECK(FingerprintFile(short_audio) == short_audio_before);
+
+    // Another MPEG-4 extension of the table.
+    const std::wstring mov_source = session->directory + L"\\source.mov";
+    CHECK(CreateSourceMp4(session->directory + L"\\for-mov.mp4", true));
+    CHECK(::CopyFileW((session->directory + L"\\for-mov.mp4").c_str(), mov_source.c_str(),
+                      TRUE) != FALSE);
+    const std::wstring from_mov = session->directory + L"\\from-mov.mp4";
+    CHECK(exporter->Export(mov_source, from_mov, start, end, TestOptions(true), {}));
+    const Mp4Inspection mov_inspection = InspectMp4(from_mov);
+    CHECK(mov_inspection.valid);
+    CHECK(mov_inspection.has_audio);
+    CheckDurationNear(mov_inspection, end - start, kAvTolerance);
+    CHECK(g_colour_conversions == 0);
+
+    // An extension outside the table is refused before anything is decoded.
+    const std::wstring mkv_source = session->directory + L"\\source.mkv";
+    CHECK(::CopyFileW(mov_source.c_str(), mkv_source.c_str(), TRUE) != FALSE);
+    const std::wstring from_mkv = session->directory + L"\\from-mkv.mp4";
+    CHECK(!exporter->Export(mkv_source, from_mkv, start, end, TestOptions(true), {}));
+    CHECK(!FileExists(from_mkv));
+
+    // WMV and VC-1 written by Windows' own encoders, decoded and re-encoded
+    // to H.264 and AAC.
+    struct AsfCase final {
+        const wchar_t* name;
+        GUID video;
+        GUID audio;
+    };
+    const AsfCase asf_cases[]{
+        {L"\\wmv3-wma.wmv", MFVideoFormat_WMV3, MFAudioFormat_WMAudioV8},
+        {L"\\vc1.asf", MFVideoFormat_WVC1, GUID_NULL},
+    };
+    for (const AsfCase& item : asf_cases) {
+        const std::wstring source = session->directory + item.name;
+        easnap::test::SinkWriterSpec spec;
+        spec.video_subtype = item.video;
+        spec.audio_subtype = item.audio;
+        spec.width = kWidth;
+        spec.height = kHeight;
+        spec.frame_rate = kFrameRate;
+        spec.frame_count = static_cast<uint32_t>(kFrameCount);
+        spec.paint = [](uint32_t index, easnap::platform::BgraImage& image) {
+            FillMovingPattern(image, index);
+        };
+        const easnap::test::SinkWriterOutcome outcome =
+            easnap::test::WriteWithSinkWriter(source, spec);
+        if (outcome == easnap::test::SinkWriterOutcome::EncoderUnavailable) {
+            std::wprintf(L"SKIP %ls: Windows has no encoder for it\n", item.name + 1);
+            continue;
+        }
+        CHECK(outcome == easnap::test::SinkWriterOutcome::Written);
+        if (outcome != easnap::test::SinkWriterOutcome::Written) {
+            continue;
+        }
+        const bool with_audio = item.audio != GUID_NULL;
+        const auto before = FingerprintFile(source);
+        const std::wstring trimmed = source + L".trimmed.mp4";
+        CHECK(exporter->Export(source, trimmed, start, end, TestOptions(with_audio), {}));
+        const Mp4Inspection inspection = InspectMp4(trimmed);
+        CHECK(inspection.valid);
+        CHECK(inspection.has_audio == with_audio);
+        CheckDurationNear(inspection, end - start, with_audio ? kAvTolerance : kVideoTolerance);
+        CheckTrimmedPictureAgainstSource(trimmed, source, start);
+        CHECK(FingerprintFile(source) == before);
+        // Its picture is BT.601, the MP4 declares BT.709: the colours are
+        // converted through RGB rather than passed on as decoded.
+        const auto pipeline = exporter->LastDiagnostics().video_pipeline;
+        CHECK(pipeline == easnap::media::TrimVideoPipeline::BoundedBgraFallback);
+        std::wprintf(L"%ls trimmed with pipeline %d\n", item.name + 1,
+                     static_cast<int>(pipeline));
+    }
+    CHECK(store->DeleteSession(*session));
+    CHECK(::GetFileAttributesW(session->directory.c_str()) == INVALID_FILE_ATTRIBUTES);
+}
+
 // The exporter says why an export failed only through LogMessage. Printing
 // the lines lets a failure on another machine, such as a hosted runner with a
 // software encoder, show its reason in the test output.
-void PrintLogLine(const wchar_t* line) noexcept { std::fwprintf(stderr, L"log: %ls\n", line); }
+void PrintLogLine(const wchar_t* line) noexcept {
+    if (std::wcsstr(line, L"not BT.709") != nullptr) {
+        ++g_colour_conversions;
+    }
+    if (std::wcsstr(line, L"silence") != nullptr) {
+        ++g_silence_fills;
+    }
+    std::fwprintf(stderr, L"log: %ls\n", line);
+}
 
 }  // namespace
+
+/// Runs one export on its own thread and gives up after `limit`: an export
+/// that stalls inside the sink writer never returns, so the test ends the
+/// process instead of waiting for the CTest timeout.
+bool ExportWithin(easnap::media::ITrimExporter& exporter, const std::wstring& source,
+                  const std::wstring& destination, MediaTime start, MediaTime end,
+                  std::chrono::seconds limit, double& seconds) {
+    std::mutex mutex;
+    std::condition_variable finished;
+    bool done = false;
+    bool result = false;
+    const auto started = std::chrono::steady_clock::now();
+    std::thread worker([&] {
+        const bool exported =
+            exporter.Export(source, destination, start, end, TestOptions(true), {});
+        const std::scoped_lock lock(mutex);
+        result = exported;
+        done = true;
+        finished.notify_one();
+    });
+    std::unique_lock lock(mutex);
+    if (!finished.wait_for(lock, limit, [&] { return done; })) {
+        std::fprintf(stderr, "FAIL  the export did not finish within %lld s: it stalled\n",
+                     static_cast<long long>(limit.count()));
+        std::fflush(stderr);
+        ::TerminateProcess(::GetCurrentProcess(), 1);
+    }
+    lock.unlock();
+    worker.join();
+    seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    return result;
+}
+
+// A long stretch of video after the audio has ended (ADR-040, ADR-007): the
+// export keeps silence at most 750 ms behind the video, so the sink writer
+// never waits on audio that will not come. Both the interval that holds no
+// audio and the one in which the audio ends are exported in bounded time.
+void TestLongVideoOnlyTail() {
+    MediaFoundationRuntime runtime;
+    CHECK(SUCCEEDED(runtime.result()));
+    auto store = easnap::media::CreateTemporarySessionStore();
+    const auto session = store != nullptr ? store->CreateSession() : std::nullopt;
+    CHECK(session.has_value());
+    auto exporter = easnap::media::CreateMp4TrimExporter();
+    CHECK(exporter != nullptr);
+    if (FAILED(runtime.result()) || !session.has_value() || exporter == nullptr) {
+        return;
+    }
+    constexpr uint32_t kTailSeconds = 32;
+    constexpr int64_t kAvTolerance = 1'000'000;
+    const std::wstring source = session->directory + L"\\long-tail.mp4";
+    easnap::test::SinkWriterSpec spec;
+    spec.video_subtype = MFVideoFormat_H264;
+    spec.audio_subtype = MFAudioFormat_AAC;
+    spec.width = kWidth;
+    spec.height = kHeight;
+    spec.frame_rate = kFrameRate;
+    spec.frame_count = (kTailSeconds + 1u) * kFrameRate;
+    spec.audio_frame_count = kFrameRate;  // One second of audio.
+    spec.paint = [](uint32_t index, easnap::platform::BgraImage& image) {
+        FillMovingPattern(image, index);
+    };
+    const easnap::test::SinkWriterOutcome outcome = easnap::test::WriteWithSinkWriter(source, spec);
+    CHECK(outcome == easnap::test::SinkWriterOutcome::Written);
+    if (outcome != easnap::test::SinkWriterOutcome::Written) {
+        return;
+    }
+
+    struct Interval final {
+        const wchar_t* name;
+        MediaTime start;
+        MediaTime end;
+    };
+    const Interval intervals[]{
+        {L"\\audio-then-long-tail.mp4", MediaTime{0}, MediaTime{kTailSeconds * kSecond}},
+        {L"\\long-tail-only.mp4", MediaTime{2 * kSecond}, MediaTime{kTailSeconds * kSecond}},
+    };
+    for (const Interval& interval : intervals) {
+        const std::wstring destination = session->directory + interval.name;
+        double seconds = 0.0;
+        CHECK(ExportWithin(*exporter, source, destination, interval.start, interval.end,
+                           std::chrono::seconds(90), seconds));
+        std::wprintf(L"%ls: %.0f s exported in %.1f s\n", interval.name + 1,
+                     static_cast<double>((interval.end - interval.start).count()) / kSecond,
+                     seconds);
+        const Mp4Inspection inspection = InspectMp4(destination);
+        CHECK(inspection.valid);
+        CHECK(inspection.has_audio);
+        CheckDurationNear(inspection, interval.end - interval.start, kAvTolerance);
+        CHECK(std::abs(inspection.video_end - inspection.audio_end) <= kAvTolerance);
+    }
+    CHECK(store->DeleteSession(*session));
+    CHECK(::GetFileAttributesW(session->directory.c_str()) == INVALID_FILE_ATTRIBUTES);
+}
 
 int main() {
     easnap::platform::SetLogSink(PrintLogLine);
     TestMp4TrimExporter();
+    // Every source above was made by the production writer, as recordings
+    // are: none may leave the NV12 path or gain silence, on any machine.
+    CHECK(g_colour_conversions == 0);
+    CHECK(g_silence_fills == 0);
+    TestExternalSources();
+    TestLongVideoOnlyTail();
     if (g_fail == 0) {
         std::printf("PASSED  %d/%d checks\n", g_pass, g_pass + g_fail);
         return 0;

@@ -191,6 +191,7 @@ set_tests_properties(media_foundation_h264_aac_mp4 PROPERTIES
 add_executable(test_mp4_trim_exporter
     test_mp4_trim_exporter.cpp
     ../src/media/mp4_trim_exporter.cpp
+    ../src/media/video_support.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/media/mf_d3d_device.cpp
     ../src/platform/platform_utils.cpp)
@@ -209,6 +210,53 @@ add_test(NAME mp4_trim_export_backend
 set_tests_properties(mp4_trim_export_backend PROPERTIES
     LABELS "integration;media-foundation;trim;audio"
     TIMEOUT 180)
+
+# ---------------------------------------------------------------------------
+# The support table and the video probe of external files (ADR-040)
+#
+# video_support_table is pure: table lookups, path rules and the probe's
+# classifier, driven with facts and HRESULTs no file has to produce.
+# video_probe_files probes MP4s written by the production writer, bad input
+# and access cases; video_probe_asf probes WMV/ASF written with the Media
+# Foundation sink writer and is skipped where Windows has no WMV encoder.
+# ---------------------------------------------------------------------------
+
+add_executable(test_video_support
+    test_video_support.cpp
+    ../src/media/video_support.cpp
+    ../src/media/video_probe.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_video_support PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_video_support PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    mfplat mfuuid mfreadwrite
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 oleaut32 uuid propsys)
+add_test(NAME video_support_table COMMAND test_video_support)
+set_tests_properties(video_support_table PROPERTIES
+    LABELS "unit;media;trim" TIMEOUT 30)
+
+add_executable(test_video_probe
+    test_video_probe.cpp
+    ../src/media/video_support.cpp
+    ../src/media/video_probe.cpp
+    ../src/media/media_foundation_writer.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_video_probe PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_video_probe PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    mf mfplat mfuuid mfreadwrite
+    shlwapi comctl32 shell32 ole32 oleaut32 uuid
+    user32 gdi32 advapi32 propsys)
+add_test(NAME video_probe_files COMMAND test_video_probe)
+set_tests_properties(video_probe_files PROPERTIES
+    LABELS "integration;media;media-foundation;trim" TIMEOUT 180)
+add_test(NAME video_probe_asf COMMAND test_video_probe --asf)
+set_tests_properties(video_probe_asf PROPERTIES
+    LABELS "integration;media;media-foundation;trim" TIMEOUT 120 SKIP_RETURN_CODE 77)
 
 add_executable(test_media_preview
     test_media_preview.cpp
@@ -286,6 +334,7 @@ add_executable(test_recording_session_integration
     ../src/capture/recording_capture_worker.cpp
     ../src/media/gif_encoder.cpp
     ../src/media/gif_exporter.cpp
+    ../src/media/video_support.cpp
     ../src/media/preview_process.cpp
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp
@@ -897,6 +946,7 @@ add_executable(test_trim_flow
     ../src/media/preview_transport.cpp
     ../src/media/mp4_trim_exporter.cpp
     ../src/media/gif_exporter.cpp
+    ../src/media/video_support.cpp
     ../src/media/gif_encoder.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/media/mf_d3d_device.cpp
@@ -926,6 +976,7 @@ add_executable(test_gif_encoder
     test_gif_encoder.cpp
     ../src/media/gif_encoder.cpp
     ../src/media/gif_exporter.cpp
+    ../src/media/video_support.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/platform/platform_utils.cpp)
 

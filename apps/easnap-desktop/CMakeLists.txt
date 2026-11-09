@@ -108,6 +108,10 @@ set(EASNAP_SOURCES
     src/media/preview_transport.h
     src/media/preview_transport.cpp
     src/media/mp4_trim_exporter.cpp
+    src/media/video_support.h
+    src/media/video_support.cpp
+    src/media/video_probe.h
+    src/media/video_probe.cpp
     src/media/temp_session.h
     src/media/wasapi_audio_provider.h
     src/media/wasapi_audio_provider.cpp
