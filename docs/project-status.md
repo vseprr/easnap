@@ -154,6 +154,61 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   `scrollshot_workspace_production`, `capture_workspace_production` and
   `capture_frame_interaction` on a private desktop. Not run: the lab,
   `annotation_editing_native` (Full tier) and the 25,000-row soak variant.
+- **A recording asks Desktop Duplication until its first composed frame**
+  ([ADR-004](decisions/ADR-004-per-output-capture-fallback.md),
+  [ADR-028](decisions/ADR-028-scrollshot-capture-workspace.md)): a recording
+  that starts on a still desktop no longer stays on GDI for its whole length.
+  The lab's earlier `VM-ok-but-fallback` mark came from the probe, which ran
+  before COM was set up; in the lab runs below every capture test reports
+  Desktop Duplication (`trim_endpoint_presentation` reports Windows Graphics
+  Capture).
+- **A crash report says why it failed and is retried**
+  ([ADR-030](decisions/ADR-030-log-file-and-crash-reports.md)): the handler
+  records the stage and the error code, retries the dump (then a smaller one)
+  and has a second channel through `OutputDebugString`; the crash-report test
+  prints each child's crash line and adds a child with a removed folder. Debug
+  passed 10 of 10 on the development PC. The cause of the missing reports on
+  the hosted runner is still unconfirmed.
+- **The trim window's minimum width is 512 DIP**
+  ([ADR-023](decisions/ADR-023-trim-resize-and-text-click-continuations.md)):
+  at 480 DIP the Turkish "cancel export" caption needed 186 px of a 184 px
+  cell at 125 %. The trim window is now in `text_fits_in_every_language`
+  (three states, at the old and the new size). The change also broke an
+  assumption of `ui_modernization_native` (a notice of 24 lines no longer
+  wraps at 512 DIP), which was corrected in the test.
+- **Behaviour-neutral clean-ups:** the UI test source is renamed
+  `test_native_ui.cpp` (CTest names unchanged); the long editor and audio
+  functions are split into smaller ones, with the audio gate and overlap rules
+  as pure functions in `audio_timeline`.
+- **The Scrollshot engine is tested with a generated realistic application**
+  ([ADR-041](decisions/ADR-041-scrollshot-realistic-test-application.md)):
+  `scrollshot_realistic_stitch` (Standard) and `scrollshot_realistic_desktop`
+  (Full, lab only). Text, pictures, eased scrolling, late content, a growing
+  list, a fixed bar, caret and spinner are stitched exactly. In the lab (run
+  `20261109-051443-full`, Desktop Duplication): 124 pictures, 101 submitted,
+  60 of them mid-animation, 0 refused, 0 misplaced, height 4,539 rows as
+  expected, 0 differing rows, the shadow engine equal to the session, the
+  observer 4.33 ms mean and 14.52 ms worst, 9.0 s. Finding: with fractional
+  scroll offsets 59 of 154 pictures were refused and 68 of 90 placements were
+  more than one row off (worst 3.07); two further expected failures (a
+  textured fixed background, a bar that changes every frame) are confirmed.
+  Fixing them needs an engine change and an amendment of ADR-027; not done.
+- **Per-frame recording allocations are measured, not fixed**
+  ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md), Proposed):
+  `frame_buffer_cost` and `recording_frame_cost`. On the development PC a
+  fresh frame image costs 1,503 µs against 304 µs when reused at 1080p
+  (6,620 against 1,189 µs at 4K) and an NV12 buffer 422 against 125 µs
+  (1,489 against 443 µs), about 1.5 ms per frame at 1080p. The memory bound
+  was corrected from 5 to 7 frames alive. The lab figures are pending and the
+  decision to change the code waits for them.
+- **An external video in the trim view: the media layer**
+  ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md), Proposed):
+  the support table, the probe with its classifier and the exporters, which
+  accept every table entry, are implemented and tested with files the writer
+  made, including a WMV. The flow, the window and the entry points (tray
+  "Open video", command line, Open with) are not implemented.
+- **Documentation tidy-up:** the ADR headers follow one style and the
+  `test.ps1` parameters are in a table in [testing](testing.md).
 
 ## v1.2.0
 
@@ -237,6 +292,17 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   first run at 150 % `real_desktop_recording_session` passed only on the
   runner's retry: one frame-count check on the GDI fallback at 30 fps. The
   owner used the release candidate for a second round without a problem.
+- v1.3 on `feature/v1.3-findings` (2026-11-09, lab): Standard 42 of 42 on
+  the starting tree `eedf148` (run `20261109-020041-standard`). Full of the
+  first batch failed 50 of 51 (`20261109-030303-full`): `ui_modernization_native`
+  assumed a notice would wrap after the trim window's 512 DIP minimum; the
+  product was right, the test was corrected in `4862bc7`. Full 51 of 51 at
+  `4862bc7` (`20261109-044659-full`) and 56 of 56 at `dd78926`
+  (`20261109-051443-full`, which adds `scrollshot_realistic_desktop`,
+  `scrollshot_realistic_stitch`, `capture_export_responsiveness`,
+  `image_export_job` and `frame_buffer_cost`), both with no retry and no
+  fallback: every capture test on Desktop Duplication, `trim_endpoint_presentation`
+  on Windows Graphics Capture.
 - The runs, including the ones that failed, and those of earlier versions are
   in the [validation records](releases/validation-history.md#validation-of-v120).
 
@@ -284,6 +350,11 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   session messages were sent to the application by hand).
 - A second reader of the Turkish text, which was read in the running
   application.
+- **v1.3:** the media layer of ADR-040 (`6643e97`) and the editor's damage
+  rectangles (`b9b3f77`) are in no lab run yet; the Soak run of this branch is
+  pending; the owner's checks of the changes in the running application are
+  pending (the settings notice, the crash report, Exit and sign-out during an
+  export, the trim window at its new minimum width).
 
 ## Known limitations and unresolved risks
 
@@ -298,13 +369,22 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   recovered; a recovered recording is the untrimmed MP4. A recording that
   starts on a still desktop reads its first picture through GDI and asks
   Desktop Duplication again from the next frame, as Scrollshot does
-  (2026-11-09; covered on a real desktop by the lab tests
-  `real_desktop_recording_session` and `recording_pause_stop_stress`, not run
-  yet). The earlier `VM-ok-but-fallback` mark of
+  (2026-11-09; the lab tests `real_desktop_recording_session` and
+  `recording_pause_stop_stress` passed on Desktop Duplication in run
+  `20261109-044659-full`). The earlier `VM-ok-but-fallback` mark of
   `real_desktop_recording_session` came from the test's own probe, which ran
   before COM was started and so always read GDI; the recordings of run
   `20261108-234453-full` asked Desktop Duplication on every frame. The probe
   now reads as a recording does.
+- Scrollshot with fractional scroll offsets (content not snapped to device
+  pixels, as some browsers do at some zoom levels) is not stitched correctly:
+  in `scrollshot_realistic_stitch` 59 of 154 pictures were refused and 68 of
+  90 placements were more than one row off (worst 3.07 rows), so the image
+  came out three rows short. A fixed textured background and a bar that
+  changes on every frame also fail, the first silently. These need an engine
+  change and an amendment of
+  [ADR-027](decisions/ADR-027-scrollshot-stitching-engine.md); not in v1.3 so
+  far ([ADR-041](decisions/ADR-041-scrollshot-realistic-test-application.md)).
 - A window that is open when the language changes keeps its text; only the
   Settings dialog can be open then, and it closes.
 - The mode island's home now starts below a taskbar docked at the top
@@ -371,10 +451,11 @@ Open since v1.0.0:
 Open since the v1.0.1 review:
 
 - The capture path still allocates a frame image and an NV12 buffer per frame.
-  What that costs is now measured by `frame_buffer_cost` (fast tier, on the
-  machine it runs on) and `recording_frame_cost` (Soak tier and
-  `lab.ps1 probe`, the whole test monitor); whether to reuse the buffers waits
-  for the lab figures, and `recording_frame_cost` has not run yet. The memory
+  What that costs is measured: about 1.5 ms per frame at 1080p on the
+  development PC (fresh 1,503 µs against 304 µs reused). The fix is pending;
+  whether to reuse the buffers waits for the lab figures of
+  `recording_frame_cost` (Soak tier and `lab.ps1 probe`), which has not run
+  in the lab yet. `frame_buffer_cost` passed in the lab. The memory
   bound in the session diagnostics now counts the seven pictures that can be
   alive at once, not five
   ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md)).
@@ -415,7 +496,18 @@ post-v1 without a promised date.
 
 ## Next slice
 
-On `feature/v1.3`: the other deferred candidates one bounded slice each, and why a crash report is
-sometimes not written on the hosted runner; the order is in the
-[roadmap](../EASNAP_ROADMAP.md). Package-manager
-submissions remain the owner's step ([distribution](distribution.md)).
+On `feature/v1.3-findings`, in this order (the roadmap has the index):
+
+1. The external video flow and entry points
+   ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md), slices V1
+   and V2).
+2. The decision on the per-frame buffers
+   ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md)), after the
+   Soak figures of `recording_frame_cost`.
+3. The remaining editor costs: the first spotlight frame (about 50 ms in a
+   tall image) and the blur closure (about 0.1 s per paint).
+4. The owner's checks of this branch's changes in the running application.
+
+The Scrollshot fractional-offset finding waits for an engine change and its
+own decision. Package-manager submissions remain the owner's step
+([distribution](distribution.md)).

@@ -1,6 +1,6 @@
 # ADR-041 — A generated application for the Scrollshot tests
 
-**Status:** Accepted (offscreen part validated on the host; desktop part pending its first lab run)
+**Status:** Accepted (offscreen part validated on the host; desktop part ran green in the lab on 2026-11-09)
 **Date:** 2026-11-09
 **Relates to:** [ADR-027](ADR-027-scrollshot-stitching-engine.md) (the rules exercised),
 [ADR-028](ADR-028-scrollshot-capture-workspace.md) (the workspace and session),
@@ -350,7 +350,20 @@ What the figures say:
 - **Overlay scrollbar.** As ADR-027 describes, its columns are content: 208
   and 280 rows of those columns show thumb remnants.
 
-**Desktop** (`scrollshot_realistic_desktop`). Built and registered. It needs
-the real pointer and the visible desktop and was not run on the host. The
-lab figures are to be added after its first lab Full run: capture path,
-pictures, refusals, placements and image rows.
+**Desktop** (`scrollshot_realistic_desktop`). It needs the real pointer and
+the visible desktop and was not run on the host. First lab run: Full tier,
+run `20261109-051443-full` (2026-11-09, tree `dd78926`), green 56 of 56, no
+retry, no fallback. The test ran in 9.0 s on Desktop Duplication.
+
+- 124 pictures were taken; 23 identical ones were dropped, so 101 were
+  submitted, 60 of them while an animation ran.
+- 0 pictures were refused and 0 placements were away from the true offset.
+- The image height was 4,539 rows, as expected, with 0 rows differing from
+  the page outside the masks and the scrollbar.
+- The shadow engine's canvas was equal to the session's result.
+- The observer's cost, which replaces the estimate above: 4.33 ms mean and
+  14.52 ms worst per examined picture; the worst case is above the
+  estimated 1 to 10 ms and below the session's reading period of at least
+  30 ms.
+
+Not run: the 150 % image and a host run.
