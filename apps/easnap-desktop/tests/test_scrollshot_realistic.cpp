@@ -27,8 +27,7 @@
 #include "scrollshot_realistic_app.h"
 
 #include <bcrypt.h>
-#include <wincodec.h>
-#include <wrl/client.h>
+#include <objbase.h>
 
 #include <algorithm>
 #include <chrono>
@@ -47,7 +46,6 @@ using easnap::scrollshot::FrameOutcome;
 using easnap::scrollshot::FrameResult;
 using easnap::scrollshot::FrameView;
 using easnap::scrollshot::StitchEngine;
-using Microsoft::WRL::ComPtr;
 using namespace easnap_test::realistic;
 
 int g_pass = 0;
@@ -91,6 +89,9 @@ struct Scenario {
     AppOptions options;
     bool immediate{false};    ///< Render every picture again instead of copying the content layer.
     bool lazy_either{false};  ///< A late picture's rows may show its placeholder or the picture.
+    /// Share of pictures, in percent, torn between two presents: the rows from
+    /// a seeded split row down show the present before the latest one.
+    int torn_percent{0};
 };
 
 [[nodiscard]] const char* ToString(Expectation expectation) {
@@ -161,6 +162,27 @@ std::vector<Scenario> Scenarios() {
         Pattern::Wheel, 4115, [](Scenario& s) { s.options.background = Background::FixedTextured; });
     add("animating-header", "a header that changes every frame is not fixed", Expectation::ExpectedFailure,
         Pattern::Wheel, 4116, [](Scenario& s) { s.options.header = Header::Animating; });
+    // Finding (ADR-041, lab Soak run 20261109-054120-soak): the desktop test's
+    // image came out too tall while the shadow engine agreed with the session.
+    // Offline, only torn pictures reproduce that - rows above a split from one
+    // present, rows below it from the present before - and whether the lab's
+    // pictures were torn is not yet shown. The engine accepts such a picture
+    // on 55 % agreement of the whole picture, appends the part that disagrees,
+    // and every later placement shifts: a product weakness, measured here and
+    // left to a later engine change. The amendment of ADR-027 proposed for it
+    // (not made): a placed picture must agree with the canvas in each part of
+    // its overlap; appended rows stay provisional until a second picture
+    // agrees; a contiguous contradicting band refuses the picture.
+    add("torn-pictures", "a picture torn between two presents is placed whole (finding)", Expectation::ExpectedFailure,
+        Pattern::Settled, 4117, [](Scenario& s) {
+            s.options.header = Header::Fixed;
+            s.options.caret = true;
+            s.options.spinner = true;
+            s.options.lazy_slots = 3;
+            s.options.growing_tail = true;
+            s.options.overlay_scrollbar = true;
+            s.torn_percent = 20;
+        });
     return list;
 }
 
@@ -173,9 +195,6 @@ public:
         directory_ = root + L"\\" + std::wstring(scenario, scenario + std::strlen(scenario));
         ::CreateDirectoryW(root.c_str(), nullptr);
         ::CreateDirectoryW(directory_.c_str(), nullptr);
-        if (FAILED(::CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory_)))) {
-            return false;
-        }
         active_ = true;
         return true;
     }
@@ -183,22 +202,7 @@ public:
     [[nodiscard]] const std::wstring& directory() const { return directory_; }
 
     bool WritePng(const std::wstring& name, int width, int height, const uint32_t* pixels) {
-        const std::wstring path = directory_ + L"\\" + name;
-        ComPtr<IWICStream> stream;
-        ComPtr<IWICBitmapEncoder> encoder;
-        ComPtr<IWICBitmapFrameEncode> frame;
-        WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
-        const UINT stride = static_cast<UINT>(width) * 4u;
-        return SUCCEEDED(factory_->CreateStream(&stream)) &&
-               SUCCEEDED(stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE)) &&
-               SUCCEEDED(factory_->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) &&
-               SUCCEEDED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) &&
-               SUCCEEDED(encoder->CreateNewFrame(&frame, nullptr)) && SUCCEEDED(frame->Initialize(nullptr)) &&
-               SUCCEEDED(frame->SetSize(static_cast<UINT>(width), static_cast<UINT>(height))) &&
-               SUCCEEDED(frame->SetPixelFormat(&format)) && format == GUID_WICPixelFormat32bppBGRA &&
-               SUCCEEDED(frame->WritePixels(static_cast<UINT>(height), stride, stride * static_cast<UINT>(height),
-                                            reinterpret_cast<BYTE*>(const_cast<uint32_t*>(pixels)))) &&
-               SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
+        return easnap_test::realistic::WritePng(directory_ + L"\\" + name, width, height, pixels, width);
     }
 
     [[nodiscard]] std::string Sha256(const std::wstring& name) const {
@@ -232,7 +236,6 @@ private:
     bool active_{false};
     std::wstring directory_;
     std::string manifest_;
-    ComPtr<IWICImagingFactory> factory_;
 };
 
 // --- One scenario ---------------------------------------------------------------------------
@@ -263,6 +266,8 @@ struct Figures {
     int header_rows_differing{0};
     int height{0};
     int expected_height{0};
+    int torn{0};          ///< Submitted pictures whose rows below the split differ from the latest present.
+    int torn_written{0};  ///< Of those, the ones the engine wrote.
     bool reached_end{false};
     double simulated_ms{0};
 };
@@ -293,6 +298,7 @@ void RunScenario(const Scenario& scenario, const std::wstring& dump_root) {
     Simulation simulation(*app, scenario.options.seed ^ 0xA5A5u);
     Random inputs(scenario.options.seed * 31u + 7u);
     Random capture_clock(scenario.options.seed * 17u + 3u);
+    Random tearing(scenario.options.seed * 13u + 5u);
     StitchEngine engine;
     Dump dump;
     if (!dump_root.empty()) {
@@ -313,6 +319,8 @@ void RunScenario(const Scenario& scenario, const std::wstring& dump_root) {
 
     Figures figures;
     Pixels frame, previous, composed;
+    State earlier;  // The present before the latest one, for a torn picture.
+    bool has_earlier = false;
     std::vector<int> last_view_row;  // Canvas row -> viewport row it was last written from.
     int first_offset = -1;
     double first_position = 0;
@@ -322,6 +330,7 @@ void RunScenario(const Scenario& scenario, const std::wstring& dump_root) {
 
     const auto capture = [&] {
         const State& state = simulation.state();
+        bool torn = false;
         if (scenario.immediate) {
             CHECK(app->RenderImmediate(state, frame));
             app->Compose(state, composed);
@@ -333,6 +342,15 @@ void RunScenario(const Scenario& scenario, const std::wstring& dump_root) {
             figures.translation_pixels += differing;
         } else {
             app->Compose(state, frame);
+            if (scenario.torn_percent > 0 && has_earlier && tearing.Chance(scenario.torn_percent)) {
+                // From the split down, the picture still shows the present before.
+                const int split = tearing.Range(header + 1, view - 1);
+                app->Compose(earlier, composed);
+                for (int y = split; y < view; ++y) {
+                    torn = torn || !SameSpan(frame.Row(y), composed.Row(y), 0, width);
+                    std::copy(composed.Row(y), composed.Row(y) + width, frame.Row(y));
+                }
+            }
         }
         ++figures.captured;
         // The session's identical-picture filter, restated (it is inline in the
@@ -347,6 +365,10 @@ void RunScenario(const Scenario& scenario, const std::wstring& dump_root) {
         if (state.loading) { ++figures.loading_frames; }
         deepest_offset = std::max(deepest_offset, state.offset);
         const FrameResult result = engine.Submit(FrameView{frame.data.data(), width, view, width});
+        if (torn) {
+            ++figures.torn;
+            if (Written(result)) { ++figures.torn_written; }
+        }
         if (first_offset < 0) {
             first_offset = state.offset;
             first_position = state.position;
@@ -374,10 +396,13 @@ void RunScenario(const Scenario& scenario, const std::wstring& dump_root) {
             const bool wrong = scenario.options.snap_to_pixels ? error_rows != 0.0 : error_rows > 1.0;
             if (wrong) {
                 if (figures.misplaced < 4) {
-                    std::fprintf(stderr, "  %s frame %d: %ls at %d, true position %.2f\n", scenario.name, index,
-                                 easnap::scrollshot::ToString(result.outcome), result.position, truth);
+                    std::fprintf(stderr, "  %s frame %d: %ls at %d, true position %.2f%s\n", scenario.name, index,
+                                 easnap::scrollshot::ToString(result.outcome), result.position, truth,
+                                 torn ? " (torn)" : "");
                 }
                 ++figures.misplaced;
+                expectation = "placed-or-refused " + std::to_string(truth_row);
+            } else if (torn) {
                 expectation = "placed-or-refused " + std::to_string(truth_row);
             } else {
                 expectation = (result.outcome == FrameOutcome::First ? "first " : "placed ") + std::to_string(truth_row);
@@ -450,6 +475,10 @@ void RunScenario(const Scenario& scenario, const std::wstring& dump_root) {
                     settle_pause = inputs.Range(60, 200);
                     break;
             }
+        }
+        if (tick > 0) {
+            earlier = simulation.state();
+            has_earlier = true;
         }
         simulation.Present(now);
         if (end_at < 0.0 && simulation.at_end()) {
@@ -547,6 +576,10 @@ void RunScenario(const Scenario& scenario, const std::wstring& dump_root) {
         std::printf(" translation_frames=%d translation_pixels=%lld", figures.translation_frames,
                     static_cast<long long>(figures.translation_pixels));
     }
+    if (scenario.torn_percent > 0) {
+        std::printf(" torn_percent=%d torn=%d torn_written=%d height_delta=%d", scenario.torn_percent, figures.torn,
+                    figures.torn_written, figures.height - figures.expected_height);
+    }
     std::printf("\n  rule: %s\n", scenario.rule);
 
     CHECK(figures.invalid == 0);
@@ -572,7 +605,6 @@ void RunScenario(const Scenario& scenario, const std::wstring& dump_root) {
         if (figures.height > 0) {
             std::vector<uint32_t> canvas(static_cast<size_t>(width) * static_cast<size_t>(figures.height));
             CHECK(engine.CopyRows(0, figures.height, canvas.data(), width));
-            for (uint32_t& pixel : canvas) { pixel |= 0xFF000000u; }
             CHECK(dump.WritePng(L"stitched.png", width, figures.height, canvas.data()));
         }
         if (compared > 0) { CHECK(dump.WritePng(L"expected.png", width, compared, expected_image.data.data())); }

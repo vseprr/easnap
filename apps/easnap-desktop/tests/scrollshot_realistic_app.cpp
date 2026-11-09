@@ -14,6 +14,7 @@
 #include <d3d11.h>
 #include <dwrite.h>
 #include <dxgi.h>
+#include <wincodec.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -823,6 +824,33 @@ std::wstring UnavailableReason() {
     Raster raster;
     std::wstring error;
     return raster.Create(error) ? std::wstring() : error;
+}
+
+bool WritePng(const std::wstring& path, int width, int height, const uint32_t* pixels, int stride) {
+    if (width <= 0 || height <= 0 || stride < width || pixels == nullptr) { return false; }
+    std::vector<uint32_t> opaque(static_cast<size_t>(width) * static_cast<size_t>(height));
+    for (int y = 0; y < height; ++y) {
+        const uint32_t* source = pixels + static_cast<size_t>(y) * static_cast<size_t>(stride);
+        uint32_t* target = opaque.data() + static_cast<size_t>(y) * static_cast<size_t>(width);
+        for (int x = 0; x < width; ++x) { target[x] = source[x] | 0xFF000000u; }
+    }
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICStream> stream;
+    ComPtr<IWICBitmapEncoder> encoder;
+    ComPtr<IWICBitmapFrameEncode> frame;
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+    const UINT row_bytes = static_cast<UINT>(width) * 4u;
+    return SUCCEEDED(::CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+           SUCCEEDED(factory->CreateStream(&stream)) &&
+           SUCCEEDED(stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE)) &&
+           SUCCEEDED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) &&
+           SUCCEEDED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) &&
+           SUCCEEDED(encoder->CreateNewFrame(&frame, nullptr)) && SUCCEEDED(frame->Initialize(nullptr)) &&
+           SUCCEEDED(frame->SetSize(static_cast<UINT>(width), static_cast<UINT>(height))) &&
+           SUCCEEDED(frame->SetPixelFormat(&format)) && format == GUID_WICPixelFormat32bppBGRA &&
+           SUCCEEDED(frame->WritePixels(static_cast<UINT>(height), row_bytes, row_bytes * static_cast<UINT>(height),
+                                        reinterpret_cast<BYTE*>(opaque.data()))) &&
+           SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
 }
 
 // --- Application --------------------------------------------------------------------

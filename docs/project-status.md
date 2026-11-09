@@ -423,6 +423,13 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   change and an amendment of
   [ADR-027](decisions/ADR-027-scrollshot-stitching-engine.md); not in v1.3 so
   far ([ADR-041](decisions/ADR-041-scrollshot-realistic-test-application.md)).
+- A Scrollshot picture torn between two presents is placed on agreement of
+  the whole picture; the part that disagrees is appended and later placements
+  shift. Offline it is the only reproduction of the too-tall images of
+  `scrollshot_realistic_desktop` in the lab Soak run `20261109-054120-soak`;
+  that the lab's pictures were torn is not shown yet. An engine change with an
+  amendment of ADR-027, not made
+  ([ADR-041](decisions/ADR-041-scrollshot-realistic-test-application.md#validation)).
 - A window that is open when the language changes keeps its text; only the
   Settings dialog can be open then, and it closes.
 - The mode island's home now starts below a taskbar docked at the top

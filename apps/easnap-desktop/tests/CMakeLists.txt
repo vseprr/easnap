@@ -894,7 +894,9 @@ set_tests_properties(scrollshot_real_desktop PROPERTIES
 # The generated application of scrollshot_realistic_stitch shown by a second
 # process in a flip-model swap chain, scrolled with real input through the
 # production workspace and session. An observer around the production
-# provider checks every placement against the published page (ADR-041).
+# provider checks every placement against the published page (ADR-041). The
+# first picture that matches no position is written into Testing/ of the
+# build tree, where the lab collects it.
 add_executable(test_scrollshot_realistic_desktop
     test_scrollshot_realistic_desktop.cpp
     scrollshot_realistic_app.cpp
@@ -916,7 +918,8 @@ target_include_directories(test_scrollshot_realistic_desktop PRIVATE
 target_link_libraries(test_scrollshot_realistic_desktop PRIVATE easnap_project_options easnap_strings
     d3d11 d2d1 dwrite dxgi dxguid windowscodecs
     user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
-add_test(NAME scrollshot_realistic_desktop COMMAND test_scrollshot_realistic_desktop)
+add_test(NAME scrollshot_realistic_desktop
+    COMMAND test_scrollshot_realistic_desktop --evidence "${CMAKE_BINARY_DIR}/Testing/scrollshot-realistic")
 set_tests_properties(scrollshot_realistic_desktop PROPERTIES
     LABELS "integration;scrollshot;real-desktop-capture" TIMEOUT 180 SKIP_RETURN_CODE 77)
 

@@ -136,7 +136,8 @@
       "build/Testing/*.xml",
       "build/Testing/Temporary/LastTest.log",
       "build/Testing/Temporary/CTestCostData.txt",
-      "build/Testing/easnap-passed-Release.json"
+      "build/Testing/easnap-passed-Release.json",
+      "build/Testing/scrollshot-realistic/*.png"
     ],
     "toast": true
   },

@@ -19,6 +19,11 @@
 // shadow engine, which places it exactly as the session's engine does: so
 // every placement can be checked, not only the final image.
 //
+// `--evidence <directory>`: where the first picture that matches no position
+// of the page, the picture examined before it and the content layer are
+// written as PNG after the session stopped (CTest passes
+// build/Testing/scrollshot-realistic, which the lab collects).
+//
 // Takes the real pointer and the keyboard focus; runs on the visible desktop
 // only (interactive-desktop). Input is sent only after the window that would
 // receive it has been verified to be the application's.
@@ -41,15 +46,20 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -78,6 +88,10 @@ constexpr wchar_t kAppClass[] = L"EasnapScrollshotRealisticApp";
 constexpr uint32_t kSeed = 4201;
 constexpr LONG kSideMargin = 40;       ///< Application window beside the frame.
 constexpr LONG kVerticalMargin = 140;  ///< Application window above and below the frame.
+/// A picture requested this long after the page was seen at rest shows a
+/// desktop composed after it (three refreshes at 60 Hz; Desktop Duplication
+/// can return a desktop composed a refresh or two before the request).
+constexpr auto kComposedAfter = std::chrono::milliseconds(50);
 
 [[nodiscard]] uint32_t Rgb(int r, int g, int b) {
     return 0xFF000000u | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
@@ -264,13 +278,31 @@ struct Observed {
     scrollshot::FrameResult result;
 };
 
-/// Runs on the session's worker thread; read only after the session stopped.
+/// Runs on the session's worker thread; read only after the session stopped,
+/// except `examined_through()`.
 class Oracle {
 public:
     explicit Oracle(const realistic::SharedReader& reader) : reader_(reader), header_(reader.header()) {}
 
-    void Observe(const platform::BgraImage& frame, const capture::RegionCaptureResult& result, LONG loaded) {
+    /// The session asks for a picture. Its worker examines a picture before it
+    /// asks for the next one, so the last picture acquired has been examined,
+    /// or dropped as identical to the one examined before it, by now.
+    void RequestStarting() {
+        examined_through_.store(last_acquired_request_.time_since_epoch().count(), std::memory_order_release);
+    }
+
+    /// When the latest request whose picture the session has examined began.
+    /// The one value read while the session runs.
+    [[nodiscard]] std::chrono::steady_clock::time_point examined_through() const {
+        return std::chrono::steady_clock::time_point(
+            std::chrono::steady_clock::duration(examined_through_.load(std::memory_order_acquire)));
+    }
+
+    /// `requested`: when the session asked for this picture.
+    void Observe(const platform::BgraImage& frame, const capture::RegionCaptureResult& result, LONG loaded,
+                 std::chrono::steady_clock::time_point requested) {
         ++acquired;
+        last_acquired_request_ = requested;
         if (result.primary_failure.stage == capture::RegionCaptureFailureStage::None) {
             ++duplication;
         } else {
@@ -287,12 +319,21 @@ public:
         // This work runs inline on the session's worker, between two of its
         // readings; its cost is measured and reported.
         const auto started = std::chrono::steady_clock::now();
+        std::swap(previous_, before_);  // `before_` is now the picture examined before this one.
         previous_ = frame;
         Observed observed;
         observed.true_offset = FindOffset(frame, loaded);
         observed.result = shadow_.Submit(
             scrollshot::FrameView{frame.pixels.data(), frame.width, frame.height, frame.width});
-        if (observed.true_offset >= 0) { last_found_ = observed.true_offset; }
+        if (observed.true_offset >= 0) {
+            last_found_ = observed.true_offset;
+        } else if (!first_unmatched_) {
+            // Kept for the report after the session stopped: the search for the
+            // closest position and the files would hold up the worker.
+            first_unmatched_ = FirstUnmatched{observed_.size(), loaded,
+                                              observed_.empty() ? -1 : observed_.back().true_offset, last_found_, frame,
+                                              before_};
+        }
         observed_.push_back(observed);
         const double spent = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
         observe_total_ms += spent;
@@ -311,11 +352,12 @@ public:
     double observe_total_ms{0};  ///< Time spent on examined pictures (copy, search, shadow engine).
     double observe_worst_ms{0};
 
-    /// Compares one row outside the scrollbar columns and outside every box
-    /// that covers document row `row`.
-    [[nodiscard]] static bool RowMatches(const uint32_t* got, const uint32_t* want, int columns, int row,
-                                         const realistic::Box* boxes, int count, const realistic::Box* more,
-                                         int more_count) {
+    /// The first and the last column of one row that differ from `want`, left
+    /// of `columns` and outside every box that covers document row `row`;
+    /// {-1, -1} when none does. With `any`, stops at the first difference.
+    [[nodiscard]] static std::pair<int, int> DifferingColumns(const uint32_t* got, const uint32_t* want, int columns,
+                                                              int row, const realistic::Box* boxes, int count,
+                                                              const realistic::Box* more, int more_count, bool any) {
         std::array<std::pair<int, int>, 2 * realistic::SharedHeader::kMaxBoxes> spans{};
         int spans_used = 0;
         for (int i = 0; i < count; ++i) {
@@ -325,24 +367,191 @@ public:
             if (more[i].HasRow(row)) { spans[static_cast<size_t>(spans_used++)] = {more[i].left, more[i].right}; }
         }
         std::sort(spans.begin(), spans.begin() + spans_used);
-        int x = 0;
-        const auto same = [&](int from, int to) {
+        std::pair<int, int> differing{-1, -1};
+        // False once a difference is found and `any` asks to stop there.
+        const auto scan = [&](int from, int to) {
             for (int i = from; i < to; ++i) {
-                if (((got[i] ^ want[i]) & 0x00FFFFFFu) != 0) { return false; }
+                if (((got[i] ^ want[i]) & 0x00FFFFFFu) != 0) {
+                    if (differing.first < 0) { differing.first = i; }
+                    differing.second = i;
+                    if (any) { return false; }
+                }
             }
             return true;
         };
+        int x = 0;
         for (int i = 0; i < spans_used; ++i) {
-            if (!same(x, std::min(spans[static_cast<size_t>(i)].first, columns))) { return false; }
+            if (!scan(x, std::min(spans[static_cast<size_t>(i)].first, columns))) { return differing; }
             x = std::max(x, spans[static_cast<size_t>(i)].second);
         }
-        return same(x, columns);
+        scan(x, columns);
+        return differing;
+    }
+
+    /// Compares one row outside the scrollbar columns and outside every box
+    /// that covers document row `row`.
+    [[nodiscard]] static bool RowMatches(const uint32_t* got, const uint32_t* want, int columns, int row,
+                                         const realistic::Box* boxes, int count, const realistic::Box* more,
+                                         int more_count) {
+        return DifferingColumns(got, want, columns, row, boxes, count, more, more_count, true).first < 0;
+    }
+
+    /// After the session stopped: where the first picture that matched no
+    /// position comes closest to the page and which rows and columns differ
+    /// there; then that picture, the one examined before it and the content
+    /// layer as PNG files in `directory`. Prints nothing when every picture
+    /// matched.
+    void ReportFirstUnmatched(const std::wstring& directory) const {
+        if (!first_unmatched_) { return; }
+        const FirstUnmatched& entry = *first_unmatched_;
+        const platform::BgraImage& picture = entry.picture;
+        std::printf("First picture with no match: picture %zu, %d x %d, taken with %ld rows loaded; the picture "
+                    "before it at offset %d\n",
+                    entry.index, picture.width, picture.height, static_cast<long>(entry.loaded), entry.previous_offset);
+        if (picture.width == header_.width && picture.height == header_.view_height) {
+            DescribeClosest(entry);
+        } else {
+            std::printf("  its size differs from the application's %d x %d\n", header_.width, header_.view_height);
+        }
+        if (directory.empty()) {
+            std::printf("  no picture written: no directory was given (--evidence)\n");
+            return;
+        }
+        std::error_code error;
+        std::filesystem::create_directories(std::filesystem::path(directory), error);
+        SYSTEMTIME now{};
+        ::GetLocalTime(&now);
+        wchar_t stamp[64]{};
+        std::swprintf(stamp, ARRAYSIZE(stamp), L"desktop-%04u%02u%02u-%02u%02u%02u-%lu", static_cast<unsigned>(now.wYear),
+                      static_cast<unsigned>(now.wMonth), static_cast<unsigned>(now.wDay),
+                      static_cast<unsigned>(now.wHour), static_cast<unsigned>(now.wMinute),
+                      static_cast<unsigned>(now.wSecond), ::GetCurrentProcessId());
+        const auto write = [&](const std::wstring& name, int width, int height, const uint32_t* pixels) {
+            const std::wstring path = directory + L"\\" + stamp + L"-" + name;
+            const bool written = pixels != nullptr && realistic::WritePng(path, width, height, pixels, width);
+            std::printf("  %s %ls\n", written ? "wrote" : "could not write", path.c_str());
+        };
+        write(L"picture-" + std::to_wstring(entry.index) + L".png", picture.width, picture.height, picture.pixels.data());
+        if (!entry.previous.empty()) {
+            write(L"previous-" + std::to_wstring(entry.index - 1) + L".png", entry.previous.width, entry.previous.height,
+                  entry.previous.pixels.data());
+        }
+        write(L"content.png", header_.width, header_.content_height, reader_.ContentRow(0));
     }
 
 private:
+    /// The first picture that matched no position, kept for the report.
+    struct FirstUnmatched {
+        size_t index{0};         ///< Its place among the examined pictures.
+        LONG loaded{0};          ///< Rows loaded before it was taken.
+        int previous_offset{-1}; ///< True offset of the picture examined before it.
+        int last_found{0};
+        platform::BgraImage picture;
+        platform::BgraImage previous;
+    };
+
+    /// Prints the position where most of the picture's loaded rows equal the
+    /// page, the rows that differ there in bands with their columns, and the
+    /// position those rows come closest to: a picture torn between two
+    /// presents shows the earlier present's position there.
+    void DescribeClosest(const FirstUnmatched& entry) const {
+        const platform::BgraImage& picture = entry.picture;
+        const int columns = header_.width - header_.scrollbar_columns;
+        const int limit = std::min(static_cast<int>(entry.loaded), header_.content_height);
+        const int last = std::max(0, header_.content_height - header_.view_height);
+        const auto equal_at = [&](int y, int offset) {
+            const int row = offset + y;
+            return RowMatches(picture.row(y), reader_.ContentRow(row), columns, row, header_.masks, header_.mask_count,
+                              header_.slots, header_.slot_count);
+        };
+        // The position with the most equal rows; of equals, the nearest to the last one found.
+        const auto closest = [&](const std::vector<int>& rows, int excluded, int& best_equal, int& best_compared) {
+            int best = -1;
+            best_equal = -1;
+            best_compared = 0;
+            for (int offset = 0; offset <= last; ++offset) {
+                if (offset == excluded) { continue; }
+                int equal = 0, compared = 0;
+                for (const int y : rows) {
+                    if (offset + y >= limit) { continue; }  // Loading row or not loaded yet.
+                    ++compared;
+                    if (equal_at(y, offset)) { ++equal; }
+                }
+                if (equal > best_equal || (equal == best_equal && std::abs(offset - entry.last_found) <
+                                                                      std::abs(best - entry.last_found))) {
+                    best = offset;
+                    best_equal = equal;
+                    best_compared = compared;
+                }
+            }
+            return best;
+        };
+        int bar_differing = 0;
+        for (int y = 0; y < header_.header_rows; ++y) {
+            if (!RowMatches(picture.row(y), reader_.HeaderRow(y), header_.width, -1, nullptr, 0, nullptr, 0)) {
+                ++bar_differing;
+            }
+        }
+        std::vector<int> content_rows;
+        for (int y = header_.header_rows; y < picture.height; ++y) { content_rows.push_back(y); }
+        int equal = 0, compared = 0;
+        const int best = closest(content_rows, -1, equal, compared);
+        std::printf("  closest offset %d: %d of %d compared rows equal (last offset found %d); %d of %d bar rows "
+                    "differ\n",
+                    best, equal, compared, entry.last_found, bar_differing, header_.header_rows);
+
+        // The rows that differ there, in bands, with the columns that differ.
+        std::vector<int> differing;
+        int band_top = -1, band_left = INT_MAX, band_right = -1, bands = 0;
+        const auto close_band = [&](int bottom) {
+            if (band_top < 0) { return; }
+            if (++bands <= 8) {
+                std::printf("  rows %d-%d (%d rows) differ in columns %d-%d\n", band_top, bottom, bottom - band_top + 1,
+                            band_left, band_right);
+            }
+            band_top = -1;
+            band_left = INT_MAX;
+            band_right = -1;
+        };
+        for (const int y : content_rows) {
+            const int row = best + y;
+            if (row >= limit) {
+                close_band(y - 1);
+                continue;
+            }
+            const std::pair<int, int> columns_differing =
+                DifferingColumns(picture.row(y), reader_.ContentRow(row), columns, row, header_.masks,
+                                 header_.mask_count, header_.slots, header_.slot_count, false);
+            if (columns_differing.first < 0) {
+                close_band(y - 1);
+                continue;
+            }
+            differing.push_back(y);
+            if (band_top < 0) { band_top = y; }
+            band_left = std::min(band_left, columns_differing.first);
+            band_right = std::max(band_right, columns_differing.second);
+        }
+        close_band(picture.height - 1);
+        if (bands > 8) { std::printf("  ... %d bands in all\n", bands); }
+        if (differing.empty()) { return; }
+        int other_equal = 0, other_compared = 0;
+        const int other = closest(differing, best, other_equal, other_compared);
+        std::printf("  the %zu differing rows come closest to offset %d: %d of %d compared rows equal\n",
+                    differing.size(), other, other_equal, other_compared);
+    }
+
     /// The picture at `offset`: the bar exactly, every loaded row outside the
     /// scrollbar, the caret, the spinner and the late pictures.
     [[nodiscard]] bool Matches(const platform::BgraImage& frame, int offset, LONG loaded) const {
+        // Rows at or past `loaded` are not compared, so a position whose rows
+        // are mostly still loading would match on the bar alone: it proves
+        // nothing. At the furthest scroll while a batch loads, about 355 of
+        // the frame's rows are compared, so this rejects no true position.
+        const int content_rows = frame.height - header_.header_rows;
+        const int compared = std::clamp(std::min(static_cast<int>(loaded), header_.content_height) -
+                                            (offset + header_.header_rows),
+                                        0, std::max(content_rows, 0));
+        if (compared < content_rows / 2) { return false; }
         const int columns = header_.width - header_.scrollbar_columns;
         for (int y = 0; y < header_.header_rows; ++y) {
             if (!RowMatches(frame.row(y), reader_.HeaderRow(y), header_.width, -1, nullptr, 0, nullptr, 0)) { return false; }
@@ -380,8 +589,12 @@ private:
     const realistic::SharedHeader& header_;
     scrollshot::StitchEngine shadow_;
     platform::BgraImage previous_;
+    platform::BgraImage before_;
     std::vector<Observed> observed_;
     int last_found_{0};
+    std::optional<FirstUnmatched> first_unmatched_;
+    std::chrono::steady_clock::time_point last_acquired_request_{};
+    std::atomic<std::chrono::steady_clock::rep> examined_through_{0};
 };
 
 /// The production provider, unchanged, with the oracle looking on.
@@ -403,11 +616,20 @@ public:
     }
     capture::RegionCaptureResult CaptureRegionImage(const RECT& region, const capture::RegionImageOptions& options,
                                                     platform::BgraImage& out) override {
-        // Rows below this were loaded before the picture was taken.
-        const LONG loaded = realistic::ReadShared(reader_.header().loaded_height);
+        oracle_->RequestStarting();
+        const auto requested = std::chrono::steady_clock::now();
+        // Rows below `loaded` existed when the picture was taken. The
+        // application publishes its state after Present, and Desktop
+        // Duplication can return a desktop composed before this reading, so a
+        // picture may still show the loading row where the reading says rows
+        // exist. `loaded_height` never decreases: the reading taken before the
+        // previous request holds for this one.
+        const LONG read = realistic::ReadShared(reader_.header().loaded_height);
+        const LONG loaded = previous_loaded_ < 0 ? read : std::min(read, previous_loaded_);
+        previous_loaded_ = read;
         const capture::RegionCaptureResult result = inner_->CaptureRegionImage(region, options, out);
         if (result.status == capture::RegionCaptureStatus::FrameAcquired && !out.empty()) {
-            oracle_->Observe(out, result, loaded);
+            oracle_->Observe(out, result, loaded, requested);
         }
         return result;
     }
@@ -418,6 +640,7 @@ private:
     std::unique_ptr<capture::IRegionCaptureProvider> inner_;
     std::shared_ptr<Oracle> oracle_;
     const realistic::SharedReader& reader_;
+    LONG previous_loaded_{-1};  ///< The loaded height read before the previous request.
 };
 
 // --- Driving it ---------------------------------------------------------------------------
@@ -508,7 +731,7 @@ HWND FindApp(DWORD process) {
     return nullptr;
 }
 
-int RunTest() {
+int RunTest(const std::wstring& evidence) {
     using namespace std::chrono_literals;
     const auto started = std::chrono::steady_clock::now();
     if (!ui::CaptureExclusionSupported()) {
@@ -637,19 +860,32 @@ int RunTest() {
         // --- Real input -------------------------------------------------------
         bool following = true;
         // The page came to rest where it was sent, its late pictures loaded,
-        // and the session stitched the rows that came into view.
+        // the session stitched the rows that came into view, and it examined a
+        // picture requested at least kComposedAfter after the page was seen at
+        // rest: one that shows the last load.
         const auto settled = [&]() {
+            bool resting = false;
+            auto rested = std::chrono::steady_clock::time_point{};
             const bool reached = PumpUntil([&] {
                 const int target = value(shared.target);
-                return value(shared.offset) == target && value(shared.animating) == 0 &&
-                       value(shared.pending_lazy) == 0 && session.progress().height >= view + target;
+                if (value(shared.offset) != target || value(shared.animating) != 0 || value(shared.pending_lazy) != 0 ||
+                    session.progress().height < view + target) {
+                    resting = false;
+                    return false;
+                }
+                if (!resting) {
+                    resting = true;
+                    rested = std::chrono::steady_clock::now();
+                }
+                return oracle->examined_through() >= rested + kComposedAfter;
             },
                                            6s);
             offset = value(shared.offset);
             if (!reached) {
-                std::fprintf(stderr, "  page at %d (target %d, animating %d, %d pictures loading), %d rows stitched, last outcome %ls\n",
+                std::fprintf(stderr, "  page at %d (target %d, animating %d, %d pictures loading), %d rows stitched, last outcome %ls%s\n",
                              offset, value(shared.target), value(shared.animating), value(shared.pending_lazy),
-                             session.progress().height, scrollshot::ToString(session.progress().last_outcome));
+                             session.progress().height, scrollshot::ToString(session.progress().last_outcome),
+                             resting ? "; at rest, no picture taken since examined" : "");
             } else {
                 rest_offsets.insert(offset);
             }
@@ -768,6 +1004,7 @@ int RunTest() {
                     ++no_overlap;
                 }
             }
+            oracle->ReportFirstUnmatched(evidence);
 
             // --- The stitched image against the page -----------------------------
             const platform::BgraImage result = session.TakeResult();
@@ -861,6 +1098,13 @@ int RunTest() {
 int wmain(int argc, wchar_t** argv) {
     ::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     if (argc >= 2 && std::wcscmp(argv[1], L"--app") == 0) { return RunApp(argc, argv); }
+    std::wstring evidence;
+    if (argc == 3 && std::wcscmp(argv[1], L"--evidence") == 0) {
+        evidence = argv[2];
+    } else if (argc != 1) {
+        std::fprintf(stderr, "usage: test_scrollshot_realistic_desktop [--evidence <directory>]\n");
+        return 2;
+    }
     // Assertions and the log name things in English, whatever Windows speaks.
     easnap::strings::SetPreference(easnap::strings::LanguagePreference::English);
     const HRESULT com = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -870,7 +1114,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     int result = 1;
     try {
-        result = RunTest();
+        result = RunTest(evidence);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
     }

@@ -105,6 +105,12 @@ struct AppOptions {
 /// Covers Direct2D, DirectWrite, the WARP device and the five fonts it uses.
 [[nodiscard]] std::wstring UnavailableReason();
 
+/// Writes `height` top-down rows of 32-bit BGRA pixels, `stride` pixels apart,
+/// as an opaque PNG with WIC (alpha is written as 255; the colour channels are
+/// kept exactly). COM must be initialised on the calling thread. Pictures go
+/// under build/Testing/scrollshot-realistic/, never into the source tree.
+[[nodiscard]] bool WritePng(const std::wstring& path, int width, int height, const uint32_t* pixels, int stride);
+
 /// What one presented frame shows.
 struct State {
     double time_ms{0};

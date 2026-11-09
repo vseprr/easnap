@@ -1,6 +1,6 @@
 # ADR-041 — A generated application for the Scrollshot tests
 
-**Status:** Accepted (offscreen part validated on the host; desktop part ran green in the lab on 2026-11-09)
+**Status:** Accepted (offscreen part validated on the host; desktop part green in a lab Full run and red in a Soak run on 2026-11-09, see Validation)
 **Date:** 2026-11-09
 **Relates to:** [ADR-027](ADR-027-scrollshot-stitching-engine.md) (the rules exercised),
 [ADR-028](ADR-028-scrollshot-capture-workspace.md) (the workspace and session),
@@ -168,6 +168,7 @@ masks; "assert placement" asserts the placements only; "measured" and
 | `fractional-offsets` | Offsets not rounded | No exact path; tolerant descriptors only | Measured |
 | `textured-background` | Fixed detailed texture behind sparse text | "Unmoved" judged by rows can win over motion | Expected failure |
 | `animating-header` | Bar with an indicator that changes every frame | A header that animates every frame is not fixed (ADR-027 limit) | Expected failure |
+| `torn-pictures` | The `realistic-app` page; one picture in five is torn: from a seeded split row down it shows the present before the latest | A picture torn between two presents is judged on the whole picture (finding, see Validation) | Expected failure |
 
 The desktop test shows the `realistic-app` configuration.
 
@@ -199,7 +200,9 @@ The desktop test shows the `realistic-app` configuration.
 
 No script parameter changed. In `testenv.json` the desktop test joins
 `scrollshot_real_desktop` in `tests.captureTests`, `probe.tests` and the
-`display` and `gpu` parity lists.
+`display` and `gpu` parity lists, and `report.collect` takes
+`build/Testing/scrollshot-realistic/*.png`, the desktop test's diagnostic
+pictures.
 
 **The desktop test.** It follows `scrollshot_real_desktop`: the display from
 `EASNAP_TEST_MONITOR`, the same 77 rules, one click into the frame where the
@@ -216,13 +219,19 @@ has returned the application's window.
 - *The workspace.* The production overlay, `ExposeFrame`, the island, the
   preview and `ScrollshotSession`.
 - *The observer.* The session's provider is the production provider wrapped
-  in a pass-through observer. Before each capture it reads the loaded height,
-  since rows below it existed when the picture was taken. It drops identical
-  pictures with a restated copy of the session's filter. It finds each
-  picture's true offset by an exact search in the published layer: the bar
-  must match exactly, and every loaded row must match outside the scrollbar,
-  the masks and the late pictures. Each picture also goes to a shadow
-  `StitchEngine`, which places it as the session's engine does.
+  in a pass-through observer. Before each capture it reads the loaded height
+  and uses the smaller of that reading and the one taken before the previous
+  capture: the application publishes its state after `Present`, and Desktop
+  Duplication can return a desktop composed before the reading, so a picture
+  may still show the loading row where the reading already says rows exist;
+  the loaded height never decreases. It drops identical pictures with a
+  restated copy of the session's filter. It finds each picture's true offset
+  by an exact search in the published layer: the bar must match exactly,
+  every loaded row must match outside the scrollbar, the masks and the late
+  pictures, and at least half of the rows below the bar must be loaded rows,
+  since a position whose rows are mostly still loading would match on the bar
+  alone. Each picture also goes to a shadow `StitchEngine`, which places it
+  as the session's engine does.
 - *The observer's cost.* `Observe` runs inline on the session's worker, so it
   delays the session's next reading. Per examined picture it copies about
   1.4 MB (about 0.2 ms), searches for the offset (estimated 0.5 to 5 ms,
@@ -234,7 +243,11 @@ has returned the application's window.
   replaces the estimate with those figures.
 - *The input.* Six single notches, three pairs whose second notch arrives
   mid-animation, a click and two Page Downs, then notches to the end of the
-  list; three batches load on the way.
+  list; three batches load on the way. After each input the test waits, with
+  a deadline, until the page rests where it was sent with its late pictures
+  loaded, the session has stitched the rows in view, and the session has
+  examined a picture requested at least 50 ms after the page was seen at
+  rest, so the last load is in a picture the session has seen.
 - *What it asserts.* No written picture that is not the application; every
   written picture at its true offset; the image equal to the page outside the
   masks and scrollbar, with the bar exact; the shadow engine's canvas equal to
@@ -244,15 +257,26 @@ has returned the application's window.
   three pictures through GDI.
 - *What it prints.* `EASNAP_CAPTURE_PATH=<Duplication|GDI>` and a `MEASURE`
   line.
+- *Diagnostics.* When a picture matches no position of the page, the first
+  such picture is kept and examined after the session stopped: the test
+  prints the offset where most of its loaded rows equal the page, the rows
+  that differ there in bands with their columns, and the offset those rows
+  come closest to (a picture torn between two presents shows the earlier
+  present's offset there). It writes that picture, the picture examined
+  before it and the content layer as PNG into the directory given with
+  `--evidence`; CTest passes `build/Testing/scrollshot-realistic/`, and the
+  file names, printed by the test, carry the time and the process id.
 
 ## Media and licence
 
-Nothing is stored. The tests write no picture unless `--dump <directory>` is
-given; the directory to use is `build/Testing/scrollshot-realistic/`, which
-is ignored with the rest of `build/`, and PNG files are refused everywhere
-else. Nothing is added to `scripts/repository-media-allowlist.txt`. The fonts
-are the system's own, used at run time; no font, text or picture of anyone
-else is part of the tests.
+Nothing is stored. The offscreen test writes no picture unless
+`--dump <directory>` is given; the desktop test writes only the diagnostic
+pictures above, when a picture matches no position. The directory for both
+is `build/Testing/scrollshot-realistic/`, which is ignored with the rest of
+`build/`, and PNG files are refused everywhere else. Nothing is added to
+`scripts/repository-media-allowlist.txt`. The fonts are the system's own,
+used at run time; no font, text or picture of anyone else is part of the
+tests.
 
 ## Relation to item 1.2 and to `scrollshot_real_desktop`
 
@@ -287,8 +311,9 @@ white page. That case stays with 1.2.
 ## Validation
 
 **Host, offscreen** (development PC, Windows 10 22H2 build 19045, Release,
-2026-11-09). 257 checks passed; the whole run took 8 s (Debug: 59 s, with the
-same figures). "Pictures" counts every picture taken. "Submitted" counts what
+2026-11-09). 261 checks passed; the whole run took 9 s (Debug, before
+`torn-pictures` was added: 59 s, with the same figures). "Pictures" counts
+every picture taken. "Submitted" counts what
 the engine received after identical pictures were dropped. "Mid-animation"
 counts submitted pictures taken while an animation ran. "Wrong" counts
 placements away from the true offset (more than one row for fractional
@@ -313,6 +338,7 @@ the last presentation for a fixed gradient or texture.
 | fractional-offsets | 221 | 154 | 138 | 59 | 68 of 90 | 3,873 (3,876) | 2,438 |
 | textured-background | 184 | 116 | 115 | 0 | 58 of 116 | 3,730 (3,806) | 3,704 |
 | animating-header | 217 | 217 | 138 | 0 | 0 | 4,063 (4,063) | 2,656 |
+| torn-pictures | 436 | 226 | 193 | 2 | 178 of 221 | 5,397 (5,396) | 2,330 |
 
 What the figures say:
 
@@ -338,6 +364,16 @@ What the figures say:
 - **Animating bar (expected failure, confirmed).** Every placement was right,
   but the bar was never recognised as fixed and was written into the content:
   2,656 of 4,063 rows differ.
+- **Torn pictures (expected failure, finding).** One picture in five is torn
+  at a seeded row; 44 submitted pictures differed from the latest present
+  below the split, and the engine wrote 41 of them. The first wrong placement
+  was a torn picture, written 25 rows above the position of its upper part
+  (at 184 for 209). In all, 178 of the 221 written placements were away from
+  the true offset, torn pictures or not (worst 57 rows), and 2,330 rows
+  differ from the page, although the height came out only one row long. The
+  engine judges a picture by its agreement as a whole (55 %), so the part
+  that disagrees is written in. The scenario reproduces the mechanism behind
+  the lab Soak failure below, not its figures.
 - **Sticky heading engaging mid-scroll (measured).** Every placement was
   right; the heading was stamped once into the content, as predicted (31
   rows from row 1,225). Kept measured. Removing the stamp is a change to the
@@ -365,5 +401,47 @@ retry, no fallback. The test ran in 9.0 s on Desktop Duplication.
   14.52 ms worst per examined picture; the worst case is above the
   estimated 1 to 10 ms and below the session's reading period of at least
   30 ms.
+
+**Lab Soak run `20261109-054120-soak`** (2026-11-09).
+`scrollshot_realistic_desktop` failed twice; it had passed in the Full runs.
+The triage found two defects of the test, a latent flake and a weakness of
+the engine:
+
+- *The oracle matched on the bar alone.* It skipped every row at or past the
+  loaded height, so an offset whose rows were all still loading matched on
+  the bar (offset 2,846 with 2,906 rows loaded). The last offset found stuck
+  there, and every later picture was reported as misplaced and then as
+  matching no position: artefacts of the test. A position now matches only
+  when at least half of the rows below the bar are compared.
+- *The loaded height raced the picture.* It was read before the capture, but
+  the application publishes it after `Present`, and Desktop Duplication can
+  return a desktop composed earlier that still shows the loading row. The
+  observer now takes the smaller of the reading and the one before the
+  previous capture.
+- *The wrong image was real.* The image was 4,678 and 4,755 rows high against
+  4,539, and the shadow engine agreed with the session, so the engine was
+  given pictures that led there. Offline modelling reproduces this only with
+  torn pictures (`torn-pictures` above). The test kept no pictures, so what
+  the lab's pictures contained is not proven. This is a weakness of the
+  engine, recorded for a later engine change with this proposed amendment of
+  ADR-027 (not made; its thresholds are unchanged): a placed picture must
+  agree with the canvas in each part of its overlap; appended rows stay
+  provisional until a second picture agrees; a contiguous band that
+  contradicts the canvas refuses the picture.
+- *A latent flake.* The wait after each input ended once the late pictures
+  had loaded, not once the session had examined a picture that showed them,
+  so the third late picture could keep its placeholder in the image. The
+  wait now also needs a picture requested 50 ms after the page was seen at
+  rest to have been examined.
+- The observer's worst case of 90 ms in that run was its own search through
+  every offset after a picture that matched nothing, not a load.
+
+The desktop test's checks are unchanged: no unmatched picture written, no
+placement away from the true offset, and the image equal to the page. The
+next lab run prints, for the first picture that matches no position, the
+closest offset, the rows and columns that differ there and the offset those
+rows come closest to, and collects that picture, the one before it and the
+content layer as PNG (Diagnostics, above). These changes have not run in the
+lab yet.
 
 Not run: the 150 % image and a host run.
