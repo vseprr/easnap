@@ -2604,7 +2604,9 @@ void Trim(bool all_edges_only = false, const wchar_t* edge_filter = nullptr, int
             trim.SetExportProgress(.42f);
             check_trim_text();
             std::wstring notice;
-            for (int line = 0; line < 24; ++line) { notice += std::to_wstring(line) + L": The original recording remains available; choose a different destination and retry.\r\n"; }
+            // Overflow the status budget at every size even when no line wraps:
+            // an 800 DIP window holds about 27 unwrapped rows at any scale.
+            for (int line = 0; line < 48; ++line) { notice += std::to_wstring(line) + L": The original recording remains available; choose a different destination and retry.\r\n"; }
             trim.SetStatus(notice, true);
             check_trim_text();
             CHECK(::IsWindowVisible(status) && ::IsWindowVisible(progress));
