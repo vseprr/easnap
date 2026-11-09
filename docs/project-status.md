@@ -11,19 +11,17 @@ and the individual runs in the [validation records](releases/validation-history.
 
 ## Baseline
 
-- v1.3.0 is prepared on `main` after the merges of pull requests #21 and
-  #22 ([release notes](releases/v1.3.0.md)); its publication is recorded
-  here once the Release workflow has run. Latest published stable release:
-  [v1.2.0](https://github.com/vseprr/easnap/releases/tag/v1.2.0), published on
-  2026-11-08 from `main`, tag on the merge of pull request #19
-  ([release notes](releases/v1.2.0.md)). The stable release before it was
-  [v1.1.0](releases/v1.1.0.md), published the same day from the merge of pull
-  request #17.
-- The Release workflow built, tested and attested the v1.2.0 packages on the
-  hosted runner, on its second attempt (below). Before publication the
-  draft's three packages matched their SHA-256 files, the installer's and the
-  ZIP's attestations verified, and both executables and the installer
-  reported 1.2.0.
+- Latest stable release:
+  [v1.3.0](https://github.com/vseprr/easnap/releases/tag/v1.3.0), published on
+  2026-11-09 from `main`, tag on the merge of pull request #23
+  ([release notes](releases/v1.3.0.md)). The stable releases before it were
+  [v1.2.0](releases/v1.2.0.md) and [v1.1.0](releases/v1.1.0.md), both
+  published on 2026-11-08.
+- The Release workflow built, tested and attested the v1.3.0 packages on the
+  hosted runner at the first attempt (run `42651302863`). Before publication
+  the draft's three packages matched their SHA-256 files, the installer's and
+  the ZIP's attestations verified, and both executables and the installer
+  reported 1.3.0.
 - Stabilization toward v1.1.0 ran on the branch `stabilize/v1.1.0`, created
   on 2026-11-07 from `main` at `42b3efa` and merged by pull request #17. Its
   release candidate rc.1 was checked by the owner and not published
@@ -49,7 +47,8 @@ split, merged by pull request #21) and then on `feature/v1.3-findings` (the
 2026-11-07 audit findings, the external video feature and the preview clock
 check, merged by pull request #22 on 2026-11-09). No release candidate was
 packaged: the owner checked the branch's build by hand on 2026-11-09 and asked
-for a stable release. Its notes are [v1.3.0](releases/v1.3.0.md).
+for a stable release. v1.3.0 was published on 2026-11-09 from `main` at
+`2284b19`. Its notes are [v1.3.0](releases/v1.3.0.md).
 
 Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
 `main` at `68e34c5`.

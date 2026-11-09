@@ -424,6 +424,17 @@ Duplication or Windows Graphics Capture (`VM-ok`, no fallback).
 - **Static checks:** every C++ file passes `scripts/format.ps1 -Check`;
   clang-tidy without findings on the changed sources in every slice and in
   the CI job; the hygiene check green.
+- **Final sources** (`3247aa4`, pull request #23, configured as Easnap
+  1.3.0): lab Full `20261109-184545-full`, 66 of 66, 0 retried, 0 on a
+  fallback path; the pull request's eight CI checks passed.
+- **The Release workflow** (run `42651302863`, tag `v1.3.0` on `2284b19`)
+  passed at the first attempt: validation, the Build matrix, the sanitizer,
+  format, clang-tidy, hygiene and the draft. Before publication, on the
+  development PC: the setup, the ZIP and the symbols ZIP matched their
+  SHA-256 files; `gh attestation verify` passed for the setup and the ZIP;
+  `Easnap.exe`, `EasnapPreviewHost.exe` (from the ZIP) and the setup
+  reported product version 1.3.0 and file version 1.3.0.0. Published on
+  2026-11-09 as the latest release.
 
 ## Validation of v1.2.0
 

@@ -7,7 +7,7 @@ phase boundaries; what is implemented and validated belongs in project status,
 and what each release contained in its release notes, listed in the
 [documentation index](docs/README.md).
 
-## Current: v1.3.0 prepared on `main`
+## Current: v1.3.0 published
 
 The first beta of v1.1 was published on 2026-10-13 as a prerelease of
 [`vseprr/easnap`](https://github.com/vseprr/easnap): Scrollshot in the
@@ -23,9 +23,10 @@ was published on 2026-11-08 as the latest stable version. v1.3 ran on the
 branch `feature/v1.3`, created on 2026-11-08 from `main` at `68e34c5` (S2 of
 the coordinator split, merged by pull request #21), and on
 `feature/v1.3-findings` (the audit findings, the external video feature and
-the preview clock check, merged by pull request #22 on 2026-11-09). v1.3.0 is
-prepared from `main` without a release candidate, at the owner's request
-after their check of the branch's build.
+the preview clock check, merged by pull request #22 on 2026-11-09). v1.3.0
+was published on 2026-11-09 from `main` without a release candidate, at the
+owner's request after their check of the branch's build; it is the latest
+stable version.
 
 | Phase | State |
 |---|---|
