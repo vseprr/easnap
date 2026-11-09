@@ -211,7 +211,12 @@ show is a later step.
   A gesture ending where it began leaves the export unchanged, moving a
   shape or a spotlight repaints under a tenth of the viewport, and switching
   the darkening on, or cancelling it, repaints all of it. Times are printed,
-  never asserted.
+  never asserted. The test reaches 67 % and 10 % by Ctrl+wheel from the
+  fitted zoom in either direction: on a 1920-pixel display the image fits at
+  98 % and the ladder is descended; on the hosted CI runner's 1024-pixel
+  display it fits at 52 % and the ladder is climbed (2026-11-09; before, the
+  test descended only and failed there). The Debug and sanitizer CI jobs
+  leave the test out, where the blur closure costs seconds per paint.
 - `redaction_renderer_logic`: in a 6,000-row picture, moving a spotlight
   reports exactly its old and new extent, and an unchanged effect list
   reports nothing.

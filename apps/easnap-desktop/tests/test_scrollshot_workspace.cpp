@@ -1287,10 +1287,14 @@ void EditPass(const platform::BgraImage& source, const RECT& area, float target_
     CHECK(editor.OpenDocument(image, area, area.left, &settings, nullptr));
     if (!editor.has_image()) { return; }
     if (target_zoom > 0.0f) {
-        // Ctrl+wheel around the top-left corner keeps the top of the image in view.
-        for (int step = 0; step < 16 && editor.view().zoom > target_zoom; ++step) {
+        // Ctrl+wheel around the top-left corner keeps the top of the image in
+        // view. The fitted zoom lies above the target on a 1920-pixel display
+        // and below it on a small one (1024 pixels on the hosted runner), so
+        // the ladder is climbed in whichever direction reaches it.
+        for (int step = 0; step < 16 && editor.view().zoom != target_zoom; ++step) {
             const RECT shown = editor.view().viewport;
-            editor.Wheel(-WHEEL_DELTA, true, false, POINT{shown.left, shown.top});
+            const int delta = editor.view().zoom > target_zoom ? -WHEEL_DELTA : WHEEL_DELTA;
+            editor.Wheel(delta, true, false, POINT{shown.left, shown.top});
         }
         CHECK(editor.view().zoom == target_zoom && editor.view().scroll_y == 0.0f);
     }

@@ -181,11 +181,19 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   at 10 % except for watermark glyphs; at the other zooms Direct2D's own
   drawing variance (up to 7 levels) is allowed and nothing stale is found.
   Exports have the same fingerprints before and after. Validated on the
-  development PC only: Release build without warnings, the Fast tier, and
-  the Standard tests `scrollshot_edit_performance`,
+  development PC (Release build without warnings, the Fast tier, and the
+  Standard tests `scrollshot_edit_performance`,
   `scrollshot_workspace_production`, `capture_workspace_production` and
-  `capture_frame_interaction` on a private desktop. Not run: the lab,
-  `annotation_editing_native` (Full tier) and the 25,000-row soak variant.
+  `capture_frame_interaction` on a private desktop) and in the lab runs
+  below, Full and Soak, the 25,000-row soak variant included (in the VM:
+  rectangle drag 0.69 ms, first spotlight frame 72 ms, blur closure 136 ms
+  per paint). The first CI run of the branch found two assumptions of the
+  test, not of the product: on the hosted runner's 1024-pixel display the
+  image fits at 52 %, below the 67 % step the test expected to reach by
+  zooming out, so the test now climbs the zoom ladder in either direction;
+  and in the Debug build the blur closure costs about 1.8 s per paint, so the
+  Debug and sanitizer CI jobs leave the test out (it measures in Release,
+  55 s on the runner).
 - **A recording asks Desktop Duplication until its first composed frame**
   ([ADR-004](decisions/ADR-004-per-output-capture-fallback.md),
   [ADR-028](decisions/ADR-028-scrollshot-capture-workspace.md)): a recording

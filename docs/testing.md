@@ -52,8 +52,11 @@ Hosted CI runs the fast tier and the part of the integration tier a hosted
 Windows Server image can execute. It has no real display or input queue and
 cannot open an MFPlay player, so it excludes the desktop and soak tiers, every
 test labelled `preview`, and `capture_overlay_interaction`, whose click targets
-assume a larger desktop than the runner's. A green CI run says nothing about
-those tests; they run in the lab.
+assume a larger desktop than the runner's. The Debug build and the sanitizer
+job also leave out `scrollshot_edit_performance`, whose blur closure costs
+seconds per paint there; it measures in the Release build, on the runner's
+1024-pixel display at the zoom steps it reaches from there. A green CI run
+says nothing about the excluded tests; they run in the lab.
 
 ## Running only what changed
 
