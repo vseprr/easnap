@@ -132,6 +132,28 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   on the changed sources. Not validated: the notification itself, which no
   test can see, and the flow with an unwritable `settings.ini` in the running
   application; no lab run.
+- **A move in the editor repaints what it changed**
+  ([ADR-029](decisions/ADR-029-scrolled-and-zoomed-image-editing.md#a-move-repaints-what-it-changed-amended-2026-11-09)):
+  dragging an annotation and a spotlight preview invalidate the annotation's
+  old and new extent; the paint that recomputes the pixel effects invalidates
+  whatever else they changed, so a second paint shows it, and effects are
+  never recomputed during input. A watermark draws only the tiles the target
+  shows. In a 1,920 × 8,400 image on the development PC (125 %), dragging a
+  rectangle went from about 3 ms and the whole viewport per move to about
+  0.5 ms and 4 % of it, with a watermark from 7.5–13.5 ms to 0.5–0.9 ms. A
+  cancelled spotlight preview used to leave the rest of the picture darkened
+  on screen, and a pixelating brush drawn up or left showed old blocks until
+  released; both are now repainted. `scrollshot_edit_performance` (Standard)
+  measures the gestures at 98.4 %, 67 % and 10 % and compares the partly
+  repainted picture with a full repaint in the middle of each gesture: equal
+  at 10 % except for watermark glyphs; at the other zooms Direct2D's own
+  drawing variance (up to 7 levels) is allowed and nothing stale is found.
+  Exports have the same fingerprints before and after. Validated on the
+  development PC only: Release build without warnings, the Fast tier, and
+  the Standard tests `scrollshot_edit_performance`,
+  `scrollshot_workspace_production`, `capture_workspace_production` and
+  `capture_frame_interaction` on a private desktop. Not run: the lab,
+  `annotation_editing_native` (Full tier) and the 25,000-row soak variant.
 
 ## v1.2.0
 
@@ -358,9 +380,13 @@ Open since the v1.0.1 review:
   ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md)).
 - The repacking of a locked hardware surface was exercised only on the hosted
   runner's WARP adapter, not on a physical GPU with a software encoder.
-- Editor pixel effects still repaint the whole image for a spotlight preview
-  and for moving any annotation, although only the changed rectangle is
-  recomputed.
+- Editor pixel effects: moving an annotation and drawing a spotlight now
+  repaint only what changed (ADR-029, amended 2026-11-09), but a change of the
+  spotlight darkening still recomputes the whole image, a blur or pixelation
+  next to a moved effect is recomputed whole in every paint during a drag
+  (about 0.1 s for a blur 6,300 rows tall), below about 20 % every repaint
+  uploads the bands it shows again, and the keyboard nudge and undo repaint
+  the whole viewport.
 - `recording_pause_stop_stress` exceeded its 100 ms duration limit once, during
   the validation of v1.0.2.
 - The UI thread writes acknowledgements to the helper pipe synchronously; a

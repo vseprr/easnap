@@ -718,6 +718,19 @@ add_test(NAME scrollshot_workspace_production
 set_tests_properties(scrollshot_workspace_production PROPERTIES
     LABELS "integration;scrollshot;workspace;editor;isolated-desktop" TIMEOUT 90)
 
+# Editing a very tall stitched image: what one pointer move repaints and how
+# long it takes, at the fitted width and at 10 %, printed as MEASURE lines.
+# Asserts that the partly repainted picture equals a full repaint. The image of
+# 25,000 rows (48 million pixels, the Scrollshot limit) is the soak variant.
+add_test(NAME scrollshot_edit_performance
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_scrollshot_workspace> --edit-performance)
+set_tests_properties(scrollshot_edit_performance PROPERTIES
+    LABELS "integration;scrollshot;editor;performance;isolated-desktop" TIMEOUT 300 SKIP_RETURN_CODE 77)
+add_test(NAME scrollshot_edit_performance_soak
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_scrollshot_workspace> --edit-performance 25000)
+set_tests_properties(scrollshot_edit_performance_soak PROPERTIES
+    LABELS "integration;scrollshot;editor;performance;isolated-desktop;soak" TIMEOUT 1800 SKIP_RETURN_CODE 77)
+
 # Every caption and label fits its control in English and in Turkish.
 add_executable(test_text_fit
     test_text_fit.cpp

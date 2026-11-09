@@ -282,6 +282,12 @@ private:
                                               LPARAM lparam, UINT_PTR identifier, DWORD_PTR reference);
     void Invalidate() const;
     void InvalidateImage(const RECT& source_bounds) const;
+    /// The desktop pixels, inside the viewport, that show `source_bounds`.
+    [[nodiscard]] RECT DesktopDamage(const RECT& source_bounds) const;
+    /// Image pixels that showing `annotation` can touch: its bounds, its
+    /// strokes and their antialiasing, and with `selected` the selection frame
+    /// and handles, which keep their size on screen.
+    [[nodiscard]] RECT AnnotationDamage(const Annotation& annotation, bool selected) const;
     [[nodiscard]] RECT PendingDamage() const;
 
     /// Desktop point to image pixels through the current view.
@@ -333,7 +339,10 @@ private:
 
     /// Brings the derived blur/pixelation and spotlight pixels up to date with
     /// the effect list. Only the final composite reaches the clipboard or file.
-    void RebuildRedactedBase();
+    /// Returns the image pixels that may have changed; empty when none did.
+    /// Those not inside `painting`, the desktop pixels a paint in progress
+    /// covers, are invalidated, so changed pixels always reach the screen.
+    RECT RebuildRedactedBase(const RECT* painting = nullptr);
     /// Chooses where to save (quick save or the dialog, on this thread) and
     /// starts writing the file on a worker. False when nothing was started.
     bool SaveToFile();

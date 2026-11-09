@@ -85,6 +85,16 @@ constexpr std::array<float, 3> kThicknessOptions = {2.0f, 4.0f, 7.0f};
 /// Mosaic brush diameters in captured pixels (independent of the preview zoom).
 constexpr std::array<float, 3> kBrushSizeOptions = {16.0f, 32.0f, 64.0f};
 
+/// Selection chrome in device-independent pixels; it keeps its size on screen
+/// at every zoom. A frame follows the outline, with a gap around text, and
+/// handles are rings on the corners or ends.
+constexpr float kSelectionStroke = 1.2f;
+constexpr float kSelectionTextGap = 3.0f;
+constexpr float kHandleRadius = 4.5f;
+constexpr float kHandleStroke = 1.5f;
+/// How far the chrome reaches past an annotation's bounds.
+constexpr float kSelectionReach = std::max(kHandleRadius + kHandleStroke / 2, kSelectionTextGap + kSelectionStroke / 2);
+
 /// Round caps/joins make freehand strokes and arrows look continuous.
 ID2D1StrokeStyle* RoundStrokeStyle() {
     static platform::ComPtr<ID2D1StrokeStyle> style = [] {
@@ -183,6 +193,39 @@ void DrawFreehand(ID2D1RenderTarget* target, const std::vector<D2D1_POINT_2F>& p
     for (size_t i = 1; i < points.size(); ++i) {
         target->DrawLine(points[i - 1], points[i], brush, thickness, RoundStrokeStyle());
     }
+}
+
+/// The bounding box of `area` mapped through `transform`.
+D2D1_RECT_F TransformedBounds(const D2D1_RECT_F& area, const D2D1::Matrix3x2F& transform) {
+    const std::array<D2D1_POINT_2F, 4> corners{{{area.left, area.top}, {area.right, area.top}, {area.right, area.bottom}, {area.left, area.bottom}}};
+    const D2D1_POINT_2F first = transform.TransformPoint(corners[0]);
+    D2D1_RECT_F bounds{first.x, first.y, first.x, first.y};
+    for (const auto& corner : corners) {
+        const D2D1_POINT_2F point = transform.TransformPoint(corner);
+        bounds.left = std::min(bounds.left, point.x);
+        bounds.top = std::min(bounds.top, point.y);
+        bounds.right = std::max(bounds.right, point.x);
+        bounds.bottom = std::max(bounds.bottom, point.y);
+    }
+    return bounds;
+}
+
+/// The part of the space `transform` maps onto `target` that the target
+/// shows, grown by `margin` target pixels for antialiasing. Empty when the
+/// transform cannot be inverted.
+std::optional<D2D1_RECT_F> ShownArea(ID2D1RenderTarget* target, const D2D1_MATRIX_3X2_F& m, float margin) {
+    const float determinant = m._11 * m._22 - m._12 * m._21;
+    if (determinant == 0.0f || !std::isfinite(determinant)) { return std::nullopt; }
+    // The inverse of the 2x3 matrix, written out.
+    const D2D1::Matrix3x2F inverse(m._22 / determinant, -m._12 / determinant, -m._21 / determinant, m._11 / determinant,
+                                   (m._21 * m._32 - m._22 * m._31) / determinant,
+                                   (m._12 * m._31 - m._11 * m._32) / determinant);
+    const D2D1_SIZE_F size = target->GetSize();
+    const D2D1_RECT_F shown = TransformedBounds({-margin, -margin, size.width + margin, size.height + margin}, inverse);
+    if (!std::isfinite(shown.left) || !std::isfinite(shown.top) || !std::isfinite(shown.right) || !std::isfinite(shown.bottom)) {
+        return std::nullopt;
+    }
+    return shown;
 }
 
 /// Draws one annotation in image space. Mosaic strokes are baked into the base
@@ -364,8 +407,26 @@ void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
             const float reach = std::hypot(center.x, center.y) + std::max(stepX, stepY);
             target->SetTransform(D2D1::Matrix3x2F::Rotation(-18, center) * original);
             const int columns = static_cast<int>(std::ceil(reach / stepX)), rows = static_cast<int>(std::ceil(reach / stepY));
-            for (int row = -rows; row <= rows; ++row)
-                for (int column = -columns; column <= columns; ++column) {
+            // A tall picture has thousands of tiles. Only those that can reach
+            // what the target shows are drawn, in the order of the full grid.
+            int first_row = -rows, last_row = rows, first_column = -columns, last_column = columns;
+            if (const auto shown = ShownArea(target, original, 2.0f)) {
+                // Tiles are laid out in image space turned back by their rotation.
+                const D2D1_RECT_F area = TransformedBounds(*shown, D2D1::Matrix3x2F::Rotation(18, center));
+                // Glyphs may overhang their layout box: an em on every side.
+                const float em = annotation.FontPixels();
+                const float width = metrics.widthIncludingTrailingWhitespace, height = metrics.height;
+                const auto index = [](float position, float step, int limit, bool upward) {
+                    const float value = upward ? std::ceil(position / step) : std::floor(position / step);
+                    return static_cast<int>(std::clamp(value, static_cast<float>(-limit), static_cast<float>(limit)));
+                };
+                first_column = index(area.left - em - center.x - width / 2, stepX, columns, false);
+                last_column = index(area.right + em - center.x + width / 2, stepX, columns, true);
+                first_row = index(area.top - em - center.y - height / 2, stepY, rows, false);
+                last_row = index(area.bottom + em - center.y + height / 2, stepY, rows, true);
+            }
+            for (int row = first_row; row <= last_row; ++row)
+                for (int column = first_column; column <= last_column; ++column) {
                     const D2D1_POINT_2F origin{center.x + column * stepX - metrics.widthIncludingTrailingWhitespace / 2,
                                                center.y + row * stepY - metrics.height / 2};
                     target->DrawTextLayout(origin, layout.Get(), brush);
@@ -1818,15 +1879,24 @@ void ScreenshotEditor::Invalidate() const {
     if (has_image() && callbacks_.on_image_invalidated) { callbacks_.on_image_invalidated(region_); }
 }
 
-void ScreenshotEditor::InvalidateImage(const RECT& source_damage) const {
-    if (!has_image() || !callbacks_.on_image_invalidated) { return; }
+RECT ScreenshotEditor::DesktopDamage(const RECT& source_damage) const {
+    if (::IsRectEmpty(&source_damage)) { return {}; }
+    // A reduced view filters the picture, so a changed image pixel also shows
+    // in the screen pixels of its neighbours.
+    const float bleed = zoom_ < 1.0f ? 1.0f : 0.0f;
     // Image pixels to desktop pixels, rounded outwards.
     const RECT desktop_damage{
-        static_cast<LONG>(std::floor(view_origin_.x + static_cast<float>(source_damage.left) * zoom_)),
-        static_cast<LONG>(std::floor(view_origin_.y + static_cast<float>(source_damage.top) * zoom_)),
-        static_cast<LONG>(std::ceil(view_origin_.x + static_cast<float>(source_damage.right) * zoom_)),
-        static_cast<LONG>(std::ceil(view_origin_.y + static_cast<float>(source_damage.bottom) * zoom_))};
-    callbacks_.on_image_invalidated(platform::IntersectRects(desktop_damage, region_));
+        static_cast<LONG>(std::floor(view_origin_.x + (static_cast<float>(source_damage.left) - bleed) * zoom_)),
+        static_cast<LONG>(std::floor(view_origin_.y + (static_cast<float>(source_damage.top) - bleed) * zoom_)),
+        static_cast<LONG>(std::ceil(view_origin_.x + (static_cast<float>(source_damage.right) + bleed) * zoom_)),
+        static_cast<LONG>(std::ceil(view_origin_.y + (static_cast<float>(source_damage.bottom) + bleed) * zoom_))};
+    return platform::IntersectRects(desktop_damage, region_);
+}
+
+void ScreenshotEditor::InvalidateImage(const RECT& source_damage) const {
+    if (!has_image() || !callbacks_.on_image_invalidated) { return; }
+    const RECT damage = DesktopDamage(source_damage);
+    if (!platform::IsEmptyRect(damage)) { callbacks_.on_image_invalidated(damage); }
 }
 
 void ScreenshotEditor::ResetFixedView() {
@@ -1890,12 +1960,23 @@ platform::BgraImage ScreenshotEditor::TakeImage() {
     return image;
 }
 
-RECT ScreenshotEditor::PendingDamage() const {
-    if (pending_.tool == ToolId::Text) { return RECT{0, 0, source_image_.width, source_image_.height}; }
-    const auto bounds = pending_.bounds();
-    const float pad = std::max(pending_.style.brush_size, pending_.style.thickness * 6.0f) + 3.0f;
+RECT ScreenshotEditor::AnnotationDamage(const Annotation& annotation, bool selected) const {
+    const auto bounds = annotation.bounds();
+    // Stroke ends, arrow heads and the mosaic brush reach past the points.
+    float pad = std::max(annotation.style.brush_size, annotation.style.thickness * 6.0f) + 3.0f;
+    // Glyphs overhang their layout box, and outlined text is stroked around it.
+    if (annotation.tool == ToolId::Text || annotation.tool == ToolId::Tag) { pad += annotation.FontPixels(); }
+    // The selection frame and its handles keep their size on screen.
+    if (selected) { pad += kSelectionReach * scale_ / zoom_; }
+    // Antialiasing reaches one screen pixel further.
+    pad += 1.0f / zoom_;
     return RECT{static_cast<LONG>(std::floor(bounds.left - pad)), static_cast<LONG>(std::floor(bounds.top - pad)),
                 static_cast<LONG>(std::ceil(bounds.right + pad)), static_cast<LONG>(std::ceil(bounds.bottom + pad))};
+}
+
+RECT ScreenshotEditor::PendingDamage() const {
+    if (pending_.tool == ToolId::Text) { return RECT{0, 0, source_image_.width, source_image_.height}; }
+    return AnnotationDamage(pending_, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -2647,6 +2728,7 @@ void ScreenshotEditor::BeginStroke(POINT point) {
 void ScreenshotEditor::UpdateStroke(POINT point) {
     const auto p = ToImagePoint(point);
     if (transforming_ && selected_) {
+        if (*selected_ >= document_.annotations().size()) { return; }
         auto updated = original_;
         if (transform_handle_ < 0) {
             const float dx = p.x - drag_origin_.x;
@@ -2664,8 +2746,20 @@ void ScreenshotEditor::UpdateStroke(POINT point) {
                 updated.points = {handles[(static_cast<size_t>(transform_handle_) + 2) % 4], q};
             }
         }
-        document_.Replace(*selected_, std::move(updated));
-        Invalidate();
+        // Only the annotation where it was and where it is, with its
+        // selection chrome, is repainted. Pixels a moved effect changes
+        // elsewhere are found when the paint recomputes the effects
+        // (RebuildRedactedBase). The toolbar does not change during the drag;
+        // EndStroke brings it up to date.
+        const size_t index = *selected_;
+        const RECT before = AnnotationDamage(document_.annotations()[index], true);
+        const uint64_t revision = document_.revision();
+        document_.Replace(index, std::move(updated));
+        if (document_.revision() == revision) { return; }
+        const RECT after = AnnotationDamage(document_.annotations()[index], true);
+        RECT damage{};
+        ::UnionRect(&damage, &before, &after);
+        InvalidateImage(damage);
         return;
     }
     if (!has_pending_ || !dragging_) { return; }
@@ -2684,11 +2778,9 @@ void ScreenshotEditor::UpdateStroke(POINT point) {
         const RECT after = PendingDamage();
         ::UnionRect(&damage, &before, &after);
     }
-    if (pending_.tool == ToolId::Spotlight) {
-        Invalidate();
-    } else {
-        InvalidateImage(damage);
-    }
+    // A spotlight that switches the darkening on changes every pixel; the
+    // paint that recomputes it invalidates the rest (RebuildRedactedBase).
+    InvalidateImage(damage);
 }
 void ScreenshotEditor::EndStroke(POINT point) {
     if (transforming_) {
@@ -2726,6 +2818,8 @@ void ScreenshotEditor::CancelStroke() {
     const RECT damage = PendingDamage();
     dragging_ = has_pending_ = false;
     pending_ = {};
+    // A cancelled spotlight takes its darkening back from the whole picture;
+    // the paint that recomputes the effects invalidates what lies outside.
     InvalidateImage(damage);
 }
 void ScreenshotEditor::StartTextEditing(std::optional<size_t> index, POINT point) {
@@ -3030,11 +3124,11 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorB
     // Frame and handles keep their size on screen at every scale of the view.
     const float unit = scale_ / zoom_;
     brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
-    const float width = 1.2f * unit;
+    const float width = kSelectionStroke * unit;
     const auto box = NormalizedD2DRect(a.points.front(), a.points.back());
     if (a.tool == ToolId::Text || a.tool == ToolId::Tag) {
         auto r = a.bounds();
-        const float pad = 3 * unit;
+        const float pad = kSelectionTextGap * unit;
         r.left -= pad;
         r.top -= pad;
         r.right += pad;
@@ -3053,9 +3147,9 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorB
     }
     for (auto point : a.Handles()) {
         brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
-        target->FillEllipse(D2D1::Ellipse(point, 4.5f * unit, 4.5f * unit), brush);
+        target->FillEllipse(D2D1::Ellipse(point, kHandleRadius * unit, kHandleRadius * unit), brush);
         brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
-        target->DrawEllipse(D2D1::Ellipse(point, 4.5f * unit, 4.5f * unit), brush, 1.5f * unit);
+        target->DrawEllipse(D2D1::Ellipse(point, kHandleRadius * unit, kHandleRadius * unit), brush, kHandleStroke * unit);
     }
 }
 
@@ -3063,9 +3157,9 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorB
 // Rendering
 // ---------------------------------------------------------------------------
 
-void ScreenshotEditor::RebuildRedactedBase() {
+RECT ScreenshotEditor::RebuildRedactedBase(const RECT* painting) {
     const bool effect_preview = has_pending_ && (pending_.tool == ToolId::Mosaic || pending_.tool == ToolId::Spotlight);
-    if ((redaction_revision_ == document_.revision() && !effect_preview) || !has_image()) { return; }
+    if ((redaction_revision_ == document_.revision() && !effect_preview) || !has_image()) { return {}; }
     std::vector<RedactionEffect> effects;
     const auto add = [&](const Annotation& a) {
         if ((a.tool != ToolId::Mosaic && a.tool != ToolId::Spotlight) || a.points.empty()) { return; }
@@ -3093,17 +3187,27 @@ void ScreenshotEditor::RebuildRedactedBase() {
     redaction_revision_ = effect_preview ? UINT64_MAX : document_.revision();
     // Only the pixels an edit can influence are recomputed and uploaded.
     const RECT changed = redaction_.Update(source_image_, std::move(effects));
-    if (::IsRectEmpty(&changed) || !image_bitmap_) { return; }
-    const auto& image = redaction_.image();
+    if (::IsRectEmpty(&changed)) { return changed; }
     // The bitmap holds rows [band_top_, band_top_ + band_rows_): the whole
     // picture for a screenshot, the band on show for a tall document.
     const LONG top = std::max<LONG>(changed.top, band_top_), bottom = std::min<LONG>(changed.bottom, band_top_ + band_rows_);
-    if (bottom <= top) { return; }
-    const D2D1_RECT_U target{static_cast<UINT32>(changed.left), static_cast<UINT32>(top - band_top_), static_cast<UINT32>(changed.right), static_cast<UINT32>(bottom - band_top_)};
-    if (FAILED(image_bitmap_->CopyFromMemory(&target, image.row(top) + changed.left, static_cast<UINT32>(image.stride_bytes())))) {
-        image_bitmap_.Reset();
-        band_rows_ = 0;
+    if (image_bitmap_ && bottom > top) {
+        const auto& image = redaction_.image();
+        const D2D1_RECT_U target{static_cast<UINT32>(changed.left), static_cast<UINT32>(top - band_top_), static_cast<UINT32>(changed.right), static_cast<UINT32>(bottom - band_top_)};
+        if (FAILED(image_bitmap_->CopyFromMemory(&target, image.row(top) + changed.left, static_cast<UINT32>(image.stride_bytes())))) {
+            image_bitmap_.Reset();
+            band_rows_ = 0;
+        }
     }
+    // Whatever invalidated this paint, every changed pixel reaches the
+    // screen: what the paint does not cover is invalidated for the next one,
+    // which finds nothing left to recompute.
+    const RECT shown = DesktopDamage(changed);
+    RECT covered{};
+    if (!platform::IsEmptyRect(shown) && (painting == nullptr || !::IntersectRect(&covered, &shown, painting) || !::EqualRect(&covered, &shown))) {
+        InvalidateImage(changed);
+    }
+    return changed;
 }
 
 int ScreenshotEditor::EnsureBaseRows(int first, int end) {
@@ -3150,15 +3254,17 @@ int ScreenshotEditor::EnsureBaseRows(int first, int end) {
 void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repaint) {
     auto& graphics = platform::GraphicsEnvironment::Get();
     if (!has_image() || !graphics.EnsureInitialized() || !dc) { return; }
-    RebuildRedactedBase();
+    RECT client{0, 0, platform::RectWidth(bounds), platform::RectHeight(bounds)};
+    if (repaint) { client = platform::IntersectRects(client, *repaint); }
+    RECT painting = client;
+    ::OffsetRect(&painting, bounds.left, bounds.top);
+    RebuildRedactedBase(&painting);
     if (!image_target_) {
         const auto properties = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
                                                              D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.0f, 96.0f);
         if (FAILED(graphics.d2d_factory()->CreateDCRenderTarget(&properties, &image_target_))) { return; }
         image_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &image_brush_);
     }
-    RECT client{0, 0, platform::RectWidth(bounds), platform::RectHeight(bounds)};
-    if (repaint) { client = platform::IntersectRects(client, *repaint); }
     if (platform::IsEmptyRect(client) || FAILED(image_target_->BindDC(dc, &client))) { return; }
     // Where image pixel (0, 0) falls in this paint, and which image rows the
     // paint can show. A screenshot shows all of its rows.
