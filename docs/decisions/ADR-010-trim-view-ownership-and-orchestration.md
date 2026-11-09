@@ -325,8 +325,9 @@ Shutdown (see Context); confirmed process retirement is therefore part of the co
   above (Seek-then-Play ordering, illustrative helper dispatch times). With
   the check disabled, its three new tests fail 38 assertions, among them the
   selected-Out policy pausing on the 8.13 s clock; with it, 212,803 of
-  212,803 assertions pass. The MFPlay preview tests have not yet run in the
-  lab with the check. A green lab run can show only that the check does not
-  misfire: MFPlay cannot be made to ignore a seek on demand, so the re-seek
-  and recovery paths stay validated by these Fast tests until the race
-  recurs.
+  212,803 assertions pass. In the lab with the check (runs
+  `20261109-151309-full`, 66 of 66, and `20261109-171521-soak`, 74 of 74)
+  every MFPlay preview and trim test passed with no helper replaced and no
+  Play lost. A green lab run can show only that the check does not misfire:
+  MFPlay cannot be made to ignore a seek on demand, so the re-seek and
+  recovery paths stay validated by these Fast tests until the race recurs.

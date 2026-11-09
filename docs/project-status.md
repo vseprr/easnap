@@ -281,12 +281,18 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   carries only the last 2,048 trace characters). Validated: the Fast tier on
   the development PC (30 of 30), where `trim_workflow_orchestration` replays
   the transport side of the lab trace and fails 38 assertions with the check
-  disabled. Not validated: the MFPlay preview tests in the lab. A green lab
-  run will show only that the check does not misfire. MFPlay cannot be made
-  to ignore a seek on demand, so the re-seek and recovery are validated by the
-  Fast tests alone until the race recurs; with one failure in 30 runs, about
-  90 clean runs would be needed before claiming the race is gone, and no such
-  claim is made.
+  disabled. In the lab with the check: Full (run `20261109-151309-full`) 66
+  of 66 with no retry, Soak (run `20261109-171521-soak`) 74 of 74, every
+  `mfplay_preview_*` and `trim_*` test passed, no helper was replaced and no
+  Play was lost (`helper_changed=0`, `lost_play=0` in every seek stress
+  line). That shows only that the check does not misfire. MFPlay cannot be
+  made to ignore a seek on demand, so the re-seek and recovery are validated
+  by the Fast tests alone until the race recurs; with one failure in 30 runs,
+  about 90 clean runs would be needed before claiming the race is gone, and
+  no such claim is made. The two Soak retries were the known ones: the
+  pointer landing on the trim window's caption in `trim_timeline_seek_stress`
+  and torn pictures in `scrollshot_realistic_desktop` (five torn and one
+  with six differing rows, so the test did not relax).
 
 ## v1.2.0
 
@@ -442,11 +448,17 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   session messages were sent to the application by hand).
 - A second reader of the Turkish text, which was read in the running
   application.
-- **v1.3:** the conditional contract of `scrollshot_realistic_desktop` (torn
-  input reported as a known weakness) has not run in the lab yet; the
-  owner's checks of the changes in the running application are
-  pending (the settings notice, the crash report, Exit and sign-out during an
-  export, the trim window at its new minimum width).
+- **v1.3:** the owner ran the checklist of this branch in the running
+  application on the development PC (2026-11-09: the tall Scrollshot copy and
+  save, tall image editing, the settings notice with an unwritable
+  `settings.ini`, the trim window at its minimum width, a recording started
+  on a still desktop, and the external video feature: tray entry, "Open
+  with" while Easnap runs and while it does not, the reason dialog, Close and
+  Exit during an export, Save and Copy as MP4 and GIF, the source untouched)
+  and found no problem. The conditional contract of
+  `scrollshot_realistic_desktop` ran in the lab (Full `20261109-151309-full`
+  passed; Soak `20261109-171521-soak` first attempt failed on five torn
+  pictures and one with six differing rows, retry passed).
 
 ## Known limitations and unresolved risks
 
@@ -496,9 +508,9 @@ Its notes are [v1.2.0](releases/v1.2.0.md).
   lab runs). MFPlay reported its clock at In while paused, then reported
   playing from its clock before the seek; why is unknown, because the helper
   sends only the last 2,048 characters of its trace. The helper now checks
-  the clock against the seek and seeks again (v1.3 above); that has not run
-  in the lab yet, and a green lab run would show only that the check does
-  not misfire. It does not detect a contradiction under 500 ms, one that
+  the clock against the seek and seeks again (v1.3 above); the lab Full and
+  Soak runs with it were green, which shows only that the check does not
+  misfire. It does not detect a contradiction under 500 ms, one that
   appears more than 3 s after playback resumed, or a clock left behind the
   target.
 - A window that is open when the language changes keeps its text; only the
@@ -617,18 +629,7 @@ On `feature/v1.3-findings`, in this order (the roadmap has the index):
    second picture agrees, a contiguous contradiction refused as `Ambiguous`.
    `scrollshot_realistic_desktop` then shows whether torn input still needs
    its `KNOWN_WEAKNESS` path.
-2. The lab check of the preview clock correction (v1.3 above): Full, then
-   Soak, with `mfplay_preview_stress_0`, `_1` and `_2`,
-   `mfplay_preview_transport`, `mfplay_preview_audio_transport`,
-   `mfplay_preview_continuous_seek`, `trim_flow_production`,
-   `trim_timeline_seek_stress` and `trim_endpoint_presentation`. It shows
-   only that the check does not misfire; the correction itself stays
-   validated by the Fast tests until the race recurs.
-3. The owner's checks: the external video feature
-   ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md): the
-   installer's "Open with" entries and the owner checklist) and this
-   branch's other changes in the running application.
-4. The remaining editor costs: the first spotlight frame (about 50 ms in a
+2. The remaining editor costs: the first spotlight frame (about 50 ms in a
    tall image) and the blur closure (about 0.1 s per paint).
 
 The Scrollshot fractional-offset finding waits for an engine change and its

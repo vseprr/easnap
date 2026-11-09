@@ -1,6 +1,6 @@
 # ADR-040 — Opening an external video in the trim view
 
-**Status:** Proposed; implemented (media layer, flow, entry points); validation pending  
+**Status:** Accepted; implemented (media layer, flow, entry points); checked by the owner 2026-11-09  
 **Date:** 2026-11-09
 
 ## Context
@@ -524,7 +524,13 @@ against a running Easnap (the hand-over test uses its own window and class),
   while it does not and while it is busy (the second start's message); Close
   and Exit during an export; Save with the source's
   own name refused; Save as MP4 and as GIF; the source file untouched
-  afterwards.
+  afterwards. Run by the owner on the development PC on 2026-11-09 (Windows
+  10 22H2, installed build with the "Open with" entries): no problem found.
+  In the lab the branch's Full run `20261109-151309-full` (66 of 66) and
+  Soak run `20261109-171521-soak` (74 of 74) passed with the feature's tests
+  (`trim_flow_production`, `copydata_handover`, `video_probe_files`,
+  `video_probe_asf`, `video_probe_job`, `external_video_text`,
+  `text_fits_in_every_language`).
 - **What the lab can and cannot verify.** The lab can run everything above
   that needs no extra decoder. It has no HEVC extension unless one is
   installed there, so "needs a Windows codec extension" is verified by the
