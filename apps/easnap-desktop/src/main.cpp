@@ -16,10 +16,18 @@
 #include <shellapi.h>
 #include <shlobj.h>
 
+#include <chrono>
 #include <cmath>
+#include <memory>
+#include <optional>
 #include <string>
 
+#include "app/app_settings.h"
+#include "app/command_line.h"
+#include "app/external_video.h"
 #include "app/session_state.h"
+#include "app/video_handover.h"
+#include "media/video_probe.h"
 #include "platform/diagnostics.h"
 #include "platform/platform_utils.h"
 #include "platform/startup_entry.h"
@@ -43,8 +51,12 @@ namespace {
 using easnap::app::CaptureCoordinator;
 using easnap::app::SessionState;
 
+/// A second Easnap.exe finds the running one's host window by this class: to
+/// ask for a capture, or to hand it a video to open (ADR-040).
 constexpr wchar_t kHostClassName[] = L"EasnapHostWindow";
 constexpr wchar_t kSingleInstanceMutex[] = L"Local\\Easnap.SingleInstance";
+/// How long a second Easnap.exe waits for the running one to take a video.
+constexpr std::chrono::milliseconds kHandOverTimeout{5000};
 constexpr wchar_t kProductName[] = L"Easnap";
 constexpr UINT kMsgTrayIcon = WM_APP + 1;
 constexpr UINT kTrayIconId = 1;
@@ -160,7 +172,8 @@ constexpr wchar_t kUpdatesPage[] = L"https://github.com/vseprr/easnap/releases";
 #else
 constexpr wchar_t kUpdatesPage[] = L"https://github.com/vseprr/easnap/releases/latest";
 #endif
-/// A second launch posts this to the running instance: start a capture.
+/// A second launch without a file posts this to the running instance: start a
+/// capture.
 constexpr wchar_t kActivateMessageName[] = L"Easnap.StartCapture";
 constexpr int kProbeHotkeyId = 2;
 
@@ -168,6 +181,9 @@ TrayIcon g_tray;
 UINT g_taskbar_created_message = 0;
 UINT g_activate_message = 0;
 bool g_hotkey_registered = false;
+/// A video to open, from this process's command line or handed over by a
+/// second Easnap.exe; acted on from the host window's own message.
+easnap::app::OpenVideoRequests g_video_requests;
 
 /// The tooltip says how to capture: with the shortcut, or by clicking when
 /// another application holds the shortcut.
@@ -546,6 +562,18 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             coordinator.OnVideoProbeCompleted(static_cast<UINT_PTR>(wparam));
             return 0;
 
+        case WM_COPYDATA:
+            // Any program on the desktop can send this. It is checked and only
+            // kept here; the work happens on the message posted below.
+            return g_video_requests.OnCopyData(hwnd, reinterpret_cast<const COPYDATASTRUCT*>(lparam),
+                                               coordinator.AcceptsVideoRequest())
+                       ? TRUE
+                       : FALSE;
+
+        case easnap::app::kMsgOpenVideoRequest:
+            if (const std::optional<std::wstring> path = g_video_requests.Take()) { coordinator.OpenVideo(*path); }
+            return 0;
+
         case easnap::app::kMsgScrollshotProgress:
             coordinator.OnScrollshotProgress(static_cast<uint64_t>(wparam));
             return 0;
@@ -647,24 +675,79 @@ HWND CreateHostWindow(HINSTANCE instance) {
                              instance, nullptr);
 }
 
+struct ArgumentsDeleter {
+    void operator()(LPWSTR* arguments) const noexcept { ::LocalFree(static_cast<HLOCAL>(arguments)); }
+};
+
+/// What this start was asked for (ADR-040); nothing when Windows cannot split
+/// the command line.
+easnap::app::CommandLineRequest ReadCommandLine() {
+    int count = 0;
+    const std::unique_ptr<LPWSTR, ArgumentsDeleter> arguments(::CommandLineToArgvW(::GetCommandLineW(), &count));
+    if (!arguments) {
+        easnap::app::CommandLineRequest request;
+        request.bad = true;
+        return request;
+    }
+    return easnap::app::ParseCommandLine(count, arguments.get());
+}
+
+/// A second Easnap.exe was given a video: the running one opens it. This
+/// process was started by the user, so it, and not the running Easnap, says
+/// why nothing opens. The running Easnap checks the request's form, and its
+/// probe checks the file again on a worker.
+void HandOverVideo(const std::wstring& path) {
+    namespace app = easnap::app;
+    namespace strings = easnap::strings;
+    const easnap::media::VideoRefusal location = easnap::media::CheckVideoLocation(path);
+    if (location != easnap::media::VideoRefusal::None) {
+        // The answer the running Easnap's probe would give.
+        easnap::media::VideoProbeResult refused;
+        refused.reason = location;
+        easnap::ui::ShowErrorMessage(
+            nullptr, strings::Format(app::VideoRefusalMessageId(refused), {app::VideoFileDisplayName(path)}).c_str());
+        return;
+    }
+    switch (app::HandOverOpenVideo(kHostClassName, path, kHandOverTimeout)) {
+        case app::HandOverResult::Taken:
+            break;
+        case app::HandOverResult::Refused:
+            easnap::ui::ShowErrorMessage(
+                nullptr, strings::Format(IDS_VIDEO_HANDOVER_BUSY, {app::VideoFileDisplayName(path)}).c_str());
+            break;
+        case app::HandOverResult::NoRecipient:
+            easnap::ui::ShowMessage(nullptr, strings::Get(IDS_SHELL_ALREADY_RUNNING), kProductName,
+                                    MB_OK | MB_ICONINFORMATION);
+            break;
+    }
+}
+
 }  // namespace
 
-int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR command_line, _In_ int) {
+int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, _In_ int) {
     // A failure is logged once the log is open.
     const bool dll_search_restricted = easnap::platform::RestrictDllSearchPath();
     const DWORD dll_search_error = dll_search_restricted ? ERROR_SUCCESS : ::GetLastError();
     namespace diagnostics = easnap::platform::diagnostics;
     const std::wstring crash_directory = diagnostics::CrashDirectory();
     diagnostics::InstallCrashHandler(crash_directory, L"easnap");
+    const easnap::app::CommandLineRequest request = ReadCommandLine();
     // Started by the entry Settings writes for sign-in: stay quiet.
-    const bool started_at_sign_in = command_line != nullptr && ::wcsstr(command_line, easnap::platform::kStartupArgument) != nullptr;
+    const bool started_at_sign_in = request.startup;
     g_activate_message = ::RegisterWindowMessageW(kActivateMessageName);
 
     // Single instance, so the global shortcut and the notification icon have
-    // exactly one owner. Starting Easnap again is a request to capture: the
-    // running instance is told, and this process ends.
+    // exactly one owner. Starting Easnap again is a request to capture, or,
+    // with a video, a request to open it: the running instance is told, and
+    // this process ends.
     const easnap::platform::UniqueHandle instance_mutex{::CreateMutexW(nullptr, TRUE, kSingleInstanceMutex)};
     if (!instance_mutex || ::GetLastError() == ERROR_ALREADY_EXISTS) {
+        // Anything this process says, it says in the running Easnap's language.
+        easnap::strings::SetPreference(ToPreference(easnap::app::AppSettings::Load().language));
+        if (!request.open_path.empty()) {
+            HandOverVideo(request.open_path);
+            return 0;
+        }
         HWND running = ::FindWindowW(kHostClassName, kProductName);
         if (running != nullptr && g_activate_message != 0) {
             if (!started_at_sign_in) {
@@ -687,6 +770,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
     easnap::platform::LogMessage(L"Easnap %ls started on Windows %lu.%lu build %lu", EASNAP_VERSION_TEXT_W, windows.major,
                                  windows.minor, windows.build);
     diagnostics::LogCrashHandlerStatus();
+    if (request.bad) {
+        // The arguments themselves may name the user's files: not logged.
+        easnap::platform::LogMessage(L"Command line arguments Easnap does not know were ignored");
+    }
     // Windows 10 version 2004. Earlier builds cannot keep Easnap's own windows
     // out of a recording or a scrolling screenshot, and nothing is tested there.
     if (windows.build != 0 && (windows.major < 10 || (windows.major == 10 && windows.build < 19041))) {
@@ -750,6 +837,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
 
     ShowCrashNotice(crash_directory);
     coordinator.OfferRecoveredRecordings();
+    if (!request.open_path.empty()) {
+        // Started with a video ("Open with" while Easnap did not run): opened
+        // the way a second Easnap.exe's hand-over is, from the host window's
+        // own message, once what starting may show has been answered.
+        g_video_requests.Queue(host, request.open_path);
+    }
 
     MSG message{};
     BOOL result = FALSE;

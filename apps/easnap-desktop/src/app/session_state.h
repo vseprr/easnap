@@ -60,6 +60,7 @@ inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
 /// Posted when a save of the settings failed and the user may be told now.
 inline constexpr UINT kMsgSettingsNotSaved = WM_APP + 16;
 // WM_APP + 18 is kMsgVideoProbeCompleted, in app/external_video.h.
+// WM_APP + 19 is kMsgOpenVideoRequest, in app/video_handover.h.
 /// Timer on the host window: retired windows are destroyed once no dialog of
 /// theirs is running its own message loop any more.
 inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
@@ -120,6 +121,14 @@ public:
     /// thread. Only while idle and while no other video is being checked.
     void OpenVideo();
     [[nodiscard]] bool CanOpenVideo() const;
+    /// A video named on the command line or handed over by another Easnap
+    /// process (ADR-040): checked like one chosen in Open video, without the
+    /// dialog. A request, not a command: acted on only while
+    /// AcceptsVideoRequest(); otherwise dropped with a log line and nothing
+    /// is shown.
+    void OpenVideo(const std::wstring& path);
+    /// CanOpenVideo(), and no dialog or menu of Easnap runs its own loop.
+    [[nodiscard]] bool AcceptsVideoRequest() const;
     /// Handles kMsgVideoProbeCompleted: opens the checked video in the trim
     /// view, or says why it cannot open.
     void OnVideoProbeCompleted(VideoProbeJob::Generation generation);
@@ -201,6 +210,13 @@ private:
     void BeginRecordingFinalization();
     void FinishRecordingWorkflow(bool finalized);
     void StopRecordingForShutdown();
+    /// A finished probe whose message never came is dropped, so that a lost
+    /// message cannot keep a video from opening.
+    void DropUndeliveredVideoProbe();
+    /// What follows once a video is named, by the dialog or a request: a file
+    /// in Easnap's own folder is refused, anything else goes to the probe on
+    /// its worker. `origin` completes the log line.
+    void CheckVideo(const std::wstring& path, const wchar_t* origin);
     /// Opens a video the probe accepted in the trim view.
     void BeginExternalTrim(const VideoProbeOutcome& outcome);
 

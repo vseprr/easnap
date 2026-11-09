@@ -405,8 +405,9 @@ void TrimWindow(const RECT& region, const ui::TrimWindow::Source& source, const 
 /// dialog grows with its text, so the answer whose text wraps tallest at the
 /// dialog's text width, naming a file with a long name, is the one that could
 /// need a scroll bar: it is shown and must show whole. Every answer the
-/// production mapping can give is measured, and the refusal of a file in
-/// Easnap's own folder, which Open video gives before the probe. (A dialog
+/// production mapping can give is measured, the refusal of a file in
+/// Easnap's own folder, which Open video gives before the probe, and what a
+/// second Easnap.exe says when the running one is busy. (A dialog
 /// costs about two seconds on a private desktop, so only the tallest is shown.)
 void VideoRefusalDialog() {
     using media::VideoNotSupportedYetCause;
@@ -434,6 +435,9 @@ void VideoRefusalDialog() {
     CHECK(ids.size() == 18);
     // Only the strings of this feature: none is borrowed from another one.
     for (const UINT id : ids) { CHECK(id >= IDS_VIDEO_OPEN_FAILED && id <= IDS_LAST); }
+    // What a second Easnap.exe says, in the same dialog, when the running one
+    // does not take the video it was handed.
+    ids.push_back(IDS_VIDEO_HANDOVER_BUSY);
 
     // Measured as the dialog lays it out: its body font, 480 DIPs wide less
     // its 24 DIP margins, on the monitor under the cursor where it opens.

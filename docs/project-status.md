@@ -121,9 +121,21 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   tier 27 of 27, the Standard tests listed in ADR-040's validation, clang-tidy
   without findings on the changed sources. Not validated: the lab, the tray
   entry and its dialogs in the running application, Exit and sign-out during
-  an opened video's export (no test compiles the coordinator). Not yet built:
-  `--open`, the hand-over from a second instance and the installer's "Open
-  with" entries.
+  an opened video's export (no test compiles the coordinator).
+- **A video file opens from Explorer and the command line** (ADR-040, entry
+  points): real argument parsing (`app/command_line`) replaces the
+  `--startup` substring check, so a path containing `--startup` opens the
+  file instead of starting quietly; `--open <file>` and a bare existing file
+  open it. A second `Easnap.exe` with a file hands the path to the running one
+  with `WM_COPYDATA` (`app/video_handover`); the receiver checks it, keeps
+  one request, posts itself and opens it only while idle with no dialog or
+  menu open, and otherwise drops it with a log line. The second start says
+  why nothing opened (the probe's refusal for a path the receiver refuses, or
+  the new "Easnap is busy" message). The installer offers Easnap under "Open
+  with" for the table's extensions (HKCU only, never the default, removed at
+  uninstall). Validated on the development PC (2026-11-09): see ADR-040's
+  validation. Not validated: the installer itself (not compiled or run),
+  Explorer's "Open with", a real second `Easnap.exe`, and the lab.
 - **Recording stays in the coordinator**, decided after S2: its island
   belongs to the workspace while the region is configured, and what can fail
   is already in classes with tests
@@ -221,6 +233,12 @@ Work toward v1.3 runs on the branch `feature/v1.3`, created on 2026-11-08 from
   (1,489 against 443 µs), about 1.5 ms per frame at 1080p. The memory bound
   was corrected from 5 to 7 frames alive. The lab figures are pending and the
   decision to change the code waits for them.
+- **An external video in the trim view: the media layer**
+  ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md), Proposed):
+  the support table, the probe with its classifier and the exporters, which
+  accept every table entry, are implemented and tested with files the writer
+  made, including a WMV. The flow, the window and the entry points followed
+  (above).
 - **Documentation tidy-up:** the ADR headers follow one style and the
   `test.ps1` parameters are in a table in [testing](testing.md).
 
@@ -512,10 +530,9 @@ post-v1 without a promised date.
 
 On `feature/v1.3-findings`, in this order (the roadmap has the index):
 
-1. The external video entry points
-   ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md), slice V2:
-   the command line, the hand-over to a running instance and the installer's
-   "Open with" entries); the flow (V1) is implemented.
+1. The validation of the external video feature
+   ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md)): the lab
+   run, the installer's "Open with" entries and the owner checklist.
 2. The decision on the per-frame buffers
    ([ADR-042](decisions/ADR-042-recording-frame-buffer-cost.md)), after the
    Soak figures of `recording_frame_cost`.

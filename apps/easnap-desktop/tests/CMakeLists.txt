@@ -285,6 +285,41 @@ add_test(NAME video_probe_job COMMAND test_external_video --probe-job)
 set_tests_properties(video_probe_job PROPERTIES
     LABELS "integration;media;media-foundation;trim" TIMEOUT 120 SKIP_RETURN_CODE 77)
 
+# How a video reaches Easnap from outside (ADR-040, entry points). The command
+# line parser, the hand-over validator and the installer's "Open with" list
+# are Fast; installer_open_with_list reads packaging/easnap.iss from the source
+# tree and skips when it is not there. copydata_handover drives the production
+# receiver with WM_COPYDATA on a private desktop and starts this executable
+# again as the second process that hands a path over.
+add_executable(test_open_requests
+    test_open_requests.cpp
+    ../src/app/command_line.cpp
+    ../src/app/video_handover.cpp
+    ../src/media/video_support.cpp
+    ../src/media/video_probe.cpp
+    ../src/platform/startup_entry.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_open_requests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_open_requests PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    mf mfplat mfuuid mfreadwrite
+    shlwapi comctl32 shell32 ole32 oleaut32 uuid
+    user32 gdi32 advapi32 propsys)
+add_test(NAME command_line_parsing COMMAND test_open_requests --command-line)
+set_tests_properties(command_line_parsing PROPERTIES LABELS "unit;shell" TIMEOUT 30)
+add_test(NAME handover_validation COMMAND test_open_requests --validate)
+set_tests_properties(handover_validation PROPERTIES LABELS "unit;shell" TIMEOUT 30)
+add_test(NAME installer_open_with_list
+    COMMAND test_open_requests --installer "${PROJECT_SOURCE_DIR}/packaging/easnap.iss")
+set_tests_properties(installer_open_with_list PROPERTIES
+    LABELS "unit;packaging;trim" TIMEOUT 30 SKIP_RETURN_CODE 77)
+add_test(NAME copydata_handover
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_open_requests> --handover)
+set_tests_properties(copydata_handover PROPERTIES
+    LABELS "integration;shell;isolated-desktop" TIMEOUT 90)
+
 add_executable(test_media_preview
     test_media_preview.cpp
     ../src/capture/capture_provider.cpp

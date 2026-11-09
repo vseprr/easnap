@@ -7,7 +7,8 @@ These are implemented behaviors. Validation and remaining work are recorded in
 
 Press **Ctrl+Shift+A** (the shortcut can be changed in
 [Settings](#settings-and-the-tray-menu)), choose **Capture** from the tray
-menu, click the tray icon, or start Easnap again while it runs. Each enters
+menu, click the tray icon, or start Easnap again, without a file, while it
+runs. Each enters
 Standby. Reusing the shortcut during a session brings that session forward;
 while one of Easnap's dialogs is open it brings that dialog forward.
 
@@ -353,6 +354,22 @@ on this PC, a file another program is using, a missing file, one Easnap may
 not read, or a file in Easnap's own data folder, where Easnap deletes its
 temporary recordings
 ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md)).
+
+A video can also come from outside Easnap:
+
+- **Open with** in Explorer lists Easnap for these files once the installer has
+  run. The installer offers Easnap there and never makes it the default (you
+  can still choose it in Windows); the portable copy registers nothing.
+- `Easnap.exe --open <file>`, or `Easnap.exe <file>` with an existing file
+  (also a file dropped on `Easnap.exe`), opens it. `--startup` counts only as
+  an argument of its own; other arguments are ignored.
+- When Easnap does not run, it starts and then opens the file.
+- When Easnap runs, the new start hands the file to it and ends. The running
+  Easnap opens it only while nothing else is going on: no capture or trim view,
+  no other video being checked, no Easnap dialog or menu open. Otherwise
+  nothing opens and the new start says that Easnap is busy. A file on a
+  network drive or not on this PC, a missing file or a folder is answered by
+  the new start with the same message as from the tray.
 
 Easnap never changes, moves or deletes the file itself. In its trim view:
 

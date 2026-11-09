@@ -368,4 +368,5 @@ BEGIN
     IDS_EXTERNAL_GIF_FAILED_CONVERTING "Video GIF'e dönüştürülürken dışa aktarılamadı. Video dosyası değişmedi; yeniden deneyebilirsiniz."
     IDS_VIDEO_REFUSED_EASNAP_FOLDER "Easnap ""%1"" dosyasını açamıyor.\n\nBu dosya Easnap'in kendi klasöründe; Easnap orada geçici kayıtlarını temizler. Önce başka bir yere kopyalayın."
     IDS_VIDEO_REFUSED_MEDIA_FOUNDATION "Easnap ""%1"" dosyasını açamıyor.\n\nBu Windows sürümünde Easnap'in video oynatmak ve kırpmak için gerek duyduğu Media Foundation yok. Windows Ayarları'ndaki isteğe bağlı özelliklerden Media Feature Pack'i kurun, sonra Easnap'i yeniden başlatın."
+    IDS_VIDEO_HANDOVER_BUSY "Easnap meşgul olduğu için ""%1"" dosyasını açmadı.\n\nEasnap'te açık olanı bitirin ya da kapatın, sonra videoyu yeniden açın."
 END

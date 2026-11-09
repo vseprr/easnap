@@ -369,4 +369,5 @@ BEGIN
     IDS_EXTERNAL_GIF_FAILED_CONVERTING "GIF export failed while converting the video to GIF. The video file is unchanged; you can try again."
     IDS_VIDEO_REFUSED_EASNAP_FOLDER "Easnap cannot open ""%1"".\n\nThis file is in Easnap's own folder, where Easnap cleans up its temporary recordings. Copy it somewhere else first."
     IDS_VIDEO_REFUSED_MEDIA_FOUNDATION "Easnap cannot open ""%1"".\n\nThis edition of Windows has no Media Foundation, which Easnap needs to play and trim videos. Install the Media Feature Pack from the optional features in Windows Settings, then start Easnap again."
+    IDS_VIDEO_HANDOVER_BUSY "Easnap did not open ""%1"" because it is busy.\n\nFinish or close what is open in Easnap, then open the video again."
 END

@@ -34,6 +34,10 @@ set(EASNAP_SOURCES
     src/app/trim_flow.cpp
     src/app/external_video.h
     src/app/external_video.cpp
+    src/app/command_line.h
+    src/app/command_line.cpp
+    src/app/video_handover.h
+    src/app/video_handover.cpp
     src/app/app_settings.h
     src/app/appearance_theme.h
     src/app/app_settings.cpp

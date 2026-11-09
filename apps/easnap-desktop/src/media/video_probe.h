@@ -165,6 +165,13 @@ struct VideoProbeVerdict final {
 /// not a disk file.
 [[nodiscard]] VideoPathProblem CheckVideoPathSyntax(std::wstring_view path) noexcept;
 
+/// The probe's path step alone: the spelling, the drive and the attributes.
+/// None when `path` names an existing regular file on a local drive whose
+/// data is on this PC; otherwise the answer the probe gives at that step.
+/// Never opens the file, so it costs no more than reading the attributes of a
+/// local file.
+[[nodiscard]] VideoRefusal CheckVideoLocation(const std::wstring& path);
+
 struct VideoProbeResult final {
     /// The trim view may open the file. `reason` is then None, or
     /// TooLargeForMp4 when only GIF export is possible.

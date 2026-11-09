@@ -1,6 +1,6 @@
 # ADR-040 — Opening an external video in the trim view
 
-**Status:** Proposed; media layer and flow implemented, entry points pending (the tray entry is implemented; the command line, the hand-over and the installer entries are not)  
+**Status:** Proposed; implemented (media layer, flow, entry points); validation pending  
 **Date:** 2026-11-09
 
 ## Context
@@ -299,7 +299,7 @@ the preview and the export use the same one.
 | Tray "Open video…" | Placed after Capture, enabled only when Idle. The file dialog declares a `platform::ModalLoopScope`. |
 | `Easnap.exe --open <path>` and a bare path | What Explorer's "Open with" runs. Real argument parsing with `CommandLineToArgvW` replaces the `--startup` substring check. |
 | Second instance | Hands the path to the running one with `WM_COPYDATA` and exits. If no instance runs, the new one opens the file. |
-| Installer "Open with" | HKCU entries only (ProgID `Easnap.Video`, `OpenWithProgids` per extension, `Applications\Easnap.exe\SupportedTypes`). Offered, never made the default, `UserChoice` never touched, removed at uninstall. The portable ZIP writes nothing. |
+| Installer "Open with" | HKCU entries only (ProgID `Easnap.Video`, `OpenWithProgids` per extension, `Applications\Easnap.exe\SupportedTypes`). Offered, never made the default by the installer (the user can still choose it in Windows), `UserChoice` never touched, removed at uninstall. The portable ZIP writes nothing. |
 
 The hand-over message is a request from any process on the desktop, so the
 receiver validates it: one absolute, local, existing file, with a bounded
@@ -312,6 +312,77 @@ The installer's extension list is the table's list. A Fast test reads
 `packaging/easnap.iss` and fails when the two differ.
 
 There is no drag-and-drop in v1.
+
+#### As implemented by the entry-point slice (2026-11-09)
+
+The entry-point slice (`app/command_line`, `app/video_handover`, `main.cpp`,
+`packaging/easnap.iss`) follows the table above, with these differences and
+additions:
+
+- **Arguments.** `ParseCommandLine` reads what `CommandLineToArgvW` splits.
+  `--startup` and `--open` count only as whole arguments, in any ASCII case;
+  the argument after `--open` is the path as given; a bare argument is a path
+  only when it names an existing file; the first path wins. A relative path is
+  made absolute against the current directory where it is parsed, so the
+  running Easnap is never handed one. A UNC path or a URL is kept, and the
+  location check refuses it. Ignored arguments are logged as one line that
+  does not repeat them, since they may name the user's files.
+- **The location check is the probe's path step.** `media::CheckVideoLocation`
+  runs the probe's own spelling, drive-type and attribute checks without
+  opening the file; it answers None only for an existing regular file on a
+  local drive whose data is on this PC. The sender uses it. The receiver does
+  not (a deviation from "one absolute, local, existing file" above): it checks
+  the payload and the spelling only, so no drive is touched inside
+  `WM_COPYDATA` on the UI thread; whether the file exists and is local is the
+  probe's answer, on its worker, as for a file chosen in Open video.
+- **The hand-over.** `dwData` is `0x45564F50` ("EVOP"); the payload is the
+  UTF-16 path with its terminator, at most 32 KiB, with no other NUL;
+  `ParseHandOver` checks this and the spelling (a drive letter, or `\\?\` and
+  a drive letter). The sender finds the host window by its class
+  (`EasnapHostWindow`) and sends only when that window's process runs an
+  executable of its own file name. The receiver keeps one request at a time,
+  answers TRUE only when it kept it, and posts itself `WM_APP + 19`; the
+  coordinator's `OpenVideo(path)` then starts the probe. Whether Easnap
+  accepts (`AcceptsVideoRequest`: Idle, no video being checked, no dialog or
+  menu running its own loop) is asked both when the message arrives and when
+  the posted message is handled. A request that fails either is dropped with a
+  log line. No message filter is opened, so an Easnap running elevated does
+  not take a hand-over from a start that is not.
+- **Known limits of the hand-over.** `SendMessageTimeout` stops waiting after
+  five seconds, but Windows still delivers the message: a running Easnap whose
+  UI thread was stuck can open the video after the new start has said it is
+  busy. Opening several files at once from Explorer starts one `Easnap.exe`
+  per file, so the first opens and every other one says Easnap is busy; a
+  `MultiSelectModel` value on the verb, which would hand all files to one
+  start, is a later option.
+- **The new start speaks; the running Easnap does not.** The second
+  `Easnap.exe` was started by the user, so it, not the running Easnap, tells
+  the user why nothing opens: for a path that is not an existing local file,
+  the probe's own refusal message, the same one the tray entry gives; when the
+  running Easnap refuses or does not answer within five seconds, that Easnap
+  is busy (`IDS_VIDEO_HANDOVER_BUSY`, the one new string, ID 21362). It reads
+  the saved language first, which the "already running" message now also
+  follows. The running Easnap shows nothing for a request it drops. A request
+  it takes goes on as a file chosen in Open video does: a file in Easnap's own
+  folder is refused there, and the probe's answer is shown there.
+- **The first start with a file** queues the path through the same receiver,
+  after the tray icon, the ready notice, the crash notice and the offer of
+  recovered recordings. If the user opens a recovered recording there, the
+  file is dropped like any request that arrives while a trim view is open.
+- **A start during the first one's start-up**, before its host window exists,
+  says "already running", as a second start without a file always has.
+- **The installer** writes the entries planned above, with `FriendlyAppName`
+  "Easnap" and Easnap.exe's icon on both of Easnap's keys. Easnap's own keys
+  (`Easnap.Video`, `Applications\Easnap.exe`) are removed whole at uninstall;
+  under an extension only Easnap's value is removed, and the extension's key
+  when it is left empty. `ChangesAssociations=yes` tells Explorer when setup
+  and uninstall change them. The ProgID has no type name: the installer never
+  makes it a default, so no file shows it as its type unless the user chooses
+  Easnap as the default in Windows.
+- **Tests.** The validator runs on the Fast tier as planned, as
+  `handover_validation` beside `command_line_parsing` and
+  `installer_open_with_list`; the window and the second process run on the
+  Standard tier as `copydata_handover`, on a private desktop.
 
 ### Not supported in v1
 
@@ -352,7 +423,8 @@ There is no drag-and-drop in v1.
   are large.
 - The window and the strings now carry two source kinds; both are measured in
   the text-fit test.
-- Registered file types are offered, never default, so installing changes no
+- Registered file types are offered, never made the default by the installer
+  (the user can still choose Easnap in Windows), so installing changes no
   existing association.
 
 ## Validation
@@ -388,8 +460,43 @@ seconds as MP4 took about 0.55 s, three seconds as GIF about 0.9 s. Nothing
 has run in the lab. Not run anywhere: the tray entry, the Open and Save
 dialogs and the reason dialog in the running application; Exit, sign-out and
 a probe result held back by an open dialog, because no test compiles the
-coordinator; and the later slices (installer list, argument parsing,
-hand-over, owner checklist).
+coordinator; and the owner checklist.
+
+The entry-point slice, on the host only (Windows 10 22H2, 2026-11-09): the
+Release build without warnings; the Fast tier 30 of 30, with
+`command_line_parsing` (37 checks: the sign-in command exactly as Settings
+writes it, `--startup` in any case, a folder named `--startup` and a file
+whose name ends in it opening the file, quoted paths with spaces, `--open`
+with a missing file, a UNC path and a URL kept for the location check, a
+bare missing file, a folder, unknown options, `--open` without a path, second
+paths ignored, relative paths made absolute), `handover_validation` (34
+checks: wrong magic, no terminator, a NUL inside, odd and oversized payloads,
+the largest accepted one, relative, drive-relative, UNC, `\\?\UNC`, URL and
+device spellings; the location check on an existing file, a `\\?\` spelling,
+a missing file, a folder, a UNC path, a URL and a drive that does not exist)
+and `installer_open_with_list` (both lists equal the table; HKCU only; no
+`UserChoice`; no extension default value; the command is
+`"{app}\Easnap.exe" --open "%1"`; uninstall flags, and never `uninsdeletekey`
+under an extension, whose key other programs share; section names and
+indented comments read as Inno Setup reads them; copies of the script with
+one extension missing and a default value added, and with `uninsdeletekey` on
+`.mp4` under an indented lower-case section name, failed as they should);
+`executable_imports` and `strings_catalog` unchanged. On the Standard tier
+`copydata_handover` (44 checks, private desktop: a valid request kept and
+opened only from the posted message, a second request refused while one
+waits, a busy receiver, eight malformed payloads and spellings that are not a
+local path dropped, a missing file and a folder kept without touching the
+disk and left to the probe, this process's own request; then the test
+started again as a second process with the production sender: taken,
+refused while busy, refused for a relative path, and no recipient for an
+unknown class), `text_fits_in_every_language` with
+the busy message among the measured refusals (the Media Foundation sentence
+stays the tallest), `trim_flow_production`, `video_probe_job`,
+`video_probe_files` and `strings_catalog`. clang-tidy found nothing in the
+changed sources. Not run: the installer (neither compiled with ISCC nor
+installed or uninstalled), Explorer's "Open with", a real second `Easnap.exe`
+against a running Easnap (the hand-over test uses its own window and class),
+`OpenVideo(path)` in the coordinator (no test compiles it), and the lab.
 
 - **Fast tier.** Table contents; the classifier from facts and HRESULTs,
   including protected and a missing codec extension; the installer list equals
@@ -413,8 +520,9 @@ hand-over, owner checklist).
 - **Text fit.** The reason dialog and the trim window, both source kinds, in
   `text_fits_in_every_language`.
 - **Owner checklist** (test-created files only, evidence kept out of the
-  repository): open from the tray; open with "Open with" while Easnap runs and
-  while it does not; Close and Exit during an export; Save with the source's
+  repository): open from the tray; open with "Open with" while Easnap runs,
+  while it does not and while it is busy (the second start's message); Close
+  and Exit during an export; Save with the source's
   own name refused; Save as MP4 and as GIF; the source file untouched
   afterwards.
 - **What the lab can and cannot verify.** The lab can run everything above

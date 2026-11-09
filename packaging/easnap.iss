@@ -60,6 +60,9 @@ WizardStyle=modern
 ; uninstall ask the user to exit it instead of replacing files in use.
 AppMutex=Local\Easnap.SingleInstance
 CloseApplications=no
+; The "Open with" entries below: Explorer is told when setup and uninstall
+; change them, so its list is current without signing out.
+ChangesAssociations=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -78,6 +81,41 @@ Source: "{#SourceDir}\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags
 ; "Start Easnap when I sign in to Windows" in Settings writes this value. The
 ; installer never creates it; the uninstaller removes it.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "Easnap"; Flags: uninsdeletevalue dontcreatekey
+
+; "Open with" for the videos Easnap opens (ADR-040), for the current user
+; only. Easnap is offered in Explorer's "Open with" list and never made the
+; default: no extension's default value is written and UserChoice is never
+; touched, so installing changes no existing association. Uninstalling removes
+; Easnap's own keys and its values under the extensions. The extensions are
+; the support table's (src/media/video_support.cpp); the Fast test
+; installer_open_with_list fails when the two lists differ. The portable ZIP
+; writes none of this.
+Root: HKCU; Subkey: "Software\Classes\Easnap.Video"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Easnap.Video\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\Easnap.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\Easnap.Video\shell\open"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "Easnap"
+Root: HKCU; Subkey: "Software\Classes\Easnap.Video\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Easnap.exe"" --open ""%1"""
+Root: HKCU; Subkey: "Software\Classes\Applications\Easnap.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "Easnap"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Applications\Easnap.exe\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\Easnap.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\Applications\Easnap.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\Easnap.exe"" --open ""%1"""
+Root: HKCU; Subkey: "Software\Classes\Applications\Easnap.exe\SupportedTypes"; ValueType: string; ValueName: ".mp4"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\Applications\Easnap.exe\SupportedTypes"; ValueType: string; ValueName: ".m4v"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\Applications\Easnap.exe\SupportedTypes"; ValueType: string; ValueName: ".mov"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\Applications\Easnap.exe\SupportedTypes"; ValueType: string; ValueName: ".wmv"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\Applications\Easnap.exe\SupportedTypes"; ValueType: string; ValueName: ".asf"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\Applications\Easnap.exe\SupportedTypes"; ValueType: string; ValueName: ".avi"; ValueData: ""
+; An extension key Easnap created is removed when nothing else is left in it.
+Root: HKCU; Subkey: "Software\Classes\.mp4"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.mp4\OpenWithProgids"; ValueType: string; ValueName: "Easnap.Video"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.m4v"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.m4v\OpenWithProgids"; ValueType: string; ValueName: "Easnap.Video"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.mov"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.mov\OpenWithProgids"; ValueType: string; ValueName: "Easnap.Video"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.wmv"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.wmv\OpenWithProgids"; ValueType: string; ValueName: "Easnap.Video"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.asf"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.asf\OpenWithProgids"; ValueType: string; ValueName: "Easnap.Video"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.avi"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\.avi\OpenWithProgids"; ValueType: string; ValueName: "Easnap.Video"; ValueData: ""; Flags: uninsdeletevalue uninsdeletekeyifempty
 
 [Icons]
 Name: "{group}\Easnap"; Filename: "{app}\Easnap.exe"

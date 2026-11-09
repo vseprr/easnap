@@ -379,4 +379,7 @@
 #define IDS_VIDEO_REFUSED_EASNAP_FOLDER 21360
 #define IDS_VIDEO_REFUSED_MEDIA_FOUNDATION 21361
 
-#define IDS_LAST 21361
+// Opening a video from Explorer or the command line (ADR-040, entry points) ---
+#define IDS_VIDEO_HANDOVER_BUSY 21362
+
+#define IDS_LAST 21362

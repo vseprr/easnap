@@ -875,11 +875,7 @@ void CaptureCoordinator::OpenVideo() {
         ::MessageBeep(MB_ICONWARNING);  // One video is checked at a time.
         return;
     }
-    if (video_probe_.busy() && video_probe_.TryTake(video_probe_.generation()).has_value()) {
-        // Finished, but its message never came: dropped, so that a lost
-        // message cannot keep Open from working.
-        platform::LogMessage(L"[Probe] A probe result that was never delivered was dropped");
-    }
+    DropUndeliveredVideoProbe();
     const OpenVideoDialogText text{strings::Get(IDS_OPEN_VIDEO_TITLE), strings::Get(IDS_OPEN_VIDEO_FILE_TYPE),
                                    strings::Get(IDS_OPEN_VIDEO_ALL_FILES)};
     // No owner: the hidden host window would pin the dialog to the corner of
@@ -888,20 +884,50 @@ void CaptureCoordinator::OpenVideo() {
     if (!path.has_value() || !initialized_ || state() != SessionState::Idle || video_probe_.busy()) {
         return;
     }
+    CheckVideo(*path, L"the user chose");
+}
+
+bool CaptureCoordinator::AcceptsVideoRequest() const {
+    return CanOpenVideo() && !platform::ModalLoopActive() && !ui::PopupActive();
+}
+
+void CaptureCoordinator::OpenVideo(const std::wstring& path) {
+    // Asked for from outside this process's own windows: never interrupts what
+    // the user is doing, and is not remembered for later.
+    if (!AcceptsVideoRequest()) {
+        platform::LogMessage(L"[Probe] A video request was dropped: Easnap is busy (%s)", ToString(state()));
+        return;
+    }
+    DropUndeliveredVideoProbe();
+    if (video_probe_.busy()) {
+        return;
+    }
+    CheckVideo(path, L"named on a command line");
+}
+
+void CaptureCoordinator::DropUndeliveredVideoProbe() {
+    if (video_probe_.busy() && video_probe_.TryTake(video_probe_.generation()).has_value()) {
+        // Finished, but its message never came: dropped, so that a lost
+        // message cannot keep Open from working.
+        platform::LogMessage(L"[Probe] A probe result that was never delivered was dropped");
+    }
+}
+
+void CaptureCoordinator::CheckVideo(const std::wstring& path, const wchar_t* origin) {
     // Easnap deletes what is in its own folder: a recording left there must
     // not become a file the user believes is safe (ADR-040).
-    if (IsInsideEasnapFolder(*path, platform::AppDataDirectory())) {
+    if (IsInsideEasnapFolder(path, platform::AppDataDirectory())) {
         platform::LogMessage(L"[Probe] A video inside Easnap's data folder was not opened");
-        ui::ShowErrorMessage(
-            nullptr, strings::Format(IDS_VIDEO_REFUSED_EASNAP_FOLDER, {VideoFileDisplayName(*path)}).c_str());
+        ui::ShowErrorMessage(nullptr,
+                             strings::Format(IDS_VIDEO_REFUSED_EASNAP_FOLDER, {VideoFileDisplayName(path)}).c_str());
         return;
     }
     // The probe reads the file and may wait for the disk: never on this thread.
-    if (!video_probe_.Start(host_window_, kMsgVideoProbeCompleted, *path, kVideoProbeDeadline)) {
-        ui::ShowErrorMessage(nullptr, strings::Format(IDS_VIDEO_OPEN_FAILED, {VideoFileDisplayName(*path)}).c_str());
+    if (!video_probe_.Start(host_window_, kMsgVideoProbeCompleted, path, kVideoProbeDeadline)) {
+        ui::ShowErrorMessage(nullptr, strings::Format(IDS_VIDEO_OPEN_FAILED, {VideoFileDisplayName(path)}).c_str());
         return;
     }
-    platform::LogMessage(L"[Probe] Checking a video the user chose");
+    platform::LogMessage(L"[Probe] Checking a video %s", origin);
 }
 
 void CaptureCoordinator::OnVideoProbeTimer() { OnVideoProbeCompleted(video_probe_.generation()); }

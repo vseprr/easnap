@@ -791,6 +791,20 @@ VideoPathProblem CheckVideoPathSyntax(std::wstring_view path) noexcept {
     return VideoPathProblem::NotAbsolute;
 }
 
+VideoRefusal CheckVideoLocation(const std::wstring& path) {
+    VideoProbeFacts facts;
+    facts.step = VideoProbeStep::Path;
+    facts.path_problem = CheckVideoPathSyntax(path);
+    HRESULT result = S_OK;
+    if (facts.path_problem == VideoPathProblem::None) {
+        result = CheckLocation(path, facts);
+        if (SUCCEEDED(result) && facts.path_problem == VideoPathProblem::None) {
+            return VideoRefusal::None;
+        }
+    }
+    return ClassifyVideoProbe(facts, result).reason;
+}
+
 VideoProbeVerdict ClassifyVideoProbe(const VideoProbeFacts& facts, HRESULT error) noexcept {
     if (facts.deadline_passed) {
         return {VideoRefusal::Timeout};

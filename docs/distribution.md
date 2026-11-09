@@ -56,6 +56,22 @@ log and crash reports under `%LOCALAPPDATA%\Easnap` should be removed as well;
 a silent uninstall keeps them. A recording that was not saved is never removed
 by the uninstaller.
 
+The installer also offers Easnap in Explorer's "Open with" list for the videos
+it opens (`.mp4`, `.m4v`, `.mov`, `.wmv`, `.asf`, `.avi`), for the current user
+only, under `HKCU\Software\Classes`: the ProgID `Easnap.Video` (its command is
+`"<folder>\Easnap.exe" --open "%1"`), an `Easnap.Video` value under each
+extension's `OpenWithProgids`, and `Applications\Easnap.exe` with the same
+extensions as `SupportedTypes`. The installer offers Easnap and never makes it
+the default: no extension's default value is written and `UserChoice` is never
+touched, so no existing association changes; the user can still choose Easnap
+as the default in Windows. Setup and uninstall tell Explorer that associations
+changed (`ChangesAssociations=yes`). Uninstalling removes Easnap's two keys and its
+value under each extension, and an extension key it leaves empty. The list is
+the support table's; the Fast test `installer_open_with_list` fails when they
+differ ([ADR-040](decisions/ADR-040-external-video-in-the-trim-view.md)). The
+portable ZIP writes nothing to the registry; `Easnap.exe --open <file>` works
+from it all the same.
+
 A prerelease is not a second channel. It has the same installer identity, the
 same single-instance rule and the same data folder as a stable version:
 installing a beta replaces an installed stable version and uses its settings,
