@@ -4,6 +4,8 @@
 // messages on a private window station and desktop: nothing is shown on the
 // user's screen, and the clipboard the copy check fills is the station's own.
 
+#include "platform/image_export.h"
+#include "temp_folder.h"
 #include "ui/native_controls.h"
 #include "ui/pin_layout.h"
 #include "ui/pinned_images.h"
@@ -117,6 +119,22 @@ void PumpPosted() {
     }
 }
 
+/// Runs this thread's messages until `done` holds or the deadline passes: a
+/// copy or save runs on a worker and reports back with a message.
+template <typename Condition>
+bool PumpUntil(Condition done, DWORD timeout_ms = 30000) {
+    const ULONGLONG deadline = ::GetTickCount64() + timeout_ms;
+    while (!done()) {
+        PumpPosted();
+        if (done()) { return true; }
+        const ULONGLONG now = ::GetTickCount64();
+        if (now >= deadline) { return false; }
+        ::MsgWaitForMultipleObjects(0, nullptr, FALSE, static_cast<DWORD>((std::min<ULONGLONG>)(deadline - now, 100)),
+                                    QS_ALLINPUT);
+    }
+    return true;
+}
+
 RECT SourceOnPrimary(LONG width, LONG height) {
     const auto monitor = platform::MonitorForPoint({0, 0});
     const LONG left = monitor.work_area.left + 120;
@@ -217,8 +235,11 @@ void WindowAndPicture() {
     ::SendMessageW(pin, WM_COMMAND, ui::kPinCommandOriginalSize, 0);
     CHECK(Width(WindowRect(pin)) == 200 + 2 * border);
 
-    // Copy from the menu: the full image on this station's clipboard.
+    // Copy from the menu: the full image on this station's clipboard, once
+    // the worker has prepared it.
     ::SendMessageW(pin, WM_COMMAND, ui::kPinCommandCopy, 0);
+    CHECK(platform::ImageExportActive());
+    CHECK(PumpUntil([] { return !platform::ImageExportActive(); }));
     CHECK(::IsClipboardFormatAvailable(CF_DIB));
     const bool opened = ::OpenClipboard(nullptr) != FALSE;
     CHECK(opened);
@@ -372,6 +393,33 @@ void CloseWhileBusy() {
     CHECK(!::IsWindow(g_busy.pin) && pins.count() == 0);
 }
 
+/// Save from a pin with quick save: written into the screenshots folder (one
+/// of the test's own) on a worker. A close asked for meanwhile waits for it.
+void QuickSave() {
+    test::TempFolder folder(L"easnap-pin-quick-save");
+    CHECK(folder.ok());
+    app::AppSettings settings;
+    settings.quick_save_images = true;
+    settings.image_folder = folder.path();
+    ui::PinnedImages pins(&settings);
+    const platform::BgraImage image = Picture(200, 120);
+    CHECK(pins.Pin(image, SourceOnPrimary(200, 120)));
+    const HWND pin = pins.windows().front();
+    KeyWithControl(pin, 'S');
+    CHECK(platform::ImageExportActive());
+    ::SendMessageW(pin, WM_CLOSE, 0, 0);
+    CHECK(::IsWindow(pin) != FALSE);  // Busy: it closes once the file is there.
+    CHECK(PumpUntil([] { return !platform::ImageExportActive(); }));
+    CHECK(!::IsWindow(pin) && pins.count() == 0);
+    const std::vector<std::wstring> saved = folder.Files(L"Easnap*.png");
+    CHECK(saved.size() == 1 && folder.StagedFiles() == 0 && settings.last_image_directory.empty());
+    if (saved.size() == 1) {
+        platform::BgraImage decoded;
+        CHECK(test::DecodeImageFile(folder.File(saved.front().c_str()), decoded));
+        CHECK(decoded.width == 200 && decoded.height == 120 && decoded.pixels == image.pixels);
+    }
+}
+
 void PlacementOfOtherImages() {
     app::AppSettings settings;
     ui::PinnedImages pins(&settings);
@@ -400,10 +448,13 @@ int main() {
             ++failed;
             return;
         }
+        ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         WindowAndPicture();
         ClosingPins();
         CloseWhileBusy();
+        QuickSave();
         PlacementOfOtherImages();
+        ::CoUninitialize();
         // Notices from the copy check close on their own timers; end them here.
         ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM) -> BOOL {
             wchar_t name[64]{};

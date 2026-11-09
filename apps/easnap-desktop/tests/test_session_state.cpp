@@ -111,10 +111,16 @@ void TestStateNamesAndGroups() {
 }
 
 void TestSessionEntryAndCancellation() {
-    CHECK(easnap::app::kSessionTransitionCount == 35);
+    CHECK(easnap::app::kSessionTransitionCount == 36);
     CHECK(IsSessionTransitionLegal(SessionState::Idle, SessionState::RegionSelecting));
     CHECK(IsSessionTransitionLegal(SessionState::RegionSelecting, SessionState::Idle));
     CHECK(!IsSessionTransitionLegal(SessionState::Idle, SessionState::RecordingActive));
+    // A video the user opened goes from Idle straight to trimming (ADR-040),
+    // but never straight to an export or back into a recording.
+    CHECK(IsSessionTransitionLegal(SessionState::Idle, SessionState::RecordingTrimming));
+    CHECK(!IsSessionTransitionLegal(SessionState::Idle, SessionState::Exporting));
+    CHECK(!IsSessionTransitionLegal(SessionState::RecordingTrimming, SessionState::RecordingActive));
+    CHECK(!IsSessionTransitionLegal(SessionState::RecordingTrimming, SessionState::RecordingFinalizing));
 }
 
 void TestScreenshotBranch() {
@@ -536,36 +542,61 @@ void TestRecordingRegionAndElapsedFormatting() {
 
 }  // namespace
 
-/// What exiting would lose, for every state: the table the exit question and
-/// the shutdown block reason are chosen from.
+/// What exiting would lose, for every state and both kinds of video in the
+/// trim view: the table the exit question and the shutdown block reason are
+/// chosen from (ADR-031, ADR-040).
 void TestPendingWork() {
     using easnap::app::PendingWork;
     using easnap::app::PendingWorkFor;
+    using easnap::app::TrimSourceKind;
     struct Row {
         SessionState state;
         PendingWork plain;
         PendingWork with_edits;
+        PendingWork exporting;
     };
     const Row rows[] = {
-        {SessionState::Idle, PendingWork::None, PendingWork::None},
-        {SessionState::RegionSelecting, PendingWork::None, PendingWork::None},
-        {SessionState::ScreenshotEditing, PendingWork::None, PendingWork::Image},
-        {SessionState::ScreenshotExporting, PendingWork::None, PendingWork::None},
-        {SessionState::RecordingConfiguring, PendingWork::None, PendingWork::None},
-        {SessionState::RecordingActive, PendingWork::Recording, PendingWork::Recording},
-        {SessionState::RecordingPaused, PendingWork::Recording, PendingWork::Recording},
-        {SessionState::RecordingFinalizing, PendingWork::Recording, PendingWork::Recording},
-        {SessionState::RecordingTrimming, PendingWork::UnsavedRecording, PendingWork::UnsavedRecording},
-        {SessionState::Exporting, PendingWork::Export, PendingWork::Export},
-        {SessionState::ScrollshotConfiguring, PendingWork::None, PendingWork::None},
-        {SessionState::ScrollshotCapturing, PendingWork::Image, PendingWork::Image},
-        {SessionState::ScrollshotReview, PendingWork::Image, PendingWork::Image},
+        {SessionState::Idle, PendingWork::None, PendingWork::None, PendingWork::Image},
+        {SessionState::RegionSelecting, PendingWork::None, PendingWork::None, PendingWork::Image},
+        {SessionState::ScreenshotEditing, PendingWork::None, PendingWork::Image, PendingWork::Image},
+        {SessionState::ScreenshotExporting, PendingWork::None, PendingWork::None, PendingWork::Image},
+        {SessionState::RecordingConfiguring, PendingWork::None, PendingWork::None, PendingWork::Image},
+        {SessionState::RecordingActive, PendingWork::Recording, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingPaused, PendingWork::Recording, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingFinalizing, PendingWork::Recording, PendingWork::Recording, PendingWork::Recording},
+        {SessionState::RecordingTrimming, PendingWork::UnsavedRecording, PendingWork::UnsavedRecording,
+         PendingWork::UnsavedRecording},
+        {SessionState::Exporting, PendingWork::Export, PendingWork::Export, PendingWork::Export},
+        {SessionState::ScrollshotConfiguring, PendingWork::None, PendingWork::None, PendingWork::Image},
+        {SessionState::ScrollshotCapturing, PendingWork::Image, PendingWork::Image, PendingWork::Image},
+        {SessionState::ScrollshotReview, PendingWork::Image, PendingWork::Image, PendingWork::Image},
     };
     CHECK(sizeof(rows) / sizeof(rows[0]) == easnap::app::kSessionStateCount);
     for (const Row& row : rows) {
-        CHECK(PendingWorkFor(row.state, false) == row.plain);
-        CHECK(PendingWorkFor(row.state, true) == row.with_edits);
+        CHECK(PendingWorkFor(row.state, false, false, TrimSourceKind::Owned) == row.plain);
+        CHECK(PendingWorkFor(row.state, true, false, TrimSourceKind::Owned) == row.with_edits);
+        CHECK(PendingWorkFor(row.state, false, true, TrimSourceKind::Owned) == row.exporting);
+        CHECK(PendingWorkFor(row.state, true, true, TrimSourceKind::Owned) ==
+              (row.with_edits == PendingWork::None ? PendingWork::Image : row.with_edits));
     }
+    // An opened video is the user's own file: trimming it is never unsaved
+    // work, and only its export is pending. Every other state answers as before.
+    for (const Row& row : rows) {
+        const bool trimming = row.state == SessionState::RecordingTrimming;
+        for (const bool edits : {false, true}) {
+            for (const bool image_export : {false, true}) {
+                const PendingWork owned = PendingWorkFor(row.state, edits, image_export, TrimSourceKind::Owned);
+                const PendingWork external = PendingWorkFor(row.state, edits, image_export, TrimSourceKind::External);
+                if (trimming) {
+                    // A pinned image that is still being saved still counts.
+                    CHECK(external == (image_export ? PendingWork::Image : PendingWork::None));
+                } else {
+                    CHECK(external == owned);
+                }
+            }
+        }
+    }
+    CHECK(PendingWorkFor(SessionState::Exporting, false, false, TrimSourceKind::External) == PendingWork::Export);
 }
 
 /// What H.264 can hold: 36,864 macroblocks and 8,688 pixels on a side.
@@ -582,6 +613,76 @@ void TestRecordingRegionFitsH264() {
     CHECK(!RecordingRegionFitsH264(RECT{0, 0, 16, 8690}));
     CHECK(!RecordingRegionFitsH264(RECT{0, 0, 8704, 16}));
     CHECK(!RecordingRegionFitsH264(RECT{0, 0, 0, 100}) && !RecordingRegionFitsH264(RECT{10, 10, 5, 5}));
+}
+
+/// A settings file that cannot be written keeps what it held, and Save says why.
+void TestSettingsSaveFailures() {
+    using easnap::app::SettingsSaveError;
+    const std::wstring base = (std::filesystem::temp_directory_path() /
+                               (L"easnap_unwritable_" + std::to_wstring(::GetCurrentProcessId())))
+                                  .wstring();
+    const std::wstring path = base + L".ini";
+    std::error_code error;
+    ::SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);  // Left by an interrupted run.
+    std::filesystem::remove(path, error);
+
+    AppSettings earlier;
+    earlier.capture_cursor = true;
+    earlier.image_folder = L"C:\\Earlier";
+    CHECK(earlier.Save(path));
+    CHECK(::SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_READONLY) != FALSE);
+    AppSettings later = earlier;
+    later.capture_cursor = false;
+    later.image_folder = L"C:\\Later";
+    SettingsSaveError failure;
+    CHECK(!later.Save(path, &failure));
+    CHECK(failure.kind == SettingsSaveError::Kind::WriteFailed);
+    CHECK(failure.code == ERROR_ACCESS_DENIED);
+    const AppSettings kept = AppSettings::Load(path);
+    CHECK(kept.capture_cursor && kept.image_folder == L"C:\\Earlier");
+    CHECK(::SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL) != FALSE);
+    std::filesystem::remove(path, error);
+
+    // The folder the file belongs in is a file.
+    const std::wstring blocker = base + L".folder";
+    {
+        std::ofstream file(blocker, std::ios::binary);
+        file << "not a folder";
+    }
+    failure = {};
+    CHECK(!earlier.Save(blocker + L"\\settings.ini", &failure));
+    CHECK(failure.kind == SettingsSaveError::Kind::WriteFailed);
+    CHECK(failure.code == ERROR_DIRECTORY);
+    CHECK(std::filesystem::is_regular_file(blocker, error));
+    std::filesystem::remove(blocker, error);
+
+    // A value out of range is refused before anything is written.
+    AppSettings invalid;
+    invalid.language = static_cast<easnap::app::LanguageSetting>(7);
+    failure = {};
+    CHECK(!invalid.Save(path, &failure));
+    CHECK(failure.kind == SettingsSaveError::Kind::InvalidValue);
+    CHECK(!std::filesystem::exists(path, error));
+}
+
+/// When a failed save is told: once per run, while idle, with no dialog or
+/// menu of Easnap open.
+void TestSettingsNoticeDecision() {
+    using easnap::app::ShouldTellSettingsNotSaved;
+    CHECK(ShouldTellSettingsNotSaved(SessionState::Idle, false, false));
+    CHECK(!ShouldTellSettingsNotSaved(SessionState::Idle, true, false));   // A dialog or menu is open.
+    CHECK(!ShouldTellSettingsNotSaved(SessionState::Idle, false, true));   // Told already.
+    CHECK(!ShouldTellSettingsNotSaved(SessionState::Idle, true, true));
+    // Never during a session: the save after its end finds the failure again.
+    for (std::size_t value = 0; value < easnap::app::kSessionStateCount; ++value) {
+        const auto state = static_cast<SessionState>(value);
+        if (state == SessionState::Idle) { continue; }
+        for (const bool dialog_open : {false, true}) {
+            for (const bool already_told : {false, true}) {
+                CHECK(!ShouldTellSettingsNotSaved(state, dialog_open, already_told));
+            }
+        }
+    }
 }
 
 int main() {
@@ -601,6 +702,8 @@ int main() {
     TestAudioSourceSettingsPersistence();
     TestAppearanceSettingsPersistence();
     TestSettingsLanguageAndFolders();
+    TestSettingsSaveFailures();
+    TestSettingsNoticeDecision();
     TestBothRecordingTransitions();
     TestRecordingRegionAndElapsedFormatting();
 

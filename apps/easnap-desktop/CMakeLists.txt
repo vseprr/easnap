@@ -32,6 +32,12 @@ set(EASNAP_SOURCES
     src/app/trim_workflow.cpp
     src/app/trim_flow.h
     src/app/trim_flow.cpp
+    src/app/external_video.h
+    src/app/external_video.cpp
+    src/app/command_line.h
+    src/app/command_line.cpp
+    src/app/video_handover.h
+    src/app/video_handover.cpp
     src/app/app_settings.h
     src/app/appearance_theme.h
     src/app/app_settings.cpp
@@ -108,6 +114,10 @@ set(EASNAP_SOURCES
     src/media/preview_transport.h
     src/media/preview_transport.cpp
     src/media/mp4_trim_exporter.cpp
+    src/media/video_support.h
+    src/media/video_support.cpp
+    src/media/video_probe.h
+    src/media/video_probe.cpp
     src/media/temp_session.h
     src/media/wasapi_audio_provider.h
     src/media/wasapi_audio_provider.cpp
@@ -117,6 +127,8 @@ set(EASNAP_SOURCES
     src/recording/audio_timeline.cpp
     src/platform/diagnostics.h
     src/platform/diagnostics.cpp
+    src/platform/image_export.h
+    src/platform/image_export.cpp
     src/platform/startup_entry.h
     src/platform/startup_entry.cpp
     src/ui/settings_dialog.h

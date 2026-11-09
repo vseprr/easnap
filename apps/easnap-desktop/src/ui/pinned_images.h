@@ -35,9 +35,12 @@ public:
     /// Shows `image` as a new pin over `source`, in desktop pixels, and
     /// activates it. False when its window could not be created.
     [[nodiscard]] bool Pin(platform::BgraImage image, const RECT& source);
-    /// Closes every pin. A pin whose menu or Save dialog is open closes when
-    /// that returns.
+    /// Closes every pin. A pin whose menu or Save dialog is open, or whose
+    /// copy or save is running, closes when that has finished.
     void CloseAll();
+    /// Windows is ending the session: a pin's save is waited for, its copy
+    /// cancelled (platform::ImageExportJob::SettleForSessionEnd).
+    void SettleExportsForSessionEnd() noexcept;
     /// The windows of the open pins, oldest first.
     [[nodiscard]] std::vector<HWND> windows() const;
     [[nodiscard]] size_t count() const noexcept;

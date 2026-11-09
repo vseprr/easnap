@@ -1,4 +1,4 @@
-// Included by test_ui_modernization.cpp. Observe the real production trim and
+// Included by test_native_ui.cpp. Observe the real production trim and
 // helper on the monitor, including the UI surrounding the video at EOS.
 void TrimEndpointPresentation(const std::filesystem::path& supplied_source = {}) {
     const bool generated = supplied_source.empty();

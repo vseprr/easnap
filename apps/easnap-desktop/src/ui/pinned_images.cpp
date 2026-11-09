@@ -1,6 +1,7 @@
 // Easnap - screenshots pinned to the screen (ADR-038).
 #include "ui/pinned_images.h"
 
+#include "platform/image_export.h"
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
 #include "ui/native_controls.h"
@@ -13,7 +14,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <memory>
 #include <new>
+#include <optional>
 #include <utility>
 
 namespace easnap::ui {
@@ -37,8 +40,12 @@ bool SameZoom(double a, double b) noexcept { return std::fabs(a - b) < 1e-9; }
 
 class PinnedImages::Window final {
 public:
-    Window(PinnedImages& owner, platform::BgraImage image) noexcept : owner_(owner), image_(std::move(image)) {}
+    Window(PinnedImages& owner, platform::BgraImage image)
+        : owner_(owner), image_(std::make_shared<const platform::BgraImage>(std::move(image))) {}
     ~Window() {
+        // A copy or save still running is dropped before its window goes.
+        export_job_.Discard();
+        CloseCaptureNotice(export_notice_);
         if (hwnd_ != nullptr) { ::DestroyWindow(hwnd_); }
     }
     Window(const Window&) = delete;
@@ -48,11 +55,13 @@ public:
     /// Closes the pin now, or when its menu or Save dialog returns.
     void RequestClose();
     [[nodiscard]] HWND hwnd() const noexcept { return hwnd_; }
+    /// Windows is ending the session: a save is waited for, a copy cancelled.
+    void SettleExportForSessionEnd() noexcept { export_job_.SettleForSessionEnd(); }
 
 private:
     static LRESULT CALLBACK Procedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
     LRESULT Handle(UINT message, WPARAM wparam, LPARAM lparam);
-    [[nodiscard]] SIZE image_size() const noexcept { return {image_.width, image_.height}; }
+    [[nodiscard]] SIZE image_size() const noexcept { return image_ ? SIZE{image_->width, image_->height} : SIZE{}; }
     void Paint();
     /// The whole client area, border and image, into `dc`.
     void PaintTo(HDC dc);
@@ -63,14 +72,23 @@ private:
     void ShowMenu(POINT at);
     void Copy();
     void Save();
+    /// Copies or saves on a worker; the pin is busy until it has finished.
+    bool StartExport(platform::ImageExportTarget target, ImageSaveDestination destination);
+    /// Handles kMsgImageExportCompleted.
+    void OnExportCompleted(platform::ImageExportJob::Generation generation);
     void KeepOnScreen();
     /// Ends a menu or dialog. A close asked for meanwhile happens now; true
     /// when the window is gone.
     bool EndBusy();
 
     PinnedImages& owner_;
-    platform::BgraImage image_;
+    /// Shared with a copy or save that is running.
+    std::shared_ptr<const platform::BgraImage> image_;
     HWND hwnd_{nullptr};
+    platform::ImageExportJob export_job_;
+    ImageSaveDestination export_destination_;
+    /// "Copying..." or "Saving..." while the export lasts.
+    HWND export_notice_{nullptr};
     double zoom_{1.0};
     int wheel_delta_{0};
     int busy_{0};
@@ -91,7 +109,7 @@ bool PinnedImages::Window::Create(const RECT& source) {
         wc.lpszClassName = kPinClassName;
         return ::RegisterClassExW(&wc) != 0;
     }();
-    if (!registered || image_.empty()) { return false; }
+    if (!registered || !image_ || image_->empty()) { return false; }
     const platform::MonitorInfo monitor = platform::MonitorForRect(source);
     const PinPlacement placement = InitialPinPlacement(image_size(), source, monitor.work_area, monitor.scale());
     zoom_ = placement.zoom;
@@ -140,7 +158,7 @@ LRESULT CALLBACK PinnedImages::Window::Procedure(HWND hwnd, UINT message, WPARAM
         ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         RemoveScreenContentMark(hwnd);
         self->hwnd_ = nullptr;
-        self->image_ = platform::BgraImage{}; // The image goes with its window.
+        self->image_.reset(); // The image goes with its window.
         return ::DefWindowProcW(hwnd, message, wparam, lparam);
     }
     return self->Handle(message, wparam, lparam);
@@ -155,6 +173,10 @@ LRESULT PinnedImages::Window::Handle(UINT message, WPARAM wparam, LPARAM lparam)
             return hit == HTCLIENT ? HTCAPTION : hit;
         }
         case WM_SETCURSOR:
+            if (export_job_.running()) {
+                ::SetCursor(::LoadCursorW(nullptr, IDC_APPSTARTING));
+                return TRUE;
+            }
             if (LOWORD(lparam) == HTCAPTION) {
                 ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL));
                 return TRUE;
@@ -241,6 +263,10 @@ LRESULT PinnedImages::Window::Handle(UINT message, WPARAM wparam, LPARAM lparam)
                 ::InvalidateRect(hwnd_, nullptr, FALSE);
                 return 0;
             }
+            if (message == platform::kMsgImageExportCompleted) {
+                OnExportCompleted(static_cast<platform::ImageExportJob::Generation>(wparam));
+                return 0;
+            }
             break;
     }
     return ::DefWindowProcW(hwnd_, message, wparam, lparam);
@@ -269,25 +295,26 @@ void PinnedImages::Window::PaintTo(HDC dc) {
         const int height = inner.bottom - inner.top;
         // A change of activation repaints only the border: the paint target is
         // clipped to it, so a large image is not scaled again for nothing.
-        if (!image_.empty() && width > 0 && height > 0 && ::RectVisible(dc, &inner) != FALSE) {
+        if (image_ && !image_->empty() && width > 0 && height > 0 && ::RectVisible(dc, &inner) != FALSE) {
+            const platform::BgraImage& image = *image_;
             BITMAPINFO info{};
             info.bmiHeader.biSize = sizeof(info.bmiHeader);
-            info.bmiHeader.biWidth = image_.width;
-            info.bmiHeader.biHeight = -image_.height; // Top-down rows.
+            info.bmiHeader.biWidth = image.width;
+            info.bmiHeader.biHeight = -image.height; // Top-down rows.
             info.bmiHeader.biPlanes = 1;
             info.bmiHeader.biBitCount = 32;
             info.bmiHeader.biCompression = BI_RGB;
-            if (width == image_.width && height == image_.height) {
+            if (width == image.width && height == image.height) {
                 ::SetDIBitsToDevice(target, inner.left, inner.top, static_cast<DWORD>(width), static_cast<DWORD>(height), 0, 0, 0,
-                                    static_cast<UINT>(image_.height), image_.pixels.data(), &info, DIB_RGB_COLORS);
+                                    static_cast<UINT>(image.height), image.pixels.data(), &info, DIB_RGB_COLORS);
             } else {
                 // Halftone keeps a reduced pin readable; an enlarged one shows
                 // its pixels sharp, so that enlarged text stays crisp.
-                const bool reduced = width < image_.width;
+                const bool reduced = width < image.width;
                 ::SetStretchBltMode(target, reduced ? HALFTONE : COLORONCOLOR);
                 if (reduced) { ::SetBrushOrgEx(target, 0, 0, nullptr); }
-                ::StretchDIBits(target, inner.left, inner.top, width, height, 0, 0, image_.width, image_.height,
-                                image_.pixels.data(), &info, DIB_RGB_COLORS, SRCCOPY);
+                ::StretchDIBits(target, inner.left, inner.top, width, height, 0, 0, image.width, image.height,
+                                image.pixels.data(), &info, DIB_RGB_COLORS, SRCCOPY);
             }
         }
         buffer.Present();
@@ -355,36 +382,83 @@ void PinnedImages::Window::ShowMenu(POINT at) {
 }
 
 void PinnedImages::Window::Copy() {
-    if (hwnd_ == nullptr || image_.empty()) { return; }
-    const RECT where = WindowRect(hwnd_);
-    if (!platform::CopyImageToClipboard(hwnd_, image_)) {
-        ShowCaptureStatusNotice(where, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
+    if (hwnd_ == nullptr || !image_ || image_->empty()) { return; }
+    if (busy_ != 0) {
+        ::MessageBeep(MB_ICONWARNING);  // A menu, a dialog or an export is still open.
         return;
     }
-    platform::LogMessage(L"Pinned image copied to the clipboard");
-    ShowCaptureCopiedNotice(where);
+    static_cast<void>(StartExport(platform::ImageExportTarget::Clipboard, {}));
 }
 
 void PinnedImages::Window::Save() {
-    if (hwnd_ == nullptr || image_.empty() || busy_ != 0) { return; }
+    if (hwnd_ == nullptr || !image_ || image_->empty()) { return; }
+    if (busy_ != 0) {
+        ::MessageBeep(MB_ICONWARNING);
+        return;
+    }
     ++busy_;
-    const ImageSaveOutcome outcome = SaveFinishedImage(hwnd_, image_, owner_.settings_);
+    std::optional<ImageSaveDestination> destination = ChooseImageDestination(hwnd_, owner_.settings_, true);
+    if (EndBusy() || !destination) { return; }  // Closed while the dialog was open, or cancelled.
+    static_cast<void>(StartExport(platform::ImageExportTarget::File, std::move(*destination)));
+}
+
+bool PinnedImages::Window::StartExport(platform::ImageExportTarget target, ImageSaveDestination destination) {
+    platform::ImageExportRequest request{image_, target, destination.path};
+    if (!export_job_.Start(hwnd_, platform::kMsgImageExportCompleted, std::move(request))) {
+        // Another export of Easnap is still running.
+        ::MessageBeep(MB_ICONWARNING);
+        return false;
+    }
+    // Busy like a menu or dialog: a close asked for meanwhile waits for the result.
+    ++busy_;
+    export_destination_ = std::move(destination);
+    const bool copy = target == platform::ImageExportTarget::Clipboard;
+    export_notice_ = ShowCaptureProgressNotice(
+        WindowRect(hwnd_), strings::Get(copy ? IDS_SCROLLSHOT_STATUS_COPYING : IDS_SCROLLSHOT_STATUS_SAVING));
+    RefreshCursor();
+    return true;
+}
+
+void PinnedImages::Window::OnExportCompleted(platform::ImageExportJob::Generation generation) {
+    std::optional<platform::ImageExportResult> result = export_job_.TryTake(generation);
+    if (!result) { return; }  // From an export that was dropped.
+    CloseCaptureNotice(export_notice_);
+    export_notice_ = nullptr;
+    const ImageSaveDestination destination = std::move(export_destination_);
+    export_destination_ = {};
     const RECT where = WindowRect(hwnd_);
-    static_cast<void>(EndBusy());
-    switch (outcome) {
-        case ImageSaveOutcome::SavedToFolder:
+    const bool copy = result->target == platform::ImageExportTarget::Clipboard;
+    const bool succeeded = result->status == platform::ImageExportStatus::Succeeded;
+    // The window still exists: busy_ holds back any close until EndBusy.
+    const bool copied = copy && succeeded && platform::PublishClipboardImage(hwnd_, result->clipboard);
+    if (!copy && succeeded) { RecordImageSaved(owner_.settings_, destination); }
+    bool fallback = false;
+    if (!copy && result->status == platform::ImageExportStatus::Failed && destination.quick && !close_requested_) {
+        // The screenshots folder could not be written: the dialog offers
+        // every other place for the same image.
+        fallback = true;
+        std::optional<ImageSaveDestination> chosen = ChooseImageDestination(hwnd_, owner_.settings_, false);
+        if (chosen && !close_requested_ && StartExport(platform::ImageExportTarget::File, std::move(*chosen))) {
+            static_cast<void>(EndBusy());  // The new export holds the pin busy.
+            return;
+        }
+    }
+    // The notices say what happened also when the pin closes now.
+    if (copied) {
+        platform::LogMessage(L"Pinned image copied to the clipboard");
+        ShowCaptureCopiedNotice(where);
+    } else if (!copy && succeeded) {
+        if (destination.quick) {
             platform::LogMessage(L"Pinned image saved without a dialog");
             ShowCaptureSavedNotice(where);
-            break;
-        case ImageSaveOutcome::SavedAs:
+        } else {
             platform::LogMessage(L"Pinned image saved");
-            break;
-        case ImageSaveOutcome::Cancelled:
-            break;
-        case ImageSaveOutcome::Failed:
-            ShowCaptureStatusNotice(where, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED));
-            break;
+        }
+    } else if (result->status != platform::ImageExportStatus::Cancelled && !fallback) {
+        ShowCaptureStatusNotice(where, strings::Get(copy ? IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE
+                                                         : IDS_EDITOR_NOTICE_SAVE_FAILED));
     }
+    if (!EndBusy()) { RefreshCursor(); }  // EndBusy closes the pin when that was asked for meanwhile.
 }
 
 void PinnedImages::Window::KeepOnScreen() {
@@ -419,6 +493,10 @@ bool PinnedImages::Pin(platform::BgraImage image, const RECT& source) {
     }
     platform::LogMessage(L"Image pinned (%zu open)", count());
     return true;
+}
+
+void PinnedImages::SettleExportsForSessionEnd() noexcept {
+    for (const auto& pin : pins_) { pin->SettleExportForSessionEnd(); }
 }
 
 void PinnedImages::CloseAll() {

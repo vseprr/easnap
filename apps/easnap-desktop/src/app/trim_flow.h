@@ -1,8 +1,10 @@
-// Easnap - the trimming and completion of one finished recording (ADR-039).
+// Easnap - the trimming and completion of one video (ADR-039, ADR-040).
 //
 // The coordinator owns one TrimFlow. The flow owns the trim window, the export
-// controller, the finalized source path and the latest temporary result; it
-// changes the session state only through the coordinator's state machine.
+// controller, the source and the latest temporary result; it changes the
+// session state only through the coordinator's state machine. The source is a
+// finished recording (Owned) or a video file the user opened (External), which
+// the flow never changes, moves or deletes.
 // Every method must be called on the UI thread, except that the export
 // controller reports completion from its worker thread by posting
 // kMsgTrimExportCompleted.
@@ -63,9 +65,13 @@ public:
     TrimFlow(const TrimFlow&) = delete;
     TrimFlow& operator=(const TrimFlow&) = delete;
 
-    /// Opens the trim window for `source_path` in RecordingTrimming. `session`
-    /// is the recording's temporary session, deleted or kept when the flow ends.
-    void Begin(const std::wstring& source_path, const media::RecordingOptions& options, const RECT& region,
+    /// Opens the trim window for `source` in RecordingTrimming. For a
+    /// recording, `options` are the recording's and `session` is its temporary
+    /// session, deleted or kept when the flow ends. For an external video,
+    /// `options` carry the export settings, `session` must be empty: the flow
+    /// takes a work session of its own from the store for its temporary
+    /// results, never marks it recoverable and removes it when it ends.
+    void Begin(const TrimSource& source, const media::RecordingOptions& options,
                std::optional<media::TemporarySession> session);
     /// Handles kMsgTrimExportCompleted.
     void OnExportCompleted(uint64_t export_generation);
@@ -79,6 +85,8 @@ public:
     /// controller at once. For the end of the application.
     void Destroy();
 
+    /// What the flow holds; Owned when no flow is open.
+    [[nodiscard]] TrimSourceKind source_kind() const noexcept { return source_.kind; }
     [[nodiscard]] bool window_visible() const;
     /// The trim window while it is visible, otherwise null.
     [[nodiscard]] HWND visible_window() const;
@@ -92,6 +100,12 @@ private:
                                    Copy };
 
     [[nodiscard]] SessionState state() const noexcept { return machine_.state(); }
+    [[nodiscard]] bool external() const noexcept { return source_.kind == TrimSourceKind::External; }
+    /// `owned` for a recording, `external` for an opened video: the same
+    /// message, without "the recording was kept" for a file nobody could lose.
+    [[nodiscard]] UINT TextFor(UINT owned, UINT external_id) const noexcept {
+        return external() ? external_id : owned;
+    }
     bool RequestTransition(SessionState next) { return machine_.RequestTransition(next); }
     void EndSession() { services_.end_session(); }
     void ScheduleCleanup() { services_.schedule_cleanup(); }
@@ -100,14 +114,34 @@ private:
     void OnTrimSaveRequested(media::MediaTime start, media::MediaTime end);
     void OnTrimCopyRequested(media::MediaTime start, media::MediaTime end);
     void BeginTrimAction(PendingTrimAction action, media::MediaTime start,
-                         media::MediaTime end,
+                         media::MediaTime end, media::RecordingFormat format,
                          std::wstring save_destination = {},
                          bool replace_existing = false);
     void StartTrimExport(media::MediaTime start, media::MediaTime end,
+                         media::RecordingFormat format,
                          std::wstring destination_path = {},
                          bool destination_is_clipboard = false,
                          bool destination_is_save = false,
                          bool replace_existing = false);
+    /// The export controller for `format`; a recording keeps the one it was
+    /// opened with, an external video changes it between actions.
+    [[nodiscard]] bool EnsureExportController(media::RecordingFormat format);
+    /// The recording options with the format of this export.
+    [[nodiscard]] media::RecordingOptions ExportOptions(media::RecordingFormat format) const;
+    /// Where a temporary result goes: beside a recording in its own session,
+    /// into the work session for an external video, never beside its file.
+    [[nodiscard]] std::wstring TemporaryResultDirectory() const;
+    /// A full-range action may hand on the source itself.
+    [[nodiscard]] bool SourceReusable() const;
+    /// Whether `path`, a file the flow made, may be moved on instead of
+    /// copied. The external video itself never is; nor is anything outside the
+    /// flow's work session.
+    [[nodiscard]] bool MayMoveArtifact(const std::wstring& path) const;
+    /// For an external video: the file is still the one the probe checked.
+    /// Otherwise the window says so and no action starts.
+    [[nodiscard]] bool ExternalSourceUnchanged();
+    /// Closing an external video: no question unless an export runs.
+    void CloseExternalVideo();
     void CompletePendingTrimAction();
     void OnTrimExportCancel();
     void OnTrimWindowClosed();
@@ -125,10 +159,16 @@ private:
 
     std::unique_ptr<ui::TrimWindow> trim_window_;
     std::unique_ptr<TrimExportController> trim_export_;
+    /// The format of `trim_export_`'s exporter.
+    media::RecordingFormat export_controller_format_{media::RecordingFormat::Mp4};
     media::RecordingOptions recording_options_{};
+    /// A recording's temporary session, or an external video's work session.
     std::optional<media::TemporarySession> session_;
-    std::wstring trim_source_path_;
+    TrimSource source_;
     TrimArtifact trim_artifact_;
+    /// The format of the export that runs or ran last.
+    media::RecordingFormat trim_export_format_{media::RecordingFormat::Mp4};
+    media::RecordingFormat pending_format_{media::RecordingFormat::Mp4};
     std::atomic<uint64_t> trim_export_generation_{0};
     media::MediaTime trim_export_start_{0};
     media::MediaTime trim_export_end_{0};

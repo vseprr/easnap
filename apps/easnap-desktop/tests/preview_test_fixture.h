@@ -11,21 +11,35 @@
 
 namespace easnap::test {
 
-// Moving 640x360 H.264 at 30 fps (twelve seconds by default), optionally with a real silent
-// stereo AAC track. PCM is generated directly; no recording session or audio
-// device is involved. A/V timestamps share the exact active-time origin and end.
-inline bool CreatePreviewSource(const std::wstring& path, bool include_audio,
-                                uint32_t duration_seconds = 12) {
+/// A moving H.264 picture, optionally with a real silent stereo AAC track. PCM
+/// is generated directly; no recording session or audio device is involved.
+/// Time is counted in 48 kHz audio frames, so A/V timestamps share the exact
+/// active-time origin and end whatever the frame durations are.
+struct PreviewSourceSpec final {
+    uint32_t width{640};
+    uint32_t height{360};
+    /// The nominal rate the writer is opened with.
+    uint32_t frame_rate{30};
+    uint32_t frame_count{360};
+    bool include_audio{false};
+    /// Durations of consecutive frames in 48 kHz audio frames, repeated in
+    /// turn; empty means 48,000 / frame_rate for every frame.
+    std::vector<uint32_t> frame_durations{};
+};
+
+inline bool CreatePreviewSource(const std::wstring& path, const PreviewSourceSpec& spec) {
     constexpr int64_t second = 10'000'000;
-    constexpr uint32_t width = 640;
-    constexpr uint32_t height = 360;
-    constexpr uint32_t frame_rate = 30;
     constexpr uint32_t sample_rate = 48'000;
     constexpr uint16_t channels = 2;
-    if (duration_seconds == 0 || duration_seconds > 60) return false;
-    const uint32_t frame_count = duration_seconds * frame_rate;
-    constexpr uint32_t audio_frames_per_video_frame = sample_rate / frame_rate;
-    static_assert(sample_rate % frame_rate == 0);
+    const uint32_t width = spec.width;
+    const uint32_t height = spec.height;
+    if (spec.frame_count == 0 || spec.frame_rate == 0 || width == 0 || height == 0 ||
+        (spec.frame_durations.empty() && sample_rate % spec.frame_rate != 0)) {
+        return false;
+    }
+    for (const uint32_t duration : spec.frame_durations) {
+        if (duration == 0) return false;
+    }
 
     auto writer = media::CreateMediaFoundationWriter();
     if (!writer) {
@@ -49,20 +63,19 @@ inline bool CreatePreviewSource(const std::wstring& path, bool include_audio,
     options.region = RECT{0, 0, static_cast<LONG>(width),
                           static_cast<LONG>(height)};
     options.format = media::RecordingFormat::Mp4;
-    options.audio = include_audio ? media::AudioSource::SystemAudio : media::AudioSource::None;
-    options.target_frame_rate = frame_rate;
+    options.audio = spec.include_audio ? media::AudioSource::SystemAudio : media::AudioSource::None;
+    options.target_frame_rate = spec.frame_rate;
     options.video_bitrate_bps = 4'000'000;
     options.audio_bitrate_bps = 192'000;
-    if (!writer->Open(path, options, include_audio ? &audio_format : nullptr)) return fail(L"open");
+    if (!writer->Open(path, options, spec.include_audio ? &audio_format : nullptr)) return fail(L"open");
 
     auto image = std::make_shared<platform::BgraImage>();
     image->width = static_cast<int>(width);
     image->height = static_cast<int>(height);
     image->pixels.resize(static_cast<std::size_t>(width) * height);
-    const std::vector<float> silence(
-        static_cast<std::size_t>(audio_frames_per_video_frame) * channels,
-        0.0f);
-    for (uint32_t index = 0; index < frame_count; ++index) {
+    std::vector<float> silence;
+    int64_t first_audio_frame = 0;
+    for (uint32_t index = 0; index < spec.frame_count; ++index) {
         for (uint32_t y = 0; y < height; ++y) {
             auto* row = image->row(static_cast<int>(y));
             for (uint32_t x = 0; x < width; ++x) {
@@ -72,27 +85,26 @@ inline bool CreatePreviewSource(const std::wstring& path, bool include_audio,
                 row[x] = 0xff000000u | (red << 16u) | (green << 8u) | blue;
             }
         }
-        const media::MediaTime start{
-            static_cast<int64_t>(index) * second / frame_rate};
-        const media::MediaTime end{
-            static_cast<int64_t>(index + 1u) * second / frame_rate};
+        const uint32_t audio_frames_per_video_frame =
+            spec.frame_durations.empty()
+                ? sample_rate / spec.frame_rate
+                : spec.frame_durations[index % spec.frame_durations.size()];
+        const int64_t next_audio_frame = first_audio_frame + audio_frames_per_video_frame;
+        const media::MediaTime start{first_audio_frame * second / sample_rate};
+        const media::MediaTime end{next_audio_frame * second / sample_rate};
         // WriteVideoFrame synchronously consumes this image on its MTA worker,
         // so one frame allocation can be reused after each call returns.
         if (!writer->WriteVideoFrame({image, start, end - start})) {
             return fail(L"video write");
         }
-        const int64_t first_audio_frame =
-            static_cast<int64_t>(index) * audio_frames_per_video_frame;
-        const media::MediaTime audio_start{
-            first_audio_frame * second / sample_rate};
-        const media::MediaTime audio_end{
-            (first_audio_frame + audio_frames_per_video_frame) * second /
-            sample_rate};
-        const media::MediaChunk packet{
-            reinterpret_cast<const uint8_t*>(silence.data()),
-            silence.size() * sizeof(float), audio_start,
-            audio_end - audio_start, false, false};
-        if (include_audio && !writer->WriteAudioPacket(packet)) return fail(L"audio write");
+        if (spec.include_audio) {
+            silence.assign(static_cast<std::size_t>(audio_frames_per_video_frame) * channels, 0.0f);
+            const media::MediaChunk packet{
+                reinterpret_cast<const uint8_t*>(silence.data()),
+                silence.size() * sizeof(float), start, end - start, false, false};
+            if (!writer->WriteAudioPacket(packet)) return fail(L"audio write");
+        }
+        first_audio_frame = next_audio_frame;
     }
 
     std::wstring finalized;
@@ -100,6 +112,17 @@ inline bool CreatePreviewSource(const std::wstring& path, bool include_audio,
     const DWORD attributes = ::GetFileAttributesW(path.c_str());
     return finalized == path && attributes != INVALID_FILE_ATTRIBUTES &&
            (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+}
+
+// Moving 640x360 H.264 at 30 fps (twelve seconds by default), optionally with a
+// real silent stereo AAC track.
+inline bool CreatePreviewSource(const std::wstring& path, bool include_audio,
+                                uint32_t duration_seconds = 12) {
+    if (duration_seconds == 0 || duration_seconds > 60) return false;
+    PreviewSourceSpec spec;
+    spec.frame_count = duration_seconds * spec.frame_rate;
+    spec.include_audio = include_audio;
+    return CreatePreviewSource(path, spec);
 }
 
 inline bool CreateAudioPreviewSource(const std::wstring& path) {

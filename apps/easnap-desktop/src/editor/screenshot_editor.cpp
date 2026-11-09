@@ -85,6 +85,16 @@ constexpr std::array<float, 3> kThicknessOptions = {2.0f, 4.0f, 7.0f};
 /// Mosaic brush diameters in captured pixels (independent of the preview zoom).
 constexpr std::array<float, 3> kBrushSizeOptions = {16.0f, 32.0f, 64.0f};
 
+/// Selection chrome in device-independent pixels; it keeps its size on screen
+/// at every zoom. A frame follows the outline, with a gap around text, and
+/// handles are rings on the corners or ends.
+constexpr float kSelectionStroke = 1.2f;
+constexpr float kSelectionTextGap = 3.0f;
+constexpr float kHandleRadius = 4.5f;
+constexpr float kHandleStroke = 1.5f;
+/// How far the chrome reaches past an annotation's bounds.
+constexpr float kSelectionReach = std::max(kHandleRadius + kHandleStroke / 2, kSelectionTextGap + kSelectionStroke / 2);
+
 /// Round caps/joins make freehand strokes and arrows look continuous.
 ID2D1StrokeStyle* RoundStrokeStyle() {
     static platform::ComPtr<ID2D1StrokeStyle> style = [] {
@@ -183,6 +193,39 @@ void DrawFreehand(ID2D1RenderTarget* target, const std::vector<D2D1_POINT_2F>& p
     for (size_t i = 1; i < points.size(); ++i) {
         target->DrawLine(points[i - 1], points[i], brush, thickness, RoundStrokeStyle());
     }
+}
+
+/// The bounding box of `area` mapped through `transform`.
+D2D1_RECT_F TransformedBounds(const D2D1_RECT_F& area, const D2D1::Matrix3x2F& transform) {
+    const std::array<D2D1_POINT_2F, 4> corners{{{area.left, area.top}, {area.right, area.top}, {area.right, area.bottom}, {area.left, area.bottom}}};
+    const D2D1_POINT_2F first = transform.TransformPoint(corners[0]);
+    D2D1_RECT_F bounds{first.x, first.y, first.x, first.y};
+    for (const auto& corner : corners) {
+        const D2D1_POINT_2F point = transform.TransformPoint(corner);
+        bounds.left = std::min(bounds.left, point.x);
+        bounds.top = std::min(bounds.top, point.y);
+        bounds.right = std::max(bounds.right, point.x);
+        bounds.bottom = std::max(bounds.bottom, point.y);
+    }
+    return bounds;
+}
+
+/// The part of the space `transform` maps onto `target` that the target
+/// shows, grown by `margin` target pixels for antialiasing. Empty when the
+/// transform cannot be inverted.
+std::optional<D2D1_RECT_F> ShownArea(ID2D1RenderTarget* target, const D2D1_MATRIX_3X2_F& m, float margin) {
+    const float determinant = m._11 * m._22 - m._12 * m._21;
+    if (determinant == 0.0f || !std::isfinite(determinant)) { return std::nullopt; }
+    // The inverse of the 2x3 matrix, written out.
+    const D2D1::Matrix3x2F inverse(m._22 / determinant, -m._12 / determinant, -m._21 / determinant, m._11 / determinant,
+                                   (m._21 * m._32 - m._22 * m._31) / determinant,
+                                   (m._12 * m._31 - m._11 * m._32) / determinant);
+    const D2D1_SIZE_F size = target->GetSize();
+    const D2D1_RECT_F shown = TransformedBounds({-margin, -margin, size.width + margin, size.height + margin}, inverse);
+    if (!std::isfinite(shown.left) || !std::isfinite(shown.top) || !std::isfinite(shown.right) || !std::isfinite(shown.bottom)) {
+        return std::nullopt;
+    }
+    return shown;
 }
 
 /// Draws one annotation in image space. Mosaic strokes are baked into the base
@@ -364,8 +407,26 @@ void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
             const float reach = std::hypot(center.x, center.y) + std::max(stepX, stepY);
             target->SetTransform(D2D1::Matrix3x2F::Rotation(-18, center) * original);
             const int columns = static_cast<int>(std::ceil(reach / stepX)), rows = static_cast<int>(std::ceil(reach / stepY));
-            for (int row = -rows; row <= rows; ++row)
-                for (int column = -columns; column <= columns; ++column) {
+            // A tall picture has thousands of tiles. Only those that can reach
+            // what the target shows are drawn, in the order of the full grid.
+            int first_row = -rows, last_row = rows, first_column = -columns, last_column = columns;
+            if (const auto shown = ShownArea(target, original, 2.0f)) {
+                // Tiles are laid out in image space turned back by their rotation.
+                const D2D1_RECT_F area = TransformedBounds(*shown, D2D1::Matrix3x2F::Rotation(18, center));
+                // Glyphs may overhang their layout box: an em on every side.
+                const float em = annotation.FontPixels();
+                const float width = metrics.widthIncludingTrailingWhitespace, height = metrics.height;
+                const auto index = [](float position, float step, int limit, bool upward) {
+                    const float value = upward ? std::ceil(position / step) : std::floor(position / step);
+                    return static_cast<int>(std::clamp(value, static_cast<float>(-limit), static_cast<float>(limit)));
+                };
+                first_column = index(area.left - em - center.x - width / 2, stepX, columns, false);
+                last_column = index(area.right + em - center.x + width / 2, stepX, columns, true);
+                first_row = index(area.top - em - center.y - height / 2, stepY, rows, false);
+                last_row = index(area.bottom + em - center.y + height / 2, stepY, rows, true);
+            }
+            for (int row = first_row; row <= last_row; ++row)
+                for (int column = first_column; column <= last_column; ++column) {
                     const D2D1_POINT_2F origin{center.x + column * stepX - metrics.widthIncludingTrailingWhitespace / 2,
                                                center.y + row * stepY - metrics.height / 2};
                     target->DrawTextLayout(origin, layout.Get(), brush);
@@ -1158,6 +1219,9 @@ void ScreenshotEditor::SyncToolbarControls() const {
                 break;
             case ToolbarItem::Kind::Command:
                 if (item.command == kCommandUndo || item.command == kCommandClear) { enabled = document_.CanUndo(); }
+                if (item.command == kCommandCopy || item.command == kCommandSave || item.command == kCommandPin) {
+                    enabled = !exporting_;
+                }
                 if (item.command == kCommandRedo) { enabled = document_.CanRedo(); }
                 if (item.command == kCommandScrollshot) {
                     // A scrolling capture starts from a provisional frame only.
@@ -1646,6 +1710,10 @@ void ScreenshotEditor::NotifyMutation(uint64_t previous_revision) {
 
 void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
     if (!visible_ || modal_active_) { return; }
+    if (exporting_) {
+        if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) { RefuseWhileExporting(); }
+        return;
+    }
     switch (message) {
         case WM_LBUTTONDOWN:
             if (FeatureUsed()) { BeginStroke(point); }
@@ -1683,13 +1751,30 @@ void ScreenshotEditor::Keyboard(UINT message, WPARAM key, LPARAM flags) {
 }
 
 bool ScreenshotEditor::CompleteCopy() {
-    if (!CopyToClipboard()) { return false; }
-    ui::ShowCaptureCopiedNotice(region_);
-    Close(true);
-    return true;
+    if (exporting_) {
+        RefuseWhileExporting();
+        return false;
+    }
+    if (!EnsureImage()) { return false; }
+    completing_ = true;
+    CommitPendingText();
+    completing_ = false;
+    // Composited here: the worker never sees the editor's own pixels.
+    platform::BgraImage image = Composite();
+    if (image.empty()) {
+        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_COPY));
+        Invalidate();
+        return false;
+    }
+    return StartExport(platform::ImageExportTarget::Clipboard,
+                       std::make_shared<const platform::BgraImage>(std::move(image)), {});
 }
 
 bool ScreenshotEditor::CompletePin() {
+    if (exporting_) {
+        RefuseWhileExporting();
+        return false;
+    }
     if (!callbacks_.on_pin || !EnsureImage()) { return false; }
     platform::BgraImage image = CompositeCommitted();
     if (image.empty()) {
@@ -1710,6 +1795,11 @@ bool ScreenshotEditor::CompletePin() {
 
 void ScreenshotEditor::RequestDiscard() {
     if (modal_active_) { return; }  // Already asking, or a file dialog is open.
+    if (exporting_) {
+        // The image is being copied or saved; the editor closes when that ends.
+        RefuseWhileExporting();
+        return;
+    }
     if ((has_annotations() || document_mode_) && callbacks_.on_confirm_discard) {
         // The workspace stays enabled under the question; it must not draw.
         modal_active_ = true;
@@ -1721,6 +1811,11 @@ void ScreenshotEditor::RequestDiscard() {
 }
 
 void ScreenshotEditor::Close(bool exported) {
+    if (exporting_) {
+        // Only the end of the session closes an editor during an export.
+        export_job_.Discard();
+        EndExport();
+    }
     Hide();
     if (hwnd_ != nullptr) {
         ::ShowWindow(hwnd_, SW_HIDE);
@@ -1738,6 +1833,8 @@ void ScreenshotEditor::Close(bool exported) {
 }
 
 void ScreenshotEditor::Destroy() {
+    export_job_.Discard();
+    if (exporting_) { EndExport(); }
     if (brush_popup_) {
         ::DestroyWindow(brush_popup_);
         brush_popup_ = nullptr;
@@ -1782,15 +1879,24 @@ void ScreenshotEditor::Invalidate() const {
     if (has_image() && callbacks_.on_image_invalidated) { callbacks_.on_image_invalidated(region_); }
 }
 
-void ScreenshotEditor::InvalidateImage(const RECT& source_damage) const {
-    if (!has_image() || !callbacks_.on_image_invalidated) { return; }
+RECT ScreenshotEditor::DesktopDamage(const RECT& source_damage) const {
+    if (::IsRectEmpty(&source_damage)) { return {}; }
+    // A reduced view filters the picture, so a changed image pixel also shows
+    // in the screen pixels of its neighbours.
+    const float bleed = zoom_ < 1.0f ? 1.0f : 0.0f;
     // Image pixels to desktop pixels, rounded outwards.
     const RECT desktop_damage{
-        static_cast<LONG>(std::floor(view_origin_.x + static_cast<float>(source_damage.left) * zoom_)),
-        static_cast<LONG>(std::floor(view_origin_.y + static_cast<float>(source_damage.top) * zoom_)),
-        static_cast<LONG>(std::ceil(view_origin_.x + static_cast<float>(source_damage.right) * zoom_)),
-        static_cast<LONG>(std::ceil(view_origin_.y + static_cast<float>(source_damage.bottom) * zoom_))};
-    callbacks_.on_image_invalidated(platform::IntersectRects(desktop_damage, region_));
+        static_cast<LONG>(std::floor(view_origin_.x + (static_cast<float>(source_damage.left) - bleed) * zoom_)),
+        static_cast<LONG>(std::floor(view_origin_.y + (static_cast<float>(source_damage.top) - bleed) * zoom_)),
+        static_cast<LONG>(std::ceil(view_origin_.x + (static_cast<float>(source_damage.right) + bleed) * zoom_)),
+        static_cast<LONG>(std::ceil(view_origin_.y + (static_cast<float>(source_damage.bottom) + bleed) * zoom_))};
+    return platform::IntersectRects(desktop_damage, region_);
+}
+
+void ScreenshotEditor::InvalidateImage(const RECT& source_damage) const {
+    if (!has_image() || !callbacks_.on_image_invalidated) { return; }
+    const RECT damage = DesktopDamage(source_damage);
+    if (!platform::IsEmptyRect(damage)) { callbacks_.on_image_invalidated(damage); }
 }
 
 void ScreenshotEditor::ResetFixedView() {
@@ -1854,12 +1960,23 @@ platform::BgraImage ScreenshotEditor::TakeImage() {
     return image;
 }
 
-RECT ScreenshotEditor::PendingDamage() const {
-    if (pending_.tool == ToolId::Text) { return RECT{0, 0, source_image_.width, source_image_.height}; }
-    const auto bounds = pending_.bounds();
-    const float pad = std::max(pending_.style.brush_size, pending_.style.thickness * 6.0f) + 3.0f;
+RECT ScreenshotEditor::AnnotationDamage(const Annotation& annotation, bool selected) const {
+    const auto bounds = annotation.bounds();
+    // Stroke ends, arrow heads and the mosaic brush reach past the points.
+    float pad = std::max(annotation.style.brush_size, annotation.style.thickness * 6.0f) + 3.0f;
+    // Glyphs overhang their layout box, and outlined text is stroked around it.
+    if (annotation.tool == ToolId::Text || annotation.tool == ToolId::Tag) { pad += annotation.FontPixels(); }
+    // The selection frame and its handles keep their size on screen.
+    if (selected) { pad += kSelectionReach * scale_ / zoom_; }
+    // Antialiasing reaches one screen pixel further.
+    pad += 1.0f / zoom_;
     return RECT{static_cast<LONG>(std::floor(bounds.left - pad)), static_cast<LONG>(std::floor(bounds.top - pad)),
                 static_cast<LONG>(std::ceil(bounds.right + pad)), static_cast<LONG>(std::ceil(bounds.bottom + pad))};
+}
+
+RECT ScreenshotEditor::PendingDamage() const {
+    if (pending_.tool == ToolId::Text) { return RECT{0, 0, source_image_.width, source_image_.height}; }
+    return AnnotationDamage(pending_, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -1880,6 +1997,14 @@ LRESULT CALLBACK ScreenshotEditor::WindowProc(HWND hwnd, UINT message, WPARAM wp
 
 LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     if (ui::ConsumePopupInput(message, wparam)) { return 0; }
+    if (message == platform::kMsgImageExportCompleted && hwnd == hwnd_) {
+        OnExportCompleted(static_cast<platform::ImageExportJob::Generation>(wparam));
+        return 0;
+    }
+    if (message == WM_SETCURSOR && exporting_) {
+        ::SetCursor(::LoadCursorW(nullptr, IDC_APPSTARTING));
+        return TRUE;
+    }
     if (message == WM_TIMER && wparam == 0xEA63) {
         SyncWatermarkClear();
         return 0;
@@ -1969,102 +2094,9 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             if (draw && ui::DrawComboItem(*draw)) { return TRUE; }
             break;
         }
-        case WM_COMMAND: {
-            const int id = LOWORD(wparam), notification = HIWORD(wparam);
-            if (id == IDCANCEL) {
-                RequestDiscard();
-                return 0;
-            }
-            if (id == 2600 && notification == CBN_DROPDOWN) {
-                COMBOBOXINFO info{sizeof(info)};
-                ::GetComboBoxInfo(Control(2600), &info);
-                ::SetWindowLongPtrW(info.hwndList, GWL_STYLE, ::GetWindowLongPtrW(info.hwndList, GWL_STYLE) & ~WS_BORDER);
-                ::SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE, ::GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
-                ui::RoundWindow(info.hwndList);
-                // Shown again on every drop-down: excluded as an opaque layered
-                // window, it leaves no hole in a capture.
-                static_cast<void>(ui::ExcludeFromCapture(info.hwndList));
-                return 0;
-            }
-            if (id == 2700 && notification == EN_CHANGE) {
-                UpdateTextFromControl();
-                return 0;
-            }
-            if (syncing_context_) { return 0; }
-            if (id == 2600 && (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS)) {
-                wchar_t text[32]{};
-                if (notification == CBN_SELCHANGE) {
-                    ::SendMessageW(Control(2600), CB_GETLBTEXT, ::SendMessageW(Control(2600), CB_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(text));
-                } else {
-                    ::GetWindowTextW(Control(2600), text, 32);
-                }
-                wchar_t* end = nullptr;
-                const double size = std::wcstod(text, &end);
-                while (end && std::iswspace(*end)) { ++end; }
-                if (end && ::lstrcmpiW(end, L"pt") == 0) { end += 2; }
-                if (end && *end == 0 && std::isfinite(size) && size >= 6 && size <= 288) {
-                    auto value = ContextStyle();
-                    value.font_size = static_cast<float>(size);
-                    ChangeStyle(value);
-                } else {
-                    ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_FONT_SIZE_RANGE));
-                    SyncContext();
-                    Invalidate();
-                }
-                if (notification == CBN_KILLFOCUS) { CommitContextTransaction(); }
-                return 0;
-            }
-            if (id == 2605 && notification == BN_CLICKED) {
-                document_.BeginTransaction();
-                ::SetWindowTextW(Control(2604), L"");
-                document_.CommitTransaction();
-                ::SetFocus(Control(2604));
-                SyncWatermarkClear();
-                return 0;
-            }
-            if (id == 2604 && notification == EN_CHANGE && ContextTool() == ToolId::Watermark) {
-                if (!FeatureUsed()) { return 0; }
-                const int length = ::GetWindowTextLengthW(Control(2604));
-                std::wstring text(static_cast<size_t>(length) + 1, L'\0');
-                ::GetWindowTextW(Control(2604), text.data(), length + 1);
-                text.resize(std::min(length, 16));
-                if (!text.empty() && text.back() >= 0xd800 && text.back() <= 0xdbff) { text.pop_back(); }
-                if (text.size() != static_cast<size_t>(length)) {
-                    syncing_context_ = true;
-                    ::SetWindowTextW(Control(2604), text.c_str());
-                    ::SendMessageW(Control(2604), EM_SETSEL, text.size(), text.size());
-                    syncing_context_ = false;
-                }
-                if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
-                Annotation a;
-                if (selected_) {
-                    a = document_.annotations()[*selected_];
-                } else {
-                    a.tool = ToolId::Watermark;
-                    a.style = style_;
-                    a.style.opacity = 30;
-                    a.points = {{0, 0}, {static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)}};
-                }
-                a.text = std::move(text);
-                if (selected_) {
-                    document_.Replace(*selected_, std::move(a));
-                } else {
-                    document_.Apply(std::move(a));
-                    selected_ = document_.annotations().size() - 1;
-                }
-                SyncContext();
-                Invalidate();
-                return 0;
-            }
-            if (notification == BN_CLICKED) {
-                const auto found = std::find_if(toolbar_.begin(), toolbar_.end(), [id](const auto& item) { return item.identifier == id; });
-                if (found != toolbar_.end()) {
-                    const auto item = *found;
-                    OnToolbarActivated(item);
-                }
-            }
+        case WM_COMMAND:
+            OnCommand(LOWORD(wparam), HIWORD(wparam));
             return 0;
-        }
         case WM_PRINTCLIENT:
             PaintToolbar(reinterpret_cast<HDC>(wparam));
             return 0;
@@ -2217,142 +2249,9 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             OnCharacter(static_cast<wchar_t>(wparam));
             return 0;
 
-        case WM_KEYDOWN: {
-            if (editing_text_ && text_edit_) {
-                ::SendMessageW(text_edit_, message, wparam, lparam);
-                return 0;
-            }
-            if (wparam == VK_ESCAPE && (transforming_ || dragging_ || document_.in_transaction())) {
-                // The rollback can remove the selected annotation (a watermark created in this transaction).
-                CancelStroke();
-                document_.CancelTransaction();
-                if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
-                SyncContext();
-                Invalidate();
-                return 0;
-            }
-            if (wparam == VK_ESCAPE && selected_) {
-                Select({});
-                return 0;
-            }
-            if (wparam == VK_DELETE && selected_) {
-                document_.Remove(*selected_);
-                Select({});
-                return 0;
-            }
-            if (selected_ && *selected_ < document_.annotations().size() && wparam >= VK_LEFT && wparam <= VK_DOWN) {
-                auto a = document_.annotations()[*selected_];
-                const float step = (::GetKeyState(VK_SHIFT) & 0x8000) ? 10.0f : 1.0f;
-                for (auto& p : a.points) {
-                    p.x += wparam == VK_LEFT ? -step : wparam == VK_RIGHT ? step
-                                                                          : 0;
-                    p.y += wparam == VK_UP ? -step : wparam == VK_DOWN ? step
-                                                                       : 0;
-                }
-                document_.Replace(*selected_, std::move(a));
-                Invalidate();
-                return 0;
-            }
-            if (wparam == VK_TAB) {
-                ::SetFocus(::GetDlgItem(hwnd_, 2000));
-                return 0;
-            }
-            const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
-            const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            if (document_mode_) {
-                // A document larger than its viewport is moved and scaled from
-                // the keyboard as well as with the wheel.
-                const float page = static_cast<float>(platform::RectHeight(region_)) / zoom_ * 0.9f;
-                const POINT centre{(region_.left + region_.right) / 2, (region_.top + region_.bottom) / 2};
-                switch (wparam) {
-                    case VK_PRIOR: ScrollDocument(0.0f, -page); return 0;
-                    case VK_NEXT: ScrollDocument(0.0f, page); return 0;
-                    case VK_HOME: ScrollDocument(0.0f, -static_cast<float>(source_image_.height)); return 0;
-                    case VK_END: ScrollDocument(0.0f, static_cast<float>(source_image_.height)); return 0;
-                    case VK_UP: ScrollDocument(0.0f, -48.0f * scale_ / zoom_); return 0;
-                    case VK_DOWN: ScrollDocument(0.0f, 48.0f * scale_ / zoom_); return 0;
-                    case VK_LEFT: ScrollDocument(-48.0f * scale_ / zoom_, 0.0f); return 0;
-                    case VK_RIGHT: ScrollDocument(48.0f * scale_ / zoom_, 0.0f); return 0;
-                    case VK_OEM_PLUS:
-                    case VK_ADD:
-                        if (control) {
-                            ZoomDocument(StepZoom(zoom_, 1), centre);
-                            return 0;
-                        }
-                        break;
-                    case VK_OEM_MINUS:
-                    case VK_SUBTRACT:
-                        if (control) {
-                            ZoomDocument(StepZoom(zoom_, -1), centre);
-                            return 0;
-                        }
-                        break;
-                    case '0':
-                    case VK_NUMPAD0:
-                        if (control) {
-                            ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre);
-                            return 0;
-                        }
-                        break;
-                    case '1':
-                    case VK_NUMPAD1:
-                        if (control) {
-                            ZoomDocument(1.0f, centre);
-                            return 0;
-                        }
-                        break;
-                    default:
-                        break;
-                }
-            }
-            if (control) {
-                switch (wparam) {
-                    case 'Z': {
-                        selected_.reset();
-                        if (!FeatureUsed()) { return 0; }
-                        const auto revision = document_.revision();
-                        if (shift) {
-                            document_.Redo();
-                        } else {
-                            document_.Undo();
-                        }
-                        Invalidate();
-                        NotifyMutation(revision);
-                        return 0;
-                    }
-                    case 'Y': {
-                        selected_.reset();
-                        if (!FeatureUsed()) { return 0; }
-                        const auto revision = document_.revision();
-                        document_.Redo();
-                        Invalidate();
-                        NotifyMutation(revision);
-                        return 0;
-                    }
-                    case 'C':
-                        if (!FeatureUsed()) { return 0; }
-                        CompleteCopy();
-                        return 0;
-                    case 'S':
-                        if (!FeatureUsed()) { return 0; }
-                        if (SaveToFile()) {
-                            Close(true);
-                        }
-                        return 0;
-                    case 'T':
-                        if (!FeatureUsed()) { return 0; }
-                        CompletePin();
-                        return 0;
-                    default:
-                        break;
-                }
-            }
-            if (wparam == VK_ESCAPE) {
-                RequestDiscard();
-                return 0;
-            }
+        case WM_KEYDOWN:
+            OnKeyDown(wparam, lparam);
             return 0;
-        }
 
         case WM_CLOSE:
             RequestDiscard();
@@ -2365,6 +2264,240 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             break;
     }
     return ::DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+void ScreenshotEditor::OnCommand(int id, int notification) {
+    if (id == IDCANCEL) {
+        RequestDiscard();
+        return;
+    }
+    if (id == 2600 && notification == CBN_DROPDOWN) {
+        COMBOBOXINFO info{sizeof(info)};
+        ::GetComboBoxInfo(Control(2600), &info);
+        ::SetWindowLongPtrW(info.hwndList, GWL_STYLE, ::GetWindowLongPtrW(info.hwndList, GWL_STYLE) & ~WS_BORDER);
+        ::SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE, ::GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
+        ui::RoundWindow(info.hwndList);
+        // Shown again on every drop-down: excluded as an opaque layered
+        // window, it leaves no hole in a capture.
+        static_cast<void>(ui::ExcludeFromCapture(info.hwndList));
+        return;
+    }
+    if (id == 2700 && notification == EN_CHANGE) {
+        UpdateTextFromControl();
+        return;
+    }
+    if (syncing_context_) { return; }
+    if (id == 2600 && (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS)) {
+        wchar_t text[32]{};
+        if (notification == CBN_SELCHANGE) {
+            ::SendMessageW(Control(2600), CB_GETLBTEXT, ::SendMessageW(Control(2600), CB_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(text));
+        } else {
+            ::GetWindowTextW(Control(2600), text, 32);
+        }
+        wchar_t* end = nullptr;
+        const double size = std::wcstod(text, &end);
+        while (end && std::iswspace(*end)) { ++end; }
+        if (end && ::lstrcmpiW(end, L"pt") == 0) { end += 2; }
+        if (end && *end == 0 && std::isfinite(size) && size >= 6 && size <= 288) {
+            auto value = ContextStyle();
+            value.font_size = static_cast<float>(size);
+            ChangeStyle(value);
+        } else {
+            ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_FONT_SIZE_RANGE));
+            SyncContext();
+            Invalidate();
+        }
+        if (notification == CBN_KILLFOCUS) { CommitContextTransaction(); }
+        return;
+    }
+    if (id == 2605 && notification == BN_CLICKED) {
+        document_.BeginTransaction();
+        ::SetWindowTextW(Control(2604), L"");
+        document_.CommitTransaction();
+        ::SetFocus(Control(2604));
+        SyncWatermarkClear();
+        return;
+    }
+    if (id == 2604 && notification == EN_CHANGE && ContextTool() == ToolId::Watermark) {
+        if (!FeatureUsed()) { return; }
+        const int length = ::GetWindowTextLengthW(Control(2604));
+        std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+        ::GetWindowTextW(Control(2604), text.data(), length + 1);
+        text.resize(std::min(length, 16));
+        if (!text.empty() && text.back() >= 0xd800 && text.back() <= 0xdbff) { text.pop_back(); }
+        if (text.size() != static_cast<size_t>(length)) {
+            syncing_context_ = true;
+            ::SetWindowTextW(Control(2604), text.c_str());
+            ::SendMessageW(Control(2604), EM_SETSEL, text.size(), text.size());
+            syncing_context_ = false;
+        }
+        if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+        Annotation a;
+        if (selected_) {
+            a = document_.annotations()[*selected_];
+        } else {
+            a.tool = ToolId::Watermark;
+            a.style = style_;
+            a.style.opacity = 30;
+            a.points = {{0, 0}, {static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)}};
+        }
+        a.text = std::move(text);
+        if (selected_) {
+            document_.Replace(*selected_, std::move(a));
+        } else {
+            document_.Apply(std::move(a));
+            selected_ = document_.annotations().size() - 1;
+        }
+        SyncContext();
+        Invalidate();
+        return;
+    }
+    if (notification == BN_CLICKED) {
+        const auto found = std::find_if(toolbar_.begin(), toolbar_.end(), [id](const auto& item) { return item.identifier == id; });
+        if (found != toolbar_.end()) {
+            const auto item = *found;
+            OnToolbarActivated(item);
+        }
+    }
+}
+
+void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
+    if (exporting_) {
+        // Nothing may change or end the image while it is copied or saved.
+        if (key != VK_CONTROL && key != VK_SHIFT && key != VK_MENU) { RefuseWhileExporting(); }
+        return;
+    }
+    if (editing_text_ && text_edit_) {
+        ::SendMessageW(text_edit_, WM_KEYDOWN, key, flags);
+        return;
+    }
+    if (key == VK_ESCAPE && (transforming_ || dragging_ || document_.in_transaction())) {
+        // The rollback can remove the selected annotation (a watermark created in this transaction).
+        CancelStroke();
+        document_.CancelTransaction();
+        if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+        SyncContext();
+        Invalidate();
+        return;
+    }
+    if (key == VK_ESCAPE && selected_) {
+        Select({});
+        return;
+    }
+    if (key == VK_DELETE && selected_) {
+        document_.Remove(*selected_);
+        Select({});
+        return;
+    }
+    if (selected_ && *selected_ < document_.annotations().size() && key >= VK_LEFT && key <= VK_DOWN) {
+        auto a = document_.annotations()[*selected_];
+        const float step = (::GetKeyState(VK_SHIFT) & 0x8000) ? 10.0f : 1.0f;
+        for (auto& p : a.points) {
+            p.x += key == VK_LEFT ? -step : key == VK_RIGHT ? step
+                                                            : 0;
+            p.y += key == VK_UP ? -step : key == VK_DOWN ? step
+                                                         : 0;
+        }
+        document_.Replace(*selected_, std::move(a));
+        Invalidate();
+        return;
+    }
+    if (key == VK_TAB) {
+        ::SetFocus(::GetDlgItem(hwnd_, 2000));
+        return;
+    }
+    const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    if (document_mode_) {
+        // A document larger than its viewport is moved and scaled from
+        // the keyboard as well as with the wheel.
+        const float page = static_cast<float>(platform::RectHeight(region_)) / zoom_ * 0.9f;
+        const POINT centre{(region_.left + region_.right) / 2, (region_.top + region_.bottom) / 2};
+        switch (key) {
+            case VK_PRIOR: ScrollDocument(0.0f, -page); return;
+            case VK_NEXT: ScrollDocument(0.0f, page); return;
+            case VK_HOME: ScrollDocument(0.0f, -static_cast<float>(source_image_.height)); return;
+            case VK_END: ScrollDocument(0.0f, static_cast<float>(source_image_.height)); return;
+            case VK_UP: ScrollDocument(0.0f, -48.0f * scale_ / zoom_); return;
+            case VK_DOWN: ScrollDocument(0.0f, 48.0f * scale_ / zoom_); return;
+            case VK_LEFT: ScrollDocument(-48.0f * scale_ / zoom_, 0.0f); return;
+            case VK_RIGHT: ScrollDocument(48.0f * scale_ / zoom_, 0.0f); return;
+            case VK_OEM_PLUS:
+            case VK_ADD:
+                if (control) {
+                    ZoomDocument(StepZoom(zoom_, 1), centre);
+                    return;
+                }
+                break;
+            case VK_OEM_MINUS:
+            case VK_SUBTRACT:
+                if (control) {
+                    ZoomDocument(StepZoom(zoom_, -1), centre);
+                    return;
+                }
+                break;
+            case '0':
+            case VK_NUMPAD0:
+                if (control) {
+                    ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre);
+                    return;
+                }
+                break;
+            case '1':
+            case VK_NUMPAD1:
+                if (control) {
+                    ZoomDocument(1.0f, centre);
+                    return;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+    if (control) {
+        switch (key) {
+            case 'Z': {
+                selected_.reset();
+                if (!FeatureUsed()) { return; }
+                const auto revision = document_.revision();
+                if (shift) {
+                    document_.Redo();
+                } else {
+                    document_.Undo();
+                }
+                Invalidate();
+                NotifyMutation(revision);
+                return;
+            }
+            case 'Y': {
+                selected_.reset();
+                if (!FeatureUsed()) { return; }
+                const auto revision = document_.revision();
+                document_.Redo();
+                Invalidate();
+                NotifyMutation(revision);
+                return;
+            }
+            case 'C':
+                if (!FeatureUsed()) { return; }
+                CompleteCopy();
+                return;
+            case 'S':
+                if (!FeatureUsed()) { return; }
+                SaveToFile();
+                return;
+            case 'T':
+                if (!FeatureUsed()) { return; }
+                CompletePin();
+                return;
+            default:
+                break;
+        }
+    }
+    if (key == VK_ESCAPE) {
+        RequestDiscard();
+        return;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2392,6 +2525,10 @@ const ScreenshotEditor::ToolbarItem* ScreenshotEditor::HitTestToolbar(POINT clie
 }
 
 void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
+    if (exporting_ && !(item.kind == ToolbarItem::Kind::Command && item.command == kCommandTheme)) {
+        RefuseWhileExporting();
+        return;
+    }
     if (item.kind == ToolbarItem::Kind::Command && item.command == kCommandCancel) {
         RequestDiscard();
         return;
@@ -2479,10 +2616,7 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
             if (item.command == kCommandUndo) { document_.Undo(); }
             if (item.command == kCommandRedo) { document_.Redo(); }
             if (item.command == kCommandClear) { document_.Clear(); }
-            if (item.command == kCommandSave && SaveToFile()) {
-                Close(true);
-                return;
-            }
+            if (item.command == kCommandSave && SaveToFile()) { return; }
             break;
     }
     ReflowToolbar();
@@ -2492,11 +2626,14 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
 }
 
 bool ScreenshotEditor::WantsPointer(POINT point) const {
-    if (editing_text_ || transforming_ || dragging_ || selected_) { return true; }
+    // While exporting, a click on the image is refused here instead of
+    // completing the screenshot a second time.
+    if (exporting_ || editing_text_ || transforming_ || dragging_ || selected_) { return true; }
     const auto p = ToImagePoint(point);
     return tool_ != ToolId::Pointer || document_.HitTest(p, 5.0f / zoom_).has_value();
 }
 HCURSOR ScreenshotEditor::ImageCursor(POINT point) const {
+    if (exporting_) { return ::LoadCursorW(nullptr, IDC_APPSTARTING); }
     const auto p = ToImagePoint(point);
     if (selected_ && *selected_ < document_.annotations().size()) {
         const auto handles = document_.annotations()[*selected_].Handles();
@@ -2591,6 +2728,7 @@ void ScreenshotEditor::BeginStroke(POINT point) {
 void ScreenshotEditor::UpdateStroke(POINT point) {
     const auto p = ToImagePoint(point);
     if (transforming_ && selected_) {
+        if (*selected_ >= document_.annotations().size()) { return; }
         auto updated = original_;
         if (transform_handle_ < 0) {
             const float dx = p.x - drag_origin_.x;
@@ -2608,8 +2746,20 @@ void ScreenshotEditor::UpdateStroke(POINT point) {
                 updated.points = {handles[(static_cast<size_t>(transform_handle_) + 2) % 4], q};
             }
         }
-        document_.Replace(*selected_, std::move(updated));
-        Invalidate();
+        // Only the annotation where it was and where it is, with its
+        // selection chrome, is repainted. Pixels a moved effect changes
+        // elsewhere are found when the paint recomputes the effects
+        // (RebuildRedactedBase). The toolbar does not change during the drag;
+        // EndStroke brings it up to date.
+        const size_t index = *selected_;
+        const RECT before = AnnotationDamage(document_.annotations()[index], true);
+        const uint64_t revision = document_.revision();
+        document_.Replace(index, std::move(updated));
+        if (document_.revision() == revision) { return; }
+        const RECT after = AnnotationDamage(document_.annotations()[index], true);
+        RECT damage{};
+        ::UnionRect(&damage, &before, &after);
+        InvalidateImage(damage);
         return;
     }
     if (!has_pending_ || !dragging_) { return; }
@@ -2628,11 +2778,9 @@ void ScreenshotEditor::UpdateStroke(POINT point) {
         const RECT after = PendingDamage();
         ::UnionRect(&damage, &before, &after);
     }
-    if (pending_.tool == ToolId::Spotlight) {
-        Invalidate();
-    } else {
-        InvalidateImage(damage);
-    }
+    // A spotlight that switches the darkening on changes every pixel; the
+    // paint that recomputes it invalidates the rest (RebuildRedactedBase).
+    InvalidateImage(damage);
 }
 void ScreenshotEditor::EndStroke(POINT point) {
     if (transforming_) {
@@ -2670,6 +2818,8 @@ void ScreenshotEditor::CancelStroke() {
     const RECT damage = PendingDamage();
     dragging_ = has_pending_ = false;
     pending_ = {};
+    // A cancelled spotlight takes its darkening back from the whole picture;
+    // the paint that recomputes the effects invalidates what lies outside.
     InvalidateImage(damage);
 }
 void ScreenshotEditor::StartTextEditing(std::optional<size_t> index, POINT point) {
@@ -2965,7 +3115,7 @@ void ScreenshotEditor::CommitPendingText() {
     Invalidate();
 }
 void ScreenshotEditor::OnCharacter(wchar_t character) {
-    if (editing_text_ && text_edit_) { ::SendMessageW(text_edit_, WM_CHAR, character, 0); }
+    if (!exporting_ && editing_text_ && text_edit_) { ::SendMessageW(text_edit_, WM_CHAR, character, 0); }
 }
 void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush) const {
     if (!selected_ || *selected_ >= document_.annotations().size()) { return; }
@@ -2974,11 +3124,11 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorB
     // Frame and handles keep their size on screen at every scale of the view.
     const float unit = scale_ / zoom_;
     brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
-    const float width = 1.2f * unit;
+    const float width = kSelectionStroke * unit;
     const auto box = NormalizedD2DRect(a.points.front(), a.points.back());
     if (a.tool == ToolId::Text || a.tool == ToolId::Tag) {
         auto r = a.bounds();
-        const float pad = 3 * unit;
+        const float pad = kSelectionTextGap * unit;
         r.left -= pad;
         r.top -= pad;
         r.right += pad;
@@ -2997,9 +3147,9 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorB
     }
     for (auto point : a.Handles()) {
         brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
-        target->FillEllipse(D2D1::Ellipse(point, 4.5f * unit, 4.5f * unit), brush);
+        target->FillEllipse(D2D1::Ellipse(point, kHandleRadius * unit, kHandleRadius * unit), brush);
         brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
-        target->DrawEllipse(D2D1::Ellipse(point, 4.5f * unit, 4.5f * unit), brush, 1.5f * unit);
+        target->DrawEllipse(D2D1::Ellipse(point, kHandleRadius * unit, kHandleRadius * unit), brush, kHandleStroke * unit);
     }
 }
 
@@ -3007,9 +3157,9 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorB
 // Rendering
 // ---------------------------------------------------------------------------
 
-void ScreenshotEditor::RebuildRedactedBase() {
+RECT ScreenshotEditor::RebuildRedactedBase(const RECT* painting) {
     const bool effect_preview = has_pending_ && (pending_.tool == ToolId::Mosaic || pending_.tool == ToolId::Spotlight);
-    if ((redaction_revision_ == document_.revision() && !effect_preview) || !has_image()) { return; }
+    if ((redaction_revision_ == document_.revision() && !effect_preview) || !has_image()) { return {}; }
     std::vector<RedactionEffect> effects;
     const auto add = [&](const Annotation& a) {
         if ((a.tool != ToolId::Mosaic && a.tool != ToolId::Spotlight) || a.points.empty()) { return; }
@@ -3037,17 +3187,27 @@ void ScreenshotEditor::RebuildRedactedBase() {
     redaction_revision_ = effect_preview ? UINT64_MAX : document_.revision();
     // Only the pixels an edit can influence are recomputed and uploaded.
     const RECT changed = redaction_.Update(source_image_, std::move(effects));
-    if (::IsRectEmpty(&changed) || !image_bitmap_) { return; }
-    const auto& image = redaction_.image();
+    if (::IsRectEmpty(&changed)) { return changed; }
     // The bitmap holds rows [band_top_, band_top_ + band_rows_): the whole
     // picture for a screenshot, the band on show for a tall document.
     const LONG top = std::max<LONG>(changed.top, band_top_), bottom = std::min<LONG>(changed.bottom, band_top_ + band_rows_);
-    if (bottom <= top) { return; }
-    const D2D1_RECT_U target{static_cast<UINT32>(changed.left), static_cast<UINT32>(top - band_top_), static_cast<UINT32>(changed.right), static_cast<UINT32>(bottom - band_top_)};
-    if (FAILED(image_bitmap_->CopyFromMemory(&target, image.row(top) + changed.left, static_cast<UINT32>(image.stride_bytes())))) {
-        image_bitmap_.Reset();
-        band_rows_ = 0;
+    if (image_bitmap_ && bottom > top) {
+        const auto& image = redaction_.image();
+        const D2D1_RECT_U target{static_cast<UINT32>(changed.left), static_cast<UINT32>(top - band_top_), static_cast<UINT32>(changed.right), static_cast<UINT32>(bottom - band_top_)};
+        if (FAILED(image_bitmap_->CopyFromMemory(&target, image.row(top) + changed.left, static_cast<UINT32>(image.stride_bytes())))) {
+            image_bitmap_.Reset();
+            band_rows_ = 0;
+        }
     }
+    // Whatever invalidated this paint, every changed pixel reaches the
+    // screen: what the paint does not cover is invalidated for the next one,
+    // which finds nothing left to recompute.
+    const RECT shown = DesktopDamage(changed);
+    RECT covered{};
+    if (!platform::IsEmptyRect(shown) && (painting == nullptr || !::IntersectRect(&covered, &shown, painting) || !::EqualRect(&covered, &shown))) {
+        InvalidateImage(changed);
+    }
+    return changed;
 }
 
 int ScreenshotEditor::EnsureBaseRows(int first, int end) {
@@ -3094,15 +3254,17 @@ int ScreenshotEditor::EnsureBaseRows(int first, int end) {
 void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repaint) {
     auto& graphics = platform::GraphicsEnvironment::Get();
     if (!has_image() || !graphics.EnsureInitialized() || !dc) { return; }
-    RebuildRedactedBase();
+    RECT client{0, 0, platform::RectWidth(bounds), platform::RectHeight(bounds)};
+    if (repaint) { client = platform::IntersectRects(client, *repaint); }
+    RECT painting = client;
+    ::OffsetRect(&painting, bounds.left, bounds.top);
+    RebuildRedactedBase(&painting);
     if (!image_target_) {
         const auto properties = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_SOFTWARE,
                                                              D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.0f, 96.0f);
         if (FAILED(graphics.d2d_factory()->CreateDCRenderTarget(&properties, &image_target_))) { return; }
         image_target_->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &image_brush_);
     }
-    RECT client{0, 0, platform::RectWidth(bounds), platform::RectHeight(bounds)};
-    if (repaint) { client = platform::IntersectRects(client, *repaint); }
     if (platform::IsEmptyRect(client) || FAILED(image_target_->BindDC(dc, &client))) { return; }
     // Where image pixel (0, 0) falls in this paint, and which image rows the
     // paint can show. A screenshot shows all of its rows.
@@ -3261,40 +3423,30 @@ platform::BgraImage ScreenshotEditor::CompositeCommitted() {
     return Composite();
 }
 
-bool ScreenshotEditor::CopyToClipboard() {
-    if (!EnsureImage()) { return false; }
-    completing_ = true;
-    CommitPendingText();
-    completing_ = false;
-    const platform::BgraImage image = Composite();
-    if (image.empty()) {
-        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_COPY));
-        Invalidate();
-        return false;
-    }
-    if (!platform::CopyImageToClipboard(hwnd_, image)) {
-        // Failure safety: the session stays open so no capture is lost.
-        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
-        Invalidate();
-        return false;
-    }
-    platform::LogMessage(L"Screenshot copied to the clipboard");
-    return true;
-}
-
 bool ScreenshotEditor::SaveToFile() {
+    if (exporting_) {
+        RefuseWhileExporting();
+        return false;
+    }
     if (!EnsureImage()) { return false; }
     CommitPendingText();
-    if (!visible_) { return false; }
-    const platform::BgraImage image = Composite();
-    if (image.empty()) {
+    // Committing the text can complete the screenshot, which copies it.
+    if (!visible_ || exporting_) { return false; }
+    platform::BgraImage composite = Composite();
+    if (composite.empty()) {
         ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_SAVE));
         Invalidate();
         return false;
     }
+    auto image = std::make_shared<const platform::BgraImage>(std::move(composite));
+    auto destination = ChooseSaveDestination(true);
+    if (!destination || !visible_) { return false; }  // Cancelled: keep editing.
+    return StartExport(platform::ImageExportTarget::File, std::move(image), std::move(*destination));
+}
 
+std::optional<ui::ImageSaveDestination> ScreenshotEditor::ChooseSaveDestination(bool allow_quick) {
     bool dialog = false;
-    const auto outcome = ui::SaveFinishedImage(hwnd_, image, settings_, [&] {
+    auto destination = ui::ChooseImageDestination(hwnd_, settings_, allow_quick, [&] {
         // Topmost owned islands and combo lists must not cover a native file
         // dialog. Freeze their timers/placement during its nested message loop.
         dialog = true;
@@ -3315,22 +3467,87 @@ bool ScreenshotEditor::SaveToFile() {
         if (tooltip_) { ::SendMessageW(tooltip_, TTM_ACTIVATE, TRUE, 0); }
         if (visible_) { PlaceContext(); }
     }
-    switch (outcome) {
-        case ui::ImageSaveOutcome::SavedToFolder:
-            platform::LogMessage(L"Screenshot saved without a dialog");
-            ui::ShowCaptureSavedNotice(region_);
-            return true;
-        case ui::ImageSaveOutcome::SavedAs:
-            platform::LogMessage(L"Screenshot exported successfully");
-            return true;
-        case ui::ImageSaveOutcome::Cancelled:
-            return false;  // Keep editing.
-        case ui::ImageSaveOutcome::Failed:
-            ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED));
-            Invalidate();
-            return false;
-    }
-    return false;
+    return destination;
 }
+
+bool ScreenshotEditor::StartExport(platform::ImageExportTarget target, std::shared_ptr<const platform::BgraImage> image,
+                                   ui::ImageSaveDestination destination) {
+    platform::ImageExportRequest request{image, target, destination.path};
+    if (!export_job_.Start(hwnd_, platform::kMsgImageExportCompleted, std::move(request))) {
+        // Another export of Easnap is still running, from a pin or a Scrollshot.
+        RefuseWhileExporting();
+        return false;
+    }
+    exporting_ = true;
+    export_image_ = std::move(image);
+    export_destination_ = std::move(destination);
+    const bool copy = target == platform::ImageExportTarget::Clipboard;
+    export_notice_ = ui::ShowCaptureProgressNotice(
+        region_, strings::Get(copy ? IDS_SCROLLSHOT_STATUS_COPYING : IDS_SCROLLSHOT_STATUS_SAVING));
+    ShowBrushPopup(false);
+    // The property island changes the image as well.
+    if (context_) { ::EnableWindow(context_, FALSE); }
+    SyncToolbarControls();
+    ui::RefreshCursor();
+    return true;
+}
+
+void ScreenshotEditor::EndExport() {
+    exporting_ = false;
+    ui::CloseCaptureNotice(export_notice_);
+    export_notice_ = nullptr;
+    export_image_.reset();
+    export_destination_ = {};
+    if (context_) { ::EnableWindow(context_, TRUE); }
+    SyncToolbarControls();
+}
+
+void ScreenshotEditor::OnExportCompleted(platform::ImageExportJob::Generation generation) {
+    std::optional<platform::ImageExportResult> result = export_job_.TryTake(generation);
+    if (!result) { return; }  // From an export that was dropped.
+    std::shared_ptr<const platform::BgraImage> image = export_image_;
+    const ui::ImageSaveDestination destination = export_destination_;
+    EndExport();
+    ui::RefreshCursor();
+    const bool copy = result->target == platform::ImageExportTarget::Clipboard;
+    if (result->status == platform::ImageExportStatus::Succeeded) {
+        if (copy && platform::PublishClipboardImage(hwnd_, result->clipboard)) {
+            platform::LogMessage(L"Screenshot copied to the clipboard");
+            ui::ShowCaptureCopiedNotice(region_);
+            Close(true);
+            return;
+        }
+        if (!copy) {
+            ui::RecordImageSaved(settings_, destination);
+            if (destination.quick) {
+                platform::LogMessage(L"Screenshot saved without a dialog");
+                ui::ShowCaptureSavedNotice(region_);
+            } else {
+                platform::LogMessage(L"Screenshot exported successfully");
+            }
+            Close(true);
+            return;
+        }
+    }
+    if (result->status == platform::ImageExportStatus::Failed && !copy && destination.quick && visible_) {
+        // The screenshots folder could not be written: the dialog offers
+        // every other place for the same image.
+        auto chosen = ChooseSaveDestination(false);
+        if (chosen && visible_ && StartExport(platform::ImageExportTarget::File, std::move(image), std::move(*chosen))) {
+            return;
+        }
+    } else if (result->status == platform::ImageExportStatus::Failed) {
+        // Failure safety: the session stays open so no capture is lost.
+        ui::ShowCaptureStatusNotice(region_, strings::Get(copy ? IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE
+                                                               : IDS_EDITOR_NOTICE_SAVE_FAILED));
+    } else if (result->status == platform::ImageExportStatus::Succeeded) {
+        // Prepared, but the clipboard could not be opened.
+        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
+    }
+    Invalidate();
+    if (callbacks_.on_export_ended) { callbacks_.on_export_ended(); }
+}
+
+void ScreenshotEditor::RefuseWhileExporting() { ::MessageBeep(MB_ICONWARNING); }
 
 }  // namespace easnap::editor

@@ -284,6 +284,38 @@ void TestSpotlightDimIsGlobal() {
     CHECK(SamePixels(renderer.image(), source));
 }
 
+long Area(const RECT& rect) {
+    return ::IsRectEmpty(&rect) ? 0 : (rect.right - rect.left) * (rect.bottom - rect.top);
+}
+
+// The editor repaints exactly what Update reports. In a tall picture, moving
+// a spotlight with the same dim recomputes its old and new extent only, and
+// an edit that leaves the effects alone (a vector shape) recomputes nothing.
+void TestReportedAreaOfATallPicture() {
+    const int width = 640, height = 6000;
+    const BgraImage source = MakeSource(width, height, 21);
+    RedactionRenderer renderer;
+    std::vector<RedactionEffect> effects{Region(RedactionKind::Pixelate, 40, 4500, 300, 4700, 60),
+                                         Spotlight(RedactionOutline::Rounded, 100, 3000, 400, 3200, 0.5f)};
+    const RECT first = renderer.Update(source, effects);
+    CHECK(Area(first) == static_cast<long>(width) * height);  // Built from the capture.
+
+    const RECT unchanged = renderer.Update(source, effects);
+    CHECK(::IsRectEmpty(&unchanged));
+
+    RedactionEffect& spotlight = effects.back();
+    spotlight.box = D2D1::RectF(130.5f, 3040.25f, 430.5f, 3240.25f);
+    const RECT moved = renderer.Update(source, effects);
+    // Old box 100..400 x 3000..3200 and new box 130..431 x 3040..3241, whole pixels.
+    const RECT expected{100, 3000, 431, 3241};
+    CHECK(::EqualRect(&moved, &expected));
+    CHECK(Area(moved) == 331L * 241L);
+    CHECK(Area(moved) * 10 < static_cast<long>(width) * height);
+    RedactionRenderer reference;
+    reference.Update(source, effects);
+    CHECK(SamePixels(renderer.image(), reference.image()));
+}
+
 void TestResetAndNewSourceRebuild() {
     const BgraImage first_capture = MakeSource(64, 48, 3);
     const BgraImage second_capture = MakeSource(96, 80, 4);
@@ -311,6 +343,7 @@ int main() {
     TestDraggingOneEffectStaysLocal();
     TestOverlappingEffectsAreReappliedInOrder();
     TestSpotlightDimIsGlobal();
+    TestReportedAreaOfATallPicture();
     TestResetAndNewSourceRebuild();
     std::printf("redaction renderer: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

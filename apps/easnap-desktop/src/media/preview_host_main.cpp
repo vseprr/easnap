@@ -369,9 +369,13 @@ private:
 }  // namespace easnap::media
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-    easnap::platform::RestrictDllSearchPath();
+    if (!easnap::platform::RestrictDllSearchPath()) {
+        // This process keeps no log file; the line reaches a debugger.
+        easnap::platform::LogMessage(L"SetDefaultDllDirectories failed (error %lu)", ::GetLastError());
+    }
     // A fault inside the native player leaves a report beside the application's.
     easnap::platform::diagnostics::InstallCrashHandler(easnap::platform::diagnostics::CrashDirectory(), L"preview");
+    easnap::platform::diagnostics::LogCrashHandlerStatus();  // No log file here: the debugger receives it.
     const HANDLE input = ::GetStdHandle(STD_INPUT_HANDLE);
     const HANDLE output = ::GetStdHandle(STD_OUTPUT_HANDLE);
     if (input == nullptr || input == INVALID_HANDLE_VALUE ||

@@ -21,9 +21,17 @@ struct PreviewTransportCommand final {
     MediaTime position{0};
 };
 
+// SeekNotHonoured is never returned by PreviewLiveness::Observe. Its owner
+// reports it when PreviewTransport::CheckPlaybackClock is exhausted.
 enum class PreviewLivenessFailure { None,
                                     CommandTimeout,
-                                    PlaybackStalled };
+                                    PlaybackStalled,
+                                    SeekNotHonoured };
+
+/// Result of comparing the native clock with the seek that playback resumed from.
+enum class PreviewClockCheck { Consistent,
+                               Reseek,
+                               Exhausted };
 
 /// Detects a backend that no longer makes progress without inventing a native
 /// completion. Only the owner may act on a failure, by invalidating/replacing
@@ -60,6 +68,20 @@ private:
 /// received from the same player instance.
 class PreviewTransport final {
 public:
+    /// Playback runs at rate 1, so after an acknowledged seek the native clock
+    /// can run ahead of that target by no more than the real time since the
+    /// command that resumed playback was dispatched. This allowance covers tick
+    /// and clock granularity; a smaller contradiction is not detected.
+    static constexpr MediaTime clock_allowance{std::chrono::milliseconds{500}};
+    /// The check applies only this long after that command was dispatched.
+    /// The observed fault showed at the first snapshot, about 125 ms after.
+    /// With audio, the native clock follows the audio device rather than the
+    /// tick count; a drift of 100-200 ppm would exceed clock_allowance after
+    /// 40-80 minutes, so an unbounded check would misfire on long playback.
+    static constexpr std::chrono::milliseconds clock_check_window{3'000};
+    /// Times one requested position is sought again before the owner recovers.
+    static constexpr unsigned clock_reseek_limit = 2;
+
     void Reset(bool playing = false) noexcept;
     void RequestPlay() noexcept;
     void RequestPause() noexcept;
@@ -68,8 +90,9 @@ public:
     void RequestPauseAt(MediaTime position) noexcept;
 
     /// Returns and marks the next command in flight, or None while waiting for
-    /// the completion callback of an earlier command.
-    [[nodiscard]] PreviewTransportCommand TakeNext() noexcept;
+    /// the completion callback of an earlier command. now_ms is the owner's
+    /// monotonic time at which a returned command is dispatched natively.
+    [[nodiscard]] PreviewTransportCommand TakeNext(uint64_t now_ms) noexcept;
     /// The event identifies completion, NOT current playback state. The owner
     /// supplies a fresh GetState observation, serialized with command dispatch.
     /// No other event (including Ended) may retire an outstanding command.
@@ -83,6 +106,20 @@ public:
     void Ended(PreviewNativeState observed,
                std::optional<MediaTime> endpoint = std::nullopt) noexcept;
     void Failed() noexcept;
+
+    /// MFPlay has reported a seek complete and then played on from its clock
+    /// before that seek. True when, within clock_check_window of the dispatch
+    /// that resumed playback from the acknowledged target, the native clock is
+    /// further ahead of that target than clock_allowance plus the time since
+    /// that dispatch. Such a clock is not a position: the owner reports the
+    /// target, pending, until CheckPlaybackClock acts.
+    [[nodiscard]] bool PlaybackClockContradicted(MediaTime native,
+                                                 uint64_t now_ms) const noexcept;
+    /// Seeks a contradicted target again: Pause, Seek, then Play if Play is
+    /// still the newest intent. Exhausted after clock_reseek_limit attempts for
+    /// one requested position; the owner must then recover the backend.
+    [[nodiscard]] PreviewClockCheck CheckPlaybackClock(MediaTime native,
+                                                       uint64_t now_ms) noexcept;
 
     [[nodiscard]] bool play_requested() const noexcept {
         return desired_playing_;
@@ -130,6 +167,9 @@ private:
     std::optional<MediaTime> position_override_;
     std::optional<MediaTime> playback_position_floor_;
     PreviewTransportCommandType in_flight_{PreviewTransportCommandType::None};
+    uint64_t in_flight_dispatched_ms_{0};
+    uint64_t playback_clock_origin_ms_{0};
+    unsigned clock_reseeks_{0};
     bool ended_{false};
 };
 

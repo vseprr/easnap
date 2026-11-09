@@ -2004,7 +2004,7 @@ void ComposedResizeStress(ui::TrimWindow& trim) {
     const auto original_theme = ui::theme::Preference();
     const auto monitor = platform::MonitorForRect(original);
     const float scale = ::GetDpiForWindow(window) / 96.0f;
-    const int min_width = ui::theme::Scaled(480, scale), min_height = ui::theme::Scaled(400, scale);
+    const int min_width = ui::theme::Scaled(512, scale), min_height = ui::theme::Scaled(400, scale);
     const int width = std::min(ui::theme::Scaled(1100, scale), static_cast<int>(monitor.work_area.right - monitor.work_area.left));
     const int height = std::min(ui::theme::Scaled(740, scale), static_cast<int>(monitor.work_area.bottom - monitor.work_area.top));
     const RECT capture_area{monitor.work_area.left, monitor.work_area.top, monitor.work_area.left + width, monitor.work_area.top + height};
@@ -2591,12 +2591,12 @@ void Trim(bool all_edges_only = false, const wchar_t* edge_filter = nullptr, int
     ::SendMessageW(native_window, WM_GETMINMAXINFO, 0, reinterpret_cast<LPARAM>(&minimum));
     const float dpi = ::GetDpiForWindow(native_window) / 96.0f;
     std::printf("Trim: native window DPI %u (%.0f%% display scaling)\n", ::GetDpiForWindow(native_window), static_cast<double>(dpi) * 100.0);
-    CHECK(minimum.ptMinTrackSize.x - 2 * side_frame == ui::theme::Scaled(480, dpi));
+    CHECK(minimum.ptMinTrackSize.x - 2 * side_frame == ui::theme::Scaled(512, dpi));
     CHECK(minimum.ptMinTrackSize.y - bottom_frame == ui::theme::Scaled(400, dpi));
     std::puts("Trim: measured endpoint/readout glyphs and dynamic status budget");
     for (auto appearance : {app::AppearanceTheme::Light, app::AppearanceTheme::Dark}) {
         Appearance(appearance);
-        for (const auto size : {std::pair{480, 400}, std::pair{1200, 400}, std::pair{480, 800}}) {
+        for (const auto size : {std::pair{512, 400}, std::pair{1200, 400}, std::pair{512, 800}}) {
             ::SetWindowPos(native_window, nullptr, 0, 0, ui::theme::Scaled(static_cast<float>(size.first), dpi), ui::theme::Scaled(static_cast<float>(size.second), dpi), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
             trim.SetExportResult(L"");
             check_trim_text();
@@ -2604,7 +2604,9 @@ void Trim(bool all_edges_only = false, const wchar_t* edge_filter = nullptr, int
             trim.SetExportProgress(.42f);
             check_trim_text();
             std::wstring notice;
-            for (int line = 0; line < 24; ++line) { notice += std::to_wstring(line) + L": The original recording remains available; choose a different destination and retry.\r\n"; }
+            // Overflow the status budget at every size even when no line wraps:
+            // an 800 DIP window holds about 27 unwrapped rows at any scale.
+            for (int line = 0; line < 48; ++line) { notice += std::to_wstring(line) + L": The original recording remains available; choose a different destination and retry.\r\n"; }
             trim.SetStatus(notice, true);
             check_trim_text();
             CHECK(::IsWindowVisible(status) && ::IsWindowVisible(progress));

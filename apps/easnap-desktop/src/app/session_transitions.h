@@ -25,7 +25,7 @@ enum class SessionState {
 };
 
 inline constexpr std::size_t kSessionStateCount = 13;
-inline constexpr std::size_t kSessionTransitionCount = 35;
+inline constexpr std::size_t kSessionTransitionCount = 36;
 
 /// Returns true for identity transitions and every edge in the production
 /// session graph. This is the sole authority for transition legality.
@@ -55,17 +55,36 @@ private:
     SessionState state_{SessionState::Idle};
 };
 
+/// Where the video in the trim view came from (ADR-040).
+enum class TrimSourceKind {
+    /// A recording Easnap made; it is the user's unsaved work.
+    Owned,
+    /// A file the user opened. Easnap never changes or deletes it.
+    External,
+};
+
 /// What ending the application right now would lose.
 enum class PendingWork {
     None,
     Recording,         ///< A recording is running, paused or being finalized.
     UnsavedRecording,  ///< A finished recording is open and not saved or copied.
-    Export,            ///< A finished recording is being exported.
+    Export,            ///< The video in the trim view is being exported.
     Image,             ///< An annotated screenshot or a stitched image is held.
 };
 
 /// `image_at_risk` tells whether the image being edited carries work: a plain
 /// screenshot without annotations can be taken again and does not count.
-[[nodiscard]] PendingWork PendingWorkFor(SessionState state, bool image_at_risk) noexcept;
+/// `image_export_running`: an image is being copied or saved, from the
+/// session or from a pin; it counts unless a recording matters more.
+/// `trim_source` is what the trim view holds: an external file is never unsaved
+/// work, so trimming one loses nothing and only its export is pending.
+[[nodiscard]] PendingWork PendingWorkFor(SessionState state, bool image_at_risk,
+                                         bool image_export_running, TrimSourceKind trim_source) noexcept;
+
+/// Whether the user is told now that the settings could not be saved: once
+/// per run, and only while no session and none of the application's dialogs
+/// or menus is open. A failure during a session is found again by the save
+/// that follows its end.
+[[nodiscard]] bool ShouldTellSettingsNotSaved(SessionState state, bool dialog_open, bool already_told) noexcept;
 
 }  // namespace easnap::app

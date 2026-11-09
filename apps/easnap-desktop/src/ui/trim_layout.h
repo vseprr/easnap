@@ -3,7 +3,7 @@
 
 namespace easnap::ui {
 
-inline constexpr int kTrimMinClientWidthDip = 480;
+inline constexpr int kTrimMinClientWidthDip = 512;
 inline constexpr int kTrimMinClientHeightDip = 400;
 inline constexpr int kTrimChromeHeightDip = 40;
 

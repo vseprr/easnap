@@ -16,10 +16,18 @@
 #include <shellapi.h>
 #include <shlobj.h>
 
+#include <chrono>
 #include <cmath>
+#include <memory>
+#include <optional>
 #include <string>
 
+#include "app/app_settings.h"
+#include "app/command_line.h"
+#include "app/external_video.h"
 #include "app/session_state.h"
+#include "app/video_handover.h"
+#include "media/video_probe.h"
 #include "platform/diagnostics.h"
 #include "platform/platform_utils.h"
 #include "platform/startup_entry.h"
@@ -43,8 +51,12 @@ namespace {
 using easnap::app::CaptureCoordinator;
 using easnap::app::SessionState;
 
+/// A second Easnap.exe finds the running one's host window by this class: to
+/// ask for a capture, or to hand it a video to open (ADR-040).
 constexpr wchar_t kHostClassName[] = L"EasnapHostWindow";
 constexpr wchar_t kSingleInstanceMutex[] = L"Local\\Easnap.SingleInstance";
+/// How long a second Easnap.exe waits for the running one to take a video.
+constexpr std::chrono::milliseconds kHandOverTimeout{5000};
 constexpr wchar_t kProductName[] = L"Easnap";
 constexpr UINT kMsgTrayIcon = WM_APP + 1;
 constexpr UINT kTrayIconId = 1;
@@ -75,7 +87,10 @@ public:
             return false;
         }
         data.uVersion = NOTIFYICON_VERSION_4;
-        ::Shell_NotifyIconW(NIM_SETVERSION, &data);
+        if (::Shell_NotifyIconW(NIM_SETVERSION, &data) == FALSE) {
+            // The icon keeps the old callbacks: clicks work, WM_CONTEXTMENU does not come.
+            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_SETVERSION) failed (error %lu)", ::GetLastError());
+        }
         added_ = true;
         return true;
     }
@@ -108,20 +123,31 @@ public:
         NOTIFYICONDATAW data = MakeData();
         data.uFlags = NIF_TIP | NIF_SHOWTIP;
         ::wcsncpy_s(data.szTip, tooltip_.c_str(), _TRUNCATE);
-        ::Shell_NotifyIconW(NIM_MODIFY, &data);
+        if (::Shell_NotifyIconW(NIM_MODIFY, &data) == FALSE) {
+            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_MODIFY) for the tooltip failed (error %lu)",
+                                         ::GetLastError());
+        }
     }
 
-    void ShowBalloon(const wchar_t* title, const wchar_t* text) const {
+    /// True when the shell took the notification; false without an icon.
+    bool ShowBalloon(const wchar_t* title, const wchar_t* text) const {
         if (!added_) {
-            return;
+            return false;
         }
         NOTIFYICONDATAW data = MakeData();
         data.uFlags = NIF_INFO;
         data.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;
         ::wcsncpy_s(data.szInfoTitle, title, _TRUNCATE);
         ::wcsncpy_s(data.szInfo, text, _TRUNCATE);
-        ::Shell_NotifyIconW(NIM_MODIFY, &data);
+        if (::Shell_NotifyIconW(NIM_MODIFY, &data) == FALSE) {
+            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_MODIFY) for a notification failed (error %lu)",
+                                         ::GetLastError());
+            return false;
+        }
+        return true;
     }
+
+    [[nodiscard]] bool added() const noexcept { return added_; }
 
 private:
     [[nodiscard]] NOTIFYICONDATAW MakeData() const {
@@ -146,7 +172,8 @@ constexpr wchar_t kUpdatesPage[] = L"https://github.com/vseprr/easnap/releases";
 #else
 constexpr wchar_t kUpdatesPage[] = L"https://github.com/vseprr/easnap/releases/latest";
 #endif
-/// A second launch posts this to the running instance: start a capture.
+/// A second launch without a file posts this to the running instance: start a
+/// capture.
 constexpr wchar_t kActivateMessageName[] = L"Easnap.StartCapture";
 constexpr int kProbeHotkeyId = 2;
 
@@ -154,6 +181,9 @@ TrayIcon g_tray;
 UINT g_taskbar_created_message = 0;
 UINT g_activate_message = 0;
 bool g_hotkey_registered = false;
+/// A video to open, from this process's command line or handed over by a
+/// second Easnap.exe; acted on from the host window's own message.
+easnap::app::OpenVideoRequests g_video_requests;
 
 /// The tooltip says how to capture: with the shortcut, or by clicking when
 /// another application holds the shortcut.
@@ -319,13 +349,36 @@ void ShowSettings(HWND hwnd) {
     }
     const bool startup_refused = model.start_with_windows != started_with_windows &&
                                  !easnap::platform::SetStartupEntry(model.start_with_windows, executable);
-    coordinator.PersistSettings();
+    const bool saved = coordinator.PersistSettings();
     g_tray.SetTooltip(TrayTooltip());
     easnap::platform::LogMessage(L"Settings changed");
     if (startup_refused) {
         // The next visit to Settings shows the entry as it really is.
         easnap::platform::LogMessage(L"The startup entry could not be changed");
+    }
+    if (!saved) {
+        // Said here instead of in a notification. Marked first: the dialog's
+        // own message loop would otherwise show the notification as well.
+        coordinator.MarkSettingsFailureTold();
+        easnap::ui::ShowErrorMessage(
+            nullptr, strings::Get(startup_refused ? IDS_SETTINGS_STARTUP_AND_SAVE_FAILED : IDS_SETTINGS_SAVE_FAILED));
+    } else if (startup_refused) {
         easnap::ui::ShowErrorMessage(nullptr, strings::Get(IDS_SETTINGS_STARTUP_FAILED));
+    }
+}
+
+/// Says once per run that the settings cannot be saved: in a notification, or
+/// in a dialog when there is no icon to carry one. A notification the shell
+/// refused is tried again after the next failed save.
+void TellSettingsNotSaved() {
+    namespace strings = easnap::strings;
+    auto& coordinator = CaptureCoordinator::Instance();
+    if (g_tray.ShowBalloon(kProductName, strings::Get(IDS_SETTINGS_NOT_SAVED_NOTICE))) {
+        coordinator.MarkSettingsFailureTold();
+    } else if (!g_tray.added()) {
+        // Marked first: the dialog's own message loop may handle another notice.
+        coordinator.MarkSettingsFailureTold();
+        easnap::ui::ShowErrorMessage(nullptr, strings::Get(IDS_SETTINGS_SAVE_FAILED));
     }
 }
 
@@ -353,7 +406,11 @@ void OpenDataFolder() {
     if (directory.empty()) {
         return;
     }
-    easnap::platform::EnsureDirectory(directory);
+    if (!easnap::platform::EnsureDirectory(directory)) {
+        // A file may hold the folder's name: there is nothing to open.
+        easnap::platform::LogMessage(L"The data folder could not be created (error %lu)", ::GetLastError());
+        return;
+    }
     ::ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
@@ -372,6 +429,9 @@ void ShowTrayMenu(HWND hwnd) {
     const UINT capture_flags = coordinator.state() == SessionState::Idle ? MF_STRING : (MF_STRING | MF_GRAYED);
 
     ::AppendMenuW(menu, capture_flags, IDM_TRAY_CAPTURE, capture_item.c_str());
+    // A video is opened only while idle, and one at a time (ADR-040).
+    ::AppendMenuW(menu, coordinator.CanOpenVideo() ? MF_STRING : (MF_STRING | MF_GRAYED), IDM_TRAY_OPEN_VIDEO,
+                  strings::Get(IDS_TRAY_OPEN_VIDEO));
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     ::AppendMenuW(menu, MF_STRING | (coordinator.settings().capture_cursor ? MF_CHECKED : MF_UNCHECKED),
                   IDM_TRAY_CAPTURE_CURSOR, strings::Get(IDS_SHELL_TRAY_INCLUDE_CURSOR));
@@ -407,6 +467,9 @@ void OnTrayCommand(HWND hwnd, UINT command) {
     switch (command) {
         case IDM_TRAY_CAPTURE:
             coordinator.OnGlobalHotkey();
+            break;
+        case IDM_TRAY_OPEN_VIDEO:
+            coordinator.OpenVideo();
             break;
         case IDM_TRAY_CAPTURE_CURSOR:
             coordinator.settings().capture_cursor = !coordinator.settings().capture_cursor;
@@ -495,8 +558,32 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             coordinator.OnTrimExportCompleted(static_cast<uint64_t>(wparam));
             return 0;
 
+        case easnap::app::kMsgVideoProbeCompleted:
+            coordinator.OnVideoProbeCompleted(static_cast<UINT_PTR>(wparam));
+            return 0;
+
+        case WM_COPYDATA:
+            // Any program on the desktop can send this. It is checked and only
+            // kept here; the work happens on the message posted below.
+            return g_video_requests.OnCopyData(hwnd, reinterpret_cast<const COPYDATASTRUCT*>(lparam),
+                                               coordinator.AcceptsVideoRequest())
+                       ? TRUE
+                       : FALSE;
+
+        case easnap::app::kMsgOpenVideoRequest:
+            if (const std::optional<std::wstring> path = g_video_requests.Take()) { coordinator.OpenVideo(*path); }
+            return 0;
+
         case easnap::app::kMsgScrollshotProgress:
             coordinator.OnScrollshotProgress(static_cast<uint64_t>(wparam));
+            return 0;
+
+        case easnap::app::kMsgSettingsNotSaved:
+            // Asked again: a session or a dialog may have opened since the post.
+            if (coordinator.SettingsNoticeDue()) { TellSettingsNotSaved(); }
+            return 0;
+        case easnap::platform::kMsgImageExportCompleted:
+            coordinator.OnImageExportCompleted(static_cast<UINT_PTR>(wparam));
             return 0;
 
         case WM_CLIPBOARDUPDATE:
@@ -524,6 +611,10 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
         case WM_TIMER:
             if (wparam == easnap::app::kTimerDeferredCleanup) {
                 coordinator.OnDeferredCleanup();
+                return 0;
+            }
+            if (wparam == easnap::app::kTimerVideoProbeRetry) {
+                coordinator.OnVideoProbeTimer();
                 return 0;
             }
             break;
@@ -555,7 +646,7 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
                 ::UnregisterHotKey(hwnd, IDH_EASNAP_CAPTURE);
                 g_hotkey_registered = false;
             }
-            coordinator.PersistSettings();
+            coordinator.PersistSettings(CaptureCoordinator::IfNotSaved::LogOnly);
             coordinator.Shutdown();
             g_tray.Remove();
             ::PostQuitMessage(0);
@@ -584,22 +675,79 @@ HWND CreateHostWindow(HINSTANCE instance) {
                              instance, nullptr);
 }
 
+struct ArgumentsDeleter {
+    void operator()(LPWSTR* arguments) const noexcept { ::LocalFree(static_cast<HLOCAL>(arguments)); }
+};
+
+/// What this start was asked for (ADR-040); nothing when Windows cannot split
+/// the command line.
+easnap::app::CommandLineRequest ReadCommandLine() {
+    int count = 0;
+    const std::unique_ptr<LPWSTR, ArgumentsDeleter> arguments(::CommandLineToArgvW(::GetCommandLineW(), &count));
+    if (!arguments) {
+        easnap::app::CommandLineRequest request;
+        request.bad = true;
+        return request;
+    }
+    return easnap::app::ParseCommandLine(count, arguments.get());
+}
+
+/// A second Easnap.exe was given a video: the running one opens it. This
+/// process was started by the user, so it, and not the running Easnap, says
+/// why nothing opens. The running Easnap checks the request's form, and its
+/// probe checks the file again on a worker.
+void HandOverVideo(const std::wstring& path) {
+    namespace app = easnap::app;
+    namespace strings = easnap::strings;
+    const easnap::media::VideoRefusal location = easnap::media::CheckVideoLocation(path);
+    if (location != easnap::media::VideoRefusal::None) {
+        // The answer the running Easnap's probe would give.
+        easnap::media::VideoProbeResult refused;
+        refused.reason = location;
+        easnap::ui::ShowErrorMessage(
+            nullptr, strings::Format(app::VideoRefusalMessageId(refused), {app::VideoFileDisplayName(path)}).c_str());
+        return;
+    }
+    switch (app::HandOverOpenVideo(kHostClassName, path, kHandOverTimeout)) {
+        case app::HandOverResult::Taken:
+            break;
+        case app::HandOverResult::Refused:
+            easnap::ui::ShowErrorMessage(
+                nullptr, strings::Format(IDS_VIDEO_HANDOVER_BUSY, {app::VideoFileDisplayName(path)}).c_str());
+            break;
+        case app::HandOverResult::NoRecipient:
+            easnap::ui::ShowMessage(nullptr, strings::Get(IDS_SHELL_ALREADY_RUNNING), kProductName,
+                                    MB_OK | MB_ICONINFORMATION);
+            break;
+    }
+}
+
 }  // namespace
 
-int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR command_line, _In_ int) {
-    easnap::platform::RestrictDllSearchPath();
+int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, _In_ int) {
+    // A failure is logged once the log is open.
+    const bool dll_search_restricted = easnap::platform::RestrictDllSearchPath();
+    const DWORD dll_search_error = dll_search_restricted ? ERROR_SUCCESS : ::GetLastError();
     namespace diagnostics = easnap::platform::diagnostics;
     const std::wstring crash_directory = diagnostics::CrashDirectory();
     diagnostics::InstallCrashHandler(crash_directory, L"easnap");
+    const easnap::app::CommandLineRequest request = ReadCommandLine();
     // Started by the entry Settings writes for sign-in: stay quiet.
-    const bool started_at_sign_in = command_line != nullptr && ::wcsstr(command_line, easnap::platform::kStartupArgument) != nullptr;
+    const bool started_at_sign_in = request.startup;
     g_activate_message = ::RegisterWindowMessageW(kActivateMessageName);
 
     // Single instance, so the global shortcut and the notification icon have
-    // exactly one owner. Starting Easnap again is a request to capture: the
-    // running instance is told, and this process ends.
+    // exactly one owner. Starting Easnap again is a request to capture, or,
+    // with a video, a request to open it: the running instance is told, and
+    // this process ends.
     const easnap::platform::UniqueHandle instance_mutex{::CreateMutexW(nullptr, TRUE, kSingleInstanceMutex)};
     if (!instance_mutex || ::GetLastError() == ERROR_ALREADY_EXISTS) {
+        // Anything this process says, it says in the running Easnap's language.
+        easnap::strings::SetPreference(ToPreference(easnap::app::AppSettings::Load().language));
+        if (!request.open_path.empty()) {
+            HandOverVideo(request.open_path);
+            return 0;
+        }
         HWND running = ::FindWindowW(kHostClassName, kProductName);
         if (running != nullptr && g_activate_message != 0) {
             if (!started_at_sign_in) {
@@ -621,12 +769,20 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
     const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
     easnap::platform::LogMessage(L"Easnap %ls started on Windows %lu.%lu build %lu", EASNAP_VERSION_TEXT_W, windows.major,
                                  windows.minor, windows.build);
+    diagnostics::LogCrashHandlerStatus();
+    if (request.bad) {
+        // The arguments themselves may name the user's files: not logged.
+        easnap::platform::LogMessage(L"Command line arguments Easnap does not know were ignored");
+    }
     // Windows 10 version 2004. Earlier builds cannot keep Easnap's own windows
     // out of a recording or a scrolling screenshot, and nothing is tested there.
     if (windows.build != 0 && (windows.major < 10 || (windows.major == 10 && windows.build < 19041))) {
         const std::wstring text = easnap::strings::Format(IDS_WINDOWS_TOO_OLD, {std::to_wstring(windows.build)});
         ::MessageBoxW(nullptr, text.c_str(), kProductName, MB_OK | MB_ICONWARNING);
         return 1;
+    }
+    if (!dll_search_restricted) {
+        easnap::platform::LogMessage(L"SetDefaultDllDirectories failed (error %lu)", dll_search_error);
     }
     easnap::platform::EnableDpiAwareness();
 
@@ -645,10 +801,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
     }
 
     auto& coordinator = CaptureCoordinator::Instance();
-    if (!coordinator.Initialize(host)) {
-        ::DestroyWindow(host);
-        return 1;
-    }
+    coordinator.Initialize(host);
     // Text shown before this line follows Windows; from here the choice in Settings applies.
     easnap::strings::SetPreference(ToPreference(coordinator.settings().language));
 
@@ -672,19 +825,34 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
         }
     } else if (!coordinator.settings().first_run_notice_shown) {
         // Where Easnap lives and how to start a capture: said once per computer.
-        g_tray.ShowBalloon(kProductName, easnap::strings::Format(IDS_SHELL_TRAY_READY_BALLOON, {shortcut}).c_str());
+        // Where the settings cannot be saved, that is said instead.
         coordinator.settings().first_run_notice_shown = true;
-        coordinator.PersistSettings();
+        if (coordinator.PersistSettings()) {
+            g_tray.ShowBalloon(kProductName, easnap::strings::Format(IDS_SHELL_TRAY_READY_BALLOON, {shortcut}).c_str());
+        } else {
+            coordinator.settings().first_run_notice_shown = false;
+            TellSettingsNotSaved();
+        }
     }
 
     ShowCrashNotice(crash_directory);
     coordinator.OfferRecoveredRecordings();
+    if (!request.open_path.empty()) {
+        // Started with a video ("Open with" while Easnap did not run): opened
+        // the way a second Easnap.exe's hand-over is, from the host window's
+        // own message, once what starting may show has been answered.
+        g_video_requests.Queue(host, request.open_path);
+    }
 
     MSG message{};
     BOOL result = FALSE;
     while ((result = ::GetMessageW(&message, nullptr, 0, 0)) != 0) {
         if (result == -1) {
-            break;  // Fatal message-queue error.
+            // The queue cannot be read. WM_DESTROY saves the settings and shuts
+            // the coordinator down while COM is still initialised.
+            easnap::platform::LogMessage(L"GetMessage failed (error %lu)", ::GetLastError());
+            ::DestroyWindow(host);
+            break;
         }
         if (coordinator.ProcessDialogMessage(message)) {
             continue;
@@ -693,11 +861,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR c
         ::DispatchMessageW(&message);
     }
 
+    // WM_DESTROY has done this. Repeated so that the function-static
+    // coordinator never shuts down in its destructor, after COM is gone.
+    coordinator.Shutdown();
     g_tray.Remove();
     // Release process-wide graphics COM objects while the main apartment is
     // still initialized; the function-static environment is destroyed later.
     easnap::platform::GraphicsEnvironment::Get().Shutdown();
     easnap::platform::LogMessage(L"Easnap exited");
     diagnostics::StopLog();
-    return static_cast<int>(message.wParam);
+    return result == -1 ? 1 : static_cast<int>(message.wParam);
 }

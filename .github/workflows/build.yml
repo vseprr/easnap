@@ -68,7 +68,10 @@ jobs:
       # required locally: visible-desktop tests (no real display or input
       # queue), soak variants, preview tests (the hosted Windows Server image
       # cannot open an MFPlay player) and the overlay interaction test, whose
-      # click targets assume a larger desktop than the runner's.
+      # click targets assume a larger desktop than the runner's. The Debug
+      # build also leaves out the Scrollshot edit performance test: its blur
+      # closure costs about 1.8 s per paint there (0.13 s in Release), so the
+      # test runs past its limit and measures nothing of value.
       - name: Test on the hosted runner
         shell: pwsh
         working-directory: build
@@ -76,7 +79,7 @@ jobs:
           ctest --build-config ${{ matrix.configuration }}
           --output-on-failure --parallel 4 --no-tests=error
           --label-exclude "interactive-desktop|desktop-visual|soak|preview"
-          --exclude-regex "^capture_overlay_interaction$"
+          --exclude-regex "${{ matrix.configuration == 'Debug' && '^(capture_overlay_interaction|scrollshot_edit_performance)$' || '^capture_overlay_interaction$' }}"
 
       - name: Report pending physical desktop validation
         if: always()
@@ -169,7 +172,7 @@ jobs:
           $env:PATH = (Split-Path -Parent $runtime) + ';' + $env:PATH
           ctest --test-dir build-asan --build-config Release --output-on-failure --parallel 4 --no-tests=error `
             --label-exclude "interactive-desktop|desktop-visual|soak|preview" `
-            --exclude-regex "^(capture_overlay_interaction|diagnostics_log_and_crash_reports)$"
+            --exclude-regex "^(capture_overlay_interaction|diagnostics_log_and_crash_reports|scrollshot_edit_performance)$"
           if ($LASTEXITCODE -ne 0) { throw "Tests failed under AddressSanitizer (exit code $LASTEXITCODE)." }
 
   # The C++ sources follow .clang-format. The check uses the clang-format 19

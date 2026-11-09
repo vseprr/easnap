@@ -88,27 +88,28 @@ std::wstring FormatTime(media::MediaTime value) {
     return text;
 }
 
-// One whole sentence per failed operation; %1 receives the HRESULT.
+// One whole sentence per failed operation; %1 receives the HRESULT. An
+// external video has its own: nothing about it was ever at risk.
 UINT PreviewFailurePattern(
-    media::MediaPreviewOperation operation) noexcept {
+    media::MediaPreviewOperation operation, bool external) noexcept {
     switch (operation) {
         case media::MediaPreviewOperation::Open:
-            return IDS_TRIM_PREVIEW_FAILED_OPEN;
+            return external ? IDS_EXTERNAL_PREVIEW_FAILED_OPEN : IDS_TRIM_PREVIEW_FAILED_OPEN;
         case media::MediaPreviewOperation::Play:
-            return IDS_TRIM_PREVIEW_FAILED_PLAY;
+            return external ? IDS_EXTERNAL_PREVIEW_FAILED_PLAY : IDS_TRIM_PREVIEW_FAILED_PLAY;
         case media::MediaPreviewOperation::Pause:
-            return IDS_TRIM_PREVIEW_FAILED_PAUSE;
+            return external ? IDS_EXTERNAL_PREVIEW_FAILED_PAUSE : IDS_TRIM_PREVIEW_FAILED_PAUSE;
         case media::MediaPreviewOperation::Seek:
-            return IDS_TRIM_PREVIEW_FAILED_SEEK;
+            return external ? IDS_EXTERNAL_PREVIEW_FAILED_SEEK : IDS_TRIM_PREVIEW_FAILED_SEEK;
         case media::MediaPreviewOperation::Playback:
-            return IDS_TRIM_PREVIEW_FAILED_PLAYBACK;
+            return external ? IDS_EXTERNAL_PREVIEW_FAILED_PLAYBACK : IDS_TRIM_PREVIEW_FAILED_PLAYBACK;
         default:
-            return IDS_TRIM_PREVIEW_FAILED_OTHER;
+            return external ? IDS_EXTERNAL_PREVIEW_FAILED_OTHER : IDS_TRIM_PREVIEW_FAILED_OTHER;
     }
 }
 
 std::wstring PreviewFailureText(
-    const media::MediaPreviewSnapshot& snapshot) {
+    const media::MediaPreviewSnapshot& snapshot, bool external) {
     wchar_t code[16]{};
     _snwprintf_s(code, _TRUNCATE, L"0x%08lX",
                  static_cast<unsigned long>(snapshot.error));
@@ -116,11 +117,15 @@ std::wstring PreviewFailureText(
     // cause the user can remove.
     std::wstring text =
         snapshot.failed_operation == media::MediaPreviewOperation::Open && !media::PreviewHostInstalled()
-            ? std::wstring(strings::Get(IDS_TRIM_PREVIEW_HELPER_MISSING))
-            : strings::Format(PreviewFailurePattern(snapshot.failed_operation), {code});
-    // What to do next is the same after every failure.
-    text += L" ";
-    text += strings::Get(IDS_TRIM_PREVIEW_FAILED_NEXT);
+            ? std::wstring(strings::Get(external ? IDS_EXTERNAL_PREVIEW_HELPER_MISSING
+                                                 : IDS_TRIM_PREVIEW_HELPER_MISSING))
+            : strings::Format(PreviewFailurePattern(snapshot.failed_operation, external), {code});
+    if (!external) {
+        // What to do next is the same after every failure: save the recording
+        // as it is. An external video is only closed.
+        text += L" ";
+        text += strings::Get(IDS_TRIM_PREVIEW_FAILED_NEXT);
+    }
     return text;
 }
 
@@ -136,11 +141,17 @@ bool TrimWindow::preview_failed() const noexcept {
 
 bool TrimWindow::Open(const std::wstring& source_path,
                       const RECT& source_region) {
+    return Open(source_path, source_region, Source{});
+}
+
+bool TrimWindow::Open(const std::wstring& source_path,
+                      const RECT& source_region, const Source& source) {
     Destroy();
     closing_ = false;
     if (source_path.empty() || !EnsureWindowClasses()) {
         return false;
     }
+    source_ = source;
     source_region_ = source_region;
     const platform::MonitorInfo monitor = platform::MonitorForRect(source_region_);
     scale_ = monitor.scale();
@@ -154,9 +165,13 @@ bool TrimWindow::Open(const std::wstring& source_path,
     const LONG y = monitor.work_area.top +
                    (platform::RectHeight(monitor.work_area) - height) / 2;
 
+    // An opened video is named by its file; a recording has no name yet.
+    const std::wstring title = source_.kind == app::TrimSourceKind::External
+                                   ? strings::Format(IDS_EXTERNAL_TRIM_WINDOW_TITLE, {source_.file_name})
+                                   : std::wstring(strings::Get(IDS_TRIM_WINDOW_TITLE));
     hwnd_ = ::CreateWindowExW(
         kWindowExStyle, kWindowClassName,
-        strings::Get(IDS_TRIM_WINDOW_TITLE), kWindowStyle,
+        title.c_str(), kWindowStyle,
         static_cast<int>(x), static_cast<int>(y), static_cast<int>(width),
         static_cast<int>(height), nullptr, nullptr, ::GetModuleHandleW(nullptr),
         this);
@@ -178,10 +193,11 @@ bool TrimWindow::Open(const std::wstring& source_path,
     preview_ = media::CreateMfPlayPreview();
     if (preview_ == nullptr ||
         !preview_->Open(source_path, video_, hwnd_, kPreviewEventMessage)) {
+        const bool external = source_.kind == app::TrimSourceKind::External;
         if (preview_ != nullptr) {
-            SetStatus(PreviewFailureText(preview_->snapshot()), true);
+            SetStatus(PreviewFailureText(preview_->snapshot(), external), true);
         } else {
-            SetStatus(strings::Get(IDS_TRIM_PREVIEW_UNAVAILABLE), true);
+            SetStatus(strings::Get(external ? IDS_EXTERNAL_PREVIEW_UNAVAILABLE : IDS_TRIM_PREVIEW_UNAVAILABLE), true);
         }
         UpdateEnabledState();
     }
@@ -358,6 +374,7 @@ void TrimWindow::Destroy() {
     layout_ = {};
     visible_ = false;
     preview_error_reported_ = false;
+    source_ = Source{};
 }
 
 bool TrimWindow::ProcessDialogMessage(MSG& message) const {
@@ -709,7 +726,7 @@ bool TrimWindow::CreateControls() {
     range_label_ = CreateControl(L"STATIC", strings::Get(IDS_TRIM_RANGE_PLACEHOLDER),
                                  SS_LEFT, -1);
     status_ = ::CreateWindowExW(
-        0, L"EDIT", L"Opening preview…",
+        0, L"EDIT", strings::Get(IDS_TRIM_STATUS_OPENING),
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL |
             ES_READONLY,
         0, 0, 1, 1, hwnd_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
@@ -732,7 +749,12 @@ bool TrimWindow::CreateControls() {
                                    strings::Get(IDS_TRIM_CANCEL_EXPORT_BUTTON),
                                    WS_TABSTOP | BS_PUSHBUTTON,
                                    kIdCancelExport);
-    discard_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_DISCARD_BUTTON),
+    // The same cell either way: a recording is discarded, an opened video is
+    // only closed and never deleted (ADR-040).
+    discard_ = CreateControl(L"BUTTON",
+                             strings::Get(source_.kind == app::TrimSourceKind::External
+                                              ? IDS_EXTERNAL_TRIM_CLOSE_BUTTON
+                                              : IDS_TRIM_DISCARD_BUTTON),
                              WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
     progress_ = CreateControl(PROGRESS_CLASSW, L"", PBS_SMOOTH, -1);
     if (progress_ && !StyleProgress(progress_)) { return false; }
@@ -895,10 +917,11 @@ void TrimWindow::UpdatePreviewState() {
     const media::MediaPreviewSnapshot snapshot = preview_->snapshot();
     if (snapshot.state == media::MediaPreviewState::Ready && !range_.valid()) {
         if (range_.Initialize(snapshot.duration)) {
-            SetStatus(L"");
+            // A video too large for MP4 says once why Copy and Save offer GIF only.
+            SetStatus(source_.mp4_allowed ? L"" : strings::Get(IDS_EXTERNAL_GIF_ONLY_NOTICE));
         }
     } else if (snapshot.state == media::MediaPreviewState::Failed) {
-        const std::wstring failure = PreviewFailureText(snapshot);
+        const std::wstring failure = PreviewFailureText(snapshot, source_.kind == app::TrimSourceKind::External);
         SetStatus(failure, true);
         if (!preview_error_reported_) {
             preview_error_reported_ = true;
@@ -1117,6 +1140,45 @@ void TrimWindow::BeginCopy() {
     if (!exporting_ && range_.valid() && callbacks_.on_copy) {
         callbacks_.on_copy(range_.in(), range_.out());
     }
+}
+
+std::optional<media::RecordingFormat> TrimWindow::ChooseCopyFormat() {
+    if (hwnd_ == nullptr || closing_ || copy_ == nullptr || !visible_ || PopupActive()) {
+        return std::nullopt;
+    }
+    HMENU menu = ::CreatePopupMenu();
+    if (menu == nullptr) {
+        return std::nullopt;
+    }
+    constexpr UINT kCopyMp4 = 1;
+    constexpr UINT kCopyGif = 2;
+    ::AppendMenuW(menu, MF_STRING | (source_.mp4_allowed ? 0u : MF_GRAYED), kCopyMp4,
+                  strings::Get(IDS_SHELL_FILE_TYPE_MP4));
+    ::AppendMenuW(menu, MF_STRING, kCopyGif, strings::Get(IDS_SHELL_FILE_TYPE_GIF));
+    // Above the button, which sits in the bottom row, and never over it.
+    RECT button{};
+    ::GetWindowRect(copy_, &button);
+    TPMPARAMS exclude{sizeof(exclude), button};
+    // Required so the menu closes when the user clicks elsewhere.
+    ::SetForegroundWindow(hwnd_);
+    UINT command = 0;
+    {
+        const platform::ModalLoopScope modal;
+        const PopupScope scope(copy_);
+        const MenuThemeScope menu_theme(hwnd_, menu);
+        command = ::TrackPopupMenuEx(menu,
+                                     TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTBUTTON | TPM_LEFTALIGN |
+                                         TPM_BOTTOMALIGN | TPM_VERTICAL,
+                                     button.left, button.top, hwnd_, &exclude);
+    }
+    ::DestroyMenu(menu);
+    if (command == kCopyMp4 && source_.mp4_allowed) {
+        return media::RecordingFormat::Mp4;
+    }
+    if (command == kCopyGif) {
+        return media::RecordingFormat::Gif;
+    }
+    return std::nullopt;
 }
 
 void TrimWindow::RequestClose() {

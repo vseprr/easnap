@@ -1,7 +1,7 @@
-# ADR-022: Native text input and content-sized trim presentation
+# ADR-022 — Native text input and content-sized trim presentation
 
-Date: 2026-09-19  
-Status: Implemented.  
+**Status:** Implemented  
+**Date:** 2026-09-19  
 **Amended by:** [ADR-023](ADR-023-trim-resize-and-text-click-continuations.md) (resize minimum, blank double-click continuation); [ADR-024](ADR-024-native-trim-frame.md) (native frame and painting policy)
 
 Accepted and closed, 2026-09-21: the user accepted all session corrections,
@@ -42,7 +42,7 @@ Phase 3 follow-up work; it does not start Phase 4.
   the next target index. Existing frame dragging and document Undo remain.
 - Initial trim dimensions derive from source aspect ratio, work area and a
   readable control width. Fonts/targets keep their DPI scale. Manual resizing
-  retains the 480 x 400 client-DIP minimum established by ADR-023, with native
+  retains the 512 x 400 client-DIP minimum established by ADR-023, with native
   outer-frame allowances from ADR-024. The video HWND fits the available
   area without distortion, so surplus space disappears before the image shrinks.
 - Remove the redundant recording heading. Status uses measured wrapped text

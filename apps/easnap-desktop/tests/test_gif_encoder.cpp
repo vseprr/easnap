@@ -18,6 +18,8 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 
+#include "sink_writer_fixture.h"
+
 using Microsoft::WRL::ComPtr;
 using easnap::media::GifEncodeDiagnostics;
 using easnap::media::GifEncodeOptions;
@@ -1165,6 +1167,76 @@ void TestProductionMp4AdapterPreservesSource(const TestDirectory& directory) {
     CHECK(!directory.HasPartialFiles());
 }
 
+uint32_t SyntheticColor(uint32_t frame_index) {
+    return frame_index < 2 ? Color(200, 20, 20)
+                           : (frame_index < 4 ? Color(20, 200, 20) : Color(20, 20, 200));
+}
+
+// Sources that are not Easnap recordings (ADR-040): WMV written by Windows'
+// own encoder, another MPEG-4 extension of the table, and one outside it.
+void TestExternalSourceAdapters(const TestDirectory& directory) {
+    auto exporter = easnap::media::CreateGifExporter();
+    CHECK(exporter != nullptr);
+    if (exporter == nullptr) {
+        return;
+    }
+    easnap::media::RecordingOptions options;
+    options.format = easnap::media::RecordingFormat::Gif;
+    options.gif_fps = 10;
+    options.gif_dither = false;
+    const auto export_gif = [&](const std::wstring& source, const std::wstring& gif) {
+        return exporter->Export(source, gif, MediaTime{0}, MediaTime{60 * kCentisecond},
+                                options, [](float) { return true; });
+    };
+
+    const std::wstring wmv = directory.File(L"source.wmv");
+    easnap::test::SinkWriterSpec spec;
+    spec.video_subtype = MFVideoFormat_WMV3;
+    spec.width = 64;
+    spec.height = 50;
+    spec.frame_rate = 10;
+    spec.frame_count = 6;
+    spec.paint = [](uint32_t index, easnap::platform::BgraImage& image) {
+        std::fill(image.pixels.begin(), image.pixels.end(), SyntheticColor(index));
+    };
+    const easnap::test::SinkWriterOutcome outcome = easnap::test::WriteWithSinkWriter(wmv, spec);
+    if (outcome == easnap::test::SinkWriterOutcome::EncoderUnavailable) {
+        std::printf("SKIP WMV GIF source: Windows has no WMV encoder\n");
+    } else {
+        CHECK(outcome == easnap::test::SinkWriterOutcome::Written);
+        const uint64_t before = Fingerprint(wmv);
+        const std::wstring gif = directory.File(L"from-wmv.gif");
+        CHECK(export_gif(wmv, gif));
+        DecodedGif decoded;
+        CHECK(DecodeWithWic(gif, decoded));
+        CHECK(decoded.width == 64 && decoded.height == 50);
+        CHECK(decoded.frames.size() >= 2);
+        if (!decoded.frames.empty()) {
+            CHECK(NearColor(decoded.frames.front().canvas.front(), Color(200, 20, 20), 30));
+            CHECK(NearColor(decoded.frames.back().canvas.front(), Color(20, 20, 200), 30));
+        }
+        CHECK(Fingerprint(wmv) == before);
+    }
+
+    const std::wstring mp4 = directory.File(L"for-m4v.mp4");
+    const std::wstring m4v = directory.File(L"source.M4V");
+    CHECK(WriteSyntheticMp4(mp4));
+    CHECK(::CopyFileW(mp4.c_str(), m4v.c_str(), TRUE) != FALSE);
+    const std::wstring from_m4v = directory.File(L"from-m4v.gif");
+    CHECK(export_gif(m4v, from_m4v));
+    DecodedGif decoded;
+    CHECK(DecodeWithWic(from_m4v, decoded));
+    CHECK(decoded.width == 64 && decoded.height == 50);
+
+    const std::wstring mkv = directory.File(L"source.mkv");
+    CHECK(::CopyFileW(mp4.c_str(), mkv.c_str(), TRUE) != FALSE);
+    const std::wstring from_mkv = directory.File(L"from-mkv.gif");
+    CHECK(!export_gif(mkv, from_mkv));
+    CHECK(exporter->LastFailure().stage == easnap::media::TrimExportFailureStage::SourceValidation);
+    CHECK(::GetFileAttributesW(from_mkv.c_str()) == INVALID_FILE_ATTRIBUTES);
+    CHECK(!directory.HasPartialFiles());
+}
+
 }  // namespace
 
 int main() {
@@ -1194,6 +1266,7 @@ int main() {
         TestCadenceAdaptationPreservesDurationAndEndpoints(directory);
         TestTransactionalReplacement(directory);
         TestProductionMp4AdapterPreservesSource(directory);
+        TestExternalSourceAdapters(directory);
     }
     static_cast<void>(::MFShutdown());
     if (SUCCEEDED(com_result)) {

@@ -1,4 +1,4 @@
-// Included by test_ui_modernization.cpp inside its test namespace. Observe
+// Included by test_native_ui.cpp inside its test namespace. Observe
 // actual desktop pixels; never request a repaint during observed motion.
 class ResizeTestDeadline {
 public:

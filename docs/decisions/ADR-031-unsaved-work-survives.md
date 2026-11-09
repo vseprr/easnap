@@ -2,6 +2,8 @@
 
 **Status:** Accepted
 **Date:** 2026-10-13
+**Amended:** 2026-11-09 — copying and saving a finished image run on a worker;
+what Exit and a sign-out do while one runs
 
 ## Context
 
@@ -79,6 +81,56 @@ image is a stitched one. The Scrollshot island asks when the capture has grown
 beyond its first picture. The keeping answer is the default. Nothing is asked
 for a screenshot nobody has drawn on.
 
+### Copying and saving a finished image (amended 2026-11-09)
+
+Encoding a very tall image takes seconds. On the UI thread it froze the
+window that asked for it, and Windows marked Easnap "Not responding". The
+editor, a pin and the Scrollshot island now copy and save through
+`platform::ImageExportJob` (`platform/image_export`):
+
+- The composite and the destination stay on the UI thread: the editor draws
+  the annotations into a new image, and quick save or the Save dialog chooses
+  the file (`ui::ChooseImageDestination`). The worker then writes the file in
+  bands of rows, or prepares the clipboard memory (CF_DIB and the optional
+  PNG), with a COM apartment and a WIC factory of its own: the shared graphics
+  environment belongs to the UI thread. The window that asked is told with
+  `kMsgImageExportCompleted` (`WM_APP + 15`, the job's generation in WPARAM);
+  it puts the memory on the clipboard in one attempt, reports Copied or Saved
+  and closes. A failure keeps the image with the notices as before; a quick
+  save that fails opens the Save dialog.
+- One export runs in the process: two saves started in the same second would
+  choose the same file name, and two exports of the largest stitched image
+  hold about a gigabyte. A second Copy or Save is refused: with a sound in
+  the editor and a pin, silently on the Scrollshot island, whose buttons are
+  off while it is busy.
+- While its image is exported, the editor refuses every change and every way
+  out (Esc, Discard, Pin, a close request) with a sound, turns Copy, Save and
+  Pin off and shows the busy cursor; "Copying..." or "Saving..." appears when
+  the work lasts longer than 300 ms. A pin is busy as with its menu: a close
+  asked for meanwhile happens when the export has finished. The Scrollshot
+  island stays busy through the dialog and the write.
+- A cancel of the workspace (Esc on the mode island, a right-click) during an
+  export of the session is refused with a sound. A display change waits for
+  the export and is looked at again when it ended without closing the
+  session.
+- **Exit** is refused with a sound while an export runs, as while a dialog is
+  open. **Sign-out and shutdown:** a running export counts as an image at risk
+  (`PendingWorkFor` has a third input), so `WM_QUERYENDSESSION` answers no with
+  the image reason unless a recording matters more. If the session ends anyway,
+  `PrepareForSessionEnd` waits for a file being written, so it lands complete
+  and no staged `.easnap-*.tmp` is left, and cancels a copy, as nothing will
+  read the clipboard. Nothing is published there and no window is destroyed;
+  the results arrive as messages should the session go on. Ending a session or
+  destroying a window during an export (only Shutdown does) cancels and waits.
+- A copy is put on the clipboard when its worker has finished. Anything copied
+  to the clipboard in the meantime, by Easnap's text fields or another
+  application, is replaced by it.
+- What stays on the UI thread: the composite of an annotated image and
+  stopping a Scrollshot capture (`StopScrollshotCapture` waits for the stitch
+  worker). The composite of a stitched image without annotations took 12 to
+  25 ms for 1920 x 12,000 pixels on the development PC; an annotated one and
+  the stop have not been measured.
+
 ### Messages say what is true
 
 - A recording that fails to start names the part that failed and the next
@@ -118,7 +170,24 @@ it would otherwise make every recording unsavable.
 
 ## Validation
 
-- `session_state_transitions`: the pending-work table for all thirteen states.
+- `session_state_transitions`: the pending-work table for all thirteen states,
+  with and without an image export running.
+- `image_export_job` (unit): the result and its generation through a
+  message-only window, a PNG and a JPEG that decode back to the image, no
+  staged file after a failed or cancelled save, a cancel within a second
+  (29 to 63 ms in a 1920 x 16,000 encode on the development PC), a result
+  that stays after `Wait`, a save waited for and a copy cancelled at session
+  end.
+- `capture_export_responsiveness` (private desktop): the editor copies a
+  1920 x 12,000 image of noise while a thread that shares no input queue with
+  it sends `WM_NULL` with a 500 ms deadline. On the development PC
+  (2026-11-09, five recorded runs) the copy took 3.1 to 3.9 s and the slowest
+  of about 100 replies 31 to 47 ms, none missed; a second Ctrl+C and a close
+  request were refused. The clipboard then holds the whole image as a DIB and
+  a PNG.
+  `capture_workspace_production` and `pinned_images_native` wait for their
+  copies and cover a quick save from the editor and from a pin into a folder
+  of the test.
 - `recording_completion_workflow`: marking, the sweep, adoption by a later
   instance, postponing, deleting, a mark without a recording, and a lease-less
   directory before and after it is an hour old, against the real store.

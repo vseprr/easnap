@@ -83,11 +83,14 @@ cmake -S . -B build-asan -G "Visual Studio 17 2022" -A x64 -DEASNAP_BUILD_TESTS=
 cmake --build build-asan --config Release --parallel
 # The sanitizer runtime is a DLL beside the compiler; put its folder on PATH:
 $env:PATH = "<Visual Studio>\VC\Tools\MSVC\<version>\bin\Hostx64\x64;" + $env:PATH
-ctest --test-dir build-asan -C Release --label-exclude "interactive-desktop|desktop-visual|soak|preview" --exclude-regex "^diagnostics_log_and_crash_reports$"
+ctest --test-dir build-asan -C Release --label-exclude "interactive-desktop|desktop-visual|soak|preview" --exclude-regex "^(diagnostics_log_and_crash_reports|scrollshot_edit_performance)$"
 ```
 
 The crash-report test is excluded: the sanitizer takes its deliberate access
-violations before the application's own handler. Sanitized binaries are never
+violations before the application's own handler. The Scrollshot edit
+performance test is excluded under the sanitizer and in the Debug build of
+the CI workflow: its blur closure costs seconds per paint there and the
+test runs past its limit; it measures in Release. Sanitized binaries are never
 packaged.
 
 ## Code style

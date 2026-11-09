@@ -1488,22 +1488,34 @@ int ShowChoice(HWND owner, const wchar_t* text, const wchar_t* title, const std:
 platform::SaveImageDialogText SaveImageDialogLabels() {
     return {strings::Get(IDS_SHELL_SAVE_IMAGE_TITLE), strings::Get(IDS_SHELL_FILE_TYPE_PNG), strings::Get(IDS_SHELL_FILE_TYPE_JPEG)};
 }
-ImageSaveOutcome SaveFinishedImage(HWND owner, const platform::BgraImage& image, app::AppSettings* settings,
-                                   const std::function<void()>& before_dialog) {
+std::optional<ImageSaveDestination> ChooseImageDestination(HWND owner, const app::AppSettings* settings,
+                                                           bool allow_quick,
+                                                           const std::function<void()>& before_dialog) {
     const std::wstring suggested = platform::TimestampedFileName(L"Easnap", L"png");
-    // Quick save: straight into the chosen folder. If that cannot be written,
-    // the dialog below still offers every other place.
-    if (settings != nullptr && settings->quick_save_images && !settings->image_folder.empty()) {
-        const std::wstring quick = platform::UniqueFilePath(settings->image_folder, suggested);
-        if (!quick.empty() && platform::SaveImage(image, quick)) { return ImageSaveOutcome::SavedToFolder; }
+    // Quick save: straight into the chosen folder. If that folder is gone, or
+    // the file cannot be written there, the dialog offers every other place.
+    if (allow_quick && settings != nullptr && settings->quick_save_images && !settings->image_folder.empty()) {
+        std::wstring quick = platform::UniqueFilePath(settings->image_folder, suggested);
+        if (!quick.empty()) { return ImageSaveDestination{std::move(quick), true}; }
     }
     const std::wstring initial = settings != nullptr ? settings->ImageStartDirectory() : std::wstring();
     if (before_dialog) { before_dialog(); }
-    const auto destination = platform::ShowSaveImageDialog(owner, suggested, initial, SaveImageDialogLabels());
-    if (!destination) { return ImageSaveOutcome::Cancelled; }
-    if (!platform::SaveImage(image, *destination)) { return ImageSaveOutcome::Failed; }
-    if (settings != nullptr) { settings->last_image_directory = platform::DirectoryOf(*destination); }
-    return ImageSaveOutcome::SavedAs;
+    auto chosen = platform::ShowSaveImageDialog(owner, suggested, initial, SaveImageDialogLabels());
+    if (!chosen) { return std::nullopt; }
+    return ImageSaveDestination{std::move(*chosen), false};
+}
+void RecordImageSaved(app::AppSettings* settings, const ImageSaveDestination& destination) {
+    if (settings != nullptr && !destination.quick) {
+        settings->last_image_directory = platform::DirectoryOf(destination.path);
+    }
+}
+void RefreshCursor() {
+    POINT point{};
+    if (::GetCursorPos(&point) == FALSE) { return; }
+    HWND under = ::WindowFromPoint(point);
+    if (under == nullptr || ::GetWindowThreadProcessId(under, nullptr) != ::GetCurrentThreadId()) { return; }
+    const LRESULT hit = ::SendMessageW(under, WM_NCHITTEST, 0, MAKELPARAM(point.x, point.y));
+    ::SendMessageW(under, WM_SETCURSOR, reinterpret_cast<WPARAM>(under), MAKELPARAM(static_cast<WORD>(hit), WM_MOUSEMOVE));
 }
 bool ConfirmDestructive(HWND owner, const wchar_t* text, const wchar_t* title, const wchar_t* confirm, const wchar_t* keep) {
     return ShowChoice(owner, text, title, {{IDYES, confirm, true}, {IDNO, keep}}, IDNO, IDNO) == IDYES;

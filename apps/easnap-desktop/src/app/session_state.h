@@ -12,11 +12,13 @@
 
 #include "app/session_transitions.h"
 #include "app/app_settings.h"
+#include "app/external_video.h"
 #include "app/recording_completion.h"
 #include "app/recording_finalizer.h"
 #include "app/trim_flow.h"
 #include "capture/capture_provider.h"
 #include "media/media_interfaces.h"
+#include "platform/image_export.h"
 #include "platform/platform_utils.h"
 
 namespace easnap::ui {
@@ -54,9 +56,17 @@ inline constexpr UINT kMsgRecordingFinalized = WM_APP + 12;
 /// Posted by a Scrollshot capture worker when its progress changed. WPARAM
 /// carries the capture's generation; pixels never travel in the message.
 inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
+// WM_APP + 15 is platform::kMsgImageExportCompleted, in platform/image_export.h.
+/// Posted when a save of the settings failed and the user may be told now.
+inline constexpr UINT kMsgSettingsNotSaved = WM_APP + 16;
+// WM_APP + 18 is kMsgVideoProbeCompleted, in app/external_video.h.
+// WM_APP + 19 is kMsgOpenVideoRequest, in app/video_handover.h.
 /// Timer on the host window: retired windows are destroyed once no dialog of
 /// theirs is running its own message loop any more.
 inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
+/// Timer on the host window: a checked video waits until no dialog of
+/// Easnap's runs its own message loop any more.
+inline constexpr UINT_PTR kTimerVideoProbeRetry = 0xEA51;
 
 /// The session lifecycle; session_transitions.cpp lists the legal transitions.
 ///
@@ -65,6 +75,7 @@ inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
 ///     -> ScreenshotEditing -> ScreenshotExporting -> Idle
 ///     -> RecordingConfiguring -> RecordingActive <-> RecordingPaused
 ///     -> RecordingFinalizing -> RecordingTrimming -> Exporting -> Idle
+///     -> RecordingTrimming, for a video file the user opened (ADR-040)
 ///     -> ScrollshotConfiguring -> ScrollshotCapturing -> ScrollshotReview
 ///        -> Idle, or -> ScreenshotEditing to annotate the stitched image
 ///
@@ -85,8 +96,10 @@ public:
     CaptureCoordinator& operator=(const CaptureCoordinator&) = delete;
 
     /// Prepares the coordinator. Deliberately does not create capture, encoder
-    /// or renderer resources: Idle must stay passive.
-    bool Initialize(HWND host_window);
+    /// or renderer resources: Idle must stay passive. Nothing in it can fail:
+    /// unreadable settings are defaults, and a missing clipboard listener is
+    /// logged.
+    void Initialize(HWND host_window);
     void Shutdown();
 
     [[nodiscard]] SessionState state() const noexcept { return machine_.state(); }
@@ -104,16 +117,46 @@ public:
     void OnRecordingFinalized(RecordingFinalizer::Generation generation);
     /// Handles kMsgTrimExportCompleted on the UI thread.
     void OnTrimExportCompleted(uint64_t export_generation);
+    /// Tray "Open video...": asks for a file and checks it on a worker
+    /// thread. Only while idle and while no other video is being checked.
+    void OpenVideo();
+    [[nodiscard]] bool CanOpenVideo() const;
+    /// A video named on the command line or handed over by another Easnap
+    /// process (ADR-040): checked like one chosen in Open video, without the
+    /// dialog. A request, not a command: acted on only while
+    /// AcceptsVideoRequest(); otherwise dropped with a log line and nothing
+    /// is shown.
+    void OpenVideo(const std::wstring& path);
+    /// CanOpenVideo(), and no dialog or menu of Easnap runs its own loop.
+    [[nodiscard]] bool AcceptsVideoRequest() const;
+    /// Handles kMsgVideoProbeCompleted: opens the checked video in the trim
+    /// view, or says why it cannot open.
+    void OnVideoProbeCompleted(VideoProbeJob::Generation generation);
+    /// Handles kTimerVideoProbeRetry.
+    void OnVideoProbeTimer();
     /// Handles WM_CLIPBOARDUPDATE for clipboard-backed recording cleanup.
     void OnClipboardChanged();
     /// Handles kMsgScrollshotProgress on the UI thread.
     void OnScrollshotProgress(uint64_t generation);
+    /// Handles platform::kMsgImageExportCompleted: a Scrollshot copy or save ended.
+    void OnImageExportCompleted(platform::ImageExportJob::Generation generation);
     /// Enables native Tab/Enter/Esc navigation in recording/trim surfaces.
     [[nodiscard]] bool ProcessDialogMessage(MSG& message) const;
 
     [[nodiscard]] AppSettings& settings() noexcept { return settings_; }
     [[nodiscard]] const AppSettings& settings() const noexcept { return settings_; }
-    bool PersistSettings();
+    /// What a failed save of the settings leads to besides a log line.
+    enum class IfNotSaved { TellUser,
+                            LogOnly };
+    /// Writes `settings()`; false when they were not written. With TellUser a
+    /// failure posts kMsgSettingsNotSaved when `SettingsNoticeDue()`. Refused
+    /// before Initialize, whose loaded values would be overwritten.
+    bool PersistSettings(IfNotSaved if_not_saved = IfNotSaved::TellUser);
+    /// True while the user may be told that the settings cannot be saved:
+    /// not told yet this run, idle, and no dialog or menu of Easnap open.
+    [[nodiscard]] bool SettingsNoticeDue() const;
+    /// The user has been told, in a notification or a dialog; not again this run.
+    void MarkSettingsFailureTold() noexcept { settings_failure_told_ = true; }
     /// An explicit Light or Dark choice; ends following Windows.
     void SetAppearanceTheme(AppearanceTheme preference);
     /// Light or Dark as Windows is set for applications, from now on.
@@ -167,6 +210,15 @@ private:
     void BeginRecordingFinalization();
     void FinishRecordingWorkflow(bool finalized);
     void StopRecordingForShutdown();
+    /// A finished probe whose message never came is dropped, so that a lost
+    /// message cannot keep a video from opening.
+    void DropUndeliveredVideoProbe();
+    /// What follows once a video is named, by the dialog or a request: a file
+    /// in Easnap's own folder is refused, anything else goes to the probe on
+    /// its worker. `origin` completes the log line.
+    void CheckVideo(const std::wstring& path, const wchar_t* origin);
+    /// Opens a video the probe accepted in the trim view.
+    void BeginExternalTrim(const VideoProbeOutcome& outcome);
 
     enum class ScrollshotAction { Start,
                                   Help,
@@ -201,6 +253,19 @@ private:
     bool StopScrollshotCapture();
     void CopyScrollshot();
     void SaveScrollshot();
+    /// Chooses where the stitched image goes (quick save or the dialog) and
+    /// starts writing it. False when the dialog was cancelled, the session
+    /// ended meanwhile or nothing started.
+    bool StartScrollshotSave(bool allow_quick);
+    /// Copies or saves the stitched image on a worker; the island stays busy
+    /// until OnImageExportCompleted.
+    bool StartScrollshotExport(platform::ImageExportTarget target, std::wstring path, bool quick);
+    /// The session's image is being copied or saved: the session must not
+    /// change under it.
+    [[nodiscard]] bool SessionExportRunning() const;
+    /// An export of the session ended and the session stayed. A display
+    /// change or cancel deferred meanwhile is looked at now.
+    void AfterSessionExport();
     void EditScrollshot();
     void DiscardScrollshot();
     void ShowScrollshotHelp();
@@ -232,11 +297,21 @@ private:
     std::vector<platform::MonitorInfo> session_monitors_;
     media::RecordingOptions recording_options_{};
     RecordingFinalizer recording_finalizer_;
+    /// Checks a video the user chose before the trim view opens it.
+    VideoProbeJob video_probe_;
     /// Trimming and completion of the finished recording; created by Initialize.
     std::unique_ptr<TrimFlow> trim_flow_;
 
     /// The stitched image once capture has stopped, until an action takes it.
-    platform::BgraImage scrollshot_image_;
+    /// Shared with a copy or save running on `scrollshot_export_`.
+    std::shared_ptr<platform::BgraImage> scrollshot_image_;
+    platform::ImageExportJob scrollshot_export_;
+    /// Where the running save writes, and whether quick save chose it.
+    std::wstring scrollshot_save_path_;
+    bool scrollshot_save_quick_{false};
+    /// A display change or cancel arrived while the session's image was
+    /// being exported; it is looked at when the export has ended.
+    bool recheck_display_after_export_{false};
     RECT scrollshot_region_{};
     uint64_t scrollshot_generation_{0};
     int scrollshot_height_{0};
@@ -249,6 +324,8 @@ private:
     bool scrollshot_controls_retired_{false};
     bool editor_retired_{false};
     bool initialized_{false};
+    /// The user has been told this run that the settings cannot be saved.
+    bool settings_failure_told_{false};
 };
 
 }  // namespace easnap::app

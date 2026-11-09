@@ -105,4 +105,10 @@ inline constexpr uint64_t kModeToolbarFadeDurationMs = 500;
 void ShowCaptureCopiedNotice(const RECT& region);
 void ShowCaptureSavedNotice(const RECT& region);
 void ShowCaptureStatusNotice(const RECT& region, const std::wstring& text);
+/// A neutral notice for work the user waits for, such as "Copying...". It
+/// appears only when the work lasts longer than a moment, so a quick copy
+/// shows nothing but its Copied notice, and stays until CloseCaptureNotice.
+[[nodiscard]] HWND ShowCaptureProgressNotice(const RECT& region, const std::wstring& text);
+/// Removes a notice from ShowCaptureProgressNotice; null is ignored.
+void CloseCaptureNotice(HWND notice) noexcept;
 } // namespace easnap::ui

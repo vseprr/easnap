@@ -1,6 +1,6 @@
 # Easnap delivery roadmap
 
-**Updated:** 2026-11-08
+**Updated:** 2026-11-09
 
 Read this with [project status](docs/project-status.md). This file records the
 phase boundaries; what is implemented and validated belongs in project status,
@@ -35,16 +35,27 @@ first slice is S2 of the coordinator split.
 | Isolated test lab | Implemented 2026-10-19: Hyper-V VM driven by winlab, direct build, capture-path reporting ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md)) |
 | v1.1.0 stable | Stabilization on `stabilize/v1.1.0` (2026-11-07): audit, documentation, formatting, static analysis, code fixes; rc.1 checked by the owner, not published; v1.1.0 published 2026-11-08 |
 | v1.2 | On `feature/v1.2` (from 2026-11-08): Pin to screen ([ADR-038](docs/decisions/ADR-038-pinned-images.md)), audio exception boundary, undo limit, clipboard formats first, the session state machine and a required clang-tidy job; release candidate rc.1 checked by the owner, not published; v1.2.0 published 2026-11-08 |
-| v1.3 | On `feature/v1.3` (from 2026-11-08): S2 of the coordinator split, the trim flow with its own test ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)), implemented and checked by the owner; recording stays in the coordinator. Then the other deferred candidates |
+| v1.3 | On `feature/v1.3` (from 2026-11-08): S2 of the coordinator split, the trim flow with its own test ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)), implemented and checked by the owner; recording stays in the coordinator. Then, on `feature/v1.3-findings` (2026-11-09): the 2026-11-07 audit findings closed in one pass (copy and save on a worker, recording on Desktop Duplication, crash report line, settings notice and small clean-ups, editor repaint of what a move changed, trim window minimum and text fit, test rename, function splits, documentation tidy-up), the Scrollshot realistic test application ([ADR-041](docs/decisions/ADR-041-scrollshot-realistic-test-application.md)) and the frame-cost measurement and the recording's picture pool ([ADR-042](docs/decisions/ADR-042-recording-frame-buffer-cost.md)); the external video feature ([ADR-040](docs/decisions/ADR-040-external-video-in-the-trim-view.md)) is implemented (media layer, flow and tray entry, command line, hand-over to the running Easnap, installer "Open with") and checked by the owner in the running application; the trim preview's clock check ([ADR-010](docs/decisions/ADR-010-trim-view-ownership-and-orchestration.md), amended) closes the preview transport race seen in the lab |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
 
 In this order (details in [project status](docs/project-status.md#next-slice)):
 
-1. The other v1.3 candidates under [other deferred work](#other-deferred-work),
-   one bounded slice each. Recording stays in the coordinator
-   ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md#recording-decided-after-s2)).
+1. The Scrollshot engine amendment for pictures torn between two presents
+   ([ADR-027](docs/decisions/ADR-027-scrollshot-stitching-engine.md#known-weakness-2026-11-09)),
+   seen in the lab; until then `scrollshot_realistic_desktop` reports torn
+   input as `KNOWN_WEAKNESS`
+   ([ADR-041](docs/decisions/ADR-041-scrollshot-realistic-test-application.md#validation)).
+2. The remaining editor costs (first spotlight frame, blur closure).
+
+Then the other v1.3 candidates under [other deferred work](#other-deferred-work),
+one bounded slice each; the Scrollshot fractional scroll offsets need an
+engine change of their own. Recording stays in the coordinator
+([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md#recording-decided-after-s2)).
+The recording's picture pool is validated in the lab
+([ADR-042](docs/decisions/ADR-042-recording-frame-buffer-cost.md)); NV12
+sample reuse waits for a hardware-encoder run.
 
 Open on the owner's side: the host Full run for the writer fix, since the host
 desktop is used only when the owner asks. Not covered yet: Windows 11, an N

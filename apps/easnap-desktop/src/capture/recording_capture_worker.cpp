@@ -125,6 +125,90 @@ media::MediaTime MediaTimestampForFrame(uint64_t frame_index, uint32_t frame_rat
     return media::MediaTime{static_cast<int64_t>(ticks)};
 }
 
+std::shared_ptr<RecordingPicturePool> RecordingPicturePool::Create(std::size_t retained_capacity) {
+    return std::make_shared<RecordingPicturePool>(ConstructionKey{}, retained_capacity);
+}
+
+RecordingPicturePool::RecordingPicturePool(ConstructionKey, std::size_t retained_capacity)
+    : retained_capacity_(retained_capacity) {
+    free_.reserve(retained_capacity_);
+}
+
+std::shared_ptr<platform::BgraImage> RecordingPicturePool::Acquire() {
+    ReturnToPool deleter{shared_from_this()};
+    std::unique_ptr<platform::BgraImage> picture;
+    {
+        // Taking a free picture or making one, and the counts, in one critical
+        // section: a picture returned in between cannot leave the pool making
+        // a picture while another one is free.
+        const std::scoped_lock lock(mutex_);
+        if (free_.empty()) {
+            // Only the empty picture; the capture sizes its pixels, unlocked.
+            picture = std::make_unique<platform::BgraImage>();
+            ++allocated_;
+        } else {
+            picture = std::move(free_.back());
+            free_.pop_back();
+        }
+        ++in_use_;
+        peak_in_use_ = (std::max)(peak_in_use_, in_use_);
+    }
+    // Should the control block fail to allocate, shared_ptr hands the picture
+    // to the deleter, which takes it back.
+    return std::shared_ptr<platform::BgraImage>(picture.release(), std::move(deleter));
+}
+
+void RecordingPicturePool::Open() noexcept {
+    const std::scoped_lock lock(mutex_);
+    open_ = true;
+    allocated_ = 0;
+    peak_in_use_ = in_use_;
+}
+
+void RecordingPicturePool::Close() noexcept {
+    const std::scoped_lock lock(mutex_);
+    open_ = false;
+    free_.clear();  // Keeps the reserved capacity: returns still never allocate.
+}
+
+std::size_t RecordingPicturePool::free_pictures() const noexcept {
+    const std::scoped_lock lock(mutex_);
+    return free_.size();
+}
+
+std::size_t RecordingPicturePool::pictures_in_use() const noexcept {
+    const std::scoped_lock lock(mutex_);
+    return in_use_;
+}
+
+std::size_t RecordingPicturePool::peak_pictures_in_use() const noexcept {
+    const std::scoped_lock lock(mutex_);
+    return peak_in_use_;
+}
+
+uint64_t RecordingPicturePool::allocated_pictures() const noexcept {
+    const std::scoped_lock lock(mutex_);
+    return allocated_;
+}
+
+void RecordingPicturePool::ReturnToPool::operator()(platform::BgraImage* picture) const noexcept {
+    pool->Return(picture);
+}
+
+void RecordingPicturePool::Return(platform::BgraImage* picture) noexcept {
+    std::unique_ptr<platform::BgraImage> returned(picture);
+    {
+        const std::scoped_lock lock(mutex_);
+        if (in_use_ > 0) {
+            --in_use_;
+        }
+        if (open_ && free_.size() < retained_capacity_) {
+            free_.push_back(std::move(returned));
+        }
+    }
+    // A picture the pool does not keep is freed here, outside the lock.
+}
+
 bool TrySubmitVideoFrameOrDropNewest(media::FrameQueue<media::VideoFrame>& queue,
                                      media::VideoFrame&& frame,
                                      SaturatingCounter& rejected_frames) {
@@ -139,7 +223,10 @@ RecordingCaptureWorker::RecordingCaptureWorker(
     std::unique_ptr<IRegionCaptureProvider> provider,
     media::RecordingOptions options,
     media::FrameQueue<media::VideoFrame>& output_queue)
-    : provider_(std::move(provider)), options_(options), output_queue_(output_queue) {}
+    : provider_(std::move(provider)),
+      options_(options),
+      output_queue_(output_queue),
+      picture_pool_(RecordingPicturePool::Create(RecordingPicturesAlive(output_queue.capacity()))) {}
 
 RecordingCaptureWorker::~RecordingCaptureWorker() {
     Stop();
@@ -155,6 +242,7 @@ bool RecordingCaptureWorker::Start() {
     failed_.store(false, std::memory_order_relaxed);
     capture_attempts_.Reset();
     acquired_frames_.Reset();
+    fallback_frames_.Reset();
     no_new_frames_.Reset();
     reused_frames_.Reset();
     failure_reused_frames_.Reset();
@@ -167,6 +255,7 @@ bool RecordingCaptureWorker::Start() {
     region_copy_timing_.Reset();
     queue_submission_timing_.Reset();
     capture_failure_diagnostics_ = {};
+    picture_pool_->Open();
     capture_in_progress_ = false;
     pacing_reset_required_ = true;
     accumulated_active_time_ = std::chrono::steady_clock::duration::zero();
@@ -229,6 +318,9 @@ void RecordingCaptureWorker::Stop() noexcept {
     if (thread_.joinable()) {
         thread_.join();
     }
+    // The frames still queued or being written return their pictures later;
+    // the pool frees them then instead of holding them for another recording.
+    picture_pool_->Close();
 
     const std::scoped_lock command_lock(command_mutex_);
     if (lifecycle_.state() == RecordingWorkerState::Stopping) {
@@ -310,6 +402,7 @@ void RecordingCaptureWorker::CaptureLoop() {
     auto next_due = Clock::now();
     uint64_t frame_index = 0;
     std::shared_ptr<const platform::BgraImage> latest_pixels;
+    const RegionImageOptions capture_options = RecordingFrameImageOptions(options_.include_cursor);
 
     for (;;) {
         std::unique_lock command_lock(command_mutex_);
@@ -355,9 +448,11 @@ void RecordingCaptureWorker::CaptureLoop() {
         media::VideoFrame frame;
         capture_attempts_.Increment();
         const auto capture_start = Clock::now();
-        const RegionCaptureResult capture_result = provider_->CaptureRegionFrame(
-            options_.region, options_.include_cursor, timestamp,
-            next_timestamp - timestamp, frame);
+        // A pooled picture: without a new frame it goes back to the pool
+        // untouched at the end of this slot.
+        std::shared_ptr<platform::BgraImage> picture = picture_pool_->Acquire();
+        const RegionCaptureResult capture_result =
+            provider_->CaptureRegionImage(options_.region, capture_options, *picture);
         capture_attempt_timing_.Add(ElapsedMicroseconds(capture_start));
         acquisition_timing_.Add(capture_result.metrics.acquisition_microseconds);
         region_copy_timing_.Add(capture_result.metrics.region_copy_microseconds);
@@ -367,9 +462,13 @@ void RecordingCaptureWorker::CaptureLoop() {
         command_changed_.notify_all();
 
         bool have_sample = false;
-        if (capture_result.status == RegionCaptureStatus::FrameAcquired &&
-            frame.image != nullptr && !frame.image->empty()) {
+        if (capture_result.status == RegionCaptureStatus::FrameAcquired && !picture->empty()) {
             acquired_frames_.Increment();
+            if (capture_result.primary_failure.stage != RegionCaptureFailureStage::None) {
+                // Counted, not logged: an expected fallback gets no line per frame.
+                fallback_frames_.Increment();
+            }
+            frame = media::VideoFrame{std::move(picture), timestamp, next_timestamp - timestamp};
             latest_pixels = frame.image;
             have_sample = true;
         } else if (capture_result.status == RegionCaptureStatus::NoNewFrame) {

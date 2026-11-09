@@ -95,6 +95,59 @@ std::optional<media::MediaTime> NextAudioStreamTick(
     return target;
 }
 
+media::MediaTime AudioWriterGateLimit(media::MediaTime video_end,
+                                      media::MediaTime maximum_lead) noexcept {
+    constexpr int64_t kMaximum = (std::numeric_limits<int64_t>::max)();
+    constexpr int64_t kMinimum = (std::numeric_limits<int64_t>::min)();
+    const int64_t lead = maximum_lead.count();
+    if (lead > 0 && video_end.count() > kMaximum - lead) {
+        return media::MediaTime{kMaximum};
+    }
+    if (lead < 0 && video_end.count() < kMinimum - lead) {
+        return media::MediaTime{kMinimum};
+    }
+    return video_end + maximum_lead;
+}
+
+AudioPacketMapResult TrimAudioOverlap(MappedAudioPacket& mapped,
+                                      media::MediaTime committed_end,
+                                      uint32_t sample_rate) noexcept {
+    if (sample_rate == 0) {
+        return AudioPacketMapResult::Invalid;
+    }
+    if (mapped.timestamp >= committed_end) {
+        return AudioPacketMapResult::Mapped;
+    }
+    // The overlap itself must be a MediaTime; no timeline packet is that far
+    // behind the written audio.
+    if (mapped.timestamp < media::MediaTime::zero() &&
+        committed_end.count() >
+            (std::numeric_limits<int64_t>::max)() + mapped.timestamp.count()) {
+        return AudioPacketMapResult::Invalid;
+    }
+    const uint64_t overlap_frames =
+        TimeToFramesCeiling(committed_end - mapped.timestamp, sample_rate);
+    if (overlap_frames >= mapped.frame_count) {
+        return AudioPacketMapResult::Dropped;
+    }
+    const auto overlap = static_cast<uint32_t>(overlap_frames);
+    if (mapped.first_frame > (std::numeric_limits<uint32_t>::max)() - overlap) {
+        return AudioPacketMapResult::Invalid;
+    }
+    const uint32_t frame_count = mapped.frame_count - overlap;
+    media::MediaTime duration{};
+    if (!FramesToTime(frame_count, sample_rate, duration)) {
+        return AudioPacketMapResult::Invalid;
+    }
+    mapped.first_frame += overlap;
+    mapped.frame_count = frame_count;
+    // Not snapped to the frame grid: the kept suffix continues the written
+    // audio without a gap.
+    mapped.timestamp = committed_end;
+    mapped.duration = duration;
+    return AudioPacketMapResult::Mapped;
+}
+
 bool AudioTimelineMapper::Reset(const media::AudioFormat& format) noexcept {
     format_ = format;
     segment_active_offset_ = media::MediaTime::zero();

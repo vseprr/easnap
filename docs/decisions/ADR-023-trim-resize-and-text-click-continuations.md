@@ -1,8 +1,10 @@
-# ADR-023: Trim resize surfaces and text click continuations
+# ADR-023 — Trim resize surfaces and text click continuations
 
-Date: 2026-09-19
-Status: Implemented and accepted in the closed 2026-09-21 UI correction session.  
+**Status:** Implemented  
+**Date:** 2026-09-19  
+**Amended:** 2026-09-21 — accepted in the closed 2026-09-21 UI correction session  
 **Amended by:** [ADR-024](ADR-024-native-trim-frame.md) (top-level redraw and copy-bits policy)  
+**Amended:** 2026-11-09 — minimum client width raised from 480 to 512 DIP so that every caption fits in Turkish  
 New windows follow the [implementation guide](../ui/window-implementation-guide.md).
 
 ## Context
@@ -14,9 +16,13 @@ when a blank click was followed by the native double-click continuation.
 
 ## Decisions
 
-- Supersede ADR-022's unrestricted manual size decision. Keep a 480 x 400 client-DIP
+- Supersede ADR-022's unrestricted manual size decision. Keep a 512 x 400 client-DIP
   minimum with ADR-024's native outer-frame allowances, capped by the monitor work area. Preserve real DPI, every action and
   source-driven initial sizing. Extreme source ratios fit inside a usable UI.
+  The width was 480 DIP until 2026-11-09. There, at 125 %, the Turkish Cancel
+  export caption ("Dışa aktarmayı iptal et") needed 186 px of its 184 px button
+  cell; at 512 DIP the cell is 198 px. `text_fits_in_every_language` checks
+  the trim window at its smallest size in both languages.
 - The video allocation starts at the 40 DIP custom caption boundary. Time and
   selected range sit below the timeline on two stable rows. Their height does
   not change at a horizontal breakpoint. Extra preview space uses the theme's

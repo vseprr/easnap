@@ -189,8 +189,9 @@ bool Capture(Path path, HWND backdrop, COLORREF colour, const RECT& area, platfo
         capture::RegionCaptureResult result;
         if (path == Path::Gdi) {
             // A duplication created on a still desktop has no composed frame:
-            // its first picture is black and the GDI blit takes over, as it
-            // does for a recording that starts on a still desktop.
+            // its first picture is black and the GDI blit takes over. The
+            // default options give the output up there; a recording reads
+            // that one picture through GDI the same way and asks again later.
             Paint(backdrop, colour);
             Pump(std::chrono::milliseconds(400));
             result = provider->CaptureRegionImage(area, options, out);

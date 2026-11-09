@@ -94,7 +94,8 @@ screenshots and recordings and starting with Windows are in **Settings...** in
 the same menu.
 
 The binaries are unsigned, so Windows may display a publisher or reputation
-warning. Each package has a `.sha256` file in the same release:
+warning. Each package has a `.sha256` file in the same release. In the command
+below, replace `<version>` with the release you downloaded, for example `1.2.0`:
 
 ```powershell
 Get-FileHash .\Easnap-v<version>-windows-x64-setup.exe -Algorithm SHA256

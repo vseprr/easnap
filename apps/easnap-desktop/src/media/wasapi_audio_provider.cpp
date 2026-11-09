@@ -60,6 +60,17 @@ private:
     std::thread& consumer_;
 };
 
+/// Raises `peak` to `value` when `value` is larger; never lowers it.
+void RaisePeak(std::atomic<std::size_t>& peak, std::size_t value) noexcept {
+    std::size_t stored_peak = peak.load(std::memory_order_relaxed);
+    while (value > stored_peak) {
+        if (peak.compare_exchange_weak(
+                stored_peak, value, std::memory_order_relaxed)) {
+            break;
+        }
+    }
+}
+
 /// Converts WAVEFORMATEX / WAVEFORMATEXTENSIBLE to AudioFormat.
 AudioFormat FormatFromWaveFormat(const WAVEFORMATEX& wfx) noexcept {
     AudioFormat fmt;
@@ -267,6 +278,13 @@ private:
     /// Ends initialisation as a failure: counts it, keeps `hr` for the
     /// diagnostics and lets Start return `result`.
     void FailInitialization(AudioCaptureResult result, HRESULT hr) noexcept;
+    /// Keeps the clock observations and timestamp choice of one of the first
+    /// packets of a capture and writes them to the log. Call it before the
+    /// packet is counted, so that its index is the count so far.
+    void RecordTimestampDiagnostic(
+        const detail::AudioTimestampResolutionInput& input,
+        const detail::AudioTimestampResolutionResult& resolution,
+        AudioPacketFlags packet_flags);
 
     std::thread thread_;
     platform::UniqueHandle stop_event_;
@@ -919,70 +937,8 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
                 device_lost = true;
             }
 
-            AudioTimestampResolutionDiagnostic timestamp_diagnostic;
-            timestamp_diagnostic.packet_index = packets_acquired_.value();
-            timestamp_diagnostic.frame_count = frames_available;
-            timestamp_diagnostic.buffered_frame_count = buffered_frames_available;
-            timestamp_diagnostic.device_position = device_position;
-            timestamp_diagnostic.raw_wasapi_qpc_100ns = qpc_position;
-            timestamp_diagnostic.audio_clock_position = audio_clock_position;
-            timestamp_diagnostic.audio_clock_frequency = audio_clock_frequency;
-            timestamp_diagnostic.audio_clock_qpc_100ns = audio_clock_qpc_100ns;
-            timestamp_diagnostic.capture_qpc_100ns = capture_qpc_100ns;
-            timestamp_diagnostic.raw_wasapi_timestamp =
-                timestamp_resolution.raw_wasapi_timestamp;
-            timestamp_diagnostic.audio_clock_timestamp =
-                timestamp_resolution.audio_clock_timestamp;
-            timestamp_diagnostic.capture_fallback_timestamp =
-                timestamp_resolution.capture_fallback_timestamp;
-            timestamp_diagnostic.resolved_timestamp =
-                timestamp_resolution.resolved_timestamp;
-            timestamp_diagnostic.source = timestamp_resolution.source;
-            timestamp_diagnostic.packet_flags = packet.flags;
-            timestamp_diagnostic.raw_wasapi_plausible =
-                timestamp_resolution.raw_wasapi_plausible;
-            timestamp_diagnostic.audio_clock_correlation_valid =
-                timestamp_resolution.audio_clock_correlation_valid;
-
-            bool retained_timestamp_diagnostic = false;
-            {
-                const std::scoped_lock lock(timestamp_diagnostics_mutex_);
-                if (timestamp_resolution_count_ <
-                    kAudioTimestampDiagnosticCapacity) {
-                    timestamp_resolutions_[timestamp_resolution_count_] =
-                        timestamp_diagnostic;
-                    ++timestamp_resolution_count_;
-                    retained_timestamp_diagnostic = true;
-                }
-            }
-            if (retained_timestamp_diagnostic) {
-                platform::LogMessage(
-                    L"[AudioTimestamp] packet=%llu epoch=%lld frames=%u buffered=%u device=%llu "
-                    L"raw_qpc=%llu clock_pos=%llu clock_freq=%llu",
-                    static_cast<unsigned long long>(timestamp_diagnostic.packet_index),
-                    static_cast<long long>(qpc_epoch_100ns.count()),
-                    timestamp_diagnostic.frame_count,
-                    timestamp_diagnostic.buffered_frame_count,
-                    static_cast<unsigned long long>(timestamp_diagnostic.device_position),
-                    static_cast<unsigned long long>(timestamp_diagnostic.raw_wasapi_qpc_100ns),
-                    static_cast<unsigned long long>(timestamp_diagnostic.audio_clock_position),
-                    static_cast<unsigned long long>(timestamp_diagnostic.audio_clock_frequency));
-                platform::LogMessage(
-                    L"[AudioTimestamp] packet=%llu clock_qpc=%llu capture_qpc=%llu "
-                    L"raw_rel=%lld clock_rel=%lld fallback_rel=%lld resolved=%lld "
-                    L"source=%u flags=0x%X raw_ok=%u clock_ok=%u",
-                    static_cast<unsigned long long>(timestamp_diagnostic.packet_index),
-                    static_cast<unsigned long long>(timestamp_diagnostic.audio_clock_qpc_100ns),
-                    static_cast<unsigned long long>(timestamp_diagnostic.capture_qpc_100ns),
-                    static_cast<long long>(timestamp_diagnostic.raw_wasapi_timestamp.count()),
-                    static_cast<long long>(timestamp_diagnostic.audio_clock_timestamp.count()),
-                    static_cast<long long>(timestamp_diagnostic.capture_fallback_timestamp.count()),
-                    static_cast<long long>(timestamp_diagnostic.resolved_timestamp.count()),
-                    static_cast<unsigned int>(timestamp_diagnostic.source),
-                    static_cast<unsigned int>(timestamp_diagnostic.packet_flags),
-                    timestamp_diagnostic.raw_wasapi_plausible ? 1u : 0u,
-                    timestamp_diagnostic.audio_clock_correlation_valid ? 1u : 0u);
-            }
+            RecordTimestampDiagnostic(timestamp_input, timestamp_resolution,
+                                      packet.flags);
 
             // Update diagnostics.
             packets_acquired_.Increment();
@@ -1009,14 +965,7 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
             }
 
             // Track peak queue occupancy.
-            const std::size_t current_peak = queue.peak_size();
-            std::size_t stored_peak = peak_queue_occupancy_.load(std::memory_order_relaxed);
-            while (current_peak > stored_peak) {
-                if (peak_queue_occupancy_.compare_exchange_weak(
-                        stored_peak, current_peak, std::memory_order_relaxed)) {
-                    break;
-                }
-            }
+            RaisePeak(peak_queue_occupancy_, queue.peak_size());
 
             if (release_failed) {
                 break;
@@ -1039,17 +988,80 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
     }
 
     // Final peak queue occupancy.
-    const std::size_t final_peak = queue.peak_size();
-    std::size_t stored_peak = peak_queue_occupancy_.load(std::memory_order_relaxed);
-    while (final_peak > stored_peak) {
-        if (peak_queue_occupancy_.compare_exchange_weak(
-                stored_peak, final_peak, std::memory_order_relaxed)) {
-            break;
-        }
-    }
+    RaisePeak(peak_queue_occupancy_, queue.peak_size());
 
     // COM objects (capture_client, audio_client, device, enumerator) are
     // released here by their destructors before com_guard calls CoUninitialize.
+}
+
+void WasapiAudioProvider::RecordTimestampDiagnostic(
+    const detail::AudioTimestampResolutionInput& input,
+    const detail::AudioTimestampResolutionResult& resolution,
+    AudioPacketFlags packet_flags) {
+    AudioTimestampResolutionDiagnostic timestamp_diagnostic;
+    timestamp_diagnostic.packet_index = packets_acquired_.value();
+    timestamp_diagnostic.frame_count = input.frame_count;
+    timestamp_diagnostic.buffered_frame_count = input.buffered_frame_count;
+    timestamp_diagnostic.device_position = input.device_position;
+    timestamp_diagnostic.raw_wasapi_qpc_100ns = input.raw_wasapi_qpc_100ns;
+    timestamp_diagnostic.audio_clock_position = input.audio_clock_position;
+    timestamp_diagnostic.audio_clock_frequency = input.audio_clock_frequency;
+    timestamp_diagnostic.audio_clock_qpc_100ns = input.audio_clock_qpc_100ns;
+    timestamp_diagnostic.capture_qpc_100ns = input.capture_qpc_100ns;
+    timestamp_diagnostic.raw_wasapi_timestamp =
+        resolution.raw_wasapi_timestamp;
+    timestamp_diagnostic.audio_clock_timestamp =
+        resolution.audio_clock_timestamp;
+    timestamp_diagnostic.capture_fallback_timestamp =
+        resolution.capture_fallback_timestamp;
+    timestamp_diagnostic.resolved_timestamp =
+        resolution.resolved_timestamp;
+    timestamp_diagnostic.source = resolution.source;
+    timestamp_diagnostic.packet_flags = packet_flags;
+    timestamp_diagnostic.raw_wasapi_plausible =
+        resolution.raw_wasapi_plausible;
+    timestamp_diagnostic.audio_clock_correlation_valid =
+        resolution.audio_clock_correlation_valid;
+
+    bool retained_timestamp_diagnostic = false;
+    {
+        const std::scoped_lock lock(timestamp_diagnostics_mutex_);
+        if (timestamp_resolution_count_ <
+            kAudioTimestampDiagnosticCapacity) {
+            timestamp_resolutions_[timestamp_resolution_count_] =
+                timestamp_diagnostic;
+            ++timestamp_resolution_count_;
+            retained_timestamp_diagnostic = true;
+        }
+    }
+    if (retained_timestamp_diagnostic) {
+        platform::LogMessage(
+            L"[AudioTimestamp] packet=%llu epoch=%lld frames=%u buffered=%u device=%llu "
+            L"raw_qpc=%llu clock_pos=%llu clock_freq=%llu",
+            static_cast<unsigned long long>(timestamp_diagnostic.packet_index),
+            static_cast<long long>(input.qpc_epoch_100ns),
+            timestamp_diagnostic.frame_count,
+            timestamp_diagnostic.buffered_frame_count,
+            static_cast<unsigned long long>(timestamp_diagnostic.device_position),
+            static_cast<unsigned long long>(timestamp_diagnostic.raw_wasapi_qpc_100ns),
+            static_cast<unsigned long long>(timestamp_diagnostic.audio_clock_position),
+            static_cast<unsigned long long>(timestamp_diagnostic.audio_clock_frequency));
+        platform::LogMessage(
+            L"[AudioTimestamp] packet=%llu clock_qpc=%llu capture_qpc=%llu "
+            L"raw_rel=%lld clock_rel=%lld fallback_rel=%lld resolved=%lld "
+            L"source=%u flags=0x%X raw_ok=%u clock_ok=%u",
+            static_cast<unsigned long long>(timestamp_diagnostic.packet_index),
+            static_cast<unsigned long long>(timestamp_diagnostic.audio_clock_qpc_100ns),
+            static_cast<unsigned long long>(timestamp_diagnostic.capture_qpc_100ns),
+            static_cast<long long>(timestamp_diagnostic.raw_wasapi_timestamp.count()),
+            static_cast<long long>(timestamp_diagnostic.audio_clock_timestamp.count()),
+            static_cast<long long>(timestamp_diagnostic.capture_fallback_timestamp.count()),
+            static_cast<long long>(timestamp_diagnostic.resolved_timestamp.count()),
+            static_cast<unsigned int>(timestamp_diagnostic.source),
+            static_cast<unsigned int>(timestamp_diagnostic.packet_flags),
+            timestamp_diagnostic.raw_wasapi_plausible ? 1u : 0u,
+            timestamp_diagnostic.audio_clock_correlation_valid ? 1u : 0u);
+    }
 }
 
 }  // namespace

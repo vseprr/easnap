@@ -157,28 +157,42 @@ AppSettings AppSettings::Load(const std::wstring& custom_path) {
     return settings;
 }
 
-bool AppSettings::Save(const std::wstring& custom_path) const {
+bool AppSettings::Save(const std::wstring& custom_path, SettingsSaveError* error) const {
+    const auto fail = [error](SettingsSaveError::Kind kind, DWORD code) {
+        if (error != nullptr) { *error = SettingsSaveError{kind, code}; }
+        return false;
+    };
     if (!IsValidAppearanceTheme(appearance_theme) || !IsValidLanguageSetting(language) ||
         !IsSupportedRecordingFormat(recording_format) ||
         !IsSupportedRecordingAudioSource(recording_audio_source) ||
         !IsValidGifExportConfiguration(recording_gif)) {
-        return false;
+        return fail(SettingsSaveError::Kind::InvalidValue, ERROR_SUCCESS);
     }
     const std::wstring path = custom_path.empty() ? FilePath() : custom_path;
     if (path.empty()) {
-        return false;
+        // Windows named no local application data folder.
+        return fail(SettingsSaveError::Kind::WriteFailed, ERROR_PATH_NOT_FOUND);
     }
     if (!platform::EnsureDirectory(platform::DirectoryOf(path)) || !EnsureUnicodeFile(path)) {
-        return false;
+        return fail(SettingsSaveError::Kind::WriteFailed, ::GetLastError());
     }
-    const auto write_text = [&path](const wchar_t* key, const std::wstring& value) {
-        return ::WritePrivateProfileStringW(kSettingsSection, key, value.c_str(), path.c_str()) != FALSE;
+    // Every key is attempted; the first failure says why the file is incomplete.
+    DWORD first_error = ERROR_SUCCESS;
+    const auto write = [&path, &first_error](const wchar_t* key, const wchar_t* value) {
+        if (::WritePrivateProfileStringW(kSettingsSection, key, value, path.c_str()) != FALSE) {
+            return true;
+        }
+        if (first_error == ERROR_SUCCESS) { first_error = ::GetLastError(); }
+        return false;
+    };
+    const auto write_text = [&write](const wchar_t* key, const std::wstring& value) {
+        return write(key, value.c_str());
     };
 
-    const auto write_int = [&path](const wchar_t* key, int value) {
+    const auto write_int = [&write](const wchar_t* key, int value) {
         wchar_t text[16]{};
         ::_itow_s(value, text, 10);
-        return ::WritePrivateProfileStringW(kSettingsSection, key, text, path.c_str()) != FALSE;
+        return write(key, text);
     };
 
     bool ok = write_int(L"HotkeyModifiers", static_cast<int>(hotkey_modifiers));
@@ -197,9 +211,7 @@ bool AppSettings::Save(const std::wstring& custom_path) const {
     ok = write_int(L"GifPreset", static_cast<int>(recording_gif.preset)) && ok;
     for (const wchar_t* legacy_key : {L"GifOutputWidth", L"GifOutputHeight",
                                       L"GifMaximumFrameRate", L"GifQuality"}) {
-        ok = ::WritePrivateProfileStringW(kSettingsSection, legacy_key, nullptr,
-                                          path.c_str()) != FALSE &&
-             ok;
+        ok = write(legacy_key, nullptr) && ok;
     }
     ok = write_text(L"ImageFolder", image_folder) && ok;
     ok = write_text(L"VideoFolder", video_folder) && ok;
@@ -210,9 +222,12 @@ bool AppSettings::Save(const std::wstring& custom_path) const {
     // Keys of earlier versions: one shared directory, and a switch that
     // nothing ever read.
     for (const wchar_t* retired_key : {L"LastSaveDirectory", L"CloseEditorAfterCopy"}) {
-        ok = ::WritePrivateProfileStringW(kSettingsSection, retired_key, nullptr, path.c_str()) != FALSE && ok;
+        ok = write(retired_key, nullptr) && ok;
     }
-    return ok;
+    if (!ok) {
+        return fail(SettingsSaveError::Kind::WriteFailed, first_error);
+    }
+    return true;
 }
 
 std::wstring AppSettings::HotkeyDisplayText() const {

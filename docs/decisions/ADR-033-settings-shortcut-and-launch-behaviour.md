@@ -3,6 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-10-13
 **Amended:** 2026-11-07 — "Check for updates" opens the latest stable release in a stable build
+**Amended:** 2026-11-09 — settings that cannot be saved are told once per run, in a notification
 
 ## Context
 
@@ -36,6 +37,28 @@ under the pointer.
 `settings.ini` is written as UTF-16 with a byte-order mark so that folder names
 keep their characters. `LastSaveDirectory` of older versions is read once and
 replaced by the two new keys.
+
+### Settings that cannot be saved
+
+Amended 2026-11-09. Until then a failed write was only logged, and the
+message about "Start with Windows" said "The other settings were saved" even
+when they were not. A change applies at once whether or not `settings.ini`
+could be written (a full disk, a read-only file, a file where the folder
+should be). When it could not, the user is told once per run, in a
+notification titled with the product name, and never during a capture or
+while a dialog or menu of Easnap is open: the coordinator asks
+`ShouldTellSettingsNotSaved` and posts `kMsgSettingsNotSaved` to the host
+window, which asks again before showing it. A failure during a recording or a
+trim is found again by the save that follows the end of the session. OK in
+Settings says it in its own message, combined with a refused "Start with
+Windows" when both failed. Without a notification-area icon the notice is a
+message, once per run; at the first start it replaces the notice about where
+Easnap lives; the notice about where Easnap lives is then given at the next
+start whose save succeeds. A failure while Easnap exits or Windows ends the
+session is only logged. The log line names the Win32 error and no path
+([ADR-030](ADR-030-log-file-and-crash-reports.md)); a value out of range is
+refused before anything is written and logged as a programming error, with no
+notification of its own.
 
 ### The capture shortcut
 

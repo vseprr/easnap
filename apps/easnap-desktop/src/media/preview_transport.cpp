@@ -82,6 +82,9 @@ void PreviewTransport::Reset(bool playing) noexcept {
     position_override_.reset();
     playback_position_floor_.reset();
     in_flight_ = PreviewTransportCommandType::None;
+    in_flight_dispatched_ms_ = 0;
+    playback_clock_origin_ms_ = 0;
+    clock_reseeks_ = 0;
     ended_ = false;
 }
 
@@ -93,6 +96,7 @@ void PreviewTransport::RequestSeek(MediaTime position) noexcept {
     desired_position_ = position;
     position_override_ = position;
     playback_position_floor_.reset();
+    clock_reseeks_ = 0;
 }
 
 void PreviewTransport::RequestPlayFrom(MediaTime position) noexcept {
@@ -105,7 +109,7 @@ void PreviewTransport::RequestPauseAt(MediaTime position) noexcept {
     desired_playing_ = false;
 }
 
-PreviewTransportCommand PreviewTransport::TakeNext() noexcept {
+PreviewTransportCommand PreviewTransport::TakeNext(uint64_t now_ms) noexcept {
     if (in_flight_ != PreviewTransportCommandType::None) {
         return {};
     }
@@ -113,17 +117,20 @@ PreviewTransportCommand PreviewTransport::TakeNext() noexcept {
     // this internal Pause and is reconciled only after the real Seek callback.
     if (actual_playing_ && (!desired_playing_ || desired_position_.has_value())) {
         in_flight_ = PreviewTransportCommandType::Pause;
+        in_flight_dispatched_ms_ = now_ms;
         return {in_flight_, MediaTime::zero()};
     }
     if (desired_position_.has_value()) {
         const MediaTime position = *desired_position_;
         desired_position_.reset();
         in_flight_ = PreviewTransportCommandType::Seek;
+        in_flight_dispatched_ms_ = now_ms;
         return {in_flight_, position};
     }
     if (desired_playing_ != actual_playing_) {
         in_flight_ = desired_playing_ ? PreviewTransportCommandType::Play
                                       : PreviewTransportCommandType::Pause;
+        in_flight_dispatched_ms_ = now_ms;
         return {in_flight_, MediaTime::zero()};
     }
     return {};
@@ -144,7 +151,12 @@ bool PreviewTransport::Complete(PreviewTransportCommandType type,
     if ((type == PreviewTransportCommandType::Seek ||
          type == PreviewTransportCommandType::Play) &&
         !desired_position_ && observed == PreviewNativeState::Playing) {
-        if (position_override_) playback_position_floor_ = position_override_;
+        if (position_override_) {
+            playback_position_floor_ = position_override_;
+            // Playback from this target began no earlier than the dispatch of
+            // the command now completed, whatever the callback's delay.
+            playback_clock_origin_ms_ = in_flight_dispatched_ms_;
+        }
         position_override_.reset();
     }
     if (type == PreviewTransportCommandType::Seek) ended_ = false;
@@ -185,7 +197,38 @@ void PreviewTransport::Failed() noexcept {
     position_override_.reset();
     playback_position_floor_.reset();
     in_flight_ = PreviewTransportCommandType::None;
+    in_flight_dispatched_ms_ = 0;
+    playback_clock_origin_ms_ = 0;
+    clock_reseeks_ = 0;
     ended_ = false;
+}
+
+bool PreviewTransport::PlaybackClockContradicted(MediaTime native,
+                                                 uint64_t now_ms) const noexcept {
+    // The floor is the acknowledged target until a newer seek, natural end or
+    // reset. Pauses since then only make this bound looser, never wrong. The
+    // window keeps clock drift over long playback out of the comparison.
+    if (!playback_position_floor_) return false;
+    const uint64_t elapsed_ms = now_ms > playback_clock_origin_ms_
+                                    ? now_ms - playback_clock_origin_ms_
+                                    : 0;
+    if (elapsed_ms > static_cast<uint64_t>(clock_check_window.count())) return false;
+    return native > *playback_position_floor_ +
+                        std::chrono::milliseconds{static_cast<int64_t>(elapsed_ms)} +
+                        clock_allowance;
+}
+
+PreviewClockCheck PreviewTransport::CheckPlaybackClock(MediaTime native,
+                                                       uint64_t now_ms) noexcept {
+    if (!PlaybackClockContradicted(native, now_ms)) return PreviewClockCheck::Consistent;
+    if (clock_reseeks_ >= clock_reseek_limit) return PreviewClockCheck::Exhausted;
+    ++clock_reseeks_;
+    // The same ownership as a requested seek, keeping its attempt count. The
+    // target stays the logical position until the new Seek and Play complete.
+    desired_position_ = playback_position_floor_;
+    position_override_ = playback_position_floor_;
+    playback_position_floor_.reset();
+    return PreviewClockCheck::Reseek;
 }
 
 }  // namespace easnap::media

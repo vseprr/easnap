@@ -1,0 +1,541 @@
+# ADR-040 — Opening an external video in the trim view
+
+**Status:** Accepted; implemented (media layer, flow, entry points); checked by the owner 2026-11-09  
+**Date:** 2026-11-09
+
+## Context
+
+The trim view was built for one source: the recording Easnap has just made.
+The flow in `src/app/trim_flow.cpp` and the window in `src/ui/trim_window.cpp`
+rely on that in six places. Opening a video the user already owns breaks each
+of them.
+
+- **Temporary results go beside the source.** The trimmed copy is written to
+  `trimmed-N.ext` in the folder of the source (`trim_flow.cpp`). For a user's
+  file that would write into the user's own folder.
+- **The exporters accept one shape.** `mp4_trim_exporter.cpp` and
+  `gif_exporter.cpp` take an absolute `.mp4` path with H.264 video and AAC
+  audio, and refuse anything else with a generic failure. The preview has no
+  such check: a playable HEVC file or a `.mov` previews fine and then every
+  export fails.
+- **A second instance starts a capture.** `main.cpp` posts the registered
+  message `Easnap.StartCapture` with no data and the running instance calls
+  `OnGlobalHotkey`. "Open with" on a running Easnap would therefore start a
+  screen capture. When Easnap is not running, the file argument is ignored.
+  The only command-line test is a `wcsstr` for `--startup`, so a path that
+  contains that text would start Easnap silently.
+- **Discard deletes.** The close button is "Discard" (Turkish "Sil") and asks a
+  destructive question; a preview that fails to open offers Save, Delete or
+  Keep, and its messages say the recording "was kept"
+  (`trim_flow.cpp`, `strings_en.rc`, `strings_tr.rc`).
+- **Exit and sign-out treat the video as unsaved work.** `PendingWorkFor` in
+  `session_transitions.cpp` reports `UnsavedRecording` while trimming and
+  `Export` while exporting; the texts say "If you exit now, it is deleted"
+  ([ADR-031](ADR-031-unsaved-work-survives.md)). `PrepareForSessionEnd` marks
+  the recording recoverable and the next start offers to recover it.
+- **The state machine has one way in.** `TrimFlow::Begin` is called only from
+  `FinishRecordingWorkflow`, and `session_transitions.cpp` allows only
+  `RecordingFinalizing → RecordingTrimming`.
+
+Two more facts shape the design. The trim window is not yet in
+`text_fits_in_every_language`. Both exporters decode from time zero and never
+seek; the GIF exporter does it twice.
+
+## Decision
+
+An external video opens in the same trim view as a recording. Easnap checks it
+first, tells the user in plain words when it cannot open it, and never changes
+or deletes the file.
+
+### One support table
+
+| Item | Decision |
+|---|---|
+| Where | One table in `src/media`, a header and its source; nothing else lists extensions or codecs. |
+| What it maps | Extension → container → allowed video subtypes and allowed audio subtypes → the refusal reason for a file that does not fit. |
+| Who reads it | The probe, both exporters, and a Fast test that compares the installer's extension list with it. |
+
+Contents in v1:
+
+| Extension | Container (source) | Video subtypes | Audio subtypes |
+|---|---|---|---|
+| `.mp4`, `.m4v`, `.mov` | MPEG-4 | H.264; MPEG-4 Part 2 (MP4V, M4S2); MJPEG | AAC, MP3, PCM, or none |
+| `.wmv`, `.asf` | ASF | WMV3, WVC1 (VC-1) | WMA v8/v9, or none |
+| `.avi` | AVI | H.264; MPEG-4 Part 2; MJPEG | AAC, MP3, PCM, or none |
+
+These are the combinations the table allows. Test files exist only for H.264
+with AAC or no audio in `.mp4`, `.m4v` and `.mov`, and for WMV3 and VC-1 with
+WMA v8 or no audio in `.wmv` and `.asf` (see Validation). The AVI row, MPEG-4
+Part 2 (MP4V, M4S2) and MJPEG video, and MP3, PCM and WMA v9 audio have no test
+file: Windows has no encoder for them to write one. They are covered by the
+table and classifier tests only. A subtype that Windows can decode but the
+table does not list for that container is refused as "format not supported";
+widening the table is one edit plus one test file.
+
+The table compares the subtype the Windows media source reports. An AVI whose
+video carries another FourCC, such as XVID, DIVX, DX50, avc1 or X264, is
+refused as "format not supported" in v1 unless Windows reports it as one of
+the table's subtypes; which aliases Windows maps was not checked.
+
+Deliberately not in v1: `.mkv`, `.webm`, HEVC, VP9 and AV1. The table names
+them so the probe can answer "format not supported" instead of "unknown".
+HEVC is the one exception in wording: when the extension is present but the
+Windows decoder is missing, the answer is "needs a Windows codec extension".
+
+### Probe and reasons
+
+The probe runs on a worker thread inside `Easnap.exe`. It opens the file with
+the Source Reader on a handle Easnap opened itself, with a deadline of 5
+seconds, and posts the result to the host window. The trim view opens only
+after a successful probe. The deadline is checked between steps only: opening
+the file, opening the source and a single `ReadSample` are not bounded by it,
+so a caller that must not wait longer stops waiting itself. A step that fails
+after the deadline is classified by its HRESULT, and a file whose every step
+succeeded is accepted however late the last step ended. A helper-process probe (a new packet in the preview
+helper protocol) would keep a parser crash out of `Easnap.exe`; it is recorded
+as a later option, not part of v1.
+
+The probe checks, in this order: Media Foundation is available; the path is
+absolute, local, not a URL, a regular file, not on a network or offline
+location; the extension is in the table; the file can be opened for reading;
+the Source Reader opens it; there is a video stream; the video and audio
+subtypes are in the table; the first frame decodes. It records the file's
+identity, size and modification time, and the facts the window needs.
+
+What the user is told:
+
+| Reason | Meaning in the user's words |
+|---|---|
+| Unsupported extension | Easnap does not open this kind of file. |
+| Format or codec not supported | The extension is supported but the video or audio inside is not. Includes "this needs a Windows codec extension". |
+| Damaged or unreadable | The file is damaged or is not a video. |
+| Protected | The file is copy-protected. |
+| No video | The file has sound but no picture. |
+| Not supported yet | Rotation, a pixel shape that is not square, interlaced video, or 10-bit/HDR. |
+| Too large for MP4 | Over the H.264 size limit; GIF is still allowed and the message says so. |
+| Network or offline file | Copy the file to this PC first. |
+| In use | Another program is using the file. |
+| Media Foundation missing | Windows N without the Media Feature Pack; the same answer Record gives ([ADR-034](ADR-034-media-foundation-on-first-use.md)). Added by the media-layer slice: the first check had no answer. |
+
+The mapping from a result to a reason is one pure function over the probe's
+facts and an HRESULT, so it is tested in the Fast tier without a file. The
+HRESULT mapping:
+
+| Result | Reason |
+|---|---|
+| `MF_E_UNSUPPORTED_BYTESTREAM_TYPE` (0xC00D36C4), `MF_E_INVALID_FILE_FORMAT` (0xC00D36BE) on a supported extension; any other failure to open | Damaged or not a video |
+| No `MFMediaType_Video` stream | No video |
+| Subtype not in the table | Format not supported |
+| Subtype in the table, `SetCurrentMediaType` returns `MF_E_TOPO_CODEC_NOT_FOUND` (0xC00D5212) or `MF_E_INVALIDMEDIATYPE` | Needs a Windows codec extension |
+| `MF_SD_PROTECTED` on any stream (what `MFRequireProtectedEnvironment` checks; that function lives in `mf.dll`, which Easnap does not import), `MF_E_DRM_UNSUPPORTED` (0xC00D3700), `MF_E_LICENSE_*` | Protected |
+| First-frame decode fails with `MF_E_INVALID_STREAM_DATA` | Damaged or unreadable |
+| `ERROR_SHARING_VIOLATION` (0x80070020) from `CreateFileW` | In use |
+| `ERROR_FILE_NOT_FOUND`, `ERROR_PATH_NOT_FOUND`, `ERROR_ACCESS_DENIED` | Own wording: "file not found" or "no access" |
+| Probe deadline passes | Network or offline file when the location says so; otherwise damaged or unreadable |
+
+The wording of the last two rows: "The file could not be found." and "Easnap
+is not allowed to read this file." The HRESULT values are verified against
+real files in the probe tests; a value that turns out to differ is corrected
+here.
+
+Verified on Windows 10 22H2 (`video_probe_files`, 2026-11-09): random bytes
+with `.mp4` give `MF_E_UNSUPPORTED_BYTESTREAM_TYPE`; an MP4 cut in half gives
+`MF_E_INVALID_POSITION` (0xC00D36E5), damaged; a file opened elsewhere without
+sharing, or for writing, gives 0x80070020; a missing file 0x80070002. An H.264
+file declares "mixed" interlacing in its type, so the probe takes interlacing
+from the first decoded frame (`MFSampleExtension_Interlaced`).
+
+Rotation, a pixel aspect other than 1:1, interlaced video and 10-bit or HDR
+profiles are refused because nothing in the exporters handles them: they would
+export unrotated, with the wrong shape, undeinterlaced or not at all, and the
+preview would not match the result. A file whose first frame is not at time
+zero is refused only if the preview cannot be fixed cheaply; the first
+implementation slice decides and records it.
+
+### Source ownership
+
+`TrimFlow::Begin` takes a `TrimSource`:
+
+| Field | Meaning |
+|---|---|
+| kind | `Owned` (a recording Easnap made) or `External` (a file the user opened) |
+| path | absolute path of the video |
+| identity | volume serial and file index, size and modification time, taken at probe |
+| display size, monitor anchor | where and how large to open the window |
+| probe facts | duration, size, frame rate, audio presence, subtypes |
+
+An external source also carries a work session from the temporary store. Its
+temporary results (trimmed copies, GIF output, staged copy-to-clipboard files)
+live there and never beside the source. The work session is never recoverable
+and is removed when the flow ends.
+
+**Invariant: the user's file is never changed or deleted.** The source path of
+an external flow never reaches delete, move or access-list code. Today this
+holds for the reuse path only because `allow_move = artifact != source`; the
+new code makes it structural and a test asserts it. Save refuses the source as
+a destination by file identity, not by comparing path strings, and shows its
+own message.
+
+| | Owned | External |
+|---|---|---|
+| Temporary results | the recording's session folder | the work session |
+| Close button | "Discard" / "Sil", destructive question | "Close" / "Kapat", no question unless an export is running |
+| Preview fails, then close | Save / Delete / Keep question | the window just closes |
+| Exit or sign-out | asks whether to exit; the recording is kept | nothing pending; during an export it asks, and says the export stops and the original is unchanged |
+| Recovery at next start | offered | never |
+| Save default name | `Easnap-<timestamp>` | `<name> (trimmed)` |
+| Full-range Save or Copy | reuses the file | reuses it only for MP4 + H.264 + AAC or no audio + no rotation; otherwise exports |
+| Format | fixed by the recording | chosen per action: the Save dialog offers MP4 and GIF types; Copy offers an MP4 or GIF choice |
+| `release_recording` | releases the session | does nothing |
+
+A cached export result is keyed by format so that switching between MP4 and
+GIF does not reuse the wrong file. The window title shows the file name. The
+strings that say "recording kept" or "deleted" are neutral or have an external
+variant; new string IDs are 21300–21399 in both tables
+([ADR-032](ADR-032-interface-text-in-string-tables.md)).
+
+#### As implemented by the flow slice (2026-11-09)
+
+The flow slice (`app/trim_flow`, `ui/trim_window`, `app/external_video`)
+follows the table above, with these differences and additions:
+
+- **The file on the clipboard is not in the work session.** Copy stages its
+  file in the completion controller's clipboard session, as for a recording:
+  the clipboard refers to that file after the flow has ended, so it cannot
+  live in a session the flow removes. It is never beside the source, never
+  recoverable, and is removed once the clipboard no longer refers to it. The
+  work session holds what the flow exports without a destination of its own.
+- **Reuse also needs the `.mp4` extension.** A `.mov` or `.m4v` with H.264 and
+  AAC is exported: copied under an `.mp4` name, a QuickTime file would be
+  labelled as what it is not, and the copy path accepts `.mp4` sources only.
+  The rule is `ExternalSourceIsReusable` in `app/trim_workflow`.
+- **Where the invariant is enforced.** `TrimFlow::MayMoveArtifact` is the one
+  place that lets a file be moved instead of copied: for an external video only
+  a file inside the flow's work session that is not the source by identity.
+  Save always copies (`PersistRecordingFile` stages a copy and renames the
+  copy); the access list is applied only to the clipboard session and its
+  file. The completion controller is unchanged. `trim_flow_production` wraps
+  the production completion backend and counts every move, access-list change
+  and overwrite whose path is the source by text or by identity; it must stay
+  zero, and the source's bytes, times and access list are compared after every
+  case. It also records the flow's calls to the store: the work session is
+  deleted at the end of every case, never released and never marked
+  recoverable.
+- **The source is checked again before Save and Copy.** Its identity, size and
+  modification time are compared with the probe's; a file that changed is
+  refused with its own message.
+- **Save opens in the video's folder**, under `<name> (trimmed)`; the type
+  chosen gives the format (the dialog insists on one of the two extensions).
+- **Close during an export** asks a question of its own (stop and close, or
+  keep exporting): there was no cancel-export question to reuse.
+- **A preview that fails** names the failure with "the video file is
+  unchanged" and does not offer to save the file as it is.
+- **Copy's menu** names its two items like the Save dialog's file types ("MP4
+  video", "Animated GIF").
+- **The probe result waits for dialogs.** When it arrives while a dialog or
+  menu of Easnap runs its own loop, it is taken a moment later; when a capture
+  has started meanwhile, it is dropped with a log line. Open video is off only
+  while the probe runs: a finished result whose message was lost is dropped by
+  the next Open video instead of keeping it off.
+- **A file inside Easnap's own data folder is refused** before the probe, with
+  its own sentence. Easnap deletes what is in its temporary sessions (the
+  clipboard session it replaces, stale-session cleanup, the store at exit), so
+  a recording reached through "Open data folder" must not become a file the
+  user believes is safe. The path and the folder are compared after both are
+  resolved to their final paths (short names, links and substituted drives
+  give the same answer); a network path is not opened for this, the probe
+  refuses it. The later entry points (`--open`, the hand-over) must use the
+  same check (`IsInsideEasnapFolder` in `app/external_video`).
+- **Media Foundation missing** has its own sentence, about videos, naming the
+  same remedy as Record's message (the Media Feature Pack from the optional
+  features in Windows Settings).
+- Strings: IDs 21300 to 21361, "External video" in `resources/string_ids.h`.
+
+### Session states and pending work
+
+The state machine gains an `Idle → RecordingTrimming` edge, and `PendingWorkFor`
+takes the source kind. The single table of pending work in
+[ADR-031](ADR-031-unsaved-work-survives.md) stays the one place that answers
+"what would Exit lose": for an external source it answers none while trimming
+and `Export` while exporting. No new state is added for external videos.
+
+### Export behaviour
+
+Both exporters decode every table entry through the Source Reader, asking for
+NV12 video and float audio. The MP4 writer declares BT.709 studio-range video,
+so decoded NV12 goes to the encoder unchanged only when it is that, or when it
+is H.264 that declares nothing (every recording); any other picture, such as
+WMV, VC-1 or other standard-definition video in BT.601, is decoded to RGB32 and
+converted by the writer. Passed on unchanged, a BT.601 WMV came out with a mean
+error of 7.1 per colour channel against its own decoded frame; through RGB the
+error is 1.4 (`mp4_trim_export_backend`, 2026-11-09). Two behaviours change:
+
+- An interval that holds no audio, in a file that has an audio track, exports
+  an audio track of silence instead of failing. Once the source audio has
+  ended, silence in 1,024-frame packets follows each video frame as it is
+  written, at most 750 ms behind it, and completes the track to the end of the
+  video, as a recording fills a gap
+  ([ADR-007](ADR-007-av-mux-and-active-time-audio.md)). Written only at the
+  end, the silence came too late: a 31-second stretch of video alone stalled
+  inside the sink writer and did not finish in 90 seconds; interleaved, the
+  same export takes 0.5 seconds. Audio that ends within 750 ms of the video, as
+  a recording's does, is left as it is. A gap in the middle of the source
+  audio, after which audio resumes, is not filled and remains a stall risk.
+- The bitrate default stays the one in `RecordingOptions` (8 Mbps). A
+  high-quality source is re-encoded at that rate; this is a known quality limit.
+
+Decoding still starts at time zero and does not seek, so trimming the end of a
+long file costs the time to decode up to that point (twice for GIF). This is a
+documented limit; keyframe seeking is a later slice
+([ADR-009](ADR-009-mp4-trim-boundaries-and-publication.md) allows it).
+Variable frame rate is supported: timestamps are kept and the nominal rate is
+the rounded average. Several audio tracks are supported only if a test shows
+the preview and the export use the same one.
+
+### Entry points
+
+| Entry | Behaviour |
+|---|---|
+| Tray "Open video…" | Placed after Capture, enabled only when Idle. The file dialog declares a `platform::ModalLoopScope`. |
+| `Easnap.exe --open <path>` and a bare path | What Explorer's "Open with" runs. Real argument parsing with `CommandLineToArgvW` replaces the `--startup` substring check. |
+| Second instance | Hands the path to the running one with `WM_COPYDATA` and exits. If no instance runs, the new one opens the file. |
+| Installer "Open with" | HKCU entries only (ProgID `Easnap.Video`, `OpenWithProgids` per extension, `Applications\Easnap.exe\SupportedTypes`). Offered, never made the default by the installer (the user can still choose it in Windows), `UserChoice` never touched, removed at uninstall. The portable ZIP writes nothing. |
+
+The hand-over message is a request from any process on the desktop, so the
+receiver validates it: one absolute, local, existing file, with a bounded
+length. It is treated as a user request, not a trusted command: it is posted
+to the receiver's own window and acted on only when the state is Idle and no
+dialog is open; otherwise it is dropped with a log line. The existing
+`Easnap.StartCapture` path is unchanged for the capture shortcut.
+
+The installer's extension list is the table's list. A Fast test reads
+`packaging/easnap.iss` and fails when the two differ.
+
+There is no drag-and-drop in v1.
+
+#### As implemented by the entry-point slice (2026-11-09)
+
+The entry-point slice (`app/command_line`, `app/video_handover`, `main.cpp`,
+`packaging/easnap.iss`) follows the table above, with these differences and
+additions:
+
+- **Arguments.** `ParseCommandLine` reads what `CommandLineToArgvW` splits.
+  `--startup` and `--open` count only as whole arguments, in any ASCII case;
+  the argument after `--open` is the path as given; a bare argument is a path
+  only when it names an existing file; the first path wins. A relative path is
+  made absolute against the current directory where it is parsed, so the
+  running Easnap is never handed one. A UNC path or a URL is kept, and the
+  location check refuses it. Ignored arguments are logged as one line that
+  does not repeat them, since they may name the user's files.
+- **The location check is the probe's path step.** `media::CheckVideoLocation`
+  runs the probe's own spelling, drive-type and attribute checks without
+  opening the file; it answers None only for an existing regular file on a
+  local drive whose data is on this PC. The sender uses it. The receiver does
+  not (a deviation from "one absolute, local, existing file" above): it checks
+  the payload and the spelling only, so no drive is touched inside
+  `WM_COPYDATA` on the UI thread; whether the file exists and is local is the
+  probe's answer, on its worker, as for a file chosen in Open video.
+- **The hand-over.** `dwData` is `0x45564F50` ("EVOP"); the payload is the
+  UTF-16 path with its terminator, at most 32 KiB, with no other NUL;
+  `ParseHandOver` checks this and the spelling (a drive letter, or `\\?\` and
+  a drive letter). The sender finds the host window by its class
+  (`EasnapHostWindow`) and sends only when that window's process runs an
+  executable of its own file name. The receiver keeps one request at a time,
+  answers TRUE only when it kept it, and posts itself `WM_APP + 19`; the
+  coordinator's `OpenVideo(path)` then starts the probe. Whether Easnap
+  accepts (`AcceptsVideoRequest`: Idle, no video being checked, no dialog or
+  menu running its own loop) is asked both when the message arrives and when
+  the posted message is handled. A request that fails either is dropped with a
+  log line. No message filter is opened, so an Easnap running elevated does
+  not take a hand-over from a start that is not.
+- **Known limits of the hand-over.** `SendMessageTimeout` stops waiting after
+  five seconds, but Windows still delivers the message: a running Easnap whose
+  UI thread was stuck can open the video after the new start has said it is
+  busy. Opening several files at once from Explorer starts one `Easnap.exe`
+  per file, so the first opens and every other one says Easnap is busy; a
+  `MultiSelectModel` value on the verb, which would hand all files to one
+  start, is a later option.
+- **The new start speaks; the running Easnap does not.** The second
+  `Easnap.exe` was started by the user, so it, not the running Easnap, tells
+  the user why nothing opens: for a path that is not an existing local file,
+  the probe's own refusal message, the same one the tray entry gives; when the
+  running Easnap refuses or does not answer within five seconds, that Easnap
+  is busy (`IDS_VIDEO_HANDOVER_BUSY`, the one new string, ID 21362). It reads
+  the saved language first, which the "already running" message now also
+  follows. The running Easnap shows nothing for a request it drops. A request
+  it takes goes on as a file chosen in Open video does: a file in Easnap's own
+  folder is refused there, and the probe's answer is shown there.
+- **The first start with a file** queues the path through the same receiver,
+  after the tray icon, the ready notice, the crash notice and the offer of
+  recovered recordings. If the user opens a recovered recording there, the
+  file is dropped like any request that arrives while a trim view is open.
+- **A start during the first one's start-up**, before its host window exists,
+  says "already running", as a second start without a file always has.
+- **The installer** writes the entries planned above, with `FriendlyAppName`
+  "Easnap" and Easnap.exe's icon on both of Easnap's keys. Easnap's own keys
+  (`Easnap.Video`, `Applications\Easnap.exe`) are removed whole at uninstall;
+  under an extension only Easnap's value is removed, and the extension's key
+  when it is left empty. `ChangesAssociations=yes` tells Explorer when setup
+  and uninstall change them. The ProgID has no type name: the installer never
+  makes it a default, so no file shows it as its type unless the user chooses
+  Easnap as the default in Windows.
+- **Tests.** The validator runs on the Fast tier as planned, as
+  `handover_validation` beside `command_line_parsing` and
+  `installer_open_with_list`; the window and the second process run on the
+  Standard tier as `copydata_handover`, on a private desktop.
+
+### Not supported in v1
+
+| What | Why |
+|---|---|
+| `.mkv`, `.webm`, HEVC, VP9, AV1 | Decoders are optional or paid on Windows 10; the table can grow later. |
+| Rotation metadata | Exporters ignore it, so trimmed and untrimmed results would differ. |
+| Non-square pixels, interlaced, 10-bit and HDR | Exporters have no pixel-aspect, deinterlacing or tone handling. |
+| Network drives, offline and cloud-placeholder files | A blocked read stalls the export worker, and `CancelAndWait` at Exit would block the UI. |
+| Non-AAC audio in a re-muxed full-range reuse | Reuse is only for MP4 + H.264 + AAC or none; other audio is re-encoded. |
+| Keyframe seeking | Later slice. |
+| Drag-and-drop | Not decided for v1. |
+| Probe in the helper process | Recorded as a later option. |
+
+## Amendments
+
+- [ADR-010](ADR-010-trim-view-ownership-and-orchestration.md) decision 1: the
+  flow has two source kinds, `Owned` and `External`; ownership rules in this
+  record apply to the second.
+- [ADR-031](ADR-031-unsaved-work-survives.md): an external file is not unsaved
+  work. Only an export in progress is pending, and it loses nothing but its own
+  result.
+- [ADR-034](ADR-034-media-foundation-on-first-use.md): Record is no longer the
+  only way into Media Foundation. The probe and the trim view start it too, on
+  first use, with the same availability check.
+
+## Consequences
+
+- One table replaces three implicit lists; adding a format is one edit and the
+  installer test keeps the shell entries honest.
+- Easnap parses untrusted files inside `Easnap.exe` on a worker thread. A
+  parser crash ends the process; the helper-process probe is the mitigation
+  kept for later.
+- Large or slow sources decode from zero; the full-range reuse path still
+  copies on the UI thread (`CopyFileW` in `recording_completion.cpp`), which
+  stays a limit for large files.
+- The 8 Mbps default lowers the quality of high-bitrate sources, and 4K GIFs
+  are large.
+- The window and the strings now carry two source kinds; both are measured in
+  the text-fit test.
+- Registered file types are offered, never made the default by the installer
+  (the user can still choose Easnap in Windows), so installing changes no
+  existing association.
+
+## Validation
+
+This is the plan the implementation slices follow. What has run so far, on
+the host only (Windows 10 22H2, 2026-11-09, media-layer slice): the table and
+classifier tests (`video_support_table`), the probe tests (`video_probe_files`,
+`video_probe_asf`) without the long Soak file, and exporter cases for WMV,
+VC-1, `.mov`, `.m4v`, audio that ends early and a long video-only stretch
+(`mp4_trim_export_backend`, `gif_backend`). The probe tests wrote and probed
+about forty files in under five seconds.
+
+The flow slice, on the host only (Windows 10 22H2, 2026-11-09, private
+desktops): the Fast tier 27 of 27, with `external_video_text` (the string of
+every answer, in both languages, and the trimmed name), the reuse rule and the
+external source in `trim_workflow_orchestration`, and the pending-work table
+for both source kinds in `session_state_transitions`; on the Standard tier
+`trim_flow_production` (402 checks: the seven opened-video cases below, Save's
+identity check through a hard link, another spelling and a copy, a file that
+changed after the check refused before Copy asks for a format, and a failed
+preview that closes without a question), `text_fits_in_every_language` (the
+trim window of both kinds; the GIF-only notice in the status line of the
+smallest and the opening window without a scroll bar; and, in each language,
+the refusal whose text wraps tallest at the dialog's text width among all
+eighteen refusal strings of this feature, measured with the dialog's font;
+only that one is shown, because a message dialog costs about two seconds on
+a private desktop: it was the Media Foundation sentence in both languages),
+`video_probe_job` (also a result whose message was lost, and a file in a real
+temporary session refused as inside Easnap's folder under three spellings),
+`strings_catalog`, `data_safety_questions`,
+`video_probe_files` and `mp4_trim_export_backend`. A Copy of 11 of the 12
+seconds as MP4 took about 0.55 s, three seconds as GIF about 0.9 s. Nothing
+has run in the lab. Not run anywhere: the tray entry, the Open and Save
+dialogs and the reason dialog in the running application; Exit, sign-out and
+a probe result held back by an open dialog, because no test compiles the
+coordinator; and the owner checklist.
+
+The entry-point slice, on the host only (Windows 10 22H2, 2026-11-09): the
+Release build without warnings; the Fast tier 30 of 30, with
+`command_line_parsing` (37 checks: the sign-in command exactly as Settings
+writes it, `--startup` in any case, a folder named `--startup` and a file
+whose name ends in it opening the file, quoted paths with spaces, `--open`
+with a missing file, a UNC path and a URL kept for the location check, a
+bare missing file, a folder, unknown options, `--open` without a path, second
+paths ignored, relative paths made absolute), `handover_validation` (34
+checks: wrong magic, no terminator, a NUL inside, odd and oversized payloads,
+the largest accepted one, relative, drive-relative, UNC, `\\?\UNC`, URL and
+device spellings; the location check on an existing file, a `\\?\` spelling,
+a missing file, a folder, a UNC path, a URL and a drive that does not exist)
+and `installer_open_with_list` (both lists equal the table; HKCU only; no
+`UserChoice`; no extension default value; the command is
+`"{app}\Easnap.exe" --open "%1"`; uninstall flags, and never `uninsdeletekey`
+under an extension, whose key other programs share; section names and
+indented comments read as Inno Setup reads them; copies of the script with
+one extension missing and a default value added, and with `uninsdeletekey` on
+`.mp4` under an indented lower-case section name, failed as they should);
+`executable_imports` and `strings_catalog` unchanged. On the Standard tier
+`copydata_handover` (44 checks, private desktop: a valid request kept and
+opened only from the posted message, a second request refused while one
+waits, a busy receiver, eight malformed payloads and spellings that are not a
+local path dropped, a missing file and a folder kept without touching the
+disk and left to the probe, this process's own request; then the test
+started again as a second process with the production sender: taken,
+refused while busy, refused for a relative path, and no recipient for an
+unknown class), `text_fits_in_every_language` with
+the busy message among the measured refusals (the Media Foundation sentence
+stays the tallest), `trim_flow_production`, `video_probe_job`,
+`video_probe_files` and `strings_catalog`. clang-tidy found nothing in the
+changed sources. Not run: the installer (neither compiled with ISCC nor
+installed or uninstalled), Explorer's "Open with", a real second `Easnap.exe`
+against a running Easnap (the hand-over test uses its own window and class),
+`OpenVideo(path)` in the coordinator (no test compiles it), and the lab.
+
+- **Fast tier.** Table contents; the classifier from facts and HRESULTs,
+  including protected and a missing codec extension; the installer list equals
+  the table; argument parsing (path containing `--startup`, quoted paths,
+  `--open`, bare path); the hand-over validator (relative, UNC, non-existing,
+  overlong and malformed payloads rejected).
+- **Probe tests (Standard)**, with files written by the production writer:
+  640×360 at 30 fps, 1920×1080 at 60 fps, 360×640, 24 fps, different
+  durations, with and without audio, a one-frame file, a long file (Soak), and
+  a `.wmv` written with the sink writer. Bad input: random bytes with a `.mp4`
+  extension, an unsupported extension, an audio-only file written with an
+  AAC-only sink writer. Access: a file locked exclusively and a read-only file
+  (read-only must open).
+- **`trim_flow_production`** cases for external sources: Copy of the whole
+  range and of a part, GIF Copy, Cancel, Close and Destroy while exporting,
+  and the Exit answer. After every case: the source folder holds no new file,
+  and the source's bytes, timestamps and ACL are unchanged; the work session is
+  removed.
+- **Hand-over test.** The test executable relaunches itself with `--send
+  <path>` using the production sender; the receiver acts only when idle.
+- **Text fit.** The reason dialog and the trim window, both source kinds, in
+  `text_fits_in_every_language`.
+- **Owner checklist** (test-created files only, evidence kept out of the
+  repository): open from the tray; open with "Open with" while Easnap runs,
+  while it does not and while it is busy (the second start's message); Close
+  and Exit during an export; Save with the source's
+  own name refused; Save as MP4 and as GIF; the source file untouched
+  afterwards. Run by the owner on the development PC on 2026-11-09 (Windows
+  10 22H2, installed build with the "Open with" entries): no problem found.
+  In the lab the branch's Full run `20261109-151309-full` (66 of 66) and
+  Soak run `20261109-171521-soak` (74 of 74) passed with the feature's tests
+  (`trim_flow_production`, `copydata_handover`, `video_probe_files`,
+  `video_probe_asf`, `video_probe_job`, `external_video_text`,
+  `text_fits_in_every_language`).
+- **What the lab can and cannot verify.** The lab can run everything above
+  that needs no extra decoder. It has no HEVC extension unless one is
+  installed there, so "needs a Windows codec extension" is verified by the
+  classifier only and not on a real file. It has no network drive, so the
+  network and offline refusals are verified by the classifier and by path
+  rules only. The installer entries and Explorer's "Open with" are not run in
+  the lab. The measured figures (probe time, export time for a long file) are
+  recorded here when the slices are validated.

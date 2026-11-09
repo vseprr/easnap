@@ -89,6 +89,9 @@ struct SilenceWriteDiagnostic {
 struct RecordingSessionDiagnostics {
     uint64_t capture_attempts{0};
     uint64_t acquired_frames{0};
+    /// Acquired frames read through the GDI fallback because Desktop
+    /// Duplication could not deliver them.
+    uint64_t fallback_frames{0};
     uint64_t no_new_frames{0};
     uint64_t reused_frames{0};
     uint64_t accepted_frames{0};
@@ -113,6 +116,14 @@ struct RecordingSessionDiagnostics {
     capture::AggregateTiming audio_backpressure_wait_timing;
     std::size_t queue_capacity{0};
     std::size_t peak_queue_depth{0};
+    /// BGRA pictures the capture worker made because none was free to reuse
+    /// (ADR-042); a recording of changing content stops at about the number
+    /// of pictures alive at once.
+    uint64_t picture_allocations{0};
+    std::size_t peak_pictures_in_use{0};
+    /// Pixel bytes of the BGRA pictures and the NV12 conversion buffer that
+    /// can be alive at once; samples Media Foundation keeps after WriteSample
+    /// are not included.
     uint64_t bounded_frame_payload_bytes{0};
     int64_t audio_session_active_zero_100ns{0};
     int64_t maximum_audio_writer_lead_100ns{0};
@@ -190,6 +201,17 @@ private:
     /// Caller must hold audio_callback_mutex_ and have ensured silence_buffer_
     /// is initialized and writer_ is valid. Returns false on writer failure.
     [[nodiscard]] bool FillSilenceGap(media::MediaTime target) noexcept;
+    struct VideoGateWait {
+        bool video_stalled;
+        uint64_t wait_microseconds;
+    };
+    /// Waits on audio_lock, which holds audio_callback_mutex_ and is held
+    /// again on return, until video has been written far enough for audio
+    /// ending at chunk_end, the consumer stops or the session fails.
+    /// video_stalled reports a video frontier that stopped advancing. Waiting
+    /// can throw; the audio callback catches it.
+    [[nodiscard]] VideoGateWait WaitForVideoGate(
+        std::unique_lock<std::mutex>& audio_lock, media::MediaTime chunk_end);
     [[nodiscard]] bool FinalizeAudioTimeline(media::MediaTime endpoint) noexcept;
     void ResetAudioTimelineDiagnostics() noexcept;
     void TraceAudioSegment(media::MediaTime active_offset,

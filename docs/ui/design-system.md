@@ -130,26 +130,28 @@ are [ADR-017](../decisions/ADR-017-neumorphic-editor-and-editable-annotations.md
 how the native EDIT and the source-backed painter share a text box. The visual
 values:
 
-- A selected shape or stroke shows a thin coral trace along its real outline
-  or path; a mosaic brush stroke shows a bounding selection frame. Text and tags
-  show a hollow rounded coral frame while edited, selected or moved. Selection
-  chrome never exports.
+- Selection traces and the hollow coral frame around text and tags follow the
+  behaviour described in [user flows](../user-flows.md#screenshot-editing);
+  selection chrome never exports.
 - DirectWrite renders text as Plain, rounded Fill or glyph Outline. Fill and
-  Outline use white glyphs, or black when the selected color is white. Point
-  presets are 12/16/24/36/48/60/72/96, with validated custom 6–288 pt input.
-  Content point-to-pixel conversion keeps the capture DPI rather than changing
-  with the UI theme or monitor.
+  Outline use white glyphs, or black when the selected color is white. The
+  point-size presets and the custom size range are listed in
+  [user flows](../user-flows.md#screenshot-editing). Content point-to-pixel
+  conversion keeps the capture DPI rather than changing with the UI theme or
+  monitor.
 - Tags keep a stable graphite body with white text and a proportional colored
   dot and notch. The palette includes black and gray.
-- The hand and chevron share one control. Brush size opens on click or 350 ms
-  hover and closes 250 ms after leaving, on a choice, on drawing or on a tool
-  switch. It appears in a mini island with a callout toward the hand and an
-  8 DIP island gap. All stroke presets share its three-dot visual language.
+- The brush size mini island opens from the shared hand and chevron control
+  with the hover and close timings given in
+  [user flows](../user-flows.md#screenshot-editing). Visually it has a callout
+  toward the hand and an 8 DIP island gap, and all stroke presets share its
+  three-dot visual language.
 - Watermark tiles form a rotated lattice anchored at the image center; every
   tile stays centered as text or size changes, clipped to source bounds.
-- The watermark field's clear button is a small circle inside the field. Its
-  soft lower-right drop shadow and recessed press use the shared material
-  animation.
+- The watermark field's clear button is a small circle inside the field, with a
+  soft lower-right drop shadow and a recessed press that use the shared
+  material animation; when it clears is described in
+  [user flows](../user-flows.md#screenshot-editing).
 
 The magnifier is 152 × 166 DIP with a 25 × 25 sample at 4 DIP per source pixel, a minimal
 reticle and three compact readout rows; it has no per-pixel border grid.

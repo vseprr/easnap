@@ -46,16 +46,19 @@ not unfinished roadmap instructions.
   [A/V timing](decisions/ADR-007-av-mux-and-active-time-audio.md),
   [controls/finalization](decisions/ADR-008-recording-ui-and-safe-finalization.md),
   [Both audio](decisions/ADR-012-dual-source-audio-mixing.md),
-  [startup, pacing and session leases](decisions/ADR-021-recording-startup-timeline-and-session-leases.md).
+  [startup, pacing and session leases](decisions/ADR-021-recording-startup-timeline-and-session-leases.md),
+  [what a frame's buffers cost](decisions/ADR-042-recording-frame-buffer-cost.md).
 - Media/completion: [MP4 trim](decisions/ADR-009-mp4-trim-boundaries-and-publication.md),
   [preview ownership](decisions/ADR-010-trim-view-ownership-and-orchestration.md),
-  [trimming in a flow of its own (planned)](decisions/ADR-039-coordinator-trim-flow.md),
+  [trimming in a flow of its own](decisions/ADR-039-coordinator-trim-flow.md),
+  [external videos in the trim view (proposed)](decisions/ADR-040-external-video-in-the-trim-view.md),
   [publication/clipboard lifetime](decisions/ADR-011-recording-completion-and-clipboard-lifetime.md),
   [GIF policy](decisions/ADR-013-gif-stream-timing-palette-and-publication.md),
   [shared configuration/completion](decisions/ADR-014-unified-recording-configuration-and-format-completion.md).
 - Scrollshot: [stitching engine](decisions/ADR-027-scrollshot-stitching-engine.md),
   [capture workspace](decisions/ADR-028-scrollshot-capture-workspace.md),
-  [editing an image larger than the screen](decisions/ADR-029-scrolled-and-zoomed-image-editing.md).
+  [editing an image larger than the screen](decisions/ADR-029-scrolled-and-zoomed-image-editing.md),
+  [a generated application for its tests](decisions/ADR-041-scrollshot-realistic-test-application.md).
 - Diagnostics and data safety: [log file and crash reports](decisions/ADR-030-log-file-and-crash-reports.md),
   [unsaved work survives exit, sign-out and crashes](decisions/ADR-031-unsaved-work-survives.md).
 - Shell and compatibility: [interface text in string tables](decisions/ADR-032-interface-text-in-string-tables.md),

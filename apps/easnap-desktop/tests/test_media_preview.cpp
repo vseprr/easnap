@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cwchar>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -1429,6 +1430,37 @@ private:
         }
     }
 
+    // Prints helper trace lines in which the clock check fired, so a run that
+    // meets the race shows the correction. Best effort only: each snapshot
+    // carries the helper's last 2,048 trace characters, and later lines can
+    // push such a line out before it is sent. Its absence proves nothing.
+    void ReportClockChecks() {
+        const std::wstring trace = preview_.diagnostics();
+        size_t start = trace.find(L"native host latest bounded trace:");
+        if (start == std::wstring::npos) return;
+        const size_t retired = trace.find(L"retired host generation=", start);
+        const size_t stop = retired == std::wstring::npos ? trace.size() : retired;
+        const uint32_t process = preview_.snapshot().backend_process_id;
+        if (process != clock_report_process_) {
+            clock_report_process_ = process;
+            clock_report_sequence_ = 0;
+        }
+        while (start < stop) {
+            const size_t end = (std::min)(trace.find(L'\n', start), stop);
+            const std::wstring line = trace.substr(start, end - start);
+            start = end + 1;
+            const size_t sequence_at = line.find(L"[Preview] seq=");
+            if (sequence_at == std::wstring::npos ||
+                (line.find(L"clock-contradicts-seek") == std::wstring::npos &&
+                 line.find(L"clock-contradicted=1") == std::wstring::npos)) continue;
+            const uint64_t sequence = std::wcstoull(line.c_str() + sequence_at + 14, nullptr, 10);
+            if (sequence <= clock_report_sequence_) continue;
+            clock_report_sequence_ = sequence;
+            std::printf("MFPlay clock check seed=%08X region=%u helper=%u: %ls\n",
+                        seed_, region_, process, line.c_str());
+        }
+    }
+
     void Pump() {
         MSG message{};
         while (::PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -1441,6 +1473,7 @@ private:
             next_tick_ = now + 100;
             Tick();
             Record("timer");
+            ReportClockChecks();
         }
         if (continuous_active_ && !failed_) {
             const auto state = preview_.snapshot();
@@ -1529,6 +1562,8 @@ private:
     unsigned automatic_out_count_{0};
     unsigned pending_input_count_{0};
     uint64_t sequence_{0};
+    uint32_t clock_report_process_{0};
+    uint64_t clock_report_sequence_{0};
     ULONGLONG next_tick_{0};
     bool policy_enabled_{true};
     bool failed_{false};

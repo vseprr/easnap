@@ -390,10 +390,20 @@ public:
         MFP_MEDIAPLAYER_STATE native_state = MFP_MEDIAPLAYER_STATE_EMPTY;
         if (player_ != nullptr) static_cast<void>(player_->GetState(&native_state));
         const bool starting = first_frame_pending_;
+        // Until CheckLiveness seeks again, a native clock that contradicts the
+        // acknowledged seek is never published as the logical position.
+        const std::optional<MediaTime> contradicted_target =
+            !starting && native && transport_.PlaybackClockContradicted(*native, ::GetTickCount64())
+                ? transport_.playback_position_floor()
+                : std::nullopt;
+        const bool contradicted = contradicted_target.has_value();
+        const MediaTime position = starting       ? MediaTime::zero()
+                                   : contradicted ? *contradicted_target
+                                                  : transport_.ResolvePosition(native.value_or(MediaTime::zero()));
         return {starting ? MediaPreviewState::Opening : state_, duration_, error_, failed_operation_,
-                !starting && transport_.play_requested(), starting || transport_.command_pending(),
-                starting ? MediaTime::zero() : transport_.ResolvePosition(native.value_or(MediaTime::zero())),
-                starting || transport_.position_pending(), native.value_or(MediaTime::zero()),
+                !starting && transport_.play_requested(),
+                starting || contradicted || transport_.command_pending(), position,
+                starting || contradicted || transport_.position_pending(), native.value_or(MediaTime::zero()),
                 native.has_value(), native_state == MFP_MEDIAPLAYER_STATE_PLAYING,
                 player_generation_, command_sequence_,
                 !first_frame_pending_ && transport_.in_flight() == PreviewTransportCommandType::None ? 0
@@ -756,13 +766,14 @@ private:
                 LogTransportLocked(L"wait-dispatch-return", 0, S_OK, 0);
                 return true;
             }
-            command = transport_.TakeNext();
+            const uint64_t now = ::GetTickCount64();
+            command = transport_.TakeNext(now);
             if (transport_.ended()) state_ = MediaPreviewState::Ended;
             if (command.type != PreviewTransportCommandType::None) {
                 dispatch_call_active_ = true;
                 last_command_ = command;
                 ++command_sequence_;
-                command_started_ms_ = ::GetTickCount64();
+                command_started_ms_ = now;
                 LogTransportLocked(L"dispatch", static_cast<unsigned>(command.type), S_OK, 0);
             } else {
                 LogTransportLocked(transport_.command_pending() ? L"wait-owned-callback"
@@ -1157,8 +1168,11 @@ private:
                                          : std::nullopt;
         ::PropVariantClear(&position);
         const auto logical = transport_.ResolvePosition(native_position.value_or(MediaTime{-1}));
+        // While contradicted, snapshots publish the floor instead of logical.
+        const bool clock_contradicted =
+            native_position && transport_.PlaybackClockContradicted(*native_position, ::GetTickCount64());
         static_cast<void>(::swprintf_s(buffer, capacity,
-                                       L"[Preview] seq=%llu ms=%llu tid=%lu gen=%llu intent=%llu %s=%u hr=%08X cmd=%llu/%s target=%lld desired=%u actual=%u flight=%s age=%llu dispatch=%u pending=%lld logical=%lld position-pending=%u preview=%u header=%u native=%u/%08X pos=%lld/%08X override=%lld native-target=%lld\n",
+                                       L"[Preview] seq=%llu ms=%llu tid=%lu gen=%llu intent=%llu %s=%u hr=%08X cmd=%llu/%s target=%lld desired=%u actual=%u flight=%s age=%llu dispatch=%u pending=%lld logical=%lld clock-contradicted=%u floor=%lld position-pending=%u preview=%u header=%u native=%u/%08X pos=%lld/%08X override=%lld native-target=%lld\n",
                                        sequence, ::GetTickCount64(), ::GetCurrentThreadId(), player_generation_,
                                        intent_sequence_, kind, action, static_cast<unsigned>(result),
                                        command_sequence_, TransportCommandName(last_command_.type),
@@ -1168,7 +1182,9 @@ private:
                                                                                                    : ::GetTickCount64() - command_started_ms_,
                                        dispatch_call_active_ ? 1u : 0u,
                                        transport_.desired_position().value_or(MediaTime{-1}).count(),
-                                       logical.count(), transport_.position_pending() ? 1u : 0u,
+                                       logical.count(), clock_contradicted ? 1u : 0u,
+                                       transport_.playback_position_floor().value_or(MediaTime{-1}).count(),
+                                       transport_.position_pending() ? 1u : 0u,
                                        static_cast<unsigned>(state_), header_state,
                                        static_cast<unsigned>(native), static_cast<unsigned>(state_result),
                                        native_position.value_or(MediaTime{-1}).count(),
@@ -1331,6 +1347,7 @@ private:
             }
             return;
         }
+        if (ReconcilePlaybackClock(now)) return;
         const auto current = snapshot();
         const auto failure = liveness_.Observe(now, player_generation_,
                                                command_sequence_, transport_.in_flight(), current.play_requested,
@@ -1339,6 +1356,37 @@ private:
         if (failure != PreviewLivenessFailure::None) {
             RequestRecovery(current, MediaPreviewOperation::Playback, failure);
         }
+    }
+
+    // MFPlay has reported a seek complete, then played on from its clock before
+    // that seek (lab run 20261109-101913-full). Returns true when repeated
+    // seeks were exhausted and recovery was requested.
+    bool ReconcilePlaybackClock(uint64_t now) noexcept {
+        PreviewClockCheck check = PreviewClockCheck::Consistent;
+        {
+            const std::scoped_lock lock(state_mutex_);
+            if (player_ == nullptr || recovery_snapshot_) return false;
+            PROPVARIANT value{};
+            const HRESULT result = player_->GetPosition(MFP_POSITIONTYPE_100NS, &value);
+            const auto native = SUCCEEDED(result) ? MediaTimeFromVariant(value) : std::nullopt;
+            ::PropVariantClear(&value);
+            if (!native) return false;
+            check = transport_.CheckPlaybackClock(*native, now);
+            if (check != PreviewClockCheck::Consistent) {
+                LogTransportLocked(L"clock-contradicts-seek", static_cast<unsigned>(check), S_OK, 0);
+            }
+        }
+        if (check == PreviewClockCheck::Reseek) {
+            platform::LogMessage(
+                L"[Preview] The native clock contradicted the acknowledged seek; the seek was issued again");
+            static_cast<void>(DriveTransport());
+            Notify();
+        } else if (check == PreviewClockCheck::Exhausted) {
+            RequestRecovery(snapshot(), MediaPreviewOperation::Seek,
+                            PreviewLivenessFailure::SeekNotHonoured);
+            return true;
+        }
+        return false;
     }
 
     void RequestRecovery(MediaPreviewSnapshot current, MediaPreviewOperation operation,

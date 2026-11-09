@@ -153,18 +153,27 @@ private:
 int ShowMessage(HWND owner, const wchar_t* text, const wchar_t* title, UINT flags);
 /// The image Save dialog's text in the active language.
 [[nodiscard]] platform::SaveImageDialogText SaveImageDialogLabels();
-/// What became of a finished image given to `SaveFinishedImage`.
-enum class ImageSaveOutcome { SavedToFolder,
-                              SavedAs,
-                              Cancelled,
-                              Failed };
-/// Saves a finished screenshot as Settings ask: straight into the screenshots
-/// folder with quick save, otherwise through the Save dialog, whose folder is
-/// remembered in `settings`. A quick save that fails falls back to the
-/// dialog. `before_dialog` runs just before the dialog opens, for windows that
-/// must not cover it. Without settings the dialog opens in its own folder.
-[[nodiscard]] ImageSaveOutcome SaveFinishedImage(HWND owner, const platform::BgraImage& image, app::AppSettings* settings,
-                                                 const std::function<void()>& before_dialog = {});
+/// Where a finished image is saved.
+struct ImageSaveDestination {
+    std::wstring path;
+    /// Straight into the screenshots folder, without the dialog.
+    bool quick{false};
+};
+/// Where to save a finished image as Settings ask: a new name in the
+/// screenshots folder with quick save, otherwise the place chosen in the Save
+/// dialog; nothing when the dialog was cancelled. `allow_quick` false always
+/// asks: after a quick save that failed, the dialog offers every other place.
+/// `before_dialog` runs just before the dialog opens, for windows that must
+/// not cover it. Without settings the dialog opens in its own folder. The
+/// file is written afterwards, on a worker (platform/image_export.h).
+[[nodiscard]] std::optional<ImageSaveDestination> ChooseImageDestination(
+    HWND owner, const app::AppSettings* settings, bool allow_quick, const std::function<void()>& before_dialog = {});
+/// A save to `destination` succeeded: the folder chosen in the dialog is
+/// where the next dialog opens.
+void RecordImageSaved(app::AppSettings* settings, const ImageSaveDestination& destination);
+/// Asks the window under the pointer for its cursor again, when it belongs
+/// to this thread: a window that starts or ends busy work shows it at once.
+void RefreshCursor();
 /// One button of `ShowChoice`. The value is what the call returns for it.
 struct DialogChoice {
     int value{0};

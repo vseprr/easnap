@@ -61,6 +61,7 @@ add_executable(test_trim_workflow
     test_trim_workflow.cpp
     ../src/app/trim_workflow.cpp
     ../src/app/session_transitions.cpp
+    ../src/media/video_support.cpp
     ../src/media/preview_transport.cpp
     ../src/ui/trim_layout.cpp
     ../src/platform/platform_utils.cpp)
@@ -69,7 +70,7 @@ target_include_directories(test_trim_workflow PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
     "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
 target_link_libraries(test_trim_workflow PRIVATE easnap_project_options
-    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs mfuuid
     shlwapi comctl32 shell32 ole32 oleaut32 uuid
     user32 gdi32 advapi32 propsys)
 
@@ -191,6 +192,7 @@ set_tests_properties(media_foundation_h264_aac_mp4 PROPERTIES
 add_executable(test_mp4_trim_exporter
     test_mp4_trim_exporter.cpp
     ../src/media/mp4_trim_exporter.cpp
+    ../src/media/video_support.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/media/mf_d3d_device.cpp
     ../src/platform/platform_utils.cpp)
@@ -210,10 +212,119 @@ set_tests_properties(mp4_trim_export_backend PROPERTIES
     LABELS "integration;media-foundation;trim;audio"
     TIMEOUT 180)
 
+# ---------------------------------------------------------------------------
+# The support table and the video probe of external files (ADR-040)
+#
+# video_support_table is pure: table lookups, path rules and the probe's
+# classifier, driven with facts and HRESULTs no file has to produce.
+# video_probe_files probes MP4s written by the production writer, bad input
+# and access cases; video_probe_asf probes WMV/ASF written with the Media
+# Foundation sink writer and is skipped where Windows has no WMV encoder.
+# ---------------------------------------------------------------------------
+
+add_executable(test_video_support
+    test_video_support.cpp
+    ../src/media/video_support.cpp
+    ../src/media/video_probe.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_video_support PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_video_support PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    mfplat mfuuid mfreadwrite
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 oleaut32 uuid propsys)
+add_test(NAME video_support_table COMMAND test_video_support)
+set_tests_properties(video_support_table PROPERTIES
+    LABELS "unit;media;trim" TIMEOUT 30)
+
+add_executable(test_video_probe
+    test_video_probe.cpp
+    ../src/media/video_support.cpp
+    ../src/media/video_probe.cpp
+    ../src/media/media_foundation_writer.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_video_probe PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_video_probe PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    mf mfplat mfuuid mfreadwrite
+    shlwapi comctl32 shell32 ole32 oleaut32 uuid
+    user32 gdi32 advapi32 propsys)
+add_test(NAME video_probe_files COMMAND test_video_probe)
+set_tests_properties(video_probe_files PROPERTIES
+    LABELS "integration;media;media-foundation;trim" TIMEOUT 180)
+add_test(NAME video_probe_asf COMMAND test_video_probe --asf)
+set_tests_properties(video_probe_asf PROPERTIES
+    LABELS "integration;media;media-foundation;trim" TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# external_video_text is pure: the string for every probe answer and the name
+# a trimmed copy is offered under, in both languages. video_probe_job runs the
+# production probe job on its worker thread against a message-only window.
+add_executable(test_external_video
+    test_external_video.cpp
+    ../src/app/external_video.cpp
+    ../src/app/recording_workflow.cpp
+    ../src/media/video_support.cpp
+    ../src/media/video_probe.cpp
+    ../src/media/media_foundation_writer.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_external_video PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_external_video PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    mf mfplat mfuuid mfreadwrite
+    shlwapi comctl32 shell32 ole32 oleaut32 uuid
+    user32 gdi32 advapi32 propsys)
+add_test(NAME external_video_text COMMAND test_external_video)
+set_tests_properties(external_video_text PROPERTIES
+    LABELS "unit;trim;localization" TIMEOUT 30)
+add_test(NAME video_probe_job COMMAND test_external_video --probe-job)
+set_tests_properties(video_probe_job PROPERTIES
+    LABELS "integration;media;media-foundation;trim" TIMEOUT 120 SKIP_RETURN_CODE 77)
+
+# How a video reaches Easnap from outside (ADR-040, entry points). The command
+# line parser, the hand-over validator and the installer's "Open with" list
+# are Fast; installer_open_with_list reads packaging/easnap.iss from the source
+# tree and skips when it is not there. copydata_handover drives the production
+# receiver with WM_COPYDATA on a private desktop and starts this executable
+# again as the second process that hands a path over.
+add_executable(test_open_requests
+    test_open_requests.cpp
+    ../src/app/command_line.cpp
+    ../src/app/video_handover.cpp
+    ../src/media/video_support.cpp
+    ../src/media/video_probe.cpp
+    ../src/platform/startup_entry.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_open_requests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_open_requests PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    mf mfplat mfuuid mfreadwrite
+    shlwapi comctl32 shell32 ole32 oleaut32 uuid
+    user32 gdi32 advapi32 propsys)
+add_test(NAME command_line_parsing COMMAND test_open_requests --command-line)
+set_tests_properties(command_line_parsing PROPERTIES LABELS "unit;shell" TIMEOUT 30)
+add_test(NAME handover_validation COMMAND test_open_requests --validate)
+set_tests_properties(handover_validation PROPERTIES LABELS "unit;shell" TIMEOUT 30)
+add_test(NAME installer_open_with_list
+    COMMAND test_open_requests --installer "${PROJECT_SOURCE_DIR}/packaging/easnap.iss")
+set_tests_properties(installer_open_with_list PROPERTIES
+    LABELS "unit;packaging;trim" TIMEOUT 30 SKIP_RETURN_CODE 77)
+add_test(NAME copydata_handover
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_open_requests> --handover)
+set_tests_properties(copydata_handover PROPERTIES
+    LABELS "integration;shell;isolated-desktop" TIMEOUT 90)
+
 add_executable(test_media_preview
     test_media_preview.cpp
     ../src/capture/capture_provider.cpp
     ../src/app/trim_workflow.cpp
+    ../src/media/video_support.cpp
     ../src/app/session_transitions.cpp
     ../src/media/preview_process.cpp
     ../src/media/preview_video_endpoint.cpp
@@ -286,6 +397,7 @@ add_executable(test_recording_session_integration
     ../src/capture/recording_capture_worker.cpp
     ../src/media/gif_encoder.cpp
     ../src/media/gif_exporter.cpp
+    ../src/media/video_support.cpp
     ../src/media/preview_process.cpp
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp
@@ -317,6 +429,42 @@ set_tests_properties(recording_pause_stop_stress PROPERTIES
     LABELS "integration;real-desktop-capture;recording;audio;stress"
     RUN_SERIAL TRUE
     TIMEOUT 120
+    SKIP_RETURN_CODE 77)
+
+# What a recorded frame costs (ADR-042): the whole test monitor with changing
+# content, 30 fps, three recordings of 10 seconds. It reports figures and
+# judges none; Soak tier, run in the lab by a Soak run or `lab.ps1 probe`.
+add_test(NAME recording_frame_cost
+         COMMAND test_recording_session_integration --frame-cost)
+set_tests_properties(recording_frame_cost PROPERTIES
+    LABELS "integration;real-desktop-capture;recording;performance;soak"
+    TIMEOUT 180
+    SKIP_RETURN_CODE 77)
+
+# What allocating a frame's buffers costs on this machine, against reusing
+# them (ADR-042): the production BgraImage and the writer's Media Foundation
+# buffer calls at 1080p and 2160p. It prints MEASURE lines and checks only
+# that the calls succeed; alone, so other tests do not skew its figures.
+add_executable(test_frame_buffer_cost
+    test_frame_buffer_cost.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_frame_buffer_cost PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_frame_buffer_cost PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs mfplat
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+# Loaded on first use, as in Easnap: where Windows has no Media Foundation the
+# test still starts, measures the images and reports itself skipped.
+if(MSVC)
+    target_link_options(test_frame_buffer_cost PRIVATE /DELAYLOAD:mfplat.dll)
+    target_link_libraries(test_frame_buffer_cost PRIVATE delayimp)
+endif()
+add_test(NAME frame_buffer_cost COMMAND test_frame_buffer_cost)
+set_tests_properties(frame_buffer_cost PROPERTIES
+    LABELS "unit;recording;performance"
+    RUN_SERIAL TRUE
+    TIMEOUT 60
     SKIP_RETURN_CODE 77)
 
 # ---------------------------------------------------------------------------
@@ -376,6 +524,21 @@ target_include_directories(test_scrollshot_stitch PRIVATE "${CMAKE_CURRENT_SOURC
 target_link_libraries(test_scrollshot_stitch PRIVATE easnap_project_options)
 add_test(NAME scrollshot_stitch_logic COMMAND test_scrollshot_stitch)
 set_tests_properties(scrollshot_stitch_logic PROPERTIES LABELS "unit;scrollshot" TIMEOUT 240)
+
+# A generated application with real text, pictures, late content and eased
+# scrolling, pictured at jittered moments and fed to the production engine
+# (ADR-041). Direct2D and DirectWrite on WARP; no window, desktop or capture.
+# Exits 77 where WARP, DirectWrite or one of its five fonts is missing.
+add_executable(test_scrollshot_realistic
+    test_scrollshot_realistic.cpp
+    scrollshot_realistic_app.cpp
+    ../src/scrollshot/stitch_engine.cpp)
+target_include_directories(test_scrollshot_realistic PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src")
+target_link_libraries(test_scrollshot_realistic PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs bcrypt ole32 user32)
+add_test(NAME scrollshot_realistic_stitch COMMAND test_scrollshot_realistic)
+set_tests_properties(scrollshot_realistic_stitch PROPERTIES
+    LABELS "integration;scrollshot" TIMEOUT 240 SKIP_RETURN_CODE 77)
 
 # The capture session's worker, preview, notifications and stop barrier against
 # a scripted provider: no desktop is read and no window is shown.
@@ -440,6 +603,7 @@ set_tests_properties(pin_layout_logic PROPERTIES LABELS "unit;ui;layout;pin" TIM
 add_executable(test_pinned_images
     test_pinned_images.cpp
     ../src/ui/pinned_images.cpp
+    ../src/platform/image_export.cpp
     ../src/ui/pin_layout.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/ui_theme.cpp
@@ -454,6 +618,22 @@ add_test(NAME pinned_images_native
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_pinned_images>)
 set_tests_properties(pinned_images_native PROPERTIES
     LABELS "integration;ui;pin;clipboard;isolated-desktop" TIMEOUT 60)
+
+# Copying and saving a finished image on a worker (ADR-031): the result and
+# its generation through a message-only window, files that decode back to the
+# same pixels, no staged file after a failure, cancellation within a deadline
+# and a result that stays after Wait. Nothing reaches the clipboard.
+add_executable(test_image_export
+    test_image_export.cpp
+    ../src/platform/image_export.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_image_export PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_image_export PRIVATE easnap_project_options
+    d3d11 d2d1 dwrite dxgi windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid)
+add_test(NAME image_export_job COMMAND test_image_export)
+set_tests_properties(image_export_job PROPERTIES LABELS "unit;export" TIMEOUT 60)
 
 # The log file through the production sink, and crash reports from a second
 # process that installs the production handler and fails on purpose.
@@ -537,6 +717,7 @@ add_executable(test_capture_workspace
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/app/recording_workflow.cpp
@@ -555,6 +736,13 @@ add_test(NAME capture_frame_interaction
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_workspace> --frame-performance)
 set_tests_properties(capture_frame_interaction PROPERTIES
     LABELS "integration;workspace;overlay;performance;isolated-desktop" TIMEOUT 30)
+
+# Copying a tall image in the editor leaves its window answering: a probe
+# thread measures how long the window takes to reply while the encode runs.
+add_test(NAME capture_export_responsiveness
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_workspace> --export-responsiveness)
+set_tests_properties(capture_export_responsiveness PROPERTIES
+    LABELS "integration;workspace;clipboard;editor;performance;isolated-desktop" TIMEOUT 120)
 
 # The mode island, the tools island and the recording panel as production
 # windows: never over each other, and the mode island hidden while the frame
@@ -579,6 +767,7 @@ add_executable(test_scrollshot_workspace
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/platform/platform_utils.cpp)
@@ -591,6 +780,19 @@ add_test(NAME scrollshot_workspace_production
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_scrollshot_workspace>)
 set_tests_properties(scrollshot_workspace_production PROPERTIES
     LABELS "integration;scrollshot;workspace;editor;isolated-desktop" TIMEOUT 90)
+
+# Editing a very tall stitched image: what one pointer move repaints and how
+# long it takes, at the fitted width and at 10 %, printed as MEASURE lines.
+# Asserts that the partly repainted picture equals a full repaint. The image of
+# 25,000 rows (48 million pixels, the Scrollshot limit) is the soak variant.
+add_test(NAME scrollshot_edit_performance
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_scrollshot_workspace> --edit-performance)
+set_tests_properties(scrollshot_edit_performance PROPERTIES
+    LABELS "integration;scrollshot;editor;performance;isolated-desktop" TIMEOUT 300 SKIP_RETURN_CODE 77)
+add_test(NAME scrollshot_edit_performance_soak
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_scrollshot_workspace> --edit-performance 25000)
+set_tests_properties(scrollshot_edit_performance_soak PROPERTIES
+    LABELS "integration;scrollshot;editor;performance;isolated-desktop;soak" TIMEOUT 1800 SKIP_RETURN_CODE 77)
 
 # Every caption and label fits its control in English and in Turkish.
 add_executable(test_text_fit
@@ -606,17 +808,28 @@ add_executable(test_text_fit
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/app/recording_workflow.cpp
     ../src/ui/settings_dialog.cpp
+    ../src/ui/trim_window.cpp
+    ../src/ui/trim_layout.cpp
+    ../src/ui/timeline_accessibility.cpp
+    ../src/app/trim_workflow.cpp
+    ../src/app/external_video.cpp
+    ../src/media/video_support.cpp
+    ../src/media/video_probe.cpp
     ../src/app/app_settings.cpp
+    ../src/media/preview_process.cpp
+    ../src/media/preview_transport.cpp
+    ../src/media/media_foundation_writer.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_text_fit PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
 target_link_libraries(test_text_fit PRIVATE easnap_project_options easnap_strings
-    d3d11 d2d1 dwrite dxgi windowscodecs
-    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs mf mfplat mfuuid mfreadwrite mfplay
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 oleaut32 uuid imm32 propsys UIAutomationCore)
 add_test(NAME text_fits_in_every_language
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_text_fit>)
 set_tests_properties(text_fits_in_every_language PROPERTIES
@@ -634,6 +847,7 @@ add_executable(test_data_safety
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/ui/settings_dialog.cpp
@@ -677,6 +891,38 @@ add_test(NAME scrollshot_real_desktop COMMAND test_scrollshot_desktop)
 set_tests_properties(scrollshot_real_desktop PROPERTIES
     LABELS "integration;scrollshot;real-desktop-capture" TIMEOUT 90 SKIP_RETURN_CODE 77)
 
+# The generated application of scrollshot_realistic_stitch shown by a second
+# process in a flip-model swap chain, scrolled with real input through the
+# production workspace and session. An observer around the production
+# provider checks every placement against the published page (ADR-041). The
+# first picture that matches no position is written into Testing/ of the
+# build tree, where the lab collects it.
+add_executable(test_scrollshot_realistic_desktop
+    test_scrollshot_realistic_desktop.cpp
+    scrollshot_realistic_app.cpp
+    ../src/capture/capture_provider.cpp
+    ../src/scrollshot/scrollshot_session.cpp
+    ../src/scrollshot/stitch_engine.cpp
+    ../src/ui/capture_workspace.cpp
+    ../src/ui/overlay.cpp
+    ../src/ui/island_layout.cpp
+    ../src/ui/capture_magnifier.cpp
+    ../src/ui/region_selector.cpp
+    ../src/ui/scrollshot_controls.cpp
+    ../src/ui/scrollshot_layout.cpp
+    ../src/ui/ui_theme.cpp
+    ../src/ui/native_controls.cpp
+    ../src/platform/platform_utils.cpp)
+target_include_directories(test_scrollshot_realistic_desktop PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_scrollshot_realistic_desktop PRIVATE easnap_project_options easnap_strings
+    d3d11 d2d1 dwrite dxgi dxguid windowscodecs
+    user32 gdi32 shlwapi advapi32 comctl32 shell32 ole32 uuid imm32)
+add_test(NAME scrollshot_realistic_desktop
+    COMMAND test_scrollshot_realistic_desktop --evidence "${CMAKE_BINARY_DIR}/Testing/scrollshot-realistic")
+set_tests_properties(scrollshot_realistic_desktop PROPERTIES
+    LABELS "integration;scrollshot;real-desktop-capture" TIMEOUT 180 SKIP_RETURN_CODE 77)
+
 # The recording panel and the Scrollshot island over a window of one colour,
 # captured through the GDI blit and through Desktop Duplication: the island
 # never appears in the picture.
@@ -684,6 +930,7 @@ add_executable(test_island_capture
     test_island_capture.cpp
     ../src/capture/capture_provider.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/ui/capture_workspace.cpp
@@ -706,8 +953,8 @@ add_test(NAME island_capture_exclusion COMMAND test_island_capture)
 set_tests_properties(island_capture_exclusion PROPERTIES
     LABELS "integration;real-desktop-capture;recording;scrollshot" TIMEOUT 90 SKIP_RETURN_CODE 77)
 
-add_executable(test_ui_modernization
-    test_ui_modernization.cpp
+add_executable(test_native_ui
+    test_native_ui.cpp
     ../src/capture/capture_provider.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/overlay.cpp
@@ -717,6 +964,7 @@ add_executable(test_ui_modernization
     ../src/app/app_settings.cpp
     ../src/app/recording_workflow.cpp
     ../src/app/trim_workflow.cpp
+    ../src/media/video_support.cpp
     ../src/app/session_transitions.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
@@ -725,30 +973,31 @@ add_executable(test_ui_modernization
     ../src/ui/trim_layout.cpp
     ../src/ui/timeline_accessibility.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/media/preview_process.cpp
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/platform/platform_utils.cpp)
-add_dependencies(test_ui_modernization EasnapPreviewHost)
-target_link_libraries(test_ui_modernization PRIVATE windowsapp easnap_strings)
-target_include_directories(test_ui_modernization PRIVATE
+add_dependencies(test_native_ui EasnapPreviewHost)
+target_link_libraries(test_native_ui PRIVATE windowsapp easnap_strings)
+target_include_directories(test_native_ui PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
-target_link_libraries(test_ui_modernization PRIVATE easnap_project_options
+target_link_libraries(test_native_ui PRIVATE easnap_project_options
     d3d11 d2d1 dwrite dxgi dxguid windowscodecs mf mfplat mfuuid mfreadwrite mfplay
     shlwapi comctl32 shell32 ole32 oleaut32 uuid user32 gdi32 advapi32 propsys UIAutomationCore)
-add_test(NAME ui_modernization_native COMMAND test_ui_modernization)
-add_test(NAME trim_endpoint_presentation COMMAND test_ui_modernization --trim-endpoint)
+add_test(NAME ui_modernization_native COMMAND test_native_ui)
+add_test(NAME trim_endpoint_presentation COMMAND test_native_ui --trim-endpoint)
 set_tests_properties(trim_endpoint_presentation PROPERTIES
     LABELS "integration;ui;preview;desktop-visual" TIMEOUT 90)
 # 24 real clicks per case keep every gate (frame, motion and freeze thresholds)
 # reachable in about a third of the time; the 72-click run is the soak variant.
 add_test(NAME trim_timeline_seek_stress
-         COMMAND test_ui_modernization --seek-stress
+         COMMAND test_native_ui --seek-stress
                  "${CMAKE_CURRENT_BINARY_DIR}/seek-stress-$<CONFIG>" 24)
 add_test(NAME trim_timeline_seek_soak
-         COMMAND test_ui_modernization --seek-stress
+         COMMAND test_native_ui --seek-stress
                  "${CMAKE_CURRENT_BINARY_DIR}/seek-soak-$<CONFIG>" 72)
 set_tests_properties(trim_timeline_seek_stress trim_timeline_seek_soak PROPERTIES
     LABELS "integration;ui;preview;desktop-visual;stress" TIMEOUT 300
@@ -756,7 +1005,7 @@ set_tests_properties(trim_timeline_seek_stress trim_timeline_seek_soak PROPERTIE
     # teardown. DXGI observes the same composed desktop; pixel gates are shared.
     ENVIRONMENT "EASNAP_TEST_CAPTURE=duplication")
 set_property(TEST trim_timeline_seek_soak APPEND PROPERTY LABELS soak)
-add_test(NAME ui_material_raster_parity COMMAND test_ui_modernization --material-rasters)
+add_test(NAME ui_material_raster_parity COMMAND test_native_ui --material-rasters)
 set_tests_properties(ui_material_raster_parity PROPERTIES LABELS "unit;ui;theme" TIMEOUT 30)
 set_tests_properties(ui_modernization_native PROPERTIES
     LABELS "integration;ui;accessibility;theme;preview" TIMEOUT 90)
@@ -768,6 +1017,8 @@ add_executable(test_trim_flow
     test_trim_flow.cpp
     ../src/app/trim_flow.cpp
     ../src/app/trim_workflow.cpp
+    ../src/app/external_video.cpp
+    ../src/media/video_probe.cpp
     ../src/app/recording_completion.cpp
     ../src/app/recording_workflow.cpp
     ../src/app/session_transitions.cpp
@@ -780,6 +1031,7 @@ add_executable(test_trim_flow
     ../src/media/preview_transport.cpp
     ../src/media/mp4_trim_exporter.cpp
     ../src/media/gif_exporter.cpp
+    ../src/media/video_support.cpp
     ../src/media/gif_encoder.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/media/mf_d3d_device.cpp
@@ -793,11 +1045,11 @@ target_link_libraries(test_trim_flow PRIVATE easnap_project_options easnap_strin
 add_test(NAME trim_flow_production
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_trim_flow>)
 set_tests_properties(trim_flow_production PROPERTIES
-    LABELS "integration;trim;recording;preview;isolated-desktop" TIMEOUT 180)
+    LABELS "integration;trim;recording;preview;isolated-desktop" TIMEOUT 360)
 
 foreach(ui_target test_region_selector test_redaction_renderer test_capture_overlay test_capture_workspace
-                  test_scrollshot_workspace test_scrollshot_desktop test_data_safety test_text_fit
-                  test_ui_modernization test_trim_flow)
+                  test_scrollshot_workspace test_scrollshot_desktop test_scrollshot_realistic_desktop
+                  test_data_safety test_text_fit test_native_ui test_trim_flow)
     target_link_libraries(${ui_target} PRIVATE uxtheme gdiplus oleacc dwmapi)
 endforeach()
 
@@ -809,6 +1061,7 @@ add_executable(test_gif_encoder
     test_gif_encoder.cpp
     ../src/media/gif_encoder.cpp
     ../src/media/gif_exporter.cpp
+    ../src/media/video_support.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/platform/platform_utils.cpp)
 
@@ -864,7 +1117,7 @@ set_tests_properties(wasapi_audio_capture PROPERTIES
     SKIP_RETURN_CODE 77
     TIMEOUT 60)
 
-add_test(NAME annotation_editing_native COMMAND test_ui_modernization --editor-checks)
+add_test(NAME annotation_editing_native COMMAND test_native_ui --editor-checks)
 set_tests_properties(annotation_editing_native PROPERTIES LABELS "integration;editor;ui" TIMEOUT 60)
 
 # These assertions use the physical desktop, pointer, focus or capture timing.
@@ -872,7 +1125,9 @@ set_tests_properties(annotation_editing_native PROPERTIES LABELS "integration;ed
 # The three capture_* tests left this list: they are message-driven and run on
 # a private desktop instead.
 set(interactive_desktop_tests
-    real_desktop_recording_session recording_pause_stop_stress scrollshot_real_desktop island_capture_exclusion
+    real_desktop_recording_session recording_pause_stop_stress recording_frame_cost
+    scrollshot_real_desktop
+    scrollshot_realistic_desktop island_capture_exclusion
     ui_modernization_native annotation_editing_native trim_endpoint_presentation
     trim_timeline_seek_stress trim_timeline_seek_soak)
 set_tests_properties(${interactive_desktop_tests} PROPERTIES RUN_SERIAL TRUE)

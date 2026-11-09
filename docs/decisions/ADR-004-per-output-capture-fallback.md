@@ -2,7 +2,8 @@
 
 **Status:** Accepted  
 **Amended by:** [ADR-028](ADR-028-scrollshot-capture-workspace.md) (Scrollshot awaits the first composed frame)  
-**Date:** 2026-08-27
+**Date:** 2026-08-27  
+**Amended:** 2026-11-09 — recording awaits the first composed frame as well
 
 ## Context
 
@@ -33,6 +34,17 @@ The region path used while recording (`CaptureMonitorRegion`) applies rule 3
 only to an output that has not delivered content yet (`delivered_content`).
 Once an output has returned real pixels, a later black frame is content and
 does not switch that output to GDI (v1.0.1).
+
+Nor does a black frame that carries no composed desktop update: a duplication
+returns one when the desktop has stood still since it was created. Recording
+and Scrollshot (ADR-028) read that one picture through GDI and ask duplication
+again for the next frame; recording adds no wait inside the frame (Scrollshot
+keeps its own change wait). A recording that starts on a still desktop is
+therefore not read through GDI for its whole length (2026-11-09). On an output
+that never composes anything, each pointer-only update costs one readback and
+one GDI blit, at most once per slot, which is no worse than the GDI blit every
+slot of the earlier rule. A composed black frame from an output that has never
+delivered content still marks it `unusable`.
 
 `FindOutputIndex` matches a `MonitorInfo` to a duplication slot by `HMONITOR`
 first and by desktop rectangle second, so the mapping survives enumerations that

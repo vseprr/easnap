@@ -52,8 +52,11 @@ Hosted CI runs the fast tier and the part of the integration tier a hosted
 Windows Server image can execute. It has no real display or input queue and
 cannot open an MFPlay player, so it excludes the desktop and soak tiers, every
 test labelled `preview`, and `capture_overlay_interaction`, whose click targets
-assume a larger desktop than the runner's. A green CI run says nothing about
-those tests; they run in the lab.
+assume a larger desktop than the runner's. The Debug build and the sanitizer
+job also leave out `scrollshot_edit_performance`, whose blur closure costs
+seconds per paint there; it measures in the Release build, on the runner's
+1024-pixel display at the zoom steps it reaches from there. A green CI run
+says nothing about the excluded tests; they run in the lab.
 
 ## Running only what changed
 
@@ -74,6 +77,23 @@ In practice:
 
 The cache is a local iteration aid, not a release gate. Use `-Mode Full` to
 ignore it; a lab run always does.
+
+### Parameters of test.ps1
+
+| Parameter | Values | Default | Meaning |
+| --- | --- | --- | --- |
+| `-Configuration` | `Debug`, `Release` | `Release` | Build configuration whose tests are run. |
+| `-BuildDir` | path | `build` | Build directory, relative to the repository or absolute. |
+| `-Tier` | `Fast`, `Standard`, `Full`, `Soak` | `Standard` | Which tests are considered; see [Tiers](#tiers). |
+| `-Mode` | `Affected`, `Full` | `Affected` | `Affected` reuses unchanged passes; `Full` ignores the cache. |
+| `-DesktopTests` | `Run`, `Defer` | `Run` for `Full` and `Soak`, otherwise `Defer` | `Run` runs the visible-desktop tests one at a time on the chosen display; `Defer` lists them as pending and does not run them. |
+| `-Monitor` | number, part of a name, `\\.\DISPLAYn`, `Primary`, `Ask` | `Ask` | Display for visible-desktop tests. |
+| `-Filter` | regular expression | none | Only tests whose name matches are considered. |
+| `-HostOnly` | `Include`, `Exclude`, `Only` | `Include` | How the tests listed under `tests.hostOnly` in `testenv.json` are treated. |
+| `-Jobs` | 1 to 16 | `4` | Number of background tests run in parallel. |
+| `-NoCountdown` | switch | off | Skips the countdown before visible-desktop tests. |
+| `-ListMonitors` | switch | off | Prints the active displays and exits. |
+| `-ListOnly` | switch | off | Prints, as JSON, which tests would run, be reused, be deferred or be excluded, without running them. |
 
 ## Keeping tests away from your work
 
@@ -183,7 +203,7 @@ is time-based.
   `trim_timeline_seek_stress` and `trim_timeline_seek_soak`, because a long
   run with the WGC observer faulted during WGC's asynchronous shutdown, at an
   address in the unloaded `GraphicsCapture.dll`. Set it by hand when running
-  `test_ui_modernization --seek-stress` directly; the executable alone uses
+  `test_native_ui --seek-stress` directly; the executable alone uses
   WGC. The choice is test-only: it pins no DLL, adds no teardown sleep and
   changes no picture threshold. The other endpoint and resize checks keep
   covering WGC; do not silently switch every visual test.
@@ -222,7 +242,7 @@ is time-based.
 
 ## Diagnostics that are not registered tests
 
-`test_ui_modernization` has opt-in modes that are not registered tests:
+`test_native_ui` has opt-in modes that are not registered tests:
 `--resize-edges` and `--resize-controls` observe the trim window while it is
 resized and maximized, `--trim-checks`, `--text-checks` and
 `--window-lifetime` exercise one area each. The strict resize gate

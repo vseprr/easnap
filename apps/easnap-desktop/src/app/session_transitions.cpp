@@ -31,6 +31,8 @@ constexpr std::array<std::pair<SessionState, SessionState>, kSessionTransitionCo
     // goes on to trimming (StateAfterRecordingFinalization).
     {SessionState::RecordingFinalizing, SessionState::Idle},
     {SessionState::RecordingFinalizing, SessionState::RecordingTrimming},
+    // A video the user opened goes straight to trimming (ADR-040).
+    {SessionState::Idle, SessionState::RecordingTrimming},
     {SessionState::RecordingTrimming, SessionState::Idle},
     {SessionState::RecordingTrimming, SessionState::Exporting},
     {SessionState::Exporting, SessionState::RecordingTrimming},
@@ -72,29 +74,36 @@ bool IsSessionTransitionLegal(SessionState from, SessionState to) noexcept {
     return false;
 }
 
-PendingWork PendingWorkFor(SessionState state, bool image_at_risk) noexcept {
+PendingWork PendingWorkFor(SessionState state, bool image_at_risk, bool image_export_running,
+                           TrimSourceKind trim_source) noexcept {
+    const PendingWork image = image_export_running ? PendingWork::Image : PendingWork::None;
     switch (state) {
         case SessionState::RecordingActive:
         case SessionState::RecordingPaused:
         case SessionState::RecordingFinalizing:
             return PendingWork::Recording;
         case SessionState::RecordingTrimming:
-            return PendingWork::UnsavedRecording;
+            // An opened video loses nothing; a pinned image may still be saving.
+            return trim_source == TrimSourceKind::External ? image : PendingWork::UnsavedRecording;
         case SessionState::Exporting:
             return PendingWork::Export;
         case SessionState::ScrollshotCapturing:
         case SessionState::ScrollshotReview:
             return PendingWork::Image;
         case SessionState::ScreenshotEditing:
-            return image_at_risk ? PendingWork::Image : PendingWork::None;
+            return image_at_risk ? PendingWork::Image : image;
         case SessionState::Idle:
         case SessionState::RegionSelecting:
         case SessionState::ScreenshotExporting:
         case SessionState::RecordingConfiguring:
         case SessionState::ScrollshotConfiguring:
-            return PendingWork::None;
+            return image;
     }
-    return PendingWork::None;
+    return image;
+}
+
+bool ShouldTellSettingsNotSaved(SessionState state, bool dialog_open, bool already_told) noexcept {
+    return state == SessionState::Idle && !dialog_open && !already_told;
 }
 
 const wchar_t* ToString(SessionState state) noexcept {

@@ -111,7 +111,10 @@ sign-out.
 The pin's menu runs inside `ui::PopupScope` and its Save dialog inside the
 existing `ModalLoopScope`, so Exit and cleanup wait for them as for every other
 dialog. A pin that is asked to close while its own menu or dialog is open (Close
-all from another pin) closes when that menu or dialog returns. A closed pin
+all from another pin) closes when that menu or dialog returns, and one asked
+while its copy or save runs on a worker
+([ADR-031](ADR-031-unsaved-work-survives.md#copying-and-saving-a-finished-image-amended-2026-11-09))
+closes when that has finished. A closed pin
 releases its image at once; the small object left behind is removed the next
 time the collection is used.
 
@@ -166,5 +169,6 @@ A private window station counts no window as visible, so the
 window left on a desktop `EnumWindows` reports failure, so that check keeps a
 hidden window, as Easnap always has its host window. The editor's Pin button,
 Ctrl+T and a refused pin are covered in `capture_workspace_production`. Save
-from a pin, the menu's look and pins on a real screen are not covered by an
-automated test.
+from a pin is covered with quick save into a folder of the test (2026-11-09);
+its Save dialog, the menu's look and pins on a real screen are not covered by
+an automated test.

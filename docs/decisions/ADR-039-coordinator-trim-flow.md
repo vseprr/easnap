@@ -107,7 +107,7 @@ The coordinator owns one `TrimFlow`.
   for tests.
 - **Its own test target, `test_trim_flow`,** compiles the flow with
   `trim_workflow`, `recording_completion`, `session_transitions`, the trim
-  window sources that `test_ui_modernization` already compiles and the MP4
+  window sources that `test_native_ui` already compiles and the MP4
   exporter. It writes a short MP4 with `MediaFoundationWriter` and drives the
   window with messages: Copy of the full range (no export); Copy of a part (a
   real export through Exporting and RecordingTrimming to Idle, `end_session`

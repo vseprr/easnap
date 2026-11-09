@@ -57,9 +57,9 @@ CaptureCoordinator& CaptureCoordinator::Instance() {
 
 CaptureCoordinator::~CaptureCoordinator() { Shutdown(); }
 
-bool CaptureCoordinator::Initialize(HWND host_window) {
+void CaptureCoordinator::Initialize(HWND host_window) {
     if (initialized_) {
-        return true;
+        return;
     }
     host_window_ = host_window;
     settings_ = AppSettings::Load();
@@ -91,7 +91,6 @@ bool CaptureCoordinator::Initialize(HWND host_window) {
     machine_.Reset();
     initialized_ = true;
     platform::LogMessage(L"Coordinator initialised (idle, no capture resources allocated)");
-    return true;
 }
 
 void CaptureCoordinator::Shutdown() {
@@ -99,6 +98,8 @@ void CaptureCoordinator::Shutdown() {
         return;
     }
     StopRecordingForShutdown();
+    // A video being checked is not opened any more; its result is dropped.
+    video_probe_.Join();
     if (trim_flow_) {
         trim_flow_->CancelExportAndWait();
     }
@@ -153,7 +154,8 @@ PendingWork CaptureCoordinator::pending_work() const {
     }
     const bool image_at_risk = editor_ && editor_->visible() &&
                                (editor_->has_annotations() || editor_->document_mode());
-    return PendingWorkFor(state(), image_at_risk);
+    return PendingWorkFor(state(), image_at_risk, platform::ImageExportActive(),
+                          trim_flow_ ? trim_flow_->source_kind() : TrimSourceKind::Owned);
 }
 
 HWND CaptureCoordinator::DialogOwner() const {
@@ -176,8 +178,9 @@ bool CaptureCoordinator::ConfirmExit() {
     }
     // One of the application's dialogs or menus is running its own message
     // loop. Its caller is on the stack and must find its objects when it
-    // returns, so the application cannot be taken down from here.
-    if (platform::ModalLoopActive() || ui::PopupActive()) {
+    // returns, so the application cannot be taken down from here. An image
+    // being copied or saved finishes first: it takes seconds at most.
+    if (platform::ModalLoopActive() || ui::PopupActive() || platform::ImageExportActive()) {
         ::MessageBeep(MB_ICONWARNING);
         if (HWND active = ::GetActiveWindow()) {
             FLASHWINFO flash{sizeof(flash), active, FLASHW_CAPTION, 3, 0};
@@ -190,7 +193,11 @@ bool CaptureCoordinator::ConfirmExit() {
         case PendingWork::None: return true;
         case PendingWork::Recording: text = IDS_EXIT_RECORDING; break;
         case PendingWork::UnsavedRecording: text = IDS_EXIT_UNSAVED_RECORDING; break;
-        case PendingWork::Export: text = IDS_EXIT_EXPORT; break;
+        case PendingWork::Export:
+            // Exporting an opened video loses nothing but the export itself.
+            text = trim_flow_ && trim_flow_->source_kind() == TrimSourceKind::External ? IDS_EXIT_EXTERNAL_EXPORT
+                                                                                       : IDS_EXIT_EXPORT;
+            break;
         case PendingWork::Image: text = IDS_EXIT_IMAGE; break;
     }
     platform::LogMessage(L"Exit requested with unsaved work (state %d)", static_cast<int>(state()));
@@ -201,8 +208,11 @@ bool CaptureCoordinator::ConfirmExit() {
 const wchar_t* CaptureCoordinator::ShutdownBlockReason() const {
     switch (pending_work()) {
         case PendingWork::Recording: return strings::Get(IDS_SHUTDOWN_REASON_RECORDING);
-        case PendingWork::UnsavedRecording:
-        case PendingWork::Export: return strings::Get(IDS_SHUTDOWN_REASON_UNSAVED);
+        case PendingWork::UnsavedRecording: return strings::Get(IDS_SHUTDOWN_REASON_UNSAVED);
+        case PendingWork::Export:
+            return strings::Get(trim_flow_ && trim_flow_->source_kind() == TrimSourceKind::External
+                                    ? IDS_SHUTDOWN_REASON_EXTERNAL_EXPORT
+                                    : IDS_SHUTDOWN_REASON_UNSAVED);
         case PendingWork::Image: return strings::Get(IDS_SHUTDOWN_REASON_IMAGE);
         case PendingWork::None: break;
     }
@@ -214,7 +224,12 @@ void CaptureCoordinator::PrepareForSessionEnd() {
         return;
     }
     platform::LogMessage(L"The Windows session is ending (state %d)", static_cast<int>(state()));
-    PersistSettings();
+    PersistSettings(IfNotSaved::LogOnly);
+    // An image being saved lands complete, without a staged file left; a copy
+    // is cancelled. Their results still arrive should the session go on.
+    if (editor_) { editor_->SettleExportForSessionEnd(); }
+    if (pins_) { pins_->SettleExportsForSessionEnd(); }
+    scrollshot_export_.SettleForSessionEnd();
     // A recording that is still running is closed, so that there is a file to
     // offer again. Windows allows a few seconds for this.
     if (recording_finalizer_.has_worker()) {
@@ -226,7 +241,10 @@ void CaptureCoordinator::PrepareForSessionEnd() {
     if (trim_flow_) {
         trim_flow_->CancelExportAndWait();
     }
-    if (recording_session_ && temp_store_) {
+    // An opened video is the user's own file, not unsaved work: nothing is
+    // marked for it, and the next start never offers it (ADR-040).
+    const bool opened_video = trim_flow_ && trim_flow_->source_kind() == TrimSourceKind::External;
+    if (recording_session_ && temp_store_ && !opened_video) {
         const std::optional<media::TemporarySession> session = recording_session_->temporary_session();
         const bool finished =
             recording_session_->state() == recording::RecordingSessionState::Finalized &&
@@ -816,8 +834,11 @@ void CaptureCoordinator::FinishRecordingWorkflow(bool finalized) {
             session.has_value() && temp_store_) {
             static_cast<void>(temp_store_->MarkRecoverable(*session));
         }
-        trim_flow_->Begin(retained_path, recording_options_, recording_region_,
-                          recording_session_->temporary_session());
+        TrimSource source;
+        source.kind = TrimSourceKind::Owned;
+        source.path = retained_path;
+        source.region = recording_region_;
+        trim_flow_->Begin(source, recording_options_, recording_session_->temporary_session());
         return;
     }
 
@@ -838,6 +859,124 @@ void CaptureCoordinator::OnTrimExportCompleted(uint64_t export_generation) {
     if (trim_flow_) {
         trim_flow_->OnExportCompleted(export_generation);
     }
+}
+
+// --- Opening a video file (ADR-040) -------------------------------------------
+
+bool CaptureCoordinator::CanOpenVideo() const {
+    return initialized_ && state() == SessionState::Idle && !video_probe_.running();
+}
+
+void CaptureCoordinator::OpenVideo() {
+    if (!initialized_ || state() != SessionState::Idle || platform::ModalLoopActive() || ui::PopupActive()) {
+        return;
+    }
+    if (video_probe_.running()) {
+        ::MessageBeep(MB_ICONWARNING);  // One video is checked at a time.
+        return;
+    }
+    DropUndeliveredVideoProbe();
+    const OpenVideoDialogText text{strings::Get(IDS_OPEN_VIDEO_TITLE), strings::Get(IDS_OPEN_VIDEO_FILE_TYPE),
+                                   strings::Get(IDS_OPEN_VIDEO_ALL_FILES)};
+    // No owner: the hidden host window would pin the dialog to the corner of
+    // the primary display.
+    const std::optional<std::wstring> path = ShowOpenVideoDialog(nullptr, settings_.VideoStartDirectory(), text);
+    if (!path.has_value() || !initialized_ || state() != SessionState::Idle || video_probe_.busy()) {
+        return;
+    }
+    CheckVideo(*path, L"the user chose");
+}
+
+bool CaptureCoordinator::AcceptsVideoRequest() const {
+    return CanOpenVideo() && !platform::ModalLoopActive() && !ui::PopupActive();
+}
+
+void CaptureCoordinator::OpenVideo(const std::wstring& path) {
+    // Asked for from outside this process's own windows: never interrupts what
+    // the user is doing, and is not remembered for later.
+    if (!AcceptsVideoRequest()) {
+        platform::LogMessage(L"[Probe] A video request was dropped: Easnap is busy (%s)", ToString(state()));
+        return;
+    }
+    DropUndeliveredVideoProbe();
+    if (video_probe_.busy()) {
+        return;
+    }
+    CheckVideo(path, L"named on a command line");
+}
+
+void CaptureCoordinator::DropUndeliveredVideoProbe() {
+    if (video_probe_.busy() && video_probe_.TryTake(video_probe_.generation()).has_value()) {
+        // Finished, but its message never came: dropped, so that a lost
+        // message cannot keep Open from working.
+        platform::LogMessage(L"[Probe] A probe result that was never delivered was dropped");
+    }
+}
+
+void CaptureCoordinator::CheckVideo(const std::wstring& path, const wchar_t* origin) {
+    // Easnap deletes what is in its own folder: a recording left there must
+    // not become a file the user believes is safe (ADR-040).
+    if (IsInsideEasnapFolder(path, platform::AppDataDirectory())) {
+        platform::LogMessage(L"[Probe] A video inside Easnap's data folder was not opened");
+        ui::ShowErrorMessage(nullptr,
+                             strings::Format(IDS_VIDEO_REFUSED_EASNAP_FOLDER, {VideoFileDisplayName(path)}).c_str());
+        return;
+    }
+    // The probe reads the file and may wait for the disk: never on this thread.
+    if (!video_probe_.Start(host_window_, kMsgVideoProbeCompleted, path, kVideoProbeDeadline)) {
+        ui::ShowErrorMessage(nullptr, strings::Format(IDS_VIDEO_OPEN_FAILED, {VideoFileDisplayName(path)}).c_str());
+        return;
+    }
+    platform::LogMessage(L"[Probe] Checking a video %s", origin);
+}
+
+void CaptureCoordinator::OnVideoProbeTimer() { OnVideoProbeCompleted(video_probe_.generation()); }
+
+void CaptureCoordinator::OnVideoProbeCompleted(VideoProbeJob::Generation generation) {
+    if (!initialized_ || generation == 0 || generation != video_probe_.generation()) {
+        return;
+    }
+    // A dialog or menu of Easnap is running its own loop; its caller must find
+    // everything as it left it. The result waits a moment.
+    if (platform::ModalLoopActive() || ui::PopupActive()) {
+        if (host_window_ != nullptr) { ::SetTimer(host_window_, kTimerVideoProbeRetry, 100, nullptr); }
+        return;
+    }
+    if (host_window_ != nullptr) { ::KillTimer(host_window_, kTimerVideoProbeRetry); }
+    const std::optional<VideoProbeOutcome> outcome = video_probe_.TryTake(generation);
+    if (!outcome.has_value()) {
+        return;  // Still running, or taken already.
+    }
+    if (outcome->worker_exception) {
+        platform::LogMessage(L"[Probe] The video probe failed with an exception");
+    }
+    if (state() != SessionState::Idle) {
+        // A capture started while the file was checked; the user moved on.
+        platform::LogMessage(L"[Probe] A checked video was not opened: a session is active (%s)", ToString(state()));
+        return;
+    }
+    if (!outcome->result.ok) {
+        ui::ShowErrorMessage(nullptr, strings::Format(VideoRefusalMessageId(outcome->result),
+                                                      {VideoFileDisplayName(outcome->path)})
+                                          .c_str());
+        return;
+    }
+    BeginExternalTrim(*outcome);
+}
+
+void CaptureCoordinator::BeginExternalTrim(const VideoProbeOutcome& outcome) {
+    if (!trim_flow_) {
+        return;
+    }
+    // On the monitor the user is working on, as large as the video allows.
+    POINT cursor{};
+    ::GetCursorPos(&cursor);
+    const TrimSource source = MakeExternalTrimSource(outcome.path, outcome.result,
+                                                     platform::MonitorForPoint(cursor).work_area);
+    if (!RequestTransition(SessionState::RecordingTrimming)) {
+        return;
+    }
+    trim_flow_->Begin(source, ExternalTrimOptions(source), std::nullopt);
 }
 
 void CaptureCoordinator::OnClipboardChanged() {
@@ -1056,8 +1195,8 @@ void CaptureCoordinator::UpdateScrollshotStatus() {
         return;
     }
     const bool capturing = state() == SessionState::ScrollshotCapturing && scrollshot_session_ != nullptr;
-    int width = scrollshot_image_.width;
-    int height = scrollshot_image_.height;
+    int width = scrollshot_image_ ? scrollshot_image_->width : 0;
+    int height = scrollshot_image_ ? scrollshot_image_->height : 0;
     UINT message = capturing ? IDS_SCROLLSHOT_STATUS_SCROLL : IDS_SCROLLSHOT_STATUS_READY;
     bool warning = false;
     bool following = true;
@@ -1136,14 +1275,14 @@ bool CaptureCoordinator::StopScrollshotCapture() {
         scrollshot_controls_->SetPreview(preview);
     }
     const uint32_t fallback_frames = scrollshot_session_->progress().fallback_frames;
-    scrollshot_image_ = scrollshot_session_->TakeResult();
+    scrollshot_image_ = std::make_shared<platform::BgraImage>(scrollshot_session_->TakeResult());
     scrollshot_session_.reset();
     if (scrollshot_notice_ == ScrollshotNotice::Stopping || scrollshot_notice_ == ScrollshotNotice::WheelBlocked) {
         scrollshot_notice_ = ScrollshotNotice::None;
     }
     RequestTransition(SessionState::ScrollshotReview);
     if (overlay_) { overlay_->StopScrollshotCapture(); }
-    if (scrollshot_image_.empty()) {
+    if (scrollshot_image_->empty()) {
         // Only memory exhaustion while composing the result leads here.
         platform::LogMessage(L"Scrollshot stopped without an image");
         ui::ShowErrorMessage(host_window_, strings::Get(IDS_SCROLLSHOT_START_FAILED));
@@ -1151,7 +1290,7 @@ bool CaptureCoordinator::StopScrollshotCapture() {
         EndSession();
         return false;
     }
-    platform::LogMessage(L"Scrollshot stopped: %d x %d", scrollshot_image_.width, scrollshot_image_.height);
+    platform::LogMessage(L"Scrollshot stopped: %d x %d", scrollshot_image_->width, scrollshot_image_->height);
     if (fallback_frames != 0) {
         platform::LogMessage(L"Scrollshot read %u of its pictures through the GDI fallback", fallback_frames);
     }
@@ -1165,25 +1304,15 @@ void CaptureCoordinator::CopyScrollshot() {
     }
     scrollshot_busy_ = true;
     if (scrollshot_controls_) { scrollshot_controls_->SetBusy(true); }
+    // Stopping waits for the stitch worker on this thread; the copy itself
+    // runs on a worker of its own.
     const HCURSOR previous_cursor = ::SetCursor(::LoadCursorW(nullptr, IDC_WAIT));
-    bool copied = false;
-    if (StopScrollshotCapture()) {
-        // Encoding a tall image takes a moment on this thread.
-        ShowScrollshotNotice(ScrollshotNotice::Copying);
-        // A very tall image can exceed what the clipboard accepts. The image
-        // stays, and the status points to Save.
-        copied = platform::CopyImageToClipboard(host_window_, scrollshot_image_);
-        scrollshot_notice_ = copied ? ScrollshotNotice::None : ScrollshotNotice::CopyFailed;
-    }
+    const bool stopped = StopScrollshotCapture();
     ::SetCursor(previous_cursor);
-    scrollshot_busy_ = false;
-    if (copied) {
-        platform::LogMessage(L"Scrollshot copied to the clipboard");
-        ui::ShowCaptureCopiedNotice(scrollshot_region_);
-        RequestTransition(SessionState::Idle);
-        EndSession();
-        return;
+    if (stopped && StartScrollshotExport(platform::ImageExportTarget::Clipboard, {}, false)) {
+        return;  // Busy until OnImageExportCompleted.
     }
+    scrollshot_busy_ = false;
     if (IsScrollshotState(state())) {
         if (scrollshot_controls_) { scrollshot_controls_->SetBusy(false); }
         UpdateScrollshotStatus();
@@ -1199,53 +1328,114 @@ void CaptureCoordinator::SaveScrollshot() {
         scrollshot_busy_ = false;
         return;
     }
-    // The preview is topmost and must not cover the system dialog.
-    if (scrollshot_controls_ && scrollshot_controls_->preview_hwnd() != nullptr) {
-        ::ShowWindow(scrollshot_controls_->preview_hwnd(), SW_HIDE);
+    // Busy through the dialog and the write: no second action starts inside them.
+    if (scrollshot_controls_) { scrollshot_controls_->SetBusy(true); }
+    if (StartScrollshotSave(true)) {
+        return;  // Busy until OnImageExportCompleted.
     }
+    if (initialized_ && state() == SessionState::ScrollshotReview) {
+        scrollshot_busy_ = false;  // Cancelled: the island and the image stay.
+        if (scrollshot_controls_) { scrollshot_controls_->SetBusy(false); }
+        UpdateScrollshotStatus();
+    }
+}
+
+bool CaptureCoordinator::StartScrollshotSave(bool allow_quick) {
     HWND owner = scrollshot_controls_ && scrollshot_controls_->hwnd() != nullptr ? scrollshot_controls_->hwnd()
                                                                                  : host_window_;
-    // Quick save: straight into the chosen folder. If that cannot be written,
-    // the dialog below still offers every other place.
-    if (settings_.quick_save_images && !settings_.image_folder.empty()) {
-        const std::wstring quick =
-            platform::UniqueFilePath(settings_.image_folder, platform::TimestampedFileName(L"Easnap", L"png"));
-        ShowScrollshotNotice(ScrollshotNotice::Saving);
-        if (!quick.empty() && platform::SaveImage(scrollshot_image_, quick)) {
-            scrollshot_busy_ = false;
-            platform::LogMessage(L"Scrollshot saved without a dialog");
-            ui::ShowCaptureSavedNotice(scrollshot_region_);
-            RequestTransition(SessionState::Idle);
-            EndSession();
-            return;
+    bool dialog = false;
+    auto destination = ui::ChooseImageDestination(owner, &settings_, allow_quick, [&] {
+        dialog = true;
+        // The preview is topmost and must not cover the system dialog.
+        if (scrollshot_controls_ && scrollshot_controls_->preview_hwnd() != nullptr) {
+            ::ShowWindow(scrollshot_controls_->preview_hwnd(), SW_HIDE);
         }
-        scrollshot_notice_ = ScrollshotNotice::None;
-        UpdateScrollshotStatus();
-    }
-    const auto destination = platform::ShowSaveImageDialog(
-        owner, platform::TimestampedFileName(L"Easnap", L"png"), settings_.ImageStartDirectory(),
-        ui::SaveImageDialogLabels());
-    scrollshot_busy_ = false;
+    });
     if (!initialized_ || state() != SessionState::ScrollshotReview) {
-        return;  // The session ended while the dialog was open.
+        return false;  // The session ended while the dialog was open.
     }
-    if (scrollshot_controls_) { scrollshot_controls_->SetFrame(scrollshot_region_); }
-    if (!destination.has_value()) {
-        return;  // Cancelled: the island and the image stay.
+    if (dialog && scrollshot_controls_) { scrollshot_controls_->SetFrame(scrollshot_region_); }
+    return destination.has_value() &&
+           StartScrollshotExport(platform::ImageExportTarget::File, std::move(destination->path), destination->quick);
+}
+
+bool CaptureCoordinator::StartScrollshotExport(platform::ImageExportTarget target, std::wstring path, bool quick) {
+    if (!scrollshot_image_ || scrollshot_image_->empty()) {
+        return false;
     }
-    const HCURSOR previous_cursor = ::SetCursor(::LoadCursorW(nullptr, IDC_WAIT));
-    ShowScrollshotNotice(ScrollshotNotice::Saving);
-    const bool saved = platform::SaveImage(scrollshot_image_, *destination);
-    ::SetCursor(previous_cursor);
-    if (!saved) {
-        scrollshot_notice_ = ScrollshotNotice::SaveFailed;
-        UpdateScrollshotStatus();
+    platform::ImageExportRequest request{scrollshot_image_, target, path};
+    if (!scrollshot_export_.Start(host_window_, platform::kMsgImageExportCompleted, std::move(request))) {
+        ::MessageBeep(MB_ICONWARNING);  // Another export of Easnap is still running.
+        return false;
+    }
+    scrollshot_save_path_ = std::move(path);
+    scrollshot_save_quick_ = quick;
+    ShowScrollshotNotice(target == platform::ImageExportTarget::Clipboard ? ScrollshotNotice::Copying
+                                                                          : ScrollshotNotice::Saving);
+    return true;
+}
+
+void CaptureCoordinator::OnImageExportCompleted(platform::ImageExportJob::Generation generation) {
+    std::optional<platform::ImageExportResult> result = scrollshot_export_.TryTake(generation);
+    if (!result) {
+        return;  // From an export the session dropped.
+    }
+    const ui::ImageSaveDestination destination{std::move(scrollshot_save_path_), scrollshot_save_quick_};
+    scrollshot_save_path_.clear();
+    scrollshot_save_quick_ = false;
+    if (!initialized_ || state() != SessionState::ScrollshotReview) {
+        return;  // Nothing changes a session under its export; only its end drops it.
+    }
+    const bool copy = result->target == platform::ImageExportTarget::Clipboard;
+    const bool succeeded = result->status == platform::ImageExportStatus::Succeeded &&
+                           (!copy || platform::PublishClipboardImage(host_window_, result->clipboard));
+    if (succeeded) {
+        if (copy) {
+            platform::LogMessage(L"Scrollshot copied to the clipboard");
+            ui::ShowCaptureCopiedNotice(scrollshot_region_);
+        } else {
+            ui::RecordImageSaved(&settings_, destination);
+            platform::LogMessage(destination.quick ? L"Scrollshot saved without a dialog" : L"Scrollshot saved");
+            if (destination.quick) { ui::ShowCaptureSavedNotice(scrollshot_region_); }
+        }
+        RequestTransition(SessionState::Idle);
+        EndSession();
         return;
     }
-    settings_.last_image_directory = platform::DirectoryOf(*destination);
-    platform::LogMessage(L"Scrollshot saved");
-    RequestTransition(SessionState::Idle);
-    EndSession();
+    if (!copy && result->status == platform::ImageExportStatus::Failed && destination.quick) {
+        // The screenshots folder could not be written: the dialog offers
+        // every other place for the same image.
+        scrollshot_notice_ = ScrollshotNotice::None;
+        UpdateScrollshotStatus();
+        if (StartScrollshotSave(false)) {
+            return;
+        }
+        if (!initialized_ || state() != SessionState::ScrollshotReview) {
+            return;
+        }
+    } else if (result->status == platform::ImageExportStatus::Cancelled) {
+        scrollshot_notice_ = ScrollshotNotice::None;
+    } else {
+        // A very tall image can exceed what the clipboard accepts. The image
+        // stays, and the status points to Save.
+        scrollshot_notice_ = copy ? ScrollshotNotice::CopyFailed : ScrollshotNotice::SaveFailed;
+    }
+    scrollshot_busy_ = false;
+    if (scrollshot_controls_) { scrollshot_controls_->SetBusy(false); }
+    UpdateScrollshotStatus();
+    AfterSessionExport();
+}
+
+bool CaptureCoordinator::SessionExportRunning() const {
+    return scrollshot_export_.running() || (editor_ && editor_->exporting());
+}
+
+void CaptureCoordinator::AfterSessionExport() {
+    if (!recheck_display_after_export_) {
+        return;
+    }
+    recheck_display_after_export_ = false;
+    OnDisplayChanged();
 }
 
 void CaptureCoordinator::EditScrollshot() {
@@ -1296,7 +1486,7 @@ void CaptureCoordinator::EditScrollshot() {
     }
 
     std::unique_ptr<editor::ScreenshotEditor> editor = CreateEditor();
-    if (!editor->OpenDocument(scrollshot_image_, area, scrollshot_region_.left, &settings_,
+    if (!editor->OpenDocument(*scrollshot_image_, area, scrollshot_region_.left, &settings_,
                               overlay_->panel_owner_window())) {
         // The editor takes the image only when it opened: nothing is lost.
         ui::ShowErrorMessage(scrollshot_controls_ ? scrollshot_controls_->hwnd() : host_window_,
@@ -1311,7 +1501,7 @@ void CaptureCoordinator::EditScrollshot() {
         return;
     }
     if (!RequestTransition(SessionState::ScreenshotEditing)) {
-        scrollshot_image_ = editor->TakeImage();
+        *scrollshot_image_ = editor->TakeImage();
         return;
     }
     if (scrollshot_controls_) { scrollshot_controls_->Hide(); }
@@ -1332,7 +1522,7 @@ void CaptureCoordinator::DiscardScrollshot() {
         return;
     }
     // More than the first picture means the user has scrolled for it.
-    const int height = scrollshot_session_ ? scrollshot_height_ : scrollshot_image_.height;
+    const int height = scrollshot_session_ ? scrollshot_height_ : (scrollshot_image_ ? scrollshot_image_->height : 0);
     if (state() != SessionState::ScrollshotConfiguring && height > platform::RectHeight(scrollshot_region_)) {
         scrollshot_busy_ = true;
         const bool discard = ConfirmDiscardImage(DialogOwner(), true);
@@ -1358,7 +1548,7 @@ void CaptureCoordinator::ShowScrollshotHelp() {
 void CaptureCoordinator::StopScrollshotForShutdown() {
     // Destroying the session stops and joins its worker.
     scrollshot_session_.reset();
-    scrollshot_image_ = {};
+    scrollshot_image_.reset();
 }
 
 void CaptureCoordinator::OpenEditor(const RECT& region) {
@@ -1400,6 +1590,7 @@ std::unique_ptr<editor::ScreenshotEditor> CaptureCoordinator::CreateEditor() {
     };
     callbacks.on_view_changed = [this](const editor::ImageView& view) { PublishDocumentView(view); };
     callbacks.keep_clear = [this] { return overlay_ ? overlay_->mode_island_rect() : RECT{}; };
+    callbacks.on_export_ended = [this] { AfterSessionExport(); };
     return std::make_unique<editor::ScreenshotEditor>(std::move(callbacks));
 }
 
@@ -1415,6 +1606,15 @@ void CaptureCoordinator::PublishDocumentView(const editor::ImageView& view) {
 }
 
 void CaptureCoordinator::OnOverlayCancelled() {
+    if (SessionExportRunning()) {
+        // Refused like the editor's own ways out: the session ends with its
+        // export, or stays when that fails. The overlay also cancels on a
+        // display change, which is looked at again then.
+        ::MessageBeep(MB_ICONWARNING);
+        recheck_display_after_export_ = true;
+        platform::LogMessage(L"Cancel refused: the image is being copied or saved");
+        return;
+    }
     RequestTransition(SessionState::Idle);
     EndSession();
 }
@@ -1443,6 +1643,12 @@ bool SameDisplayLayout(const std::vector<platform::MonitorInfo>& before,
 
 void CaptureCoordinator::OnDisplayChanged() {
     if (state() == SessionState::Idle) {
+        return;
+    }
+    if (SessionExportRunning()) {
+        // The image is being copied or saved: the session must not change
+        // under it. Looked at again when the export has ended.
+        recheck_display_after_export_ = true;
         return;
     }
     if (state() == SessionState::ScrollshotCapturing || state() == SessionState::ScrollshotReview) {
@@ -1482,7 +1688,7 @@ void CaptureCoordinator::OnDisplayChanged() {
             OnOverlayCancelled();
             return;
         }
-        scrollshot_image_ = std::move(image);
+        scrollshot_image_ = std::make_shared<platform::BgraImage>(std::move(image));
         session_monitors_ = platform::EnumerateMonitors();
         scrollshot_notice_ = ScrollshotNotice::DisplayChanged;
         if (overlay_) { overlay_->Hide(); }
@@ -1510,9 +1716,13 @@ void CaptureCoordinator::OnDisplayChanged() {
     if (IsRecordingState(state())) {
         // The capture provider rejects a region that left the virtual screen
         // and the worker would repeat the last frame until Stop. End the
-        // recording instead so the user keeps what was really captured.
+        // recording instead so the user keeps what was really captured. Once
+        // trimming, nothing is captured any more; an opened video never had
+        // a region.
+        const bool capturing = state() == SessionState::RecordingConfiguring ||
+                               state() == SessionState::RecordingActive || state() == SessionState::RecordingPaused;
         const RECT visible = platform::IntersectRects(recording_region_, platform::VirtualScreenBounds());
-        if (::EqualRect(&visible, &recording_region_) == FALSE) {
+        if (capturing && ::EqualRect(&visible, &recording_region_) == FALSE) {
             platform::LogMessage(L"The recording region left the desktop - ending the recording");
             if (state() == SessionState::RecordingActive || state() == SessionState::RecordingPaused) {
                 OnRecordingStop();
@@ -1609,9 +1819,14 @@ void CaptureCoordinator::EndSession() {
         scrollshot_controls_->Hide();
         scrollshot_controls_retired_ = true;
     }
-    // Ending the session ends any capture still running and drops its image.
+    // Ending the session ends any capture still running and drops its image,
+    // and a copy or save of it (only Shutdown ends a session during one).
     scrollshot_session_.reset();
-    scrollshot_image_ = {};
+    scrollshot_export_.Discard();
+    scrollshot_image_.reset();
+    scrollshot_save_path_.clear();
+    scrollshot_save_quick_ = false;
+    recheck_display_after_export_ = false;
     scrollshot_notice_ = ScrollshotNotice::None;
     scrollshot_busy_ = false;
     if (trim_flow_) {
@@ -1631,12 +1846,32 @@ bool CaptureCoordinator::ProcessDialogMessage(MSG& message) const {
     return trim_flow_ && trim_flow_->ProcessDialogMessage(message);
 }
 
-bool CaptureCoordinator::PersistSettings() {
-    if (!settings_.Save()) {
-        platform::LogMessage(L"Settings could not be written");
+bool CaptureCoordinator::PersistSettings(IfNotSaved if_not_saved) {
+    if (!initialized_) {
+        // The values are defaults, not the ones read from the file.
+        platform::LogMessage(L"Settings were not written: the coordinator is not initialised");
         return false;
     }
-    return true;
+    SettingsSaveError error;
+    if (settings_.Save({}, &error)) {
+        return true;
+    }
+    if (error.kind == SettingsSaveError::Kind::InvalidValue) {
+        // A programming error, not something the user can remedy.
+        platform::LogMessage(L"Settings were not written: a value is out of range");
+        return false;
+    }
+    platform::LogMessage(L"Settings could not be written (error %lu)", error.code);
+    // Posted, not shown here: a caller may be in the middle of its own work.
+    if (if_not_saved == IfNotSaved::TellUser && host_window_ != nullptr && SettingsNoticeDue()) {
+        ::PostMessageW(host_window_, kMsgSettingsNotSaved, 0, 0);
+    }
+    return false;
+}
+
+bool CaptureCoordinator::SettingsNoticeDue() const {
+    return ShouldTellSettingsNotSaved(state(), platform::ModalLoopActive() || ui::PopupActive(),
+                                      settings_failure_told_);
 }
 
 void CaptureCoordinator::SetAppearanceTheme(AppearanceTheme preference) {

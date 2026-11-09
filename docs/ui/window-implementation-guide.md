@@ -105,7 +105,7 @@ as the content-window reference in `src/ui/trim_window.cpp` and
    calculate all control rectangles before moving any child. Do not shrink
    fonts or input targets to make a small window fit.
 3. Include native frame dimensions when converting a client minimum to outer
-   tracking dimensions. Trim's accepted minimum is 480 x 400 client DIPs,
+   tracking dimensions. Trim's accepted minimum is 512 x 400 client DIPs,
    capped to the monitor work area; derive a new window's minimum from its own
    content. Use the destination monitor for a suggested DPI-change rectangle.
 4. Publish child geometry with the existing deferred-position batch and its
@@ -199,7 +199,7 @@ before the workspace retires. Windows also destroys owned HWNDs when their owner
 is destroyed ([Microsoft ownership contract](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#owned-windows));
 the corresponding C++ view must clear panel/control handles in
 `WM_NCDESTROY` and recreate them before reuse.
-`test_ui_modernization --window-lifetime`, part of `ui_modernization_native`,
+`test_native_ui --window-lifetime`, part of `ui_modernization_native`,
 destroys a real owner and reopens the island twelve times; its measured object
 counts, and what they do not establish, are in
 [ADR-010](../decisions/ADR-010-trim-view-ownership-and-orchestration.md#measured).
@@ -241,7 +241,7 @@ capture for that claim. Record the environment and actual result, and distinguis
 manual acceptance from an automated assertion.
 
 Readiness predicates can consume evidence. `WaitFor` in
-`tests/test_ui_modernization.cpp` returns on the first true result; it must not
+`tests/test_native_ui.cpp` returns on the first true result; it must not
 call a successful frame-consuming predicate again for its return value. A second
 call can consume an empty asynchronous frame queue and falsely turn successful
 preparation into failure. Preserve the timeout and continue to fail when no
@@ -262,7 +262,7 @@ Useful existing checks in `apps/easnap-desktop/tests`:
 
 - `ui_modernization_native`: shared controls, production trim, DPI/layout and
   rapid native resizing while playing/exporting.
-- `test_ui_modernization --resize-edges <evidence-directory>`: the opt-in
+- `test_native_ui --resize-edges <evidence-directory>`: the opt-in
   strict resize gate, with real drags from eight directions, caption movement
   and maximize/restore observed in independent monitor frames;
   `--resize-controls` applies it to visible status, progress and Cancel. Their
@@ -270,7 +270,7 @@ Useful existing checks in `apps/easnap-desktop/tests`:
   in [testing](../testing.md#diagnostics-that-are-not-registered-tests). A
   subset or diagnostic never replaces the unchanged `--resize-edges` gate, and
   PNG review remains necessary.
-- `test_ui_modernization --window-lifetime`: real recording-owner destruction,
+- `test_native_ui --window-lifetime`: real recording-owner destruction,
   stale-handle checks, reopening and repeated explicit destruction. Also included
   in the default native UI test.
 - `ui_material_raster_parity`: 768 material cases; keep pixel parity when
@@ -279,7 +279,7 @@ Useful existing checks in `apps/easnap-desktop/tests`:
   frames and delayed owner polling. Keep startup separate from transport stress.
 - `trim_timeline_seek_stress`: registered serial desktop check with 24 clicks
   per case; `trim_timeline_seek_soak` repeats it with 72 in the Soak tier. Also
-  available as `test_ui_modernization --seek-stress <evidence-directory>
+  available as `test_native_ui --seek-stress <evidence-directory>
   [click-count]`; CTest runs it with the DXGI observer
   (`EASNAP_TEST_CAPTURE=duplication`), so set that variable when running the
   command directly ([testing](../testing.md#writing-tests) says why).

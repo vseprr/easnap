@@ -18,9 +18,14 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <functional>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -998,13 +1003,575 @@ void DocumentEditing() {
     wide_editor.Destroy();
 }
 
+// --- Editing a very tall image: what one pointer move repaints --------------------------
+//
+// The editor on a stitched image 1,920 pixels wide, painted the way the
+// workspace paints it: what the editor invalidates is collected, and after
+// every input event its bounding rectangle is repainted, again while a paint
+// left something invalid, as WM_PAINT would bring while no input waits. Five
+// gestures of 120 moves each, at the fitted width, at 67 % and at 10 %, and a
+// pixelating brush. Times are printed as MEASURE lines and never asserted,
+// since they depend on the machine. Asserted is what holds everywhere: in the
+// middle of each gesture and after it the partly repainted picture equals a
+// full repaint (COMPARE lines), a gesture that ends where it began leaves the
+// export as it was, moving a shape or a spotlight repaints a small part of
+// the viewport, and switching the spotlight darkening on or off repaints all
+// of it.
+
+using Clock = std::chrono::steady_clock;
+
+constexpr int kEditMoves = 120;
+constexpr uint32_t kPlaneBackground = 0xff123456u;
+
+double Milliseconds(Clock::time_point from, Clock::time_point to) {
+    return std::chrono::duration<double, std::milli>(to - from).count();
+}
+
+double Quantile(std::vector<double> values, double fraction) {
+    if (values.empty()) { return 0.0; }
+    std::sort(values.begin(), values.end());
+    const auto index = static_cast<size_t>(fraction * static_cast<double>(values.size() - 1) + 0.5);
+    return values[std::min(values.size() - 1, index)];
+}
+
+uint64_t Area(const RECT& rect) {
+    return platform::IsEmptyRect(rect) ? 0 : static_cast<uint64_t>(platform::RectWidth(rect)) * platform::RectHeight(rect);
+}
+
+/// FNV-1a over the pixel values: equal pictures have equal fingerprints.
+uint64_t Fingerprint(const platform::BgraImage& image) {
+    uint64_t hash = 14695981039346656037ull;
+    for (const uint32_t pixel : image.pixels) { hash = (hash ^ pixel) * 1099511628211ull; }
+    return hash;
+}
+
+/// Out and back: 60 steps away from the start, then 60 steps back onto it.
+int OutAndBack(int move) { return move < kEditMoves / 2 ? move + 1 : kEditMoves - 1 - move; }
+
+/// The editor and what it has painted into its image plane.
+class PaintedEditor {
+public:
+    PaintedEditor() : editor_(MakeCallbacks()) {}
+    ~PaintedEditor() {
+        plane_.reset();
+        editor_.Destroy();
+    }
+    PaintedEditor(const PaintedEditor&) = delete;
+    PaintedEditor& operator=(const PaintedEditor&) = delete;
+
+    editor::ScreenshotEditor& editor() { return editor_; }
+    [[nodiscard]] const RECT& viewport() const { return viewport_; }
+
+    /// The image plane appears for the current view and is painted whole.
+    void Show() {
+        plane_.reset();
+        viewport_ = editor_.view().viewport;
+        surface_.Reset(platform::RectWidth(viewport_), platform::RectHeight(viewport_));
+        std::fill(surface_.pixels.begin(), surface_.pixels.end(), kPlaneBackground);
+        plane_ = std::make_unique<platform::GdiImageSurface>(surface_);
+        CHECK(plane_->valid());
+        damage_ = RECT{};
+        editor_.RenderImage(plane_->dc(), viewport_);
+        ::GdiFlush();
+    }
+
+    /// One WM_PAINT: the bounding rectangle of everything invalidated since
+    /// the last one is repainted. Returns its area in desktop pixels.
+    uint64_t Paint() {
+        RECT local = damage_;
+        damage_ = RECT{};
+        ::OffsetRect(&local, -viewport_.left, -viewport_.top);
+        local = platform::IntersectRects(local, RECT{0, 0, platform::RectWidth(viewport_), platform::RectHeight(viewport_)});
+        if (platform::IsEmptyRect(local) || !plane_) { return 0; }
+        editor_.RenderImage(plane_->dc(), viewport_, &local);
+        ::GdiFlush();
+        return Area(local);
+    }
+
+    struct Settled {
+        uint64_t area{};  ///< Desktop pixels repainted, summed over the paints.
+        int paints{};     ///< Paints until nothing was left invalid.
+    };
+
+    /// The paints a message loop delivers while no input waits: one, and
+    /// another while the last one left something invalid. A paint that kept
+    /// invalidating would be a loop; four are allowed.
+    Settled Settle() {
+        Settled settled;
+        while (!platform::IsEmptyRect(damage_) && settled.paints < 4) {
+            settled.area += Paint();
+            ++settled.paints;
+        }
+        CHECK(platform::IsEmptyRect(damage_));
+        return settled;
+    }
+
+    /// A pointer event and the repaints it asks for.
+    void Pointer(UINT message, POINT point) {
+        editor_.ImagePointer(message, point);
+        Settle();
+    }
+
+    struct Comparison {
+        int64_t differing{};  ///< Pixels that differ from a full repaint,
+        int64_t slight{};     ///< no channel of which by more than 2 levels,
+        int64_t stale{};      ///< or one channel by more than kDrawingVariance.
+        int largest{};        ///< The largest difference in one channel.
+        RECT where{};         ///< Bounding box of the differing pixels.
+        int64_t undecided{};  ///< Pixels whose full repaint depends on what was under them.
+        uint64_t repaint{};   ///< Fingerprint of the full repaint.
+    };
+
+    /// Direct2D resamples the picture and antialiases edges relative to the
+    /// rectangle a paint binds, so at a zoom where image pixels fall between
+    /// screen pixels a partial repaint differs from a full one by a level or
+    /// two, and an antialiased edge by up to seven (measured by drawing an
+    /// unchanged view in strips). A pixel left over from an earlier frame (a
+    /// shape, a selection handle, the darkening) differs by far more.
+    static constexpr int kDrawingVariance = 16;
+
+    /// The image plane against a full repaint of the same view. A pixel whose
+    /// full repaint depends on what was under it, such as an antialiased edge
+    /// where two bands of the base bitmap meet in a reduced view, cannot be
+    /// compared and is counted as undecided.
+    Comparison CompareWithFullRepaint() {
+        plane_.reset();  // Hands the painted pixels back to `surface_`.
+        const platform::BgraImage first = FullRepaint(kPlaneBackground);
+        const platform::BgraImage second = FullRepaint(0xffedcba9u);
+        Comparison result;
+        result.repaint = Fingerprint(first);
+        const auto width = static_cast<size_t>(surface_.width);
+        for (size_t i = 0; i < surface_.pixels.size() && i < first.pixels.size(); ++i) {
+            if (first.pixels[i] != second.pixels[i]) {
+                ++result.undecided;
+            } else if (surface_.pixels[i] != first.pixels[i]) {
+                ++result.differing;
+                int largest = 0;
+                for (int shift : {0, 8, 16}) {
+                    largest = std::max(largest, std::abs(static_cast<int>((surface_.pixels[i] >> shift) & 255u) -
+                                                         static_cast<int>((first.pixels[i] >> shift) & 255u)));
+                }
+                result.largest = std::max(result.largest, largest);
+                if (largest <= 2) { ++result.slight; }
+                if (largest > kDrawingVariance) { ++result.stale; }
+                const LONG x = static_cast<LONG>(i % width), y = static_cast<LONG>(i / width);
+                const RECT pixel{x, y, x + 1, y + 1};
+                if (platform::IsEmptyRect(result.where)) {
+                    result.where = pixel;
+                } else {
+                    ::UnionRect(&result.where, &result.where, &pixel);
+                }
+            }
+        }
+        plane_ = std::make_unique<platform::GdiImageSurface>(surface_);
+        CHECK(plane_->valid());
+        return result;
+    }
+
+private:
+    platform::BgraImage FullRepaint(uint32_t background) {
+        platform::BgraImage pixels;
+        pixels.Reset(platform::RectWidth(viewport_), platform::RectHeight(viewport_));
+        std::fill(pixels.pixels.begin(), pixels.pixels.end(), background);
+        {
+            platform::GdiImageSurface surface(pixels);
+            CHECK(surface.valid());
+            editor_.RenderImage(surface.dc(), viewport_);
+            ::GdiFlush();
+        }
+        return pixels;
+    }
+
+    editor::ScreenshotEditor::Callbacks MakeCallbacks() {
+        editor::ScreenshotEditor::Callbacks callbacks;
+        callbacks.on_image_invalidated = [this](const RECT& damage) {
+            if (platform::IsEmptyRect(damage)) { return; }
+            if (platform::IsEmptyRect(damage_)) {
+                damage_ = damage;
+            } else {
+                ::UnionRect(&damage_, &damage_, &damage);
+            }
+        };
+        return callbacks;
+    }
+
+    RECT viewport_{};
+    RECT damage_{};
+    platform::BgraImage surface_;
+    std::unique_ptr<platform::GdiImageSurface> plane_;
+    editor::ScreenshotEditor editor_;
+};
+
+struct MoveSeries {
+    std::vector<double> input;    ///< ImagePointer(WM_MOUSEMOVE), milliseconds.
+    std::vector<double> paint;    ///< The repaints that follow it, milliseconds.
+    std::vector<double> damaged;  ///< Desktop pixels those repaints covered.
+    std::vector<double> later;    ///< Repaints after the first: what a paint invalidated.
+    PaintedEditor::Settled press;  ///< The repaints after the button went down,
+    double press_input{};          ///< with its input
+    double press_paint{};          ///< and repaint time in milliseconds.
+};
+
+/// Presses at `start`, moves the pointer 120 times along `point_at`, each
+/// move followed by the repaints it asks for, and releases at the last point.
+/// `after_move` runs after the press (move -1) and each move's repaints,
+/// before the release.
+MoveSeries Gesture(PaintedEditor& painted, POINT start, const std::function<POINT(int)>& point_at,
+                   const std::function<void(int)>& after_move = {}) {
+    MoveSeries series;
+    const auto pressed = Clock::now();
+    painted.editor().ImagePointer(WM_LBUTTONDOWN, start);
+    const auto press_handled = Clock::now();
+    series.press = painted.Settle();
+    series.press_input = Milliseconds(pressed, press_handled);
+    series.press_paint = Milliseconds(press_handled, Clock::now());
+    if (after_move) { after_move(-1); }
+    POINT point = start;
+    for (int move = 0; move < kEditMoves; ++move) {
+        point = point_at(move);
+        const auto began = Clock::now();
+        painted.editor().ImagePointer(WM_MOUSEMOVE, point);
+        const auto handled = Clock::now();
+        const PaintedEditor::Settled settled = painted.Settle();
+        const auto repainted = Clock::now();
+        series.input.push_back(Milliseconds(began, handled));
+        series.paint.push_back(Milliseconds(handled, repainted));
+        series.damaged.push_back(static_cast<double>(settled.area));
+        series.later.push_back(static_cast<double>(std::max(0, settled.paints - 1)));
+        if (after_move) { after_move(move); }
+    }
+    painted.Pointer(WM_LBUTTONUP, point);
+    return series;
+}
+
+/// The moves of `series` from `first` on.
+MoveSeries From(const MoveSeries& series, size_t first) {
+    MoveSeries rest;
+    const auto from = static_cast<std::ptrdiff_t>(first);
+    rest.input.assign(series.input.begin() + from, series.input.end());
+    rest.paint.assign(series.paint.begin() + from, series.paint.end());
+    rest.damaged.assign(series.damaged.begin() + from, series.damaged.end());
+    rest.later.assign(series.later.begin() + from, series.later.end());
+    return rest;
+}
+
+/// One MEASURE line. The fingerprints of the export and of a full repaint
+/// let two builds be compared on the same machine.
+void Measure(const std::string& pass, const char* gesture, const MoveSeries& series, uint64_t viewport_area,
+             uint64_t export_fingerprint, const PaintedEditor::Comparison& comparison) {
+    const double damaged = Quantile(series.damaged, 0.5);
+    double later = 0;
+    for (const double paints : series.later) { later += paints; }
+    std::printf("MEASURE edit %s, %s, %zu moves: input median %.3f ms p95 %.3f ms, paint median %.3f ms p95 %.3f ms, "
+                "repainted median %.0f px (%.1f%% of the viewport) max %.0f px, %.0f follow-up paints; export %016llx, "
+                "repaint %016llx, %lld pixels not comparable\n",
+                pass.c_str(), gesture, series.input.size(), Quantile(series.input, 0.5), Quantile(series.input, 0.95),
+                Quantile(series.paint, 0.5), Quantile(series.paint, 0.95), damaged,
+                100.0 * damaged / static_cast<double>(viewport_area), Quantile(series.damaged, 1.0), later,
+                static_cast<unsigned long long>(export_fingerprint),
+                static_cast<unsigned long long>(comparison.repaint), static_cast<long long>(comparison.undecided));
+}
+
+void ChooseOption(editor::ScreenshotEditor& editor, int identifier) {
+    HWND button = ::GetDlgItem(editor.context_hwnd(), identifier);
+    CHECK(button != nullptr);
+    ::SendMessageW(button, BM_CLICK, 0, 0);
+}
+
+/// The gestures on a fresh editor at `target_zoom`, or fitted to the width when it is 0.
+void EditPass(const platform::BgraImage& source, const RECT& area, float target_zoom) {
+    app::AppSettings settings;
+    PaintedEditor painted;
+    editor::ScreenshotEditor& editor = painted.editor();
+    platform::BgraImage image = source;
+    CHECK(editor.OpenDocument(image, area, area.left, &settings, nullptr));
+    if (!editor.has_image()) { return; }
+    if (target_zoom > 0.0f) {
+        // Ctrl+wheel around the top-left corner keeps the top of the image in
+        // view. The fitted zoom lies above the target on a 1920-pixel display
+        // and below it on a small one (1024 pixels on the hosted runner), so
+        // the ladder is climbed in whichever direction reaches it.
+        for (int step = 0; step < 16 && editor.view().zoom != target_zoom; ++step) {
+            const RECT shown = editor.view().viewport;
+            const int delta = editor.view().zoom > target_zoom ? -WHEEL_DELTA : WHEEL_DELTA;
+            editor.Wheel(delta, true, false, POINT{shown.left, shown.top});
+        }
+        CHECK(editor.view().zoom == target_zoom && editor.view().scroll_y == 0.0f);
+    }
+    painted.Show();
+    const RECT viewport = painted.viewport();
+    const uint64_t viewport_area = Area(viewport);
+    const LONG width = platform::RectWidth(viewport), height = platform::RectHeight(viewport);
+    const float zoom = editor.view().zoom;
+    char label[64]{};
+    std::snprintf(label, sizeof(label), "%dx%d at %.1f%%", source.width, source.height, 100.0 * zoom);
+    const std::string pass = label;
+    std::printf("Edit pass %s: viewport %ldx%ld\n", label, width, height);
+
+    // A point whose image position is not on the pixel grid, where one
+    // exists: an anchor there makes a spotlight of zero size cover a pixel.
+    // At 10 % every screen pixel is ten image pixels: none exists.
+    const auto off_grid = [&](float x, float y) {
+        const POINT first{viewport.left + static_cast<LONG>(x * static_cast<float>(width)),
+                          viewport.top + static_cast<LONG>(y * static_cast<float>(height))};
+        const auto fraction = [](float value) { return std::fabs(value - std::round(value)); };
+        for (LONG dy = 0; dy < 6; ++dy) {
+            for (LONG dx = 0; dx < 6; ++dx) {
+                const POINT point{first.x + dx, first.y + dy};
+                const D2D1_POINT_2F image_point = editor.view().ToImage(point);
+                if (fraction(image_point.x) > 0.05f && fraction(image_point.y) > 0.05f) { return point; }
+            }
+        }
+        return first;
+    };
+    const auto on_grid = [&](POINT point) {
+        const D2D1_POINT_2F image_point = editor.view().ToImage(point);
+        return std::fabs(image_point.x - std::round(image_point.x)) <= 0.05f ||
+               std::fabs(image_point.y - std::round(image_point.y)) <= 0.05f;
+    };
+    // About a 480th of the viewport per move, at least one pixel.
+    const POINT step{std::max<LONG>(1, width / 480), std::max<LONG>(1, height / 480)};
+    const auto along = [](POINT start, POINT direction, int extra) {
+        return [=](int move) {
+            const int t = OutAndBack(move) + extra;
+            return POINT{start.x + direction.x * t, start.y + direction.y * t};
+        };
+    };
+    const auto unchanged = [&](const platform::BgraImage& before, const char* what) {
+        const platform::BgraImage after = editor.Composite();
+        const bool same = after.pixels == before.pixels;
+        if (!same) { std::fprintf(stderr, "  %s: %s changed the export\n", label, what); }
+        CHECK(same);
+        return Fingerprint(after);
+    };
+    // At 10 % every screen pixel samples halfway between image pixels, and a
+    // partial repaint equals a full one exactly: there nothing may differ but
+    // watermark glyphs, whose rotated outlines vary with the drawing origin.
+    // Elsewhere nothing may differ by more than Direct2D's drawing variance.
+    const bool exact_zoom = zoom == editor::kMinimumZoom;
+    bool watermark = false;
+    const auto compare = [&](const char* what) {
+        const PaintedEditor::Comparison comparison = painted.CompareWithFullRepaint();
+        const bool exact = exact_zoom && !watermark;
+        const bool same = exact ? comparison.differing == 0 : comparison.stale == 0;
+        std::printf("COMPARE %s, %s: %lld pixels differ (%lld by at most 2 levels, largest %d, %lld by more than %d)%s\n",
+                    label, what, static_cast<long long>(comparison.differing), static_cast<long long>(comparison.slight),
+                    comparison.largest, static_cast<long long>(comparison.stale), PaintedEditor::kDrawingVariance,
+                    exact ? ", none may" : "");
+        if (!same) {
+            std::fprintf(stderr, "  %s: %s, %lld pixels differ from a full repaint in %ld,%ld-%ld,%ld\n", label, what,
+                         static_cast<long long>(comparison.differing), comparison.where.left, comparison.where.top,
+                         comparison.where.right, comparison.where.bottom);
+        }
+        CHECK(same);
+        return comparison;
+    };
+    // Before the release, whose full repaint would hide what partial repaints left.
+    const auto compare_at = [&](int checked_move, const char* what) {
+        return [=, &compare](int move) {
+            if (move == checked_move) { compare(what); }
+        };
+    };
+    // A move repaints the annotation where it was and where it is, not the
+    // viewport: with these sizes, well under a tenth of it.
+    const auto local = [&](const MoveSeries& series, const char* what) {
+        const double most = Quantile(series.damaged, 1.0);
+        const bool contained = most < 0.1 * static_cast<double>(viewport_area);
+        if (!contained) { std::fprintf(stderr, "  %s: %s repainted %.0f of %llu pixels in one move\n", label, what, most, static_cast<unsigned long long>(viewport_area)); }
+        CHECK(contained);
+    };
+
+    // 1. A rectangle dragged by its outline.
+    SelectTool(editor, editor::ToolId::Rectangle);
+    painted.Settle();
+    const POINT rectangle_from = off_grid(0.10f, 0.20f), rectangle_to = off_grid(0.25f, 0.30f);
+    painted.Pointer(WM_LBUTTONDOWN, rectangle_from);
+    painted.Pointer(WM_MOUSEMOVE, rectangle_to);
+    painted.Pointer(WM_LBUTTONUP, rectangle_to);
+    SelectTool(editor, editor::ToolId::Pointer);
+    painted.Settle();
+    const POINT rectangle_edge{(rectangle_from.x + rectangle_to.x) / 2, rectangle_from.y};
+    platform::BgraImage before = editor.Composite();
+    const MoveSeries rectangle = Gesture(painted, rectangle_edge, along(rectangle_edge, step, 0),
+                                         compare_at(59, "the 60th move of a rectangle"));
+    uint64_t exported = unchanged(before, "dragging a rectangle back to its place");
+    local(rectangle, "dragging a rectangle");
+    Measure(pass, "drag rectangle", rectangle, viewport_area, exported, compare("after dragging a rectangle"));
+
+    // 2. A spotlight drawn from an anchor, released small and undone. Off the
+    //    pixel grid the press already darkens the picture; on it, the first
+    //    move does.
+    before = editor.Composite();
+    SelectTool(editor, editor::ToolId::Spotlight);
+    painted.Settle();
+    const POINT anchor = off_grid(0.55f, 0.15f);
+    // Off the pixel grid the zero-sized spotlight of the press already covers
+    // a pixel and switches the darkening on; on it, the first move does.
+    const bool at_press = !on_grid(anchor);
+    const MoveSeries preview = Gesture(
+        painted, anchor, along(anchor, step, 1),
+        [&](int move) {
+            if (move == (at_press ? -1 : 0)) { compare("the first spotlight frame"); }
+            if (move == 59) { compare("the 60th move of a spotlight preview"); }
+        });
+    CHECK(editor.document().annotations().size() == 2 && editor.document().annotations().back().tool == editor::ToolId::Spotlight);
+    SetControlKey(true);
+    editor.Keyboard(WM_KEYDOWN, 'Z', 0);
+    SetControlKey(false);
+    painted.Settle();
+    exported = unchanged(before, "a spotlight drawn and undone");
+    // The press repaints the viewport anyway: it clears the selection. A
+    // move that switches the darkening on repaints what it invalidated, and
+    // the paint that recomputes the darkening invalidates the rest.
+    CHECK(preview.press.area >= viewport_area);
+    if (!at_press) { CHECK(preview.damaged.front() >= static_cast<double>(viewport_area) && preview.later.front() >= 1.0); }
+    std::printf("MEASURE edit %s, spotlight preview, first frame (%s): %.3f ms (input %.3f ms, paint %.3f ms), "
+                "repainted %.0f px in %d paints\n",
+                label, at_press ? "the press, anchor off the pixel grid" : "the first move, anchor on the pixel grid",
+                at_press ? preview.press_input + preview.press_paint : preview.input.front() + preview.paint.front(),
+                at_press ? preview.press_input : preview.input.front(), at_press ? preview.press_paint : preview.paint.front(),
+                at_press ? static_cast<double>(preview.press.area) : preview.damaged.front(),
+                at_press ? preview.press.paints : 1 + static_cast<int>(preview.later.front()));
+    // Later frames keep the darkening: only the spotlight's old and new extent.
+    const MoveSeries later_frames = at_press ? preview : From(preview, 1);
+    local(later_frames, "a spotlight preview");
+    Measure(pass, at_press ? "spotlight preview after the press" : "spotlight preview after the first frame", later_frames,
+            viewport_area, exported, compare("after a spotlight preview"));
+
+    // A preview cancelled by the loss of the mouse takes the darkening back
+    // from the whole picture.
+    painted.Pointer(WM_LBUTTONDOWN, anchor);
+    for (int move = 0; move < 10; ++move) { painted.Pointer(WM_MOUSEMOVE, along(anchor, step, 1)(move)); }
+    editor.ImagePointer(WM_CAPTURECHANGED, anchor);
+    CHECK(painted.Settle().area >= viewport_area);
+    CHECK(editor.document().annotations().size() == 1);
+    unchanged(before, "a cancelled spotlight preview");
+    compare("after a cancelled spotlight preview");
+
+    // 3. A committed spotlight dragged by its outline.
+    SelectTool(editor, editor::ToolId::Spotlight);
+    painted.Settle();
+    const POINT spot_from = off_grid(0.55f, 0.45f), spot_to = off_grid(0.75f, 0.55f);
+    painted.Pointer(WM_LBUTTONDOWN, spot_from);
+    painted.Pointer(WM_MOUSEMOVE, spot_to);
+    painted.Pointer(WM_LBUTTONUP, spot_to);
+    SelectTool(editor, editor::ToolId::Pointer);
+    painted.Settle();
+    const POINT spot_edge{(spot_from.x + spot_to.x) / 2, spot_from.y};
+    before = editor.Composite();
+    const MoveSeries spotlight = Gesture(painted, spot_edge, along(spot_edge, step, 0),
+                                         compare_at(59, "the 60th move of a spotlight"));
+    exported = unchanged(before, "dragging a spotlight back to its place");
+    local(spotlight, "dragging a spotlight");
+    Measure(pass, "drag spotlight", spotlight, viewport_area, exported, compare("after dragging a spotlight"));
+
+    // 4. A pixelated region dragged along a blur that covers three quarters
+    //    of the image's height, from its first row. The blur reads what the
+    //    pixelation writes, so every move recomputes the whole blur.
+    SelectTool(editor, editor::ToolId::Mosaic);
+    ChooseOption(editor, 2521);  // Region
+    ChooseOption(editor, 2510);  // Blur
+    painted.Settle();
+    const POINT blur_from{off_grid(0.62f, 0.0f).x, viewport.top};
+    const POINT blur_to{off_grid(0.78f, 0.0f).x,
+                        viewport.top + static_cast<LONG>(0.75f * static_cast<float>(source.height) * zoom)};
+    painted.Pointer(WM_LBUTTONDOWN, blur_from);
+    painted.Pointer(WM_MOUSEMOVE, blur_to);
+    painted.Pointer(WM_LBUTTONUP, blur_to);
+    ChooseOption(editor, 2511);  // Pixelate
+    painted.Settle();
+    // 20 image pixels left of the blur: inside what the blur reads.
+    const POINT mosaic_from = off_grid(0.40f, 0.30f);
+    const POINT mosaic_to{blur_from.x - static_cast<LONG>(std::ceil(20.0f * zoom)), off_grid(0.0f, 0.40f).y};
+    painted.Pointer(WM_LBUTTONDOWN, mosaic_from);
+    painted.Pointer(WM_MOUSEMOVE, mosaic_to);
+    painted.Pointer(WM_LBUTTONUP, mosaic_to);
+    SelectTool(editor, editor::ToolId::Pointer);
+    painted.Settle();
+    CHECK(editor.document().annotations().size() == 4);
+    const POINT mosaic_edge{(mosaic_from.x + mosaic_to.x) / 2, mosaic_from.y};
+    before = editor.Composite();
+    const MoveSeries mosaic = Gesture(painted, mosaic_edge, along(mosaic_edge, POINT{0, step.y}, 0),
+                                      compare_at(59, "the 60th move of a pixelated region"));
+    exported = unchanged(before, "dragging a pixelated region back to its place");
+    Measure(pass, "drag pixelation beside a tall blur", mosaic, viewport_area, exported,
+            compare("after dragging a pixelated region"));
+
+    // 5. The rectangle again, with a watermark over the whole picture.
+    SelectTool(editor, editor::ToolId::Watermark);
+    ::SetWindowTextW(::GetDlgItem(editor.context_hwnd(), 2604), L"Easnap review");
+    CHECK(editor.document().annotations().size() == 5 && editor.document().annotations().back().tool == editor::ToolId::Watermark);
+    watermark = true;
+    SelectTool(editor, editor::ToolId::Pointer);
+    painted.Settle();
+    before = editor.Composite();
+    const MoveSeries watermarked = Gesture(painted, rectangle_edge, along(rectangle_edge, step, 0),
+                                           compare_at(59, "the 60th move of a rectangle over a watermark"));
+    exported = unchanged(before, "dragging a rectangle over a watermark back to its place");
+    local(watermarked, "dragging a rectangle over a watermark");
+    Measure(pass, "drag rectangle over a watermark", watermarked, viewport_area, exported,
+            compare("after dragging a rectangle over a watermark"));
+    CHECK(editor.document().annotations().size() == 5);
+
+    // A pixelating brush drawn up and to the left: every dab moves the top-left
+    // corner its blocks are aligned to, so the whole stroke changes, not only
+    // the last segment. Checked before the stroke ends, then cancelled.
+    SelectTool(editor, editor::ToolId::Mosaic);
+    ChooseOption(editor, 2520);  // Brush; the effect is still Pixelate.
+    painted.Settle();
+    const POINT brush_from = off_grid(0.30f, 0.62f);
+    painted.Pointer(WM_LBUTTONDOWN, brush_from);
+    for (LONG move = 1; move <= 30; ++move) {
+        painted.Pointer(WM_MOUSEMOVE, POINT{brush_from.x - step.x * move, brush_from.y - step.y * move});
+    }
+    compare("the 30th move of a pixelating brush");
+    editor.ImagePointer(WM_CAPTURECHANGED, brush_from);
+    painted.Settle();
+    compare("after a cancelled pixelating brush");
+    CHECK(editor.document().annotations().size() == 5);
+}
+
+/// `--edit-performance [rows]`: the gestures on an image of `rows` rows.
+int EditPerformance(int rows) {
+    const auto monitors = platform::EnumerateMonitors();
+    if (monitors.empty()) {
+        std::printf("No display to place the editor on: not run.\n");
+        return 77;
+    }
+    const platform::MonitorInfo monitor = test::SelectedTestMonitor() ? *test::SelectedTestMonitor() : monitors.front();
+    // The area the coordinator gives a stitched image: the work area less a
+    // 12 DIP margin, and 176 DIP below for the tool islands.
+    const float scale = monitor.scale();
+    const LONG margin = ui::theme::Scaled(12, scale);
+    const RECT area{monitor.work_area.left + margin, monitor.work_area.top + margin, monitor.work_area.right - margin,
+                    monitor.work_area.bottom - ui::theme::Scaled(176, scale)};
+    std::printf("Monitor %ldx%ld at %.0f%%, area %ldx%ld\n", platform::RectWidth(monitor.bounds),
+                platform::RectHeight(monitor.bounds), 100.0 * scale, platform::RectWidth(area), platform::RectHeight(area));
+    const platform::BgraImage source = ToBgra(MakeArticle(1920, rows, 91));
+    // Fitted to the width, a step of the zoom ladder at which image pixels fall
+    // between screen pixels, and the smallest step.
+    for (const float zoom : {0.0f, 0.67f, editor::kMinimumZoom}) { EditPass(source, area, zoom); }
+    return 0;
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     // Assertions name controls by their English text, whatever Windows speaks.
     easnap::strings::SetPreference(easnap::strings::LanguagePreference::English);
     CHECK(::SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
     ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (argc > 1 && std::string_view(argv[1]) == "--edit-performance") {
+        // Up to the 48-million-pixel limit of a stitched image.
+        const int rows = argc > 2 ? std::atoi(argv[2]) : 8400;
+        CHECK(rows >= 1000 && rows <= 25000);
+        const int result = rows >= 1000 && rows <= 25000 ? EditPerformance(rows) : 1;
+        platform::GraphicsEnvironment::Get().Shutdown();
+        ::CoUninitialize();
+        if (result == 77) { return 77; }
+        std::printf("scrollshot edit performance: %d passed, %d failed\n", passed, failed);
+        return failed || result != 0 ? 1 : 0;
+    }
     Policy();
     FrameAroundContent();
     OverlayPhases();
