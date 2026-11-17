@@ -132,8 +132,6 @@ public:
     void Reset() override;
     [[nodiscard]] const std::vector<Annotation>& annotations() const override { return annotations_; }
     [[nodiscard]] uint64_t revision() const override { return revision_; }
-    /// True when a mosaic is in the document.
-    [[nodiscard]] bool HasRedactions() const;
     /// Replaces the annotation at `index`; nothing happens when it is the same.
     void Replace(size_t index, Annotation annotation);
     /// Removes the annotation at `index`.

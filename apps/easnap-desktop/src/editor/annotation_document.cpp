@@ -225,9 +225,6 @@ void AnnotationDocument::Reset() {
     transaction_.reset();
     revision_ = 0;
 }
-bool AnnotationDocument::HasRedactions() const {
-    return std::any_of(annotations_.begin(), annotations_.end(), [](const auto& a) { return a.tool == ToolId::Mosaic; });
-}
 std::optional<size_t> AnnotationDocument::HitTest(D2D1_POINT_2F point, float tolerance) const {
     for (size_t i = annotations_.size(); i > 0; --i)
         if (annotations_[i - 1].HitTest(point, tolerance)) { return i - 1; }
