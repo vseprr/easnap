@@ -1386,9 +1386,21 @@ void StandardTextFlows() {
         }
     }
     CHECK(editor.document().annotations().size() == 4);
+    // With "Hide pointer while typing" on, a typed letter hides the pointer
+    // over Easnap's windows until it moves, although the box grows with the
+    // letter; the next click moves it and shows it again.
+    const auto display_count = [] {
+        const int count = ::ShowCursor(TRUE) - 1;
+        ::ShowCursor(FALSE);
+        return count;
+    };
+    BOOL vanish = FALSE;
+    const bool hides = ::SystemParametersInfoW(SPI_GETMOUSEVANISH, 0, &vanish, 0) && vanish;
+    const int shown_count = display_count();
     for (POINT target : {POINT{320, 260}, POINT{520, 360}, POINT{720, 360}, POINT{170, 180}}) {
         physical_click(target);
         CHECK(edit_window() && ::GetFocus() == edit_window());
+        CHECK(display_count() == shown_count);
         HWND edit = edit_window();
         if (edit && ::GetFocus() == edit && ::GetWindowThreadProcessId(edit, nullptr) == ::GetCurrentThreadId()) {
             INPUT input[2]{};
@@ -1399,11 +1411,14 @@ void StandardTextFlows() {
             CHECK(::SendInput(2, input, sizeof(INPUT)) == 2);
             Pump(30);
             CHECK(edit_window() == edit && ::GetFocus() == edit);
+            CHECK(display_count() == shown_count - (hides ? 1 : 0));
         }
         CHECK(editor.document().annotations().size() == 4);
     }
     physical_click(blank);
     CHECK(!edit_window() && editor.document().annotations().size() == 4);
+    CHECK(display_count() == shown_count);
+    std::printf("Pointer hidden while typing: %s\n", hides ? "checked" : "not applicable (setting off)");
     Pump(::GetDoubleClickTime() + 10); // A later ordinary press, not DBLCLK continuation.
     physical_click(blank);
     CHECK(edit_window() && editor.document().annotations().size() == 5);

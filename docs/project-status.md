@@ -1,6 +1,6 @@
 # Project status
 
-**Updated:** 2026-11-09
+**Updated:** 2026-11-17
 
 The current state of the implementation: what is built, what was actually
 validated, what is open and the next slice. Read it with the
@@ -39,6 +39,51 @@ and the individual runs in the [validation records](releases/validation-history.
   caption over Settings and the message dialogs when they are moved; and
   `island_capture_exclusion` drags those dialogs and reads the themed menu as
   the user sees them.
+
+## After v1.3.0
+
+Corrections on `main` that no release contains yet.
+
+- **No flash around the frame when a screenshot is fixed.** Reported by the
+  owner on v1.3.0: touching the tool island, or any tool, made the screen
+  outside the frame brighten for a moment. Cause: v1.3.0 reads a screenshot
+  with the shading split into four windows
+  ([ADR-028](decisions/ADR-028-scrollshot-capture-workspace.md)), and a
+  shading window shown again is empty until painted; the single window came
+  back at full shade and was painted only by a later `WM_PAINT`. Now a window
+  that takes the shading over appears transparent, is filled at once, shades
+  after `DwmFlush` (without the wait the new opacity still came a frame
+  before the content) and only then does the other one leave; the same in
+  both directions and for Scrollshot. Located with diagnostic builds on the
+  owner's PC; the owner confirmed the correction by eye. The new checks in
+  `scrollshot_workspace_production` record each swap and fail against the
+  v1.3.0 code. The flash itself is not observable by automation: the shading
+  is excluded from capture and the isolated test desktop is not composed.
+- **The watermark field.** Typed wider than the field, the caret no longer
+  stays on one letter. The property island edits the image's one watermark
+  whenever the watermark tool is chosen: after Esc, the clear button and the
+  sliders no longer act on the tool's defaults or add a second, empty
+  watermark. Esc in the field reverts what was typed since it took the focus,
+  every time, also after the clear button. A click on the watermark's text
+  does not select it (the owner's decision). Details in
+  [ADR-022](decisions/ADR-022-text-input-and-content-sized-trim.md#amendment-2026-11-17-typing-and-the-pointer-the-watermark-field).
+  `capture_island_placement` covers it; the island checks fail against the
+  v1.3.0 code. The stuck caret is not reproduced on the isolated test
+  desktop; the owner confirmed its correction.
+- **No pointer flicker while typing.** With "Hide pointer while typing" on,
+  the pointer dimmed at every key in the Text, Tag and watermark inputs:
+  Windows showed the pointer it hid for typing again at the redraw
+  suspension and at each growth of the text box. Typing is no longer
+  suspended, the text box changes only what changed, and
+  `ui::TypingPointer` keeps the pointer hidden over Easnap's windows until it
+  really moves. `annotation_editing_native` checks it with real keyboard
+  input in the lab (setting on there); the owner confirmed it.
+- Validated together: lab Full green, 66 of 66 with no retry (run
+  `20261117-183046-full`); lab probe of `annotation_editing_native` and
+  `ui_modernization_native` in both capture variants (`20261117-182336`),
+  the pointer hiding exercised there with real keyboard input. Not run: a
+  host Full run, Windows 11, other "Hide pointer while typing" settings by
+  hand, IME input.
 
 ## v1.3.0
 

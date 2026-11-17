@@ -273,6 +273,28 @@ LRESULT CALLBACK MenuHook(int code, WPARAM wparam, LPARAM lparam) {
 namespace {
 constexpr wchar_t kRedrawGuard[] = L"Easnap.NativeRedrawGuard";
 }  // namespace
+void TypingPointer::Typed(HWND timer_owner) {
+    if (hidden_ || timer_owner == nullptr) { return; }
+    BOOL vanish = FALSE;
+    if (!::SystemParametersInfoW(SPI_GETMOUSEVANISH, 0, &vanish, 0) || !vanish) { return; }
+    if (!::GetCursorPos(&origin_) || ::SetTimer(timer_owner, kTimerId, 30, nullptr) == 0) { return; }
+    timer_owner_ = timer_owner;
+    hidden_ = true;
+    // The display count belongs to this thread: the pointer hides over its
+    // windows only, and every other application still shows it.
+    ::ShowCursor(FALSE);
+}
+void TypingPointer::Poll() {
+    POINT now{};
+    if (hidden_ && ::GetCursorPos(&now) && (now.x != origin_.x || now.y != origin_.y)) { Restore(); }
+}
+void TypingPointer::Restore() {
+    if (!hidden_) { return; }
+    hidden_ = false;
+    if (timer_owner_ != nullptr && ::IsWindow(timer_owner_)) { ::KillTimer(timer_owner_, kTimerId); }
+    timer_owner_ = nullptr;
+    ::ShowCursor(TRUE);
+}
 NativeRedrawGuard::NativeRedrawGuard(HWND window, bool enabled) {
     if (!enabled || !window || ::GetPropW(window, kRedrawGuard) || !(::GetWindowLongPtrW(window, GWL_STYLE) & WS_VISIBLE)) { return; }
     if (!::SetPropW(window, kRedrawGuard, this)) { return; }
@@ -609,7 +631,9 @@ int ButtonContentWidth(HWND button) {
     return 2 * theme::Scaled(6, scale) + lead + static_cast<int>(extent.cx) + theme::Scaled(6, scale);
 }
 namespace {
-LRESULT CALLBACK BufferedTextProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR) {
+/// BufferedTextProc's reference data for an EDIT; a label has 0.
+constexpr DWORD_PTR kBufferedEdit = 1;
+LRESULT CALLBACK BufferedTextProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR reference) {
     if (message == WM_PRINT) { return ::DefWindowProcW(hwnd, message, wparam, lparam); }
     if (message == WM_NCDESTROY) {
         ::RemoveWindowSubclass(hwnd, BufferedTextProc, id);
@@ -631,11 +655,25 @@ LRESULT CALLBACK BufferedTextProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
         if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
         return message == WM_ERASEBKGND ? 1 : 0;
     }
-    const bool update = (message >= WM_KEYFIRST && message <= WM_KEYLAST) || (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) ||
+    // An EDIT's typing is not suspended. Suspending redraw takes WS_VISIBLE
+    // away and gives it back, which Windows takes for pointer movement: the
+    // pointer it hides while the user types came back at every key. EDIT
+    // draws its text on the same background as the buffered pass.
+    const bool typing = message >= WM_KEYFIRST && message <= WM_KEYLAST;
+    const bool update = (typing && reference != kBufferedEdit) || (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) ||
                         message == WM_SETTEXT || message == WM_SETFONT || message == WM_ENABLE || message == WM_SETFOCUS || message == WM_KILLFOCUS ||
                         message == EM_REPLACESEL || message == EM_SETSEL || message == WM_CUT || message == WM_PASTE || message == WM_CLEAR ||
                         message == WM_UNDO || message == EM_UNDO || message == WM_IME_COMPOSITION || message == WM_SIZE;
+    const bool visible = (::GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VISIBLE) != 0;
     NativeRedrawGuard guard(hwnd, update);
+    // WM_SETREDRAW also took WS_VISIBLE away. An EDIT keeps its own no-redraw
+    // flag, but one that is not visible neither scrolls its text to the caret
+    // nor places the caret: once the text was wider than the field, the caret
+    // stayed on one letter while the rest went out of sight. The text editor
+    // does the same (ScreenshotEditor::TextEditProc).
+    if (update && visible && reference == kBufferedEdit) {
+        ::SetWindowLongPtrW(hwnd, GWL_STYLE, ::GetWindowLongPtrW(hwnd, GWL_STYLE) | WS_VISIBLE);
+    }
     if (message == theme::kChangedMessage) { ::InvalidateRect(hwnd, nullptr, FALSE); }
     return ::DefSubclassProc(hwnd, message, wparam, lparam);
 }
@@ -912,13 +950,13 @@ bool StyleInput(HWND input) {
     wchar_t cls[32]{};
     ::GetClassNameW(input, cls, 32);
     if (::lstrcmpiW(cls, L"EDIT") == 0) {
-        if (!StyleLabel(input)) { return false; }
+        if (!::SetWindowSubclass(input, BufferedTextProc, 0xEA5A, kBufferedEdit)) { return false; }
     } else {
         ::SetWindowLongPtrW(input, GWL_STYLE, ::GetWindowLongPtrW(input, GWL_STYLE) | WS_CLIPCHILDREN);
         COMBOBOXINFO info{sizeof(info)};
         if (::GetComboBoxInfo(input, &info) && info.hwndItem && info.hwndItem != input) {
             ::SetWindowTheme(info.hwndItem, L"", L"");
-            if (!StyleLabel(info.hwndItem)) { return false; }
+            if (!::SetWindowSubclass(info.hwndItem, BufferedTextProc, 0xEA5A, kBufferedEdit)) { return false; }
         }
     }
     ::SetWindowPos(input, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
