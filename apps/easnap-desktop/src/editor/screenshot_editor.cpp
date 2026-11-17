@@ -3,6 +3,7 @@
 
 #include "editor/annotation_renderer.h"
 #include "editor/annotation_tools.h"
+#include "editor/key_commands.h"
 #include "editor/toolbar_item.h"
 #include "platform/graphics_device.h"
 #include "platform/image_output.h"
@@ -1000,95 +1001,53 @@ void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
     }
     const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
-    if (document_mode_) {
-        // A document larger than its viewport is moved and scaled from
-        // the keyboard as well as with the wheel.
-        const float page = static_cast<float>(platform::RectHeight(region_)) / zoom_ * 0.9f;
-        const POINT centre{(region_.left + region_.right) / 2, (region_.top + region_.bottom) / 2};
-        switch (key) {
-            case VK_PRIOR: ScrollDocument(0.0f, -page); return;
-            case VK_NEXT: ScrollDocument(0.0f, page); return;
-            case VK_HOME: ScrollDocument(0.0f, -static_cast<float>(source_image_.height)); return;
-            case VK_END: ScrollDocument(0.0f, static_cast<float>(source_image_.height)); return;
-            case VK_UP: ScrollDocument(0.0f, -48.0f * scale_ / zoom_); return;
-            case VK_DOWN: ScrollDocument(0.0f, 48.0f * scale_ / zoom_); return;
-            case VK_LEFT: ScrollDocument(-48.0f * scale_ / zoom_, 0.0f); return;
-            case VK_RIGHT: ScrollDocument(48.0f * scale_ / zoom_, 0.0f); return;
-            case VK_OEM_PLUS:
-            case VK_ADD:
-                if (control) {
-                    ZoomDocument(StepZoom(zoom_, 1), centre);
-                    return;
-                }
-                break;
-            case VK_OEM_MINUS:
-            case VK_SUBTRACT:
-                if (control) {
-                    ZoomDocument(StepZoom(zoom_, -1), centre);
-                    return;
-                }
-                break;
-            case '0':
-            case VK_NUMPAD0:
-                if (control) {
-                    ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre);
-                    return;
-                }
-                break;
-            case '1':
-            case VK_NUMPAD1:
-                if (control) {
-                    ZoomDocument(1.0f, centre);
-                    return;
-                }
-                break;
-            default:
-                break;
-        }
-    }
-    if (control) {
-        switch (key) {
-            case 'Z': {
-                selected_.reset();
-                if (!FeatureUsed()) { return; }
-                const auto revision = document_.revision();
-                if (shift) {
-                    document_.Redo();
-                } else {
-                    document_.Undo();
-                }
-                Invalidate();
-                NotifyMutation(revision);
-                return;
-            }
-            case 'Y': {
-                selected_.reset();
-                if (!FeatureUsed()) { return; }
-                const auto revision = document_.revision();
+    if (const auto command = FindKeyCommand(key, control, shift, document_mode_)) { RunKeyCommand(*command); }
+}
+
+void ScreenshotEditor::RunKeyCommand(KeyCommand command) {
+    const float page = static_cast<float>(platform::RectHeight(region_)) / zoom_ * 0.9f;
+    const POINT centre{(region_.left + region_.right) / 2, (region_.top + region_.bottom) / 2};
+    switch (command) {
+        case KeyCommand::ScrollPageUp: ScrollDocument(0.0f, -page); return;
+        case KeyCommand::ScrollPageDown: ScrollDocument(0.0f, page); return;
+        case KeyCommand::ScrollToTop: ScrollDocument(0.0f, -static_cast<float>(source_image_.height)); return;
+        case KeyCommand::ScrollToBottom: ScrollDocument(0.0f, static_cast<float>(source_image_.height)); return;
+        case KeyCommand::ScrollUp: ScrollDocument(0.0f, -48.0f * scale_ / zoom_); return;
+        case KeyCommand::ScrollDown: ScrollDocument(0.0f, 48.0f * scale_ / zoom_); return;
+        case KeyCommand::ScrollLeft: ScrollDocument(-48.0f * scale_ / zoom_, 0.0f); return;
+        case KeyCommand::ScrollRight: ScrollDocument(48.0f * scale_ / zoom_, 0.0f); return;
+        case KeyCommand::ZoomIn: ZoomDocument(StepZoom(zoom_, 1), centre); return;
+        case KeyCommand::ZoomOut: ZoomDocument(StepZoom(zoom_, -1), centre); return;
+        case KeyCommand::ZoomToFitWidth: ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre); return;
+        case KeyCommand::ZoomToActualSize: ZoomDocument(1.0f, centre); return;
+        case KeyCommand::Undo:
+        case KeyCommand::Redo: {
+            // The selection is cleared even when the image cannot be fixed.
+            selected_.reset();
+            if (!FeatureUsed()) { return; }
+            const auto revision = document_.revision();
+            if (command == KeyCommand::Redo) {
                 document_.Redo();
-                Invalidate();
-                NotifyMutation(revision);
-                return;
+            } else {
+                document_.Undo();
             }
-            case 'C':
-                if (!FeatureUsed()) { return; }
-                CompleteCopy();
-                return;
-            case 'S':
-                if (!FeatureUsed()) { return; }
-                SaveToFile();
-                return;
-            case 'T':
-                if (!FeatureUsed()) { return; }
-                CompletePin();
-                return;
-            default:
-                break;
+            Invalidate();
+            NotifyMutation(revision);
+            return;
         }
-    }
-    if (key == VK_ESCAPE) {
-        RequestDiscard();
-        return;
+        case KeyCommand::Copy:
+            if (!FeatureUsed()) { return; }
+            CompleteCopy();
+            return;
+        case KeyCommand::Save:
+            if (!FeatureUsed()) { return; }
+            SaveToFile();
+            return;
+        case KeyCommand::Pin:
+            if (!FeatureUsed()) { return; }
+            CompletePin();
+            return;
+        case KeyCommand::Discard: RequestDiscard(); return;
     }
 }
 

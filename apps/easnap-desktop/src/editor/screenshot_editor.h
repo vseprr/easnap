@@ -30,6 +30,7 @@
 #include "editor/editor_context_panel.h"
 #include "editor/editor_toolbar.h"
 #include "editor/image_viewport.h"
+#include "editor/key_commands.h"
 #include "editor/redaction_renderer.h"
 #include "editor/text_annotation_editor.h"
 #include "platform/bgra_image.h"
@@ -200,6 +201,8 @@ private:
     /// through it, so `ui::ConsumePopupInput` sees every message first.
     void OnCommand(int id, int notification);
     void OnKeyDown(WPARAM key, LPARAM flags);
+    /// Runs a keyboard shortcut of kKeyBindings (editor/key_commands.h).
+    void RunKeyCommand(KeyCommand command);
     /// Runs a tool, option or command. Takes the item by value: it rebuilds
     /// the item lists it came from.
     void OnToolbarActivated(ToolbarItem item);
