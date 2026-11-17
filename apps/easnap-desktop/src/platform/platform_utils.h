@@ -1,11 +1,11 @@
-// Easnap - platform utilities.
+// Easnap - platform core: COM and handle lifetime, process setup, logging and
+// modal loops.
 //
-// This header isolates every Win32/COM/Direct2D detail the rest of the
-// application needs: DPI awareness, monitor enumeration, the shared graphics
-// environment, image containers, clipboard and file export helpers.
-//
-// Feature code must never call raw Win32 APIs that are wrapped here, so the
-// Windows 11 / future-platform work stays confined to this layer.
+// The other Win32/COM/Direct2D details the rest of the application needs live
+// beside this file, one concern each: screen_geometry, system_info,
+// bgra_image, graphics_device, image_output and files. Feature code must never
+// call raw Win32 APIs that are wrapped in this layer, so the Windows 11 /
+// future-platform work stays confined to it.
 #pragma once
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -17,25 +17,14 @@
 
 #include <windows.h>
 
-#include <d2d1_1.h>
-#include <d2d1helper.h>
-#include <d3d11.h>
-#include <dwrite.h>
-#include <dxgi1_2.h>
-#include <shlobj.h>
-#include <wincodec.h>
 #include <wrl/client.h>
 
-#include <atomic>
-#include <cstdint>
 #include <memory>
-#include <optional>
-#include <string>
 #include <type_traits>
-#include <vector>
 
 namespace easnap::platform {
 
+/// COM smart pointer used throughout Easnap.
 template <typename T>
 using ComPtr = Microsoft::WRL::ComPtr<T>;
 
@@ -78,275 +67,9 @@ struct HandleDeleter {
 };
 using UniqueHandle = std::unique_ptr<std::remove_pointer_t<HANDLE>, HandleDeleter>;
 
-// ---------------------------------------------------------------------------
-// Geometry helpers (all coordinates are virtual-desktop pixels unless noted)
-// ---------------------------------------------------------------------------
-
-struct MonitorInfo {
-    HMONITOR handle{nullptr};
-    RECT bounds{};     ///< Full monitor rectangle in virtual-screen pixels.
-    RECT work_area{};  ///< Monitor rectangle without taskbar/app bars.
-    UINT dpi{96};
-    bool primary{false};
-
-    [[nodiscard]] float scale() const noexcept { return static_cast<float>(dpi) / 96.0f; }
-};
-
-struct WindowsVersion {
-    DWORD major{0};
-    DWORD minor{0};
-    DWORD build{0};
-};
-/// The version of Windows that is running, not the one an application
-/// manifest makes the documented version functions report.
-[[nodiscard]] WindowsVersion CurrentWindowsVersion() noexcept;
-
-/// False where Windows has no Media Foundation: the N and KN editions until
-/// the Media Feature Pack is installed. Easnap loads these libraries on first
-/// use, so it starts there; recording, trimming and export are not available.
-[[nodiscard]] bool MediaFoundationAvailable() noexcept;
-
-/// True when Windows is set to dark mode for applications.
-[[nodiscard]] bool SystemUsesDarkApps() noexcept;
-
 /// Call first in every process entry point, before any library is loaded.
 /// False when Windows refused; GetLastError tells why.
 [[nodiscard]] bool RestrictDllSearchPath();
-void EnableDpiAwareness();
-[[nodiscard]] std::vector<MonitorInfo> EnumerateMonitors();
-[[nodiscard]] MonitorInfo MonitorForPoint(POINT pt);
-[[nodiscard]] MonitorInfo MonitorForRect(const RECT& rect);
-[[nodiscard]] RECT VirtualScreenBounds();
-/// True when Windows sends the mouse wheel to the focused window instead of
-/// the one under the pointer ("Scroll inactive windows when I hover over
-/// them" is off). A window that keeps the focus then takes every wheel turn.
-[[nodiscard]] bool WheelFollowsFocus() noexcept;
-
-[[nodiscard]] RECT NormalizedRect(POINT a, POINT b);
-[[nodiscard]] RECT IntersectRects(const RECT& a, const RECT& b);
-[[nodiscard]] bool IsEmptyRect(const RECT& r) noexcept;
-[[nodiscard]] inline LONG RectWidth(const RECT& r) noexcept { return r.right - r.left; }
-[[nodiscard]] inline LONG RectHeight(const RECT& r) noexcept { return r.bottom - r.top; }
-[[nodiscard]] RECT ClampRectToBounds(RECT rect, const RECT& bounds);
-
-// ---------------------------------------------------------------------------
-// CPU-side image container (32bpp BGRA, top-down, no padding)
-// ---------------------------------------------------------------------------
-
-struct BgraImage {
-    int width{0};
-    int height{0};
-    std::vector<uint32_t> pixels;
-
-    /// Gives the picture the size `w` x `h`, every pixel opaque black.
-    void Reset(int w, int h);
-    /// Gives the picture the size `w` x `h` without filling it, for a caller
-    /// that writes every pixel next. Pixels already there keep their old
-    /// values and added ones are zero, so the picture means nothing until the
-    /// caller has written all of it. A picture reused at its size is neither
-    /// filled nor reallocated (ADR-042).
-    void ResizeForOverwrite(int w, int h);
-    /// Gives the picture the size `w` x `h` and copies every pixel from
-    /// `source`, 32bpp rows `source_pitch` bytes apart, made fully opaque in
-    /// the same pass: the picture `Reset`, a row copy and `MakeOpaque` give,
-    /// with one write per pixel instead of three.
-    void CopyOpaqueFrom(int w, int h, const void* source, size_t source_pitch);
-    [[nodiscard]] bool empty() const noexcept { return width <= 0 || height <= 0 || pixels.empty(); }
-    [[nodiscard]] size_t stride_bytes() const noexcept { return static_cast<size_t>(width) * 4u; }
-    [[nodiscard]] uint32_t* row(int y) noexcept { return pixels.data() + static_cast<size_t>(y) * width; }
-    [[nodiscard]] const uint32_t* row(int y) const noexcept {
-        return pixels.data() + static_cast<size_t>(y) * width;
-    }
-    /// Forces every pixel to be fully opaque (screenshots are never transparent).
-    void MakeOpaque() noexcept;
-};
-
-/// Temporarily wraps a BgraImage in a top-down 32bpp DIB section so GDI can draw
-/// into it (used for cursor compositing). Pixels are copied back on destruction.
-class GdiImageSurface {
-public:
-    explicit GdiImageSurface(BgraImage& image);
-    ~GdiImageSurface();
-
-    GdiImageSurface(const GdiImageSurface&) = delete;
-    GdiImageSurface& operator=(const GdiImageSurface&) = delete;
-
-    [[nodiscard]] HDC dc() const noexcept { return dc_; }
-    [[nodiscard]] bool valid() const noexcept { return dc_ != nullptr && bits_ != nullptr; }
-
-private:
-    BgraImage& image_;
-    HDC dc_{nullptr};
-    HBITMAP bitmap_{nullptr};
-    HBITMAP previous_{nullptr};
-    void* bits_{nullptr};
-};
-
-/// Copies `source_region` (image coordinates) out of `source` into `out`.
-bool CropImage(const BgraImage& source, const RECT& source_region, BgraImage& out);
-
-// ---------------------------------------------------------------------------
-// Shared Direct3D/Direct2D/DirectWrite/WIC environment
-// ---------------------------------------------------------------------------
-
-/// Process-wide graphics singleton. Created lazily on first capture so the idle
-/// notification-area process keeps its promise of not initialising any capture,
-/// encoder or renderer resources while in the Idle state.
-class GraphicsEnvironment {
-public:
-    static GraphicsEnvironment& Get();
-
-    bool EnsureInitialized();
-    void Shutdown();
-
-    [[nodiscard]] bool initialized() const noexcept { return initialized_; }
-    [[nodiscard]] ID2D1Factory1* d2d_factory() const noexcept { return d2d_factory_.Get(); }
-    [[nodiscard]] ID2D1Device* d2d_device() const noexcept { return d2d_device_.Get(); }
-    [[nodiscard]] IDWriteFactory* dwrite_factory() const noexcept { return dwrite_factory_.Get(); }
-    [[nodiscard]] IWICImagingFactory* wic_factory() const noexcept { return wic_factory_.Get(); }
-    [[nodiscard]] ID3D11Device* d3d_device() const noexcept { return d3d_device_.Get(); }
-    [[nodiscard]] IDXGIFactory2* dxgi_factory() const noexcept { return dxgi_factory_.Get(); }
-
-    /// Drops every device-dependent object; the next EnsureInitialized() recreates
-    /// them (used after DXGI_ERROR_DEVICE_REMOVED).
-    void HandleDeviceLost();
-
-    ComPtr<IDWriteTextFormat> CreateTextFormat(float size_dip,
-                                               DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_SEMI_BOLD,
-                                               const wchar_t* family = L"Segoe UI");
-
-private:
-    GraphicsEnvironment() = default;
-
-    bool initialized_{false};
-    ComPtr<ID3D11Device> d3d_device_;
-    ComPtr<ID3D11DeviceContext> d3d_context_;
-    ComPtr<IDXGIDevice1> dxgi_device_;
-    ComPtr<IDXGIFactory2> dxgi_factory_;
-    ComPtr<ID2D1Factory1> d2d_factory_;
-    ComPtr<ID2D1Device> d2d_device_;
-    ComPtr<IDWriteFactory> dwrite_factory_;
-    ComPtr<IWICImagingFactory> wic_factory_;
-};
-
-/// Direct2D device context bound to an HWND flip-model swap chain.
-/// Rendering happens in physical pixels (the target DPI stays at 96) and UI
-/// metrics are scaled explicitly per monitor, which keeps selection maths exact.
-class SwapChainTarget {
-public:
-    SwapChainTarget() = default;
-    ~SwapChainTarget();
-
-    SwapChainTarget(const SwapChainTarget&) = delete;
-    SwapChainTarget& operator=(const SwapChainTarget&) = delete;
-
-    bool Create(HWND hwnd, UINT width, UINT height);
-    bool Resize(UINT width, UINT height);
-    void Reset();
-    /// Presents the back buffer; returns false when the device was lost.
-    bool Present();
-
-    [[nodiscard]] ID2D1DeviceContext* context() const noexcept { return context_.Get(); }
-    [[nodiscard]] bool valid() const noexcept { return context_ != nullptr; }
-
-private:
-    bool BindBackBuffer();
-
-    ComPtr<IDXGISwapChain1> swap_chain_;
-    ComPtr<ID2D1DeviceContext> context_;
-    UINT width_{0};
-    UINT height_{0};
-};
-
-/// Uploads a CPU image into an immutable Direct2D bitmap.
-ComPtr<ID2D1Bitmap1> CreateD2DBitmap(ID2D1DeviceContext* context, const BgraImage& image);
-/// Same, for the plain render-target interface (WIC/offscreen targets).
-ComPtr<ID2D1Bitmap> CreateD2DBitmapForTarget(ID2D1RenderTarget* target, const BgraImage& image);
-
-// ---------------------------------------------------------------------------
-// Export: encoding, clipboard, file destinations
-// ---------------------------------------------------------------------------
-
-enum class ImageFormat { Png,
-                         Jpeg };
-
-[[nodiscard]] ImageFormat FormatFromPath(const std::wstring& path);
-/// UI-thread forms: they use the shared GraphicsEnvironment.
-bool EncodeImage(const BgraImage& image, ImageFormat format, std::vector<uint8_t>& out_bytes);
-bool SaveImage(const BgraImage& image, const std::wstring& path);
-/// Worker-thread form of SaveImage. `factory` belongs to the calling thread:
-/// the shared GraphicsEnvironment is the UI thread's and may be released
-/// under a worker. The image is written in bands of rows; once `cancel` is
-/// set, the export stops at the next band and leaves no file behind.
-bool SaveImage(IWICImagingFactory* factory, const BgraImage& image, const std::wstring& path,
-               const std::atomic<bool>* cancel);
-
-/// An image ready for the clipboard: CF_DIB, which virtually every Windows
-/// application understands, and, when it could be encoded, the registered
-/// "PNG" format for applications that prefer lossless data. Prepared away
-/// from the UI thread; the memory is freed unless the clipboard takes it.
-class ClipboardImage final {
-public:
-    ClipboardImage() noexcept = default;
-    ~ClipboardImage();
-    ClipboardImage(ClipboardImage&& other) noexcept;
-    ClipboardImage& operator=(ClipboardImage&& other) noexcept;
-    ClipboardImage(const ClipboardImage&) = delete;
-    ClipboardImage& operator=(const ClipboardImage&) = delete;
-
-    [[nodiscard]] bool empty() const noexcept { return dib_ == nullptr; }
-    [[nodiscard]] bool has_png() const noexcept { return png_ != nullptr; }
-
-private:
-    friend ClipboardImage PrepareClipboardImage(IWICImagingFactory* factory, const BgraImage& image,
-                                                const std::atomic<bool>* cancel);
-    friend bool PublishClipboardImage(HWND owner, ClipboardImage& image);
-    void Reset() noexcept;
-
-    HGLOBAL dib_{nullptr};
-    HGLOBAL png_{nullptr};
-};
-
-/// Builds the clipboard memory on the calling thread, with that thread's
-/// `factory`. Empty when the CF_DIB could not be made or `cancel` was set;
-/// the PNG is optional, as a very tall image can fail to encode.
-[[nodiscard]] ClipboardImage PrepareClipboardImage(IWICImagingFactory* factory, const BgraImage& image,
-                                                   const std::atomic<bool>* cancel);
-/// Puts a prepared image on the clipboard, on the UI thread, in one attempt:
-/// the clipboard is open only for the hand-over. The memory goes to the
-/// clipboard or is freed with `image`. True when the CF_DIB was taken.
-bool PublishClipboardImage(HWND owner, ClipboardImage& image);
-
-/// System save dialog (IFileSaveDialog). Returns std::nullopt when cancelled.
-/// Only the picker may decide the destination: no user-provided path fragment
-/// ever reaches the file system directly (see SECURITY.md).
-/// The dialog's text comes from the caller: this layer is also built into the
-/// preview helper and into tests that carry no string tables.
-struct SaveImageDialogText {
-    const wchar_t* title{L"Save screenshot"};
-    const wchar_t* png_type{L"PNG image"};
-    const wchar_t* jpeg_type{L"JPEG image"};
-};
-std::optional<std::wstring> ShowSaveImageDialog(HWND owner,
-                                                const std::wstring& suggested_file_name,
-                                                const std::wstring& initial_directory,
-                                                const SaveImageDialogText& text = {});
-
-std::optional<std::wstring> KnownFolder(REFKNOWNFOLDERID folder_id);
-/// A path in `directory` that no file uses yet: `file_name`, or the same name
-/// with " (2)", " (3)" ... before its extension. Empty when the directory does
-/// not exist.
-[[nodiscard]] std::wstring UniqueFilePath(const std::wstring& directory, const std::wstring& file_name);
-/// %LOCALAPPDATA%\Easnap, created on demand.
-std::wstring AppDataDirectory();
-std::wstring DirectoryOf(const std::wstring& path);
-std::wstring TimestampedFileName(const wchar_t* prefix, const wchar_t* extension);
-/// Creates the directory unless it exists. False when it cannot be created or
-/// a file has its name (GetLastError is then ERROR_DIRECTORY).
-bool EnsureDirectory(const std::wstring& path);
-/// Deletes a directory strictly below AppDataDirectory(); refuses reparse points.
-/// Returns false on incomplete cleanup, leaving unremoved entries intact.
-bool RemoveDirectoryTree(const std::wstring& path);
 
 // ---------------------------------------------------------------------------
 // Diagnostics (privacy preserving: never log pixels, paths or typed text)
@@ -356,10 +79,12 @@ bool RemoveDirectoryTree(const std::wstring& path);
 /// must never contain user content: no path, file name, window title or text
 /// the user typed.
 void LogMessage(const wchar_t* format, ...);
+/// Logs that `what` failed with `hr`.
 void LogHresult(const wchar_t* what, HRESULT hr);
 /// Receives every `LogMessage` line, without a line break, on the calling
 /// thread. `platform/diagnostics` sets it to the log file; null stops it.
 using LogSink = void (*)(const wchar_t* line) noexcept;
+/// Sets the receiver of every log line; null stops it.
 void SetLogSink(LogSink sink) noexcept;
 
 /// Marks a system dialog that runs its own message loop on the UI thread.
@@ -373,8 +98,19 @@ public:
     ModalLoopScope(const ModalLoopScope&) = delete;
     ModalLoopScope& operator=(const ModalLoopScope&) = delete;
 };
+/// True while a ModalLoopScope is open.
 [[nodiscard]] bool ModalLoopActive() noexcept;
 
+/// The application icon at `desired_size` pixels.
 HICON LoadAppIcon(int desired_size);
 
 }  // namespace easnap::platform
+
+// Transitional, removed by the next commit: the callers of this header still
+// expect everything it used to declare.
+#include "platform/bgra_image.h"
+#include "platform/files.h"
+#include "platform/graphics_device.h"
+#include "platform/image_output.h"
+#include "platform/screen_geometry.h"
+#include "platform/system_info.h"

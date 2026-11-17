@@ -41,6 +41,12 @@ add_executable(test_session_state
     ../src/app/session_transitions.cpp
     ../src/app/recording_workflow.cpp
     ../src/app/app_settings.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 
 target_include_directories(test_session_state PRIVATE
@@ -64,6 +70,12 @@ add_executable(test_trim_workflow
     ../src/media/video_support.cpp
     ../src/media/preview_transport.cpp
     ../src/ui/trim_layout.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 
 target_include_directories(test_trim_workflow PRIVATE
@@ -84,6 +96,12 @@ add_executable(test_recording_completion
     test_recording_completion.cpp
     ../src/app/recording_completion.cpp
     ../src/app/session_transitions.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 
 target_include_directories(test_recording_completion PRIVATE
@@ -172,6 +190,12 @@ add_executable(test_media_foundation_writer
     test_media_foundation_writer.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/capture/recording_capture_worker.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 
 target_include_directories(test_media_foundation_writer PRIVATE
@@ -195,6 +219,12 @@ add_executable(test_mp4_trim_exporter
     ../src/media/video_support.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/media/mf_d3d_device.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 
 target_include_directories(test_mp4_trim_exporter PRIVATE
@@ -226,6 +256,12 @@ add_executable(test_video_support
     test_video_support.cpp
     ../src/media/video_support.cpp
     ../src/media/video_probe.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_video_support PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -243,6 +279,12 @@ add_executable(test_video_probe
     ../src/media/video_support.cpp
     ../src/media/video_probe.cpp
     ../src/media/media_foundation_writer.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_video_probe PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -269,6 +311,12 @@ add_executable(test_external_video
     ../src/media/video_support.cpp
     ../src/media/video_probe.cpp
     ../src/media/media_foundation_writer.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_external_video PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -298,6 +346,12 @@ add_executable(test_open_requests
     ../src/media/video_support.cpp
     ../src/media/video_probe.cpp
     ../src/platform/startup_entry.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_open_requests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -330,6 +384,12 @@ add_executable(test_media_preview
     ../src/media/preview_video_endpoint.cpp
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 add_dependencies(test_media_preview EasnapPreviewHost)
 target_include_directories(test_media_preview PRIVATE
@@ -373,6 +433,12 @@ add_executable(test_preview_backpressure
     ../src/media/preview_video_endpoint.cpp
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 add_dependencies(test_preview_backpressure EasnapPreviewHost)
 target_include_directories(test_preview_backpressure PRIVATE
@@ -405,6 +471,12 @@ add_executable(test_recording_session_integration
     ../src/media/dual_audio_mixer.cpp
     ../src/media/dual_audio_provider.cpp
     ../src/media/wasapi_audio_provider.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 add_dependencies(test_recording_session_integration EasnapPreviewHost)
 
@@ -447,6 +519,12 @@ set_tests_properties(recording_frame_cost PROPERTIES
 # that the calls succeed; alone, so other tests do not skew its figures.
 add_executable(test_frame_buffer_cost
     test_frame_buffer_cost.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_frame_buffer_cost PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -480,6 +558,12 @@ add_executable(test_region_selector
     ../src/ui/region_selector.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 
 target_include_directories(test_region_selector PRIVATE
@@ -503,6 +587,12 @@ add_executable(test_redaction_renderer
     test_redaction_renderer.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/editor/mosaic.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_redaction_renderer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -547,6 +637,12 @@ add_executable(test_scrollshot_session
     test_scrollshot_session.cpp
     ../src/scrollshot/scrollshot_session.cpp
     ../src/scrollshot/stitch_engine.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_scrollshot_session PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -563,6 +659,12 @@ add_executable(test_scrollshot_layout
     test_scrollshot_layout.cpp
     ../src/ui/scrollshot_layout.cpp
     ../src/editor/image_viewport.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_scrollshot_layout PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -578,6 +680,12 @@ set_tests_properties(scrollshot_layout_logic PROPERTIES LABELS "unit;scrollshot;
 add_executable(test_island_layout
     test_island_layout.cpp
     ../src/ui/island_layout.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_island_layout PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -609,6 +717,12 @@ add_executable(test_pinned_images
     ../src/ui/capture_workspace.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_pinned_images PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -627,6 +741,12 @@ set_tests_properties(pinned_images_native PROPERTIES
 add_executable(test_image_export
     test_image_export.cpp
     ../src/platform/image_export.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_image_export PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -641,6 +761,12 @@ set_tests_properties(image_export_job PROPERTIES LABELS "unit;export" TIMEOUT 60
 add_executable(test_diagnostics
     test_diagnostics.cpp
     ../src/platform/diagnostics.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_diagnostics PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -655,6 +781,12 @@ set_tests_properties(diagnostics_log_and_crash_reports PROPERTIES LABELS "unit;d
 add_executable(test_startup_entry
     test_startup_entry.cpp
     ../src/platform/startup_entry.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_startup_entry PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -689,6 +821,12 @@ add_executable(test_capture_overlay
     ../src/ui/region_selector.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_capture_overlay PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -723,6 +861,12 @@ add_executable(test_capture_workspace
     ../src/editor/redaction_renderer.cpp
     ../src/editor/mosaic.cpp
     ../src/app/recording_workflow.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_capture_workspace PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -773,6 +917,12 @@ add_executable(test_scrollshot_workspace
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
     ../src/editor/mosaic.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_scrollshot_workspace PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -828,6 +978,12 @@ add_executable(test_text_fit
     ../src/media/preview_process.cpp
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_text_fit PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -858,6 +1014,12 @@ add_executable(test_data_safety
     ../src/ui/settings_dialog.cpp
     ../src/app/app_settings.cpp
     ../src/app/recording_workflow.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_data_safety PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -886,6 +1048,12 @@ add_executable(test_scrollshot_desktop
     ../src/ui/scrollshot_layout.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_scrollshot_desktop PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -917,6 +1085,12 @@ add_executable(test_scrollshot_realistic_desktop
     ../src/ui/scrollshot_layout.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_scrollshot_realistic_desktop PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -949,6 +1123,12 @@ add_executable(test_island_capture
     ../src/ui/settings_dialog.cpp
     ../src/app/app_settings.cpp
     ../src/app/recording_workflow.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_island_capture PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -986,6 +1166,12 @@ add_executable(test_native_ui
     ../src/media/preview_process.cpp
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 add_dependencies(test_native_ui EasnapPreviewHost)
 target_link_libraries(test_native_ui PRIVATE windowsapp easnap_strings)
@@ -1042,6 +1228,12 @@ add_executable(test_trim_flow
     ../src/media/gif_encoder.cpp
     ../src/media/media_foundation_writer.cpp
     ../src/media/mf_d3d_device.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 add_dependencies(test_trim_flow EasnapPreviewHost)
 target_include_directories(test_trim_flow PRIVATE
@@ -1070,6 +1262,12 @@ add_executable(test_gif_encoder
     ../src/media/gif_exporter.cpp
     ../src/media/video_support.cpp
     ../src/media/media_foundation_writer.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 
 target_include_directories(test_gif_encoder PRIVATE
@@ -1104,6 +1302,12 @@ add_executable(test_wasapi_audio
     ../src/media/dual_audio_provider.cpp
     ../src/media/wasapi_audio_provider.cpp
     ../src/capture/recording_capture_worker.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 
 target_include_directories(test_wasapi_audio PRIVATE
@@ -1145,6 +1349,12 @@ set_tests_properties(mfplay_preview_audio_transport wasapi_audio_capture PROPERT
 
 add_executable(test_storage_cleanup
     test_storage_cleanup.cpp
+    ../src/platform/bgra_image.cpp
+    ../src/platform/files.cpp
+    ../src/platform/graphics_device.cpp
+    ../src/platform/image_output.cpp
+    ../src/platform/screen_geometry.cpp
+    ../src/platform/system_info.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_storage_cleanup PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"

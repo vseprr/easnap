@@ -139,6 +139,18 @@ set(EASNAP_SOURCES
     src/ui/settings_dialog.h
     src/ui/settings_dialog.cpp
     src/platform/saturating_counter.h
+    src/platform/bgra_image.h
+    src/platform/bgra_image.cpp
+    src/platform/files.h
+    src/platform/files.cpp
+    src/platform/graphics_device.h
+    src/platform/graphics_device.cpp
+    src/platform/image_output.h
+    src/platform/image_output.cpp
+    src/platform/screen_geometry.h
+    src/platform/screen_geometry.cpp
+    src/platform/system_info.h
+    src/platform/system_info.cpp
     src/platform/platform_utils.h
     src/platform/platform_utils.cpp)
 
@@ -161,6 +173,12 @@ add_executable(EasnapPreviewHost WIN32
     src/media/preview_video_endpoint.cpp
     src/media/preview_transport.cpp
     src/platform/diagnostics.cpp
+    src/platform/bgra_image.cpp
+    src/platform/files.cpp
+    src/platform/graphics_device.cpp
+    src/platform/image_output.cpp
+    src/platform/screen_geometry.cpp
+    src/platform/system_info.cpp
     src/platform/platform_utils.cpp)
 target_include_directories(EasnapPreviewHost PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
