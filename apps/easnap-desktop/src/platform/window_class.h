@@ -11,6 +11,8 @@
 
 #include <windows.h>
 
+#include <type_traits>
+
 namespace easnap::platform {
 
 /// Registers `window_class` (cbSize is filled in); true also when this process already has a class of that name.
@@ -32,10 +34,11 @@ template <typename Owner>
 /// Clears the owner binding, so later messages of `window` find no owner.
 inline void UnbindWindowOwner(HWND window) noexcept { ::SetWindowLongPtrW(window, GWLP_USERDATA, 0); }
 
-/// Window procedure that hands every message of a bound window to `Handler` of its owner, and the
-/// messages without an owner to DefWindowProcW.
-template <typename Owner, LRESULT (Owner::*Handler)(HWND, UINT, WPARAM, LPARAM)>
+/// Window procedure that hands every message of a bound window to the member `Handler` of its owner,
+/// and the messages without an owner to DefWindowProcW.
+template <typename Owner, auto Handler>
 LRESULT CALLBACK BoundWindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    static_assert(std::is_invocable_r_v<LRESULT, decltype(Handler), Owner*, HWND, UINT, WPARAM, LPARAM>);
     if (Owner* owner = BindWindowOwner<Owner>(window, message, lparam); owner != nullptr) {
         return (owner->*Handler)(window, message, wparam, lparam);
     }

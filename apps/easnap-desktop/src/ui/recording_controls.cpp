@@ -7,6 +7,7 @@
 
 #include "platform/platform_utils.h"
 #include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/island_layout.h"
@@ -429,61 +430,26 @@ private:
     [[nodiscard]] static bool EnsureWindowClasses() {
         static const bool registered = [] {
             WNDCLASSEXW panel_class{};
-            panel_class.cbSize = sizeof(panel_class);
             panel_class.style = CS_HREDRAW | CS_VREDRAW;
-            panel_class.lpfnWndProc = PanelWindowProc;
+            panel_class.lpfnWndProc = platform::BoundWindowProc<Window, &Window::HandlePanelMessage>;
             panel_class.hInstance = ::GetModuleHandleW(nullptr);
             panel_class.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
             panel_class.hbrBackground = nullptr;
             panel_class.lpszClassName = kPanelClassName;
-            if (::RegisterClassExW(&panel_class) == 0 &&
-                ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-                return false;
-            }
+            if (!platform::RegisterWindowClass(panel_class)) { return false; }
 
             WNDCLASSEXW boundary_class{};
-            boundary_class.cbSize = sizeof(boundary_class);
             boundary_class.style = CS_HREDRAW | CS_VREDRAW;
-            boundary_class.lpfnWndProc = BoundaryWindowProc;
+            boundary_class.lpfnWndProc = platform::BoundWindowProc<Window, &Window::HandleBoundaryMessage>;
             boundary_class.hInstance = ::GetModuleHandleW(nullptr);
             // These windows are visual-only. Leaving their class cursor unset
             // prevents a transparent boundary from briefly replacing the
             // underlying application's cursor during composition updates.
             boundary_class.hCursor = nullptr;
             boundary_class.lpszClassName = kBoundaryClassName;
-            return ::RegisterClassExW(&boundary_class) != 0 ||
-                   ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+            return platform::RegisterWindowClass(boundary_class);
         }();
         return registered;
-    }
-
-    [[nodiscard]] static Window* FromHandle(HWND hwnd, UINT message,
-                                            LPARAM lparam) noexcept {
-        if (message == WM_NCCREATE) {
-            const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-            auto* self = static_cast<Window*>(create->lpCreateParams);
-            ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                                reinterpret_cast<LONG_PTR>(self));
-            return self;
-        }
-        return reinterpret_cast<Window*>(
-            ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    }
-
-    static LRESULT CALLBACK PanelWindowProc(HWND hwnd, UINT message,
-                                            WPARAM wparam, LPARAM lparam) {
-        if (Window* self = FromHandle(hwnd, message, lparam); self != nullptr) {
-            return self->HandlePanelMessage(hwnd, message, wparam, lparam);
-        }
-        return ::DefWindowProcW(hwnd, message, wparam, lparam);
-    }
-
-    static LRESULT CALLBACK BoundaryWindowProc(HWND hwnd, UINT message,
-                                               WPARAM wparam, LPARAM lparam) {
-        if (Window* self = FromHandle(hwnd, message, lparam); self != nullptr) {
-            return self->HandleBoundaryMessage(hwnd, message, wparam, lparam);
-        }
-        return ::DefWindowProcW(hwnd, message, wparam, lparam);
     }
 
     LRESULT HandlePanelMessage(HWND hwnd, UINT message, WPARAM wparam,
@@ -504,7 +470,7 @@ private:
                 }
                 for (HWND boundary : boundaries_)
                     if (boundary) { ::ShowWindow(boundary, SW_HIDE); }
-                ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                platform::UnbindWindowOwner(hwnd);
                 break;
             case theme::kChangedMessage:
                 ::RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);

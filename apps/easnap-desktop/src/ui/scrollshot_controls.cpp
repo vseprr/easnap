@@ -10,6 +10,7 @@
 
 #include "platform/platform_utils.h"
 #include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/native_controls.h"
@@ -120,12 +121,12 @@ public:
             tooltip_ = nullptr;
         }
         if (preview_ != nullptr) {
-            ::SetWindowLongPtrW(preview_, GWLP_USERDATA, 0);
+            platform::UnbindWindowOwner(preview_);
             ::DestroyWindow(preview_);
             preview_ = nullptr;
         }
         if (island_ != nullptr) {
-            ::SetWindowLongPtrW(island_, GWLP_USERDATA, 0);
+            platform::UnbindWindowOwner(island_);
             ::DestroyWindow(island_);
             island_ = nullptr;
         }
@@ -283,43 +284,20 @@ private:
     [[nodiscard]] static bool EnsureWindowClasses() {
         static const bool registered = [] {
             WNDCLASSEXW island{};
-            island.cbSize = sizeof(island);
             island.style = CS_HREDRAW | CS_VREDRAW;
-            island.lpfnWndProc = IslandProc;
+            island.lpfnWndProc = platform::BoundWindowProc<Window, &Window::HandleIsland>;
             island.hInstance = ::GetModuleHandleW(nullptr);
             island.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
             island.lpszClassName = kIslandClassName;
             WNDCLASSEXW preview = island;
-            preview.lpfnWndProc = PreviewProc;
+            preview.lpfnWndProc = platform::BoundWindowProc<Window, &Window::HandlePreview>;
             // Visual only: no class cursor, so it never replaces the cursor of
             // the application underneath.
             preview.hCursor = nullptr;
             preview.lpszClassName = kPreviewClassName;
-            return ::RegisterClassExW(&island) != 0 && ::RegisterClassExW(&preview) != 0;
+            return platform::RegisterWindowClass(island) && platform::RegisterWindowClass(preview);
         }();
         return registered;
-    }
-
-    [[nodiscard]] static Window* FromHandle(HWND hwnd, UINT message, LPARAM lparam) noexcept {
-        if (message == WM_NCCREATE) {
-            const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-            ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-        }
-        return reinterpret_cast<Window*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    }
-
-    static LRESULT CALLBACK IslandProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-        if (Window* self = FromHandle(hwnd, message, lparam); self != nullptr) {
-            return self->HandleIsland(hwnd, message, wparam, lparam);
-        }
-        return ::DefWindowProcW(hwnd, message, wparam, lparam);
-    }
-
-    static LRESULT CALLBACK PreviewProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-        if (Window* self = FromHandle(hwnd, message, lparam); self != nullptr) {
-            return self->HandlePreview(hwnd, message, wparam, lparam);
-        }
-        return ::DefWindowProcW(hwnd, message, wparam, lparam);
     }
 
     void ClearControlHandles() noexcept {
@@ -338,7 +316,7 @@ private:
                 tooltip_ = nullptr;
                 owner_.visible_ = false;
                 ClearControlHandles();
-                ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                platform::UnbindWindowOwner(hwnd);
                 break;
             case theme::kChangedMessage:
                 ::RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
@@ -429,7 +407,7 @@ private:
         switch (message) {
             case WM_NCDESTROY:
                 preview_ = nullptr;
-                ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                platform::UnbindWindowOwner(hwnd);
                 break;
             case WM_NCHITTEST:
                 return HTTRANSPARENT;  // Never takes the pointer or the wheel.
