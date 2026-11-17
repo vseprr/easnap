@@ -27,5 +27,8 @@ ID2D1StrokeStyle* RoundStrokeStyle();
 /// bitmap beforehand, so they only render a translucent trail while being drawn.
 void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
                     ID2D1SolidColorBrush* brush, bool preview);
+/// Draws the selection frame and resize handles of `annotation` in image
+/// space, `unit` image pixels per device-independent pixel. None for a watermark.
+void DrawSelectionChrome(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, const Annotation& annotation, float unit);
 
 }  // namespace easnap::editor

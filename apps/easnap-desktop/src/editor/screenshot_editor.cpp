@@ -2647,38 +2647,8 @@ void ScreenshotEditor::OnCharacter(wchar_t character) {
 }
 void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush) const {
     if (!selected_ || *selected_ >= document_.annotations().size()) { return; }
-    const auto& a = document_.annotations()[*selected_];
-    if (a.tool == ToolId::Watermark || a.points.empty()) { return; }
     // Frame and handles keep their size on screen at every scale of the view.
-    const float unit = scale_ / zoom_;
-    brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
-    const float width = kSelectionStroke * unit;
-    const auto box = NormalizedD2DRect(a.points.front(), a.points.back());
-    if (a.tool == ToolId::Text || a.tool == ToolId::Tag) {
-        auto r = a.bounds();
-        const float pad = kSelectionTextGap * unit;
-        r.left -= pad;
-        r.top -= pad;
-        r.right += pad;
-        r.bottom += pad;
-        target->DrawRoundedRectangle(D2D1::RoundedRect(r, 5 * unit, 5 * unit), brush, width);
-    } else if (a.tool == ToolId::Ellipse || (a.tool == ToolId::Spotlight && a.style.shape == SpotlightShape::Ellipse)) {
-        target->DrawEllipse(D2D1::Ellipse({(box.left + box.right) / 2, (box.top + box.bottom) / 2}, (box.right - box.left) / 2, (box.bottom - box.top) / 2), brush, width);
-    } else if (a.tool == ToolId::Pen || a.tool == ToolId::Line || a.tool == ToolId::Arrow) {
-        for (size_t i = 1; i < a.points.size(); ++i) { target->DrawLine(a.points[i - 1], a.points[i], brush, width, RoundStrokeStyle()); }
-    } else if (a.tool == ToolId::Spotlight && a.style.shape == SpotlightShape::Rounded) {
-        const float radius = std::min({(box.right - box.left) / 2, (box.bottom - box.top) / 2, 16 * a.style.image_scale});
-        target->DrawRoundedRectangle(D2D1::RoundedRect(box, radius, radius), brush, width);
-    } else {
-        const auto r = a.tool == ToolId::Mosaic && a.style.method == EffectMethod::Brush ? a.bounds() : box;
-        target->DrawRectangle(r, brush, width);
-    }
-    for (auto point : a.Handles()) {
-        brush->SetColor(ui::theme::D2DColor(ui::theme::kSelectionHandleFill));
-        target->FillEllipse(D2D1::Ellipse(point, kHandleRadius * unit, kHandleRadius * unit), brush);
-        brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
-        target->DrawEllipse(D2D1::Ellipse(point, kHandleRadius * unit, kHandleRadius * unit), brush, kHandleStroke * unit);
-    }
+    DrawSelectionChrome(target, brush, document_.annotations()[*selected_], scale_ / zoom_);
 }
 
 // ---------------------------------------------------------------------------
