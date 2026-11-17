@@ -1745,11 +1745,11 @@ void Workspace() {
         CHECK(Same(overlay.selector().selection(), frame));
     }
     Click(modes, 3001);
-    CHECK(overlay.mode() == app::CaptureMode::Scrollshot);
+    CHECK(overlay.mode() == ui::CaptureMode::Scrollshot);
     Click(modes, 3002);
-    CHECK(overlay.mode() == app::CaptureMode::Record);
+    CHECK(overlay.mode() == ui::CaptureMode::Record);
     Click(modes, 3000);
-    CHECK(overlay.mode() == app::CaptureMode::Screenshot);
+    CHECK(overlay.mode() == ui::CaptureMode::Screenshot);
     overlay.EnterEditing();
     CHECK(overlay.workspace().editing());
     {

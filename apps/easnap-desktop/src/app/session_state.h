@@ -21,6 +21,7 @@
 #include "platform/app_messages.h"
 #include "platform/image_export.h"
 #include "platform/platform_utils.h"
+#include "ui/capture_mode.h"
 #include "ui/control_ids.h"
 
 namespace easnap::ui {
@@ -61,11 +62,6 @@ namespace easnap::app {
 ///        -> Idle, or -> ScreenshotEditing to annotate the stitched image
 ///
 /// `SessionStateMachine` (session_transitions.h) holds the current state.
-
-enum class CaptureMode { Screenshot,
-                         Record,
-                         Scrollshot };
-
 
 /// Owns session creation, enforces legal state transitions and wires the UI
 /// components together. Singleton because exactly one capture session may exist.
@@ -173,7 +169,7 @@ private:
     [[nodiscard]] std::unique_ptr<editor::ScreenshotEditor> CreateEditor();
     /// Shows the workspace how an edited document's viewport stands.
     void PublishDocumentView(const editor::ImageView& view);
-    void OnWorkspaceEditingChanged(CaptureMode mode, const RECT& region);
+    void OnWorkspaceEditingChanged(ui::CaptureMode mode, const RECT& region);
     void OnWorkspaceRegionChanged(const RECT& region);
     void CompleteWorkspaceScreenshot();
     bool PrepareWorkspaceScreenshot();

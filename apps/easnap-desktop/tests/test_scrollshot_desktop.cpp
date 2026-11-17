@@ -379,7 +379,7 @@ int RunTest() {
         CHECK(!overlay.frame_exposed());
     }
 
-    overlay.SetMode(app::CaptureMode::Scrollshot);
+    overlay.SetMode(ui::CaptureMode::Scrollshot);
     ui::ScrollshotControls::Callbacks control_callbacks;
     control_callbacks.on_wheel_blocked = [&] { ++wheel_blocked; };
     ui::ScrollshotControls controls(std::move(control_callbacks));

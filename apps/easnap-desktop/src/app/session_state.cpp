@@ -425,7 +425,7 @@ bool CaptureCoordinator::BeginCaptureSession() {
 void CaptureCoordinator::EnsureOverlay() {
     if (!overlay_) {
         ui::OverlayController::Callbacks callbacks;
-        callbacks.on_editing_changed = [this](CaptureMode mode, const RECT& region) {
+        callbacks.on_editing_changed = [this](ui::CaptureMode mode, const RECT& region) {
             OnWorkspaceEditingChanged(mode, region);
         };
         callbacks.on_cancelled = [this]() { OnOverlayCancelled(); };
@@ -466,7 +466,7 @@ void CaptureCoordinator::EnsureOverlay() {
     overlay_retired_ = false;
 }
 
-void CaptureCoordinator::OnWorkspaceEditingChanged(CaptureMode mode, const RECT& region) {
+void CaptureCoordinator::OnWorkspaceEditingChanged(ui::CaptureMode mode, const RECT& region) {
     if (!overlay_ || !overlay_->visible() ||
         (state() != SessionState::RegionSelecting && state() != SessionState::ScreenshotEditing &&
          state() != SessionState::RecordingConfiguring && state() != SessionState::ScrollshotConfiguring)) { return; }
@@ -474,13 +474,13 @@ void CaptureCoordinator::OnWorkspaceEditingChanged(CaptureMode mode, const RECT&
         return;
     }
 
-    if (mode == CaptureMode::Record) {
+    if (mode == ui::CaptureMode::Record) {
         if (editor_) { editor_->Hide(); }
         if (scrollshot_controls_) { scrollshot_controls_->Hide(); }
         BeginRecordingConfiguration(region);
         return;
     }
-    if (mode == CaptureMode::Scrollshot) {
+    if (mode == ui::CaptureMode::Scrollshot) {
         if (editor_) { editor_->Hide(); }
         if (recording_controls_) { recording_controls_->Hide(); }
         BeginScrollshotConfiguration(region);
@@ -509,7 +509,7 @@ void CaptureCoordinator::OnWorkspaceRegionChanged(const RECT& region) {
 }
 
 void CaptureCoordinator::CompleteWorkspaceScreenshot() {
-    if (!overlay_ || !overlay_->visible() || overlay_->mode() != CaptureMode::Screenshot) { return; }
+    if (!overlay_ || !overlay_->visible() || overlay_->mode() != ui::CaptureMode::Screenshot) { return; }
     overlay_->EnterEditing();
     if (state() == SessionState::ScreenshotEditing && editor_) { editor_->CompleteCopy(); }
 }

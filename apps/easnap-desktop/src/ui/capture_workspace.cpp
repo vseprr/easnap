@@ -6,9 +6,9 @@
 #include <cmath>
 
 namespace easnap::ui {
-void CaptureWorkspace::SetMode(app::CaptureMode mode) noexcept {
+void CaptureWorkspace::SetMode(CaptureMode mode) noexcept {
     if (!can_switch_mode()) { return; }
-    if (editing() && mode_ == app::CaptureMode::Screenshot && mode != mode_ &&
+    if (editing() && mode_ == CaptureMode::Screenshot && mode != mode_ &&
         !editor_feature_used_ && !automatic_attempt_consumed_) {
         quick_return_armed_ = true;
     }
@@ -16,7 +16,7 @@ void CaptureWorkspace::SetMode(app::CaptureMode mode) noexcept {
 }
 void CaptureWorkspace::BeginScrollshotCapture() noexcept {
     if (!editing() || screenshot_fixed_ || scrollshot_locked()) { return; }
-    mode_ = app::CaptureMode::Scrollshot;
+    mode_ = CaptureMode::Scrollshot;
     scrollshot_ = ScrollshotPhase::Capturing;
     // This is not an untouched return to Screenshot: nothing completes by itself later.
     quick_return_armed_ = false;
@@ -24,7 +24,7 @@ void CaptureWorkspace::BeginScrollshotCapture() noexcept {
 void CaptureWorkspace::EditScrollshot() noexcept {
     if (scrollshot_ != ScrollshotPhase::Stopped) { return; }
     scrollshot_ = ScrollshotPhase::Idle;
-    mode_ = app::CaptureMode::Screenshot;
+    mode_ = CaptureMode::Screenshot;
     editor_feature_used_ = true;
     screenshot_fixed_ = true;
     quick_return_armed_ = false;

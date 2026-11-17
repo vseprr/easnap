@@ -29,14 +29,14 @@ constexpr wchar_t kModeToolbarClassName[] = L"EasnapCaptureModes";
 constexpr UINT kNoticeTimeoutMs = 2600;
 
 struct PaletteButton {
-    app::CaptureMode mode;
+    CaptureMode mode;
     const wchar_t* label;
     RECT rect;  ///< Client coordinates of the overlay window.
 };
 
 /// Order of the mode buttons, left to right.
-constexpr std::array<app::CaptureMode, 3> kModes{
-    app::CaptureMode::Screenshot, app::CaptureMode::Scrollshot, app::CaptureMode::Record};
+constexpr std::array<CaptureMode, 3> kModes{
+    CaptureMode::Screenshot, CaptureMode::Scrollshot, CaptureMode::Record};
 static_assert(kModeIslandButtons.count == static_cast<int>(kModes.size()));
 
 /// Reusable GDI surface shared by one monitor's serial dim/chrome/magnifier paints.
@@ -565,7 +565,7 @@ public:
             if (!button) { continue; }
             // Scrollshot needs capture exclusion; without it the button stays off.
             const bool enabled = controller_.workspace().can_switch_mode() &&
-                                 (kModes[i] != app::CaptureMode::Scrollshot || CaptureExclusionSupported());
+                                 (kModes[i] != CaptureMode::Scrollshot || CaptureExclusionSupported());
             if ((::IsWindowEnabled(button) != FALSE) != enabled) { ::EnableWindow(button, enabled); }
             const WPARAM checked = kModes[i] == controller_.mode() ? BST_CHECKED : BST_UNCHECKED;
             if (::SendMessageW(button, BM_GETCHECK, 0, 0) != static_cast<LRESULT>(checked)) { ::SendMessageW(button, BM_SETCHECK, checked, 0); }
@@ -1197,11 +1197,11 @@ private:
         if (index < 0 || index >= static_cast<int>(kModes.size())) {
             return;
         }
-        const app::CaptureMode mode = kModes[static_cast<size_t>(index)];
-        if (mode == app::CaptureMode::Scrollshot && !CaptureExclusionSupported()) { return; }
+        const CaptureMode mode = kModes[static_cast<size_t>(index)];
+        if (mode == CaptureMode::Scrollshot && !CaptureExclusionSupported()) { return; }
         if (!controller_.AllowMode(mode)) { return; }
         controller_.SetMode(mode);
-        if (controller_.mode() != app::CaptureMode::Record) { ::SetFocus(dim_); }
+        if (controller_.mode() != CaptureMode::Record) { ::SetFocus(dim_); }
     }
 
     /// One width for all mode buttons: the widest label in the active
@@ -1655,13 +1655,13 @@ void OverlayController::Destroy() {
     notice_.clear();
 }
 
-bool OverlayController::AllowMode(app::CaptureMode mode) {
-    if (mode != app::CaptureMode::Record || recording_available_) { return true; }
+bool OverlayController::AllowMode(CaptureMode mode) {
+    if (mode != CaptureMode::Record || recording_available_) { return true; }
     if (callbacks_.on_recording_unavailable) { callbacks_.on_recording_unavailable(); }
     return false;
 }
 
-void OverlayController::SetMode(app::CaptureMode mode) {
+void OverlayController::SetMode(CaptureMode mode) {
     if (!workspace_.can_switch_mode() || mode == workspace_.mode()) { return; }
     workspace_.SetMode(mode);
     if (workspace_.editing() && callbacks_.on_editing_changed) {
@@ -1836,7 +1836,7 @@ void OverlayController::PointerUp(POINT point) {
     const bool returned_click = !pointer_sequence_.dragged() &&
                                 (target == WorkspacePointerTarget::Content || target == WorkspacePointerTarget::Creation) &&
                                 workspace_.ConsumeQuickReturn();
-    if (returned_click || (quick_copy && target == WorkspacePointerTarget::Content && mode() == app::CaptureMode::Screenshot)) {
+    if (returned_click || (quick_copy && target == WorkspacePointerTarget::Content && mode() == CaptureMode::Screenshot)) {
         CompleteScreenshot();
     }
 }
@@ -1905,7 +1905,7 @@ void OverlayController::SetNotice(std::wstring text) {
 
 void OverlayController::CompleteScreenshot() {
     // Fixed screenshots disable selector manipulation, not image completion.
-    if (mode() == app::CaptureMode::Screenshot &&
+    if (mode() == CaptureMode::Screenshot &&
         (workspace_.screenshot_fixed() || selector_.CanCommit()) && callbacks_.on_screenshot_complete) {
         callbacks_.on_screenshot_complete();
     }

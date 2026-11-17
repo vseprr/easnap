@@ -19,7 +19,7 @@
 
 namespace {
 using namespace easnap;
-using app::CaptureMode;
+using ui::CaptureMode;
 int passed{}, failed{};
 #define CHECK(...)                                                         \
     do {                                                                   \

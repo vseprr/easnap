@@ -12,7 +12,6 @@
 #include <memory>
 #include <vector>
 
-#include "app/session_state.h"
 #include "capture/capture_provider.h"
 #include "platform/platform_utils.h"
 #include "ui/region_selector.h"
@@ -37,7 +36,7 @@ enum class ScrollshotCommand {
 class OverlayController {
 public:
     struct Callbacks {
-        std::function<void(app::CaptureMode, const RECT&)> on_editing_changed;
+        std::function<void(CaptureMode, const RECT&)> on_editing_changed;
         std::function<void()> on_cancelled;
         std::function<void()> on_screenshot_complete;
         std::function<void(const RECT&)> on_region_changed;
@@ -107,14 +106,14 @@ public:
 
     [[nodiscard]] bool visible() const noexcept { return visible_; }
     /// Changes only the pending capture mode. The shared selector is untouched.
-    void SetMode(app::CaptureMode mode);
-    [[nodiscard]] app::CaptureMode mode() const noexcept { return workspace_.mode(); }
+    void SetMode(CaptureMode mode);
+    [[nodiscard]] CaptureMode mode() const noexcept { return workspace_.mode(); }
     /// Recording needs Media Foundation, which some editions of Windows lack.
     /// Where it is missing the Record button explains that instead of
     /// switching the mode.
     void SetRecordingAvailable(bool available) noexcept { recording_available_ = available; }
     /// True when the mode may be entered; otherwise the owner has been told.
-    [[nodiscard]] bool AllowMode(app::CaptureMode mode);
+    [[nodiscard]] bool AllowMode(CaptureMode mode);
     [[nodiscard]] CaptureWorkspace& workspace() noexcept { return workspace_; }
     [[nodiscard]] const CaptureWorkspace& workspace() const noexcept { return workspace_; }
     /// The mode island in desktop pixels, for the islands that never cover

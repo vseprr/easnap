@@ -24,7 +24,8 @@
 #include <string>
 #include <vector>
 
-#include "app/session_state.h"
+#include "app/app_settings.h"
+#include "app/appearance_theme.h"
 #include "editor/image_viewport.h"
 #include "editor/redaction_renderer.h"
 #include "platform/image_export.h"

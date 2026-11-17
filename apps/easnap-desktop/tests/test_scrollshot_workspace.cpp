@@ -31,7 +31,7 @@
 namespace {
 
 using namespace easnap;
-using app::CaptureMode;
+using ui::CaptureMode;
 using easnap_test::synthetic::Image;
 using easnap_test::synthetic::MakeArticle;
 using ui::ScrollshotCommand;
