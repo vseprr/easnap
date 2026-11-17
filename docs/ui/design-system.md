@@ -28,6 +28,19 @@ for Easnap.
 The authority is `apps/easnap-desktop/src/ui/ui_theme.{h,cpp}`. Annotation colors
 are content values and never come from the current application palette.
 
+The values live in code, in two places. `ui/ui_theme.h` and `ui/ui_theme.cpp`
+hold the palette (`Palette`, `NormalPalette`, the high-contrast palette in
+`RefreshSystemColors`), its derived tokens (`separator`, `scroll_thumb`), the
+theme-independent chrome colours and the shared metrics: icon stroke, button
+metrics, animation timings, grips, island gap and margin, caption, menus and
+font sizes. `editor/annotation_palette.h` holds the annotation content colours
+and does not include the theme. `ui_control_raster_parity` (icons, styled
+buttons, separator, grips, panel and palette fields) and
+`ui_material_raster_parity` (the material) compare hashes recorded from the
+painters, so moving or renaming a value cannot change a pixel unnoticed; the
+high-contrast palette, button captions and menu and combo faces are not
+hashed. The [change map](change-map.md) names the symbol for each value.
+
 Text colours (main, supporting, disabled and success) have a contrast of at
 least 4.5:1, and the control boundary and keyboard focus colours at least 3:1,
 against the panel, raised, recessed, hover, pressed and selected surfaces of

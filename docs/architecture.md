@@ -14,7 +14,8 @@ application UI. Both executables must come from the same build. Both restrict
 library loading to the Windows system directory before anything else runs, and
 the parent range-checks the state the helper reports over their private pipe.
 
-The hidden host window in `src/main.cpp` receives application messages.
+The hidden host window in `src/main.cpp` receives application messages,
+whose values are allocated in `platform/app_messages.h`.
 `CaptureCoordinator` is the sole owner of application session state, held in
 one `SessionStateMachine` (`app/session_transitions.h`) through which every
 transition passes ([ADR-039](decisions/ADR-039-coordinator-trim-flow.md)). The
@@ -52,19 +53,29 @@ All paths below are under `apps/easnap-desktop/src`.
 | Area | Responsibility |
 |---|---|
 | `app/` | Coordinator, transition policy, settings, recording/finalization, trim and completion orchestration, opening a video file, command-line parsing and the video hand-over between instances, and the notification-area shell (`app/tray_shell`: the capture shortcut, tray commands, applying Settings) |
-| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls, Scrollshot island and preview, trim view, pinned images, the notification icon and its menu, and the message, Settings and About dialogs |
-| `editor/` | Screenshot document, commands/history, tools, reversible effects, the scrolled and zoomed view, inline rendering and full-resolution composite |
+| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls, Scrollshot island and preview, trim view, pinned images, the notification icon and its menu, and the message, Settings and About dialogs; the theme (`ui_theme`), icons (`icons`), the custom caption (`window_chrome`), styled controls (`native_controls`) and every control, menu, timer and subclass identifier (`control_ids.h`) |
+| `editor/` | Screenshot document, commands/history, tools, reversible effects, the scrolled and zoomed view, inline rendering and full-resolution composite. `ScreenshotEditor` owns the units: annotation document and renderer, tool records (`annotation_tools.h`), tools island, property island, text field, shortcut table (`key_commands.h`), export and the annotation colours (`annotation_palette.h`) |
 | `capture/` | Desktop acquisition, per-output fallback and capture worker |
 | `scrollshot/` | Stitching engine and the capture session that feeds it |
 | `strings/` | Localized text from the English and Turkish resource tables ([ADR-032](decisions/ADR-032-interface-text-in-string-tables.md)) |
 | `recording/` | Active-time recording session, cadence and audio timeline |
 | `media/` | Bounded queues, WASAPI, dual-source mixing/resampling, MP4/GIF writers/exporters, preview and the private session store |
-| `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers, the data-folder path and contained deletion, log file and crash reports, the sign-in start entry |
+| `platform/` | COM and handle lifetime, logging and modal loops (`platform_utils`), screen geometry, system information, graphics devices, images and their encoding, clipboard and save dialog (`image_output`), files, the data-folder path and contained deletion, log file and crash reports, the sign-in start entry, the window message table (`app_messages.h`), window class registration and owner binding (`window_class.h`) and `PaintBuffer` |
 | `main.cpp` | Start-up: single instance and the hand-over of a video to the running instance, DLL search and DPI, the host window and its message loop, session end |
 
-Native Windows APIs also appear in UI, capture and media code. `ui_theme.h`
-centralizes shared workspace styling; individual surfaces retain their own
-layout metrics. This is a Windows implementation, not a portable UI abstraction.
+The folders form layers: `platform`; then `media` and `capture`; then
+`recording` and `scrollshot`; then `editor` and `ui`; then `app`; `main.cpp`
+on top. A file includes only its own folder or a lower layer, apart from
+`capture` → `media`, `editor` → `ui` and a listed set of pure `app` value
+headers that `ui` and `editor` may read; the repository hygiene check
+enforces it ([ADR-043](decisions/ADR-043-structure-for-cheap-changes.md)).
+
+Native Windows APIs also appear in UI, capture and media code. `ui/ui_theme.h`
+holds the palette, its derived tokens and the shared metrics; annotation
+colours are content values in `editor/annotation_palette.h`; layout values
+that one surface uses stay with it. The [change map](ui/change-map.md) names
+the file and symbol for each kind of change. This is a Windows
+implementation, not a portable UI abstraction.
 
 ## Screenshot workspace
 
@@ -166,7 +177,7 @@ and export drawing code. Selection frames and handles have a separate editor-onl
 pass. There is no second document or export-specific approximation of the tools.
 
 `Composite()` renders at the original selected resolution into an independent
-WIC target. It never captures the island or samples displayed image pixels.
+WIC target (`CompositeAnnotations` in `editor/editor_export`). It never captures the island or samples displayed image pixels.
 Copy publishes CF_DIB and PNG. The CF_DIB image is written bottom-up: .NET
 applications could not read the top-down bitmap Easnap wrote before
 (`Clipboard.GetImage` returns nothing for it; `MakeClipboardDib` in
@@ -193,8 +204,10 @@ stays available. See [ADR-038](decisions/ADR-038-pinned-images.md).
 
 New windows and window-related features must follow the
 [window implementation guide](ui/window-implementation-guide.md).
-`StyleWindowChrome` / `WindowChrome` own the common chrome; styled native controls
-and `PaintBuffer` own complete buffered paints. Resizable content windows retain
+`StyleWindowChrome` / `WindowChrome` (`ui/window_chrome`) own the common
+chrome; styled native controls and `PaintBuffer` (`platform/paint_buffer.h`)
+own complete buffered paints. Window classes are registered and bound to
+their C++ owner through `platform/window_class.h`. Resizable content windows retain
 native side/bottom nonclient geometry and customize only the caption through
 the accepted [ADR-024](decisions/ADR-024-native-trim-frame.md) path. Fixed dialogs,
 floating islands and layered capture surfaces keep their dedicated paths.

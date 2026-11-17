@@ -1,6 +1,6 @@
 # Project status
 
-**Updated:** 2026-11-17
+**Updated:** 2026-11-18
 
 The current state of the implementation: what is built, what was actually
 validated, what is open and the next slice. Read it with the
@@ -40,6 +40,59 @@ and the individual runs in the [validation records](releases/validation-history.
   caption over Settings and the message dialogs when they are moved; and
   `island_capture_exclusion` drags those dialogs and reads the themed menu as
   the user sees them.
+
+## Structure refactor (branch `refactor/structure`)
+
+A behaviour-preserving restructuring on the branch `refactor/structure`,
+created on 2026-11-17 from `main` at `38538fa`; draft pull request, not
+merged. The decisions are in
+[ADR-043](decisions/ADR-043-structure-for-cheap-changes.md); where to make a
+given change is in the [change map](ui/change-map.md).
+
+- **Implemented.** Layer order checked by the repository hygiene check; every
+  `WM_APP` message in `platform/app_messages.h` and every control, menu,
+  timer and subclass identifier in `ui/control_ids.h`; `platform_utils` split
+  into one file per concern; the screenshot editor split into units owned by
+  `ScreenshotEditor` (document, renderer, tool records, both islands, text
+  field, shortcut table, export; 3,633 → 1,688 lines); one table row per
+  button on each surface and one function per icon; shared colours and
+  metrics named in `ui/ui_theme.h`, annotation colours in
+  `editor/annotation_palette.h`; pure coordinator decisions for the
+  Scrollshot status, display changes and the image export outcome
+  ([ADR-039](decisions/ADR-039-coordinator-trim-flow.md#amendment-2026-11-18-scrollshot-measured-again));
+  the tray icon, menu and About in `ui/`, the tray shell in `app/tray_shell`
+  (`main.cpp` 874 → 469 lines); window class registration and owner binding
+  through `platform/window_class.h`; the WASAPI capture thread, the
+  dual-source mixer thread and the MFPlay event callback split into named
+  steps by extraction only. Per-folder static libraries were investigated and
+  not adopted.
+- **Validated.** Every commit: Release build, Fast tier and format check on
+  the host. Lab Standard green at `7a39ece` (56/56), `51eeedf` (57/57),
+  `c616335` (59/59) and `2d16e71` (59/59); lab Full green at `9fb06c2`
+  (67/67, `scrollshot_realistic_desktop` passed on retry after torn pictures),
+  `eccffd7` (68/68), `0eb5040` (69/69, no retries) and `1d188c9` after the
+  audio and media split (69/69, every audio and preview test;
+  `island_capture_exclusion` passed on retry after foreign pixels where
+  Windows shows notifications, before the island existed). clang-tidy: 0
+  warnings in 83 files. New guards:
+  `ui_control_raster_parity` (602 cases), `coordinator_decisions` (169
+  checks) and `annotation_text_rendering`. Each phase was accepted by an
+  independent review. `ff0267a` (a private desktop per test process, found
+  when two workspace tests ran in parallel) passed 30 parallel host repeats
+  and the lab Full run at `1d188c9`.
+- **Limitations and risks.** No test compiles `main.cpp` or the tray shell;
+  the owner's by-eye check is listed in
+  [ADR-043](decisions/ADR-043-structure-for-cheap-changes.md#not-validated)
+  (tray click and menu in both languages, Settings, About, Exit during a
+  dialog, the icon after an Explorer restart, a second instance). The raster
+  test does not hash the high-contrast palette, button captions or menu and
+  combo faces. Declared small differences: the tools island's hit test, the
+  monitor comparison on every display change. Still large:
+  `screenshot_editor.cpp`, `app/session_state.cpp` (1,876 lines),
+  `ui/native_controls.cpp` (971 lines). Notifications are not turned off in
+  the lab VM's provisioning (winlab), the likely source of that retry.
+- **Next.** The owner's by-eye check, then review and merge of the pull
+  request. Optional: turn off notifications in winlab's guest provisioning.
 
 ## v1.3.1
 
