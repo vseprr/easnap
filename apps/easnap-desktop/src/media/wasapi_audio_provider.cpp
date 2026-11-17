@@ -251,6 +251,93 @@ detail::AudioTimestampResolutionResult ResolveAudioPacketTimestampImpl(
     return result;
 }
 
+// WASAPI objects and clock facts that one capture thread owns from
+// initialisation until it exits. Members are declared in the order the
+// thread acquires them, so they are released in the reverse order.
+struct WasapiCaptureSession {
+    platform::ComPtr<IMMDeviceEnumerator> enumerator;
+    platform::ComPtr<IMMDevice> device;
+    platform::ComPtr<IAudioClient> audio_client;
+    AudioFormat captured_format{};
+    REFERENCE_TIME default_period = 0;
+    REFERENCE_TIME minimum_period = 0;
+    platform::UniqueHandle audio_event;
+    platform::ComPtr<IAudioCaptureClient> capture_client;
+    platform::ComPtr<IAudioClock> audio_clock;
+    platform::ComPtr<IAudioClock2> audio_clock2;
+    uint64_t audio_clock_frequency = 0;
+    LARGE_INTEGER qpc_frequency{};
+    MediaTime qpc_epoch_100ns{};
+    uint32_t effective_period_ms = 0;
+    UINT32 negotiated_buffer_frames = 0;
+};
+
+// One buffer as IAudioCaptureClient::GetBuffer reported it.
+struct CapturedBuffer {
+    UINT32 frames_available = 0;
+    BYTE* data = nullptr;
+    DWORD flags = 0;
+    UINT64 device_position = 0;
+    UINT64 qpc_position = 0;
+    UINT32 buffered_frames_available = 0;
+};
+
+// Clock observations taken right after a buffer was acquired.
+struct CaptureClockObservation {
+    uint64_t capture_qpc_100ns = 0;
+    uint64_t audio_clock_position = 0;
+    uint64_t audio_clock_qpc_100ns = 0;
+};
+
+// Why the capture thread woke up.
+enum class CaptureWakeup { BufferReady,
+                           Idle,
+                           Exit };
+
+// Reads the capture-time QPC and the IAudioClock2 position for a buffer.
+CaptureClockObservation ObserveCaptureClocks(const WasapiCaptureSession& session) {
+    CaptureClockObservation clocks;
+    LARGE_INTEGER capture_qpc{};
+    const bool has_capture_qpc =
+        ::QueryPerformanceCounter(&capture_qpc) != FALSE;
+    const MediaTime capture_qpc_time = has_capture_qpc
+                                           ? QpcTicksToMediaTime(
+                                                 capture_qpc, session.qpc_frequency)
+                                           : MediaTime{0};
+    clocks.capture_qpc_100ns =
+        capture_qpc_time.count() > 0
+            ? static_cast<uint64_t>(capture_qpc_time.count())
+            : 0;
+
+    if (session.audio_clock2 &&
+        FAILED(session.audio_clock2->GetDevicePosition(&clocks.audio_clock_position,
+                                                       &clocks.audio_clock_qpc_100ns))) {
+        clocks.audio_clock_position = 0;
+        clocks.audio_clock_qpc_100ns = 0;
+    }
+    return clocks;
+}
+
+// Collects what the timestamp resolution needs to place one buffer.
+detail::AudioTimestampResolutionInput MakeTimestampInput(
+    const WasapiCaptureSession& session, const CapturedBuffer& buffer,
+    const CaptureClockObservation& clocks) {
+    return detail::AudioTimestampResolutionInput{
+        session.qpc_epoch_100ns.count(),
+        buffer.qpc_position,
+        (buffer.flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) != 0,
+        buffer.device_position,
+        buffer.frames_available,
+        buffer.buffered_frames_available,
+        session.captured_format.sample_rate,
+        clocks.audio_clock_position,
+        session.audio_clock_frequency,
+        clocks.audio_clock_qpc_100ns,
+        clocks.capture_qpc_100ns,
+        session.negotiated_buffer_frames,
+    };
+}
+
 // ---------------------------------------------------------------------------
 // WasapiAudioProvider
 // ---------------------------------------------------------------------------
@@ -275,6 +362,42 @@ public:
 
 private:
     void CaptureThread(AudioSource source, PacketCallback on_packet);
+    /// Creates the device enumerator, the default endpoint and its audio client.
+    bool ActivateCaptureEndpoint(AudioSource source, WasapiCaptureSession& session);
+    /// Negotiates the mix format and initialises the shared event-driven stream.
+    bool InitializeCaptureStream(AudioSource source, WasapiCaptureSession& session);
+    /// Creates the buffer-ready event and the capture client.
+    bool ConnectCaptureClient(WasapiCaptureSession& session);
+    /// Opens the optional IAudioClock observations; capture runs without them.
+    static void OpenCaptureAudioClock(WasapiCaptureSession& session);
+    /// Establishes the shared QPC epoch before the stream starts.
+    bool EstablishCaptureQpcEpoch(WasapiCaptureSession& session);
+    /// Starts the stream and reads the period and buffer size it runs with.
+    bool StartCaptureStream(WasapiCaptureSession& session);
+    /// Hands queued packets to the callback until the queue is closed and drained.
+    void DeliverQueuedPackets(AudioQueue& queue, PacketCallback& on_packet);
+    /// Runs the event-driven capture loop until stop, wait failure or endpoint loss.
+    void RunCaptureLoop(const WasapiCaptureSession& session, AudioQueue& queue,
+                        bool& overrun_pending);
+    /// Waits for the buffer-ready event or the stop request.
+    CaptureWakeup WaitForCaptureWakeup(const HANDLE* wait_handles);
+    /// Drains every buffer the endpoint has ready; returns true when it was lost.
+    bool DrainCaptureBuffer(const WasapiCaptureSession& session, AudioQueue& queue,
+                            bool& overrun_pending);
+    /// Gets the next buffer; false when it is empty or the call failed.
+    bool AcquireCaptureBuffer(const WasapiCaptureSession& session,
+                              CapturedBuffer& buffer, bool& device_lost);
+    /// Copies the buffer into the packet and sets its flags; returns its size.
+    std::size_t FillCapturedPacket(const AudioFormat& format,
+                                   const CapturedBuffer& buffer,
+                                   bool& overrun_pending, AudioPacket& packet,
+                                   AudioPacketFlags& packet_flags);
+    /// Returns the buffer to WASAPI; true when the release failed.
+    bool ReleaseCaptureBuffer(const WasapiCaptureSession& session,
+                              UINT32 frames_available, bool& device_lost);
+    /// Offers the packet to the consumer queue under the delivery barrier.
+    void EnqueueCapturedPacket(AudioQueue& queue, AudioPacket& packet,
+                               bool& overrun_pending);
     /// Ends initialisation as a failure: counts it, keeps `hr` for the
     /// diagnostics and lets Start return `result`.
     void FailInitialization(AudioCaptureResult result, HRESULT hr) noexcept;
@@ -580,172 +703,19 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
     } com_guard;
 
     // Activate the endpoint and negotiate format.
-    platform::ComPtr<IMMDeviceEnumerator> enumerator;
-    HRESULT hr = ::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-                                    CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
-    if (FAILED(hr)) {
-        platform::LogMessage(L"[Audio] CoCreateInstance(MMDeviceEnumerator) failed: 0x%08lX", hr);
-        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
+    WasapiCaptureSession session;
+    if (!ActivateCaptureEndpoint(source, session) ||
+        !InitializeCaptureStream(source, session) ||
+        !ConnectCaptureClient(session)) {
         return;
     }
-
-    platform::ComPtr<IMMDevice> device;
-    if (source == AudioSource::SystemAudio) {
-        hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
-    } else {
-        hr = enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device);
-    }
-    if (FAILED(hr) || !device) {
-        platform::LogMessage(L"[Audio] GetDefaultAudioEndpoint failed: 0x%08lX", hr);
-        FailInitialization(AudioCaptureResult::SourceUnavailable, hr);
+    OpenCaptureAudioClock(session);
+    if (!EstablishCaptureQpcEpoch(session) || !StartCaptureStream(session)) {
         return;
-    }
-
-    platform::ComPtr<IAudioClient> audio_client;
-    hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL,
-                          nullptr, reinterpret_cast<void**>(audio_client.GetAddressOf()));
-    if (FAILED(hr) || !audio_client) {
-        platform::LogMessage(L"[Audio] IMMDevice::Activate failed: 0x%08lX", hr);
-        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
-        return;
-    }
-
-    // Discover the native mix format.
-    WAVEFORMATEX* mix_format = nullptr;
-    hr = audio_client->GetMixFormat(&mix_format);
-    if (FAILED(hr) || mix_format == nullptr) {
-        platform::LogMessage(L"[Audio] GetMixFormat failed: 0x%08lX", hr);
-        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
-        return;
-    }
-
-    const AudioFormat captured_format = FormatFromWaveFormat(*mix_format);
-
-    // Store the negotiated format.
-    {
-        const std::scoped_lock lock(format_mutex_);
-        negotiated_format_ = captured_format;
-    }
-
-    // Initialize in shared mode, event-driven.
-    DWORD stream_flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
-    if (source == AudioSource::SystemAudio) {
-        stream_flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
-    }
-
-    // Use the default device period for the buffer.
-    REFERENCE_TIME default_period = 0;
-    REFERENCE_TIME minimum_period = 0;
-    audio_client->GetDevicePeriod(&default_period, &minimum_period);
-    if (default_period == 0) {
-        default_period = kDefaultBufferPeriod100ns;
-    }
-
-    hr = audio_client->Initialize(
-        AUDCLNT_SHAREMODE_SHARED,
-        stream_flags,
-        0,               // engine-selected shared-mode buffer duration
-        0,               // periodicity (must be 0 for shared mode)
-        mix_format,
-        nullptr);        // session GUID
-
-    ::CoTaskMemFree(mix_format);
-    mix_format = nullptr;
-
-    if (FAILED(hr)) {
-        platform::LogMessage(L"[Audio] IAudioClient::Initialize failed: 0x%08lX", hr);
-        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
-        return;
-    }
-
-    // Create the event for WASAPI buffer-ready notification.
-    platform::UniqueHandle audio_event(::CreateEventW(nullptr, FALSE, FALSE, nullptr));
-    if (!audio_event) {
-        platform::LogMessage(L"[Audio] Failed to create audio event");
-        FailInitialization(AudioCaptureResult::InitializationFailed, HRESULT_FROM_WIN32(::GetLastError()));
-        return;
-    }
-
-    hr = audio_client->SetEventHandle(audio_event.get());
-    if (FAILED(hr)) {
-        platform::LogMessage(L"[Audio] SetEventHandle failed: 0x%08lX", hr);
-        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
-        return;
-    }
-
-    // Get the capture client.
-    platform::ComPtr<IAudioCaptureClient> capture_client;
-    hr = audio_client->GetService(IID_PPV_ARGS(&capture_client));
-    if (FAILED(hr)) {
-        platform::LogMessage(L"[Audio] GetService(IAudioCaptureClient) failed: 0x%08lX", hr);
-        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
-        return;
-    }
-
-    // IAudioClock is an independent high-precision observation of the same
-    // client/device timeline. Capture can continue without it, but flagged or
-    // implausible GetBuffer timestamps then use the explicit capture-QPC
-    // fallback instead of being silently placed at zero.
-    platform::ComPtr<IAudioClock> audio_clock;
-    platform::ComPtr<IAudioClock2> audio_clock2;
-    uint64_t audio_clock_frequency = 0;
-    const HRESULT audio_clock_hr = audio_client->GetService(IID_PPV_ARGS(&audio_clock));
-    if (SUCCEEDED(audio_clock_hr) && audio_clock) {
-        if (FAILED(audio_clock->GetFrequency(&audio_clock_frequency)) ||
-            audio_clock_frequency == 0) {
-            audio_clock.Reset();
-            audio_clock_frequency = 0;
-        } else {
-            (void)audio_client->GetService(IID_PPV_ARGS(&audio_clock2));
-        }
-    } else {
-        audio_clock.Reset();
-    }
-
-    // Establish the shared QPC epoch before Start so the first device frame
-    // cannot legitimately predate it. GetBuffer and IAudioClock QPC positions
-    // are already expressed in 100 ns units in this same clock domain.
-    LARGE_INTEGER qpc_frequency{};
-    LARGE_INTEGER qpc_epoch{};
-    if (::QueryPerformanceFrequency(&qpc_frequency) == FALSE ||
-        qpc_frequency.QuadPart <= 0 ||
-        ::QueryPerformanceCounter(&qpc_epoch) == FALSE) {
-        platform::LogMessage(L"[Audio] QueryPerformanceCounter initialization failed");
-        FailInitialization(AudioCaptureResult::InitializationFailed, E_FAIL);
-        return;
-    }
-    const MediaTime qpc_epoch_100ns = QpcTicksToMediaTime(qpc_epoch, qpc_frequency);
-    qpc_epoch_100ns_.store(qpc_epoch_100ns.count(), std::memory_order_release);
-
-    // Start capture.
-    hr = audio_client->Start();
-    if (FAILED(hr)) {
-        platform::LogMessage(L"[Audio] IAudioClient::Start failed: 0x%08lX", hr);
-        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
-        return;
-    }
-
-    // Determine the WASAPI buffer period for queue capacity calculation.
-    audio_client->GetDevicePeriod(&default_period, &minimum_period);
-    const uint32_t period_ms = static_cast<uint32_t>(
-        (default_period > 0 ? default_period : kDefaultBufferPeriod100ns) / 10'000);
-    const uint32_t effective_period_ms = period_ms > 0 ? period_ms : 10;
-
-    // Query the negotiated buffer size so the CaptureQpcFallback path can
-    // cap inflated GetCurrentPadding values after endpoint wakeup.
-    UINT32 negotiated_buffer_frames = 0;
-    if (FAILED(audio_client->GetBufferSize(&negotiated_buffer_frames)) ||
-        negotiated_buffer_frames == 0) {
-        // Defensive: if GetBufferSize fails, fall back to one period.
-        negotiated_buffer_frames = static_cast<UINT32>(
-            (static_cast<uint64_t>(effective_period_ms) *
-                 captured_format.sample_rate +
-             999) /
-            1000);
     }
 
     // Create bounded audio queue.
-    AudioQueue queue(kDefaultAudioQueueBudgetMs, effective_period_ms);
+    AudioQueue queue(kDefaultAudioQueueBudgetMs, session.effective_period_ms);
     queue_capacity_.store(queue.capacity(), std::memory_order_relaxed);
 
     // Initialization succeeded — signal the caller.
@@ -760,226 +730,13 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
     std::thread consumer_thread;
     const ConsumerJoin join_consumer(queue, consumer_thread);
     consumer_thread = std::thread([this, &queue, &on_packet]() {
-        while (true) {
-            auto packet = queue.wait_pop();
-            if (!packet.has_value()) {
-                break;  // Queue closed and drained.
-            }
-            if (on_packet) {
-                // A failed delivery loses this packet, not the process; the
-                // barrier still counts it, or a drain would wait for ever.
-                try {
-                    on_packet(packet.value());
-                } catch (...) {
-                    capture_failures_.Increment();
-                }
-            }
-            delivery_barrier_.CompleteOne();
-        }
+        DeliverQueuedPackets(queue, on_packet);
     });
 
-    // Event-driven capture loop.
-    HANDLE wait_handles[2] = {audio_event.get(), stop_event_.get()};
-
-    while (true) {
-        const DWORD wait_result = ::WaitForMultipleObjects(2, wait_handles, FALSE, 2000);
-
-        if (wait_result == WAIT_OBJECT_0 + 1) {
-            // Stop event signalled.
-            break;
-        }
-
-        if (wait_result == WAIT_TIMEOUT) {
-            // Timeout — check if stop was requested (defensive).
-            if (::WaitForSingleObject(stop_event_.get(), 0) == WAIT_OBJECT_0) {
-                break;
-            }
-            continue;
-        }
-
-        if (wait_result != WAIT_OBJECT_0) {
-            // Unexpected wait failure.
-            platform::LogMessage(L"[Audio] WaitForMultipleObjects failed: %lu", ::GetLastError());
-            capture_failures_.Increment();
-            break;
-        }
-
-        // Drain all available packets from the WASAPI buffer.
-        bool device_lost = false;
-        while (true) {
-            UINT32 frames_available = 0;
-            BYTE* data = nullptr;
-            DWORD flags = 0;
-            UINT64 device_position = 0;
-            UINT64 qpc_position = 0;
-            UINT32 buffered_frames_available = 0;
-            const bool has_padding =
-                SUCCEEDED(audio_client->GetCurrentPadding(&buffered_frames_available));
-
-            hr = capture_client->GetBuffer(&data, &frames_available, &flags,
-                                           &device_position, &qpc_position);
-
-            // A failed call reports no frames, so it must be classified before
-            // the empty-buffer exit or endpoint loss would look like silence.
-            if (FAILED(hr)) {
-                platform::LogMessage(L"[Audio] GetBuffer failed: 0x%08lX", hr);
-                last_failure_hresult_.store(hr, std::memory_order_release);
-                capture_failures_.Increment();
-                if (hr == AUDCLNT_E_DEVICE_INVALIDATED) {
-                    device_invalidations_.Increment();
-                    device_lost = true;
-                }
-                break;
-            }
-            if (hr == AUDCLNT_S_BUFFER_EMPTY || frames_available == 0) {
-                break;
-            }
-            if (!has_padding || buffered_frames_available < frames_available) {
-                buffered_frames_available = frames_available;
-            }
-
-            LARGE_INTEGER capture_qpc{};
-            const bool has_capture_qpc =
-                ::QueryPerformanceCounter(&capture_qpc) != FALSE;
-            const MediaTime capture_qpc_time = has_capture_qpc
-                                                   ? QpcTicksToMediaTime(
-                                                         capture_qpc, qpc_frequency)
-                                                   : MediaTime{0};
-            const uint64_t capture_qpc_100ns =
-                capture_qpc_time.count() > 0
-                    ? static_cast<uint64_t>(capture_qpc_time.count())
-                    : 0;
-
-            uint64_t audio_clock_position = 0;
-            uint64_t audio_clock_qpc_100ns = 0;
-            if (audio_clock2 &&
-                FAILED(audio_clock2->GetDevicePosition(&audio_clock_position,
-                                                       &audio_clock_qpc_100ns))) {
-                audio_clock_position = 0;
-                audio_clock_qpc_100ns = 0;
-            }
-
-            // Build the audio packet with owned data.
-            AudioPacket packet;
-            packet.format = captured_format;
-            packet.frame_count = frames_available;
-
-            const size_t byte_count = static_cast<size_t>(frames_available) *
-                                      captured_format.block_align();
-
-            // Handle flags.
-            AudioPacketFlags pkt_flags = AudioPacketFlags::None;
-
-            if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) {
-                pkt_flags |= AudioPacketFlags::Discontinuity;
-                discontinuities_.Increment();
-            }
-
-            if (flags & AUDCLNT_BUFFERFLAGS_SILENT) {
-                pkt_flags |= AudioPacketFlags::Silent;
-                silent_packets_.Increment();
-                // For silent packets, create a zero-filled packet.
-                packet.data.resize(byte_count, 0);
-            } else {
-                // Copy data from the WASAPI buffer into owned storage.
-                packet.data.resize(byte_count);
-                if (data != nullptr && byte_count > 0) {
-                    std::memcpy(packet.data.data(), data, byte_count);
-                }
-            }
-
-            if (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) {
-                pkt_flags |= AudioPacketFlags::TimestampError;
-            }
-
-            if (overrun_pending) {
-                pkt_flags |= AudioPacketFlags::Discontinuity;
-                overrun_pending = false;
-            }
-
-            packet.device_position = device_position;
-
-            const detail::AudioTimestampResolutionInput timestamp_input{
-                qpc_epoch_100ns.count(),
-                qpc_position,
-                (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) != 0,
-                device_position,
-                frames_available,
-                buffered_frames_available,
-                captured_format.sample_rate,
-                audio_clock_position,
-                audio_clock_frequency,
-                audio_clock_qpc_100ns,
-                capture_qpc_100ns,
-                negotiated_buffer_frames,
-            };
-            const auto timestamp_resolution =
-                ResolveAudioPacketTimestampImpl(timestamp_input);
-            packet.timestamp = timestamp_resolution.resolved_timestamp;
-            packet.timestamp_source = timestamp_resolution.source;
-            if (timestamp_resolution.source != AudioTimestampSource::WasapiQpc) {
-                pkt_flags |= AudioPacketFlags::TimestampError;
-            }
-            packet.flags = pkt_flags;
-
-            // Release the WASAPI buffer before any blocking operation. The
-            // copied packet remains valid even if release reports endpoint
-            // loss, so retain it and terminate capture deterministically after
-            // diagnostics/enqueue below.
-            const HRESULT release_hr = capture_client->ReleaseBuffer(frames_available);
-            const bool release_failed = FAILED(release_hr);
-            if (release_failed) {
-                platform::LogMessage(L"[Audio] ReleaseBuffer failed: 0x%08lX", release_hr);
-                capture_failures_.Increment();
-                if (release_hr == AUDCLNT_E_DEVICE_INVALIDATED) {
-                    device_invalidations_.Increment();
-                }
-                device_lost = true;
-            }
-
-            RecordTimestampDiagnostic(timestamp_input, timestamp_resolution,
-                                      packet.flags);
-
-            // Update diagnostics.
-            packets_acquired_.Increment();
-            audio_frames_acquired_.Add(frames_available);
-            bytes_acquired_.Add(byte_count);
-
-            // Make the delivery decision under the same synchronization as
-            // the Pause boundary. Packets acquired while delivery is paused
-            // are explicitly discarded while WASAPI continues to drain.
-            AudioQueuePushResult push_result = AudioQueuePushResult::Closed;
-            const detail::AudioDeliveryEnqueueResult delivery_result =
-                delivery_barrier_.TryEnqueue(
-                    [&queue, &packet, &push_result](bool discontinuity) {
-                        if (discontinuity) {
-                            packet.flags |= AudioPacketFlags::Discontinuity;
-                        }
-                        push_result = queue.try_push(std::move(packet));
-                        return push_result == AudioQueuePushResult::Accepted;
-                    });
-            if (delivery_result == detail::AudioDeliveryEnqueueResult::Rejected &&
-                push_result == AudioQueuePushResult::Overrun) {
-                buffer_overruns_.Increment();
-                overrun_pending = true;
-            }
-
-            // Track peak queue occupancy.
-            RaisePeak(peak_queue_occupancy_, queue.peak_size());
-
-            if (release_failed) {
-                break;
-            }
-        }
-
-        if (device_lost) {
-            platform::LogMessage(L"[Audio] Device invalidated during capture");
-            break;
-        }
-    }
+    RunCaptureLoop(session, queue, overrun_pending);
 
     // Stop the WASAPI client.
-    audio_client->Stop();
+    session.audio_client->Stop();
 
     // Close the queue to wake the consumer, then join it.
     queue.close();
@@ -990,8 +747,421 @@ void WasapiAudioProvider::CaptureThread(AudioSource source, PacketCallback on_pa
     // Final peak queue occupancy.
     RaisePeak(peak_queue_occupancy_, queue.peak_size());
 
-    // COM objects (capture_client, audio_client, device, enumerator) are
-    // released here by their destructors before com_guard calls CoUninitialize.
+    // COM objects (the session's capture_client, audio_client, device and
+    // enumerator) are released here by their destructors before com_guard
+    // calls CoUninitialize.
+}
+
+bool WasapiAudioProvider::ActivateCaptureEndpoint(AudioSource source,
+                                                  WasapiCaptureSession& session) {
+    HRESULT hr = ::CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                                    CLSCTX_ALL, IID_PPV_ARGS(&session.enumerator));
+    if (FAILED(hr)) {
+        platform::LogMessage(L"[Audio] CoCreateInstance(MMDeviceEnumerator) failed: 0x%08lX", hr);
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
+        return false;
+    }
+
+    if (source == AudioSource::SystemAudio) {
+        hr = session.enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &session.device);
+    } else {
+        hr = session.enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &session.device);
+    }
+    if (FAILED(hr) || !session.device) {
+        platform::LogMessage(L"[Audio] GetDefaultAudioEndpoint failed: 0x%08lX", hr);
+        FailInitialization(AudioCaptureResult::SourceUnavailable, hr);
+        return false;
+    }
+
+    hr = session.device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                  reinterpret_cast<void**>(session.audio_client.GetAddressOf()));
+    if (FAILED(hr) || !session.audio_client) {
+        platform::LogMessage(L"[Audio] IMMDevice::Activate failed: 0x%08lX", hr);
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
+        return false;
+    }
+    return true;
+}
+
+bool WasapiAudioProvider::InitializeCaptureStream(AudioSource source,
+                                                  WasapiCaptureSession& session) {
+    // Discover the native mix format.
+    WAVEFORMATEX* mix_format = nullptr;
+    HRESULT hr = session.audio_client->GetMixFormat(&mix_format);
+    if (FAILED(hr) || mix_format == nullptr) {
+        platform::LogMessage(L"[Audio] GetMixFormat failed: 0x%08lX", hr);
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
+        return false;
+    }
+
+    session.captured_format = FormatFromWaveFormat(*mix_format);
+
+    // Store the negotiated format.
+    {
+        const std::scoped_lock lock(format_mutex_);
+        negotiated_format_ = session.captured_format;
+    }
+
+    // Initialize in shared mode, event-driven.
+    DWORD stream_flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
+    if (source == AudioSource::SystemAudio) {
+        stream_flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
+    }
+
+    // Use the default device period for the buffer.
+    session.audio_client->GetDevicePeriod(&session.default_period,
+                                          &session.minimum_period);
+    if (session.default_period == 0) {
+        session.default_period = kDefaultBufferPeriod100ns;
+    }
+
+    hr = session.audio_client->Initialize(
+        AUDCLNT_SHAREMODE_SHARED,
+        stream_flags,
+        0,               // engine-selected shared-mode buffer duration
+        0,               // periodicity (must be 0 for shared mode)
+        mix_format,
+        nullptr);        // session GUID
+
+    ::CoTaskMemFree(mix_format);
+    mix_format = nullptr;
+
+    if (FAILED(hr)) {
+        platform::LogMessage(L"[Audio] IAudioClient::Initialize failed: 0x%08lX", hr);
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
+        return false;
+    }
+    return true;
+}
+
+bool WasapiAudioProvider::ConnectCaptureClient(WasapiCaptureSession& session) {
+    // Create the event for WASAPI buffer-ready notification.
+    session.audio_event.reset(::CreateEventW(nullptr, FALSE, FALSE, nullptr));
+    if (!session.audio_event) {
+        platform::LogMessage(L"[Audio] Failed to create audio event");
+        FailInitialization(AudioCaptureResult::InitializationFailed, HRESULT_FROM_WIN32(::GetLastError()));
+        return false;
+    }
+
+    HRESULT hr = session.audio_client->SetEventHandle(session.audio_event.get());
+    if (FAILED(hr)) {
+        platform::LogMessage(L"[Audio] SetEventHandle failed: 0x%08lX", hr);
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
+        return false;
+    }
+
+    // Get the capture client.
+    hr = session.audio_client->GetService(IID_PPV_ARGS(&session.capture_client));
+    if (FAILED(hr)) {
+        platform::LogMessage(L"[Audio] GetService(IAudioCaptureClient) failed: 0x%08lX", hr);
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
+        return false;
+    }
+    return true;
+}
+
+void WasapiAudioProvider::OpenCaptureAudioClock(WasapiCaptureSession& session) {
+    // IAudioClock is an independent high-precision observation of the same
+    // client/device timeline. Capture can continue without it, but flagged or
+    // implausible GetBuffer timestamps then use the explicit capture-QPC
+    // fallback instead of being silently placed at zero.
+    const HRESULT audio_clock_hr =
+        session.audio_client->GetService(IID_PPV_ARGS(&session.audio_clock));
+    if (SUCCEEDED(audio_clock_hr) && session.audio_clock) {
+        if (FAILED(session.audio_clock->GetFrequency(&session.audio_clock_frequency)) ||
+            session.audio_clock_frequency == 0) {
+            session.audio_clock.Reset();
+            session.audio_clock_frequency = 0;
+        } else {
+            (void)session.audio_client->GetService(IID_PPV_ARGS(&session.audio_clock2));
+        }
+    } else {
+        session.audio_clock.Reset();
+    }
+}
+
+bool WasapiAudioProvider::EstablishCaptureQpcEpoch(WasapiCaptureSession& session) {
+    // Establish the shared QPC epoch before Start so the first device frame
+    // cannot legitimately predate it. GetBuffer and IAudioClock QPC positions
+    // are already expressed in 100 ns units in this same clock domain.
+    LARGE_INTEGER qpc_epoch{};
+    if (::QueryPerformanceFrequency(&session.qpc_frequency) == FALSE ||
+        session.qpc_frequency.QuadPart <= 0 ||
+        ::QueryPerformanceCounter(&qpc_epoch) == FALSE) {
+        platform::LogMessage(L"[Audio] QueryPerformanceCounter initialization failed");
+        FailInitialization(AudioCaptureResult::InitializationFailed, E_FAIL);
+        return false;
+    }
+    session.qpc_epoch_100ns = QpcTicksToMediaTime(qpc_epoch, session.qpc_frequency);
+    qpc_epoch_100ns_.store(session.qpc_epoch_100ns.count(), std::memory_order_release);
+    return true;
+}
+
+bool WasapiAudioProvider::StartCaptureStream(WasapiCaptureSession& session) {
+    // Start capture.
+    const HRESULT hr = session.audio_client->Start();
+    if (FAILED(hr)) {
+        platform::LogMessage(L"[Audio] IAudioClient::Start failed: 0x%08lX", hr);
+        FailInitialization(AudioCaptureResult::InitializationFailed, hr);
+        return false;
+    }
+
+    // Determine the WASAPI buffer period for queue capacity calculation.
+    session.audio_client->GetDevicePeriod(&session.default_period,
+                                          &session.minimum_period);
+    const uint32_t period_ms = static_cast<uint32_t>(
+        (session.default_period > 0 ? session.default_period : kDefaultBufferPeriod100ns) /
+        10'000);
+    session.effective_period_ms = period_ms > 0 ? period_ms : 10;
+
+    // Query the negotiated buffer size so the CaptureQpcFallback path can
+    // cap inflated GetCurrentPadding values after endpoint wakeup.
+    if (FAILED(session.audio_client->GetBufferSize(&session.negotiated_buffer_frames)) ||
+        session.negotiated_buffer_frames == 0) {
+        // Defensive: if GetBufferSize fails, fall back to one period.
+        session.negotiated_buffer_frames = static_cast<UINT32>(
+            (static_cast<uint64_t>(session.effective_period_ms) *
+                 session.captured_format.sample_rate +
+             999) /
+            1000);
+    }
+    return true;
+}
+
+void WasapiAudioProvider::DeliverQueuedPackets(AudioQueue& queue,
+                                               PacketCallback& on_packet) {
+    while (true) {
+        auto packet = queue.wait_pop();
+        if (!packet.has_value()) {
+            break;  // Queue closed and drained.
+        }
+        if (on_packet) {
+            // A failed delivery loses this packet, not the process; the
+            // barrier still counts it, or a drain would wait for ever.
+            try {
+                on_packet(packet.value());
+            } catch (...) {
+                capture_failures_.Increment();
+            }
+        }
+        delivery_barrier_.CompleteOne();
+    }
+}
+
+void WasapiAudioProvider::RunCaptureLoop(const WasapiCaptureSession& session,
+                                         AudioQueue& queue, bool& overrun_pending) {
+    // Event-driven capture loop.
+    HANDLE wait_handles[2] = {session.audio_event.get(), stop_event_.get()};
+
+    while (true) {
+        const CaptureWakeup wakeup = WaitForCaptureWakeup(wait_handles);
+        if (wakeup == CaptureWakeup::Exit) {
+            break;
+        }
+        if (wakeup == CaptureWakeup::Idle) {
+            continue;
+        }
+
+        // Drain all available packets from the WASAPI buffer.
+        const bool device_lost = DrainCaptureBuffer(session, queue, overrun_pending);
+
+        if (device_lost) {
+            platform::LogMessage(L"[Audio] Device invalidated during capture");
+            break;
+        }
+    }
+}
+
+CaptureWakeup WasapiAudioProvider::WaitForCaptureWakeup(const HANDLE* wait_handles) {
+    const DWORD wait_result = ::WaitForMultipleObjects(2, wait_handles, FALSE, 2000);
+
+    if (wait_result == WAIT_OBJECT_0 + 1) {
+        // Stop event signalled.
+        return CaptureWakeup::Exit;
+    }
+
+    if (wait_result == WAIT_TIMEOUT) {
+        // Timeout — check if stop was requested (defensive).
+        if (::WaitForSingleObject(stop_event_.get(), 0) == WAIT_OBJECT_0) {
+            return CaptureWakeup::Exit;
+        }
+        return CaptureWakeup::Idle;
+    }
+
+    if (wait_result != WAIT_OBJECT_0) {
+        // Unexpected wait failure.
+        platform::LogMessage(L"[Audio] WaitForMultipleObjects failed: %lu", ::GetLastError());
+        capture_failures_.Increment();
+        return CaptureWakeup::Exit;
+    }
+    return CaptureWakeup::BufferReady;
+}
+
+bool WasapiAudioProvider::DrainCaptureBuffer(const WasapiCaptureSession& session,
+                                             AudioQueue& queue, bool& overrun_pending) {
+    bool device_lost = false;
+    while (true) {
+        CapturedBuffer buffer;
+        if (!AcquireCaptureBuffer(session, buffer, device_lost)) {
+            break;
+        }
+
+        const CaptureClockObservation clocks = ObserveCaptureClocks(session);
+
+        // Build the audio packet with owned data.
+        AudioPacket packet;
+        AudioPacketFlags pkt_flags = AudioPacketFlags::None;
+        const size_t byte_count = FillCapturedPacket(
+            session.captured_format, buffer, overrun_pending, packet, pkt_flags);
+
+        const detail::AudioTimestampResolutionInput timestamp_input =
+            MakeTimestampInput(session, buffer, clocks);
+        const auto timestamp_resolution =
+            ResolveAudioPacketTimestampImpl(timestamp_input);
+        packet.timestamp = timestamp_resolution.resolved_timestamp;
+        packet.timestamp_source = timestamp_resolution.source;
+        if (timestamp_resolution.source != AudioTimestampSource::WasapiQpc) {
+            pkt_flags |= AudioPacketFlags::TimestampError;
+        }
+        packet.flags = pkt_flags;
+
+        // Release the WASAPI buffer before any blocking operation. The
+        // copied packet remains valid even if release reports endpoint
+        // loss, so retain it and terminate capture deterministically after
+        // diagnostics/enqueue below.
+        const bool release_failed =
+            ReleaseCaptureBuffer(session, buffer.frames_available, device_lost);
+
+        RecordTimestampDiagnostic(timestamp_input, timestamp_resolution,
+                                  packet.flags);
+
+        // Update diagnostics.
+        packets_acquired_.Increment();
+        audio_frames_acquired_.Add(buffer.frames_available);
+        bytes_acquired_.Add(byte_count);
+
+        EnqueueCapturedPacket(queue, packet, overrun_pending);
+
+        if (release_failed) {
+            break;
+        }
+    }
+    return device_lost;
+}
+
+bool WasapiAudioProvider::AcquireCaptureBuffer(const WasapiCaptureSession& session,
+                                               CapturedBuffer& buffer,
+                                               bool& device_lost) {
+    const bool has_padding = SUCCEEDED(
+        session.audio_client->GetCurrentPadding(&buffer.buffered_frames_available));
+
+    const HRESULT hr = session.capture_client->GetBuffer(
+        &buffer.data, &buffer.frames_available, &buffer.flags,
+        &buffer.device_position, &buffer.qpc_position);
+
+    // A failed call reports no frames, so it must be classified before
+    // the empty-buffer exit or endpoint loss would look like silence.
+    if (FAILED(hr)) {
+        platform::LogMessage(L"[Audio] GetBuffer failed: 0x%08lX", hr);
+        last_failure_hresult_.store(hr, std::memory_order_release);
+        capture_failures_.Increment();
+        if (hr == AUDCLNT_E_DEVICE_INVALIDATED) {
+            device_invalidations_.Increment();
+            device_lost = true;
+        }
+        return false;
+    }
+    if (hr == AUDCLNT_S_BUFFER_EMPTY || buffer.frames_available == 0) {
+        return false;
+    }
+    if (!has_padding || buffer.buffered_frames_available < buffer.frames_available) {
+        buffer.buffered_frames_available = buffer.frames_available;
+    }
+    return true;
+}
+
+std::size_t WasapiAudioProvider::FillCapturedPacket(const AudioFormat& format,
+                                                    const CapturedBuffer& buffer,
+                                                    bool& overrun_pending,
+                                                    AudioPacket& packet,
+                                                    AudioPacketFlags& packet_flags) {
+    packet.format = format;
+    packet.frame_count = buffer.frames_available;
+
+    const size_t byte_count = static_cast<size_t>(buffer.frames_available) *
+                              format.block_align();
+
+    // Handle flags.
+    if (buffer.flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) {
+        packet_flags |= AudioPacketFlags::Discontinuity;
+        discontinuities_.Increment();
+    }
+
+    if (buffer.flags & AUDCLNT_BUFFERFLAGS_SILENT) {
+        packet_flags |= AudioPacketFlags::Silent;
+        silent_packets_.Increment();
+        // For silent packets, create a zero-filled packet.
+        packet.data.resize(byte_count, 0);
+    } else {
+        // Copy data from the WASAPI buffer into owned storage.
+        packet.data.resize(byte_count);
+        if (buffer.data != nullptr && byte_count > 0) {
+            std::memcpy(packet.data.data(), buffer.data, byte_count);
+        }
+    }
+
+    if (buffer.flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) {
+        packet_flags |= AudioPacketFlags::TimestampError;
+    }
+
+    if (overrun_pending) {
+        packet_flags |= AudioPacketFlags::Discontinuity;
+        overrun_pending = false;
+    }
+
+    packet.device_position = buffer.device_position;
+    return byte_count;
+}
+
+bool WasapiAudioProvider::ReleaseCaptureBuffer(const WasapiCaptureSession& session,
+                                               UINT32 frames_available,
+                                               bool& device_lost) {
+    const HRESULT release_hr = session.capture_client->ReleaseBuffer(frames_available);
+    const bool release_failed = FAILED(release_hr);
+    if (release_failed) {
+        platform::LogMessage(L"[Audio] ReleaseBuffer failed: 0x%08lX", release_hr);
+        capture_failures_.Increment();
+        if (release_hr == AUDCLNT_E_DEVICE_INVALIDATED) {
+            device_invalidations_.Increment();
+        }
+        device_lost = true;
+    }
+    return release_failed;
+}
+
+void WasapiAudioProvider::EnqueueCapturedPacket(AudioQueue& queue, AudioPacket& packet,
+                                                bool& overrun_pending) {
+    // Make the delivery decision under the same synchronization as
+    // the Pause boundary. Packets acquired while delivery is paused
+    // are explicitly discarded while WASAPI continues to drain.
+    AudioQueuePushResult push_result = AudioQueuePushResult::Closed;
+    const detail::AudioDeliveryEnqueueResult delivery_result =
+        delivery_barrier_.TryEnqueue(
+            [&queue, &packet, &push_result](bool discontinuity) {
+                if (discontinuity) {
+                    packet.flags |= AudioPacketFlags::Discontinuity;
+                }
+                push_result = queue.try_push(std::move(packet));
+                return push_result == AudioQueuePushResult::Accepted;
+            });
+    if (delivery_result == detail::AudioDeliveryEnqueueResult::Rejected &&
+        push_result == AudioQueuePushResult::Overrun) {
+        buffer_overruns_.Increment();
+        overrun_pending = true;
+    }
+
+    // Track peak queue occupancy.
+    RaisePeak(peak_queue_occupancy_, queue.peak_size());
 }
 
 void WasapiAudioProvider::RecordTimestampDiagnostic(
