@@ -3,9 +3,11 @@
 #include "ui/control_ids.h"
 #include "platform/paint_buffer.h"
 
+#include "platform/image_output.h"
 #include "ui/ui_theme.h"
 
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace easnap::app {

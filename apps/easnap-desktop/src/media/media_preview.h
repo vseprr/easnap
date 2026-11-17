@@ -1,12 +1,13 @@
 // Easnap - disk-backed MP4 preview boundary.
 #pragma once
 
+#include <windows.h>
+
 #include <memory>
 #include <cstdint>
 #include <string>
 
 #include "media/media_types.h"
-#include "platform/platform_utils.h"
 
 namespace easnap::media {
 

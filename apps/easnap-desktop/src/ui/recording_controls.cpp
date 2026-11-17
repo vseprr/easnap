@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/island_layout.h"

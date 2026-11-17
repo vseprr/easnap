@@ -10,6 +10,7 @@
 
 #include "app/recording_workflow.h"
 #include "media/video_support.h"
+#include "platform/files.h"
 #include "platform/platform_utils.h"
 #include "strings/strings.h"
 

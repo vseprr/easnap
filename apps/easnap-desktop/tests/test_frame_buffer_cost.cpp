@@ -32,7 +32,8 @@
 #include <cstring>
 #include <vector>
 
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
+#include "platform/system_info.h"
 
 namespace {
 

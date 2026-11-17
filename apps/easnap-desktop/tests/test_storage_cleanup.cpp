@@ -1,4 +1,5 @@
 // Storage cleanup regression: real production deletion and synthetic owned files.
+#include "platform/files.h"
 #include "platform/platform_utils.h"
 
 #include <winioctl.h>

@@ -1,5 +1,7 @@
 // Capture-workspace interaction policy; independent of recording lifecycle.
 #pragma once
+#include <string>
+
 #include "ui/capture_mode.h"
 #include "ui/ui_theme.h"
 

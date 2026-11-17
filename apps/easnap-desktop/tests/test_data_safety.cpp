@@ -9,6 +9,10 @@
 #include "scrollshot_synthetic.h"
 
 #include "editor/screenshot_editor.h"
+#include "platform/bgra_image.h"
+#include "platform/graphics_device.h"
+#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/native_controls.h"
 #include "ui/settings_dialog.h"

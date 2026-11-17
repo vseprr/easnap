@@ -8,6 +8,8 @@
 #include <array>
 #include <utility>
 
+#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/native_controls.h"

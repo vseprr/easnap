@@ -8,12 +8,13 @@
 // hide/flush/acquire/show fallback. Frozen startup pixels serve magnifier sampling.
 #pragma once
 
+#include <windows.h>
+
 #include <functional>
 #include <memory>
 #include <vector>
 
 #include "capture/capture_provider.h"
-#include "platform/platform_utils.h"
 #include "ui/region_selector.h"
 #include "ui/capture_magnifier.h"
 #include "ui/capture_workspace.h"

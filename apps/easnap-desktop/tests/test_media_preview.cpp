@@ -26,6 +26,10 @@
 #include "media/media_foundation_writer.h"
 #include "app/trim_workflow.h"
 #include "capture/capture_provider.h"
+#include "platform/bgra_image.h"
+#include "platform/graphics_device.h"
+#include "platform/image_output.h"
+#include "platform/screen_geometry.h"
 #include "preview_test_fixture.h"
 
 namespace {

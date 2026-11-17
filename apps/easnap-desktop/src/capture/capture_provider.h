@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "media/media_interfaces.h"
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
 
 namespace easnap::capture {
 

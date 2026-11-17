@@ -2,8 +2,10 @@
 // Source pixels and annotation colors are deliberately outside this domain.
 #pragma once
 
+#include <windows.h>
+#include <d2d1.h>
+
 #include "platform/app_messages.h"
-#include "platform/platform_utils.h"
 #include "app/appearance_theme.h"
 
 namespace easnap::ui::theme {

@@ -13,6 +13,7 @@
 #include "capture/recording_capture_worker.h"
 #include "media/media_foundation_writer.h"
 #include "media/temp_session.h"
+#include "platform/bgra_image.h"
 
 namespace {
 

@@ -15,6 +15,7 @@
 #include "capture/capture_provider.h"
 #include "media/frame_queue.h"
 #include "media/media_interfaces.h"
+#include "platform/bgra_image.h"
 #include "platform/saturating_counter.h"
 
 namespace easnap::capture {

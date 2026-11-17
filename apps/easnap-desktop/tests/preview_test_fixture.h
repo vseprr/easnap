@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "media/media_foundation_writer.h"
+#include "platform/bgra_image.h"
 
 namespace easnap::test {
 

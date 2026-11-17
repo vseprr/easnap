@@ -1,6 +1,9 @@
 // Easnap - screenshot annotation editor implementation.
 #include "editor/screenshot_editor.h"
 
+#include "platform/graphics_device.h"
+#include "platform/image_output.h"
+#include "platform/screen_geometry.h"
 #include "ui/island_layout.h"
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"

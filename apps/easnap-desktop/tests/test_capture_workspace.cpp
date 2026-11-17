@@ -1,6 +1,9 @@
 #include "native_test_monitor.h"
 // Production workspace policy + real editor/configuration integration.
 // A private window station/desktop gives these tests their own OS clipboard.
+#include "platform/bgra_image.h"
+#include "platform/graphics_device.h"
+#include "platform/screen_geometry.h"
 #include "ui/capture_workspace.h"
 #include "strings/strings.h"
 #include "ui/island_layout.h"

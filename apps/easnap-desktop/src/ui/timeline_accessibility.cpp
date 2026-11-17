@@ -1,10 +1,12 @@
 #include "ui/timeline_accessibility.h"
 
+#include <ole2.h>
 #include <UIAutomation.h>
 #include <atomic>
 #include <cmath>
 #include <new>
 
+#include "platform/platform_utils.h"
 #include "strings/strings.h"
 
 namespace easnap::ui {

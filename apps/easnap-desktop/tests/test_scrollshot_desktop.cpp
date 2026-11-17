@@ -19,6 +19,10 @@
 #include "scrollshot_synthetic.h"
 
 #include "capture/capture_provider.h"
+#include "platform/bgra_image.h"
+#include "platform/graphics_device.h"
+#include "platform/screen_geometry.h"
+#include "platform/system_info.h"
 #include "scrollshot/scrollshot_session.h"
 #include "strings/strings.h"
 #include "ui/native_controls.h"

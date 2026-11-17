@@ -1,11 +1,11 @@
 // Frozen-pixel sampling and presentation policy for the native capture overlay.
 #pragma once
 
+#include <windows.h>
+
 #include <optional>
 #include <span>
 #include <string>
-
-#include "platform/platform_utils.h"
 
 namespace easnap::ui {
 

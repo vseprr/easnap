@@ -2,6 +2,9 @@
 #include "ui/pinned_images.h"
 
 #include "platform/image_export.h"
+#include "platform/image_output.h"
+#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
 #include "ui/native_controls.h"

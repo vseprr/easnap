@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "platform/platform_utils.h"
+#include "platform/system_info.h"
 
 namespace easnap::media {
 namespace {

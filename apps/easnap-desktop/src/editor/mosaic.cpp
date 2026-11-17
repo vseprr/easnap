@@ -3,6 +3,8 @@
 
 #include <algorithm>
 
+#include "platform/screen_geometry.h"
+
 namespace easnap::editor {
 
 using platform::IsEmptyRect;

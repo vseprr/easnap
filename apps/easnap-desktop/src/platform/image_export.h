@@ -10,7 +10,8 @@
 #pragma once
 
 #include "platform/app_messages.h"
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
+#include "platform/image_output.h"
 
 #include <atomic>
 #include <memory>

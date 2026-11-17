@@ -4,7 +4,9 @@
 // messages on a private window station and desktop: nothing is shown on the
 // user's screen, and the clipboard the copy check fills is the station's own.
 
+#include "platform/bgra_image.h"
 #include "platform/image_export.h"
+#include "platform/screen_geometry.h"
 #include "temp_folder.h"
 #include "ui/native_controls.h"
 #include "ui/pin_layout.h"

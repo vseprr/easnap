@@ -28,6 +28,7 @@
 #include "app/appearance_theme.h"
 #include "editor/image_viewport.h"
 #include "editor/redaction_renderer.h"
+#include "platform/bgra_image.h"
 #include "platform/image_export.h"
 #include "platform/platform_utils.h"
 #include "ui/native_controls.h"

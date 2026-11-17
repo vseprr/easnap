@@ -12,6 +12,7 @@
 
 #include "platform/app_messages.h"
 #include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/trim_layout.h"

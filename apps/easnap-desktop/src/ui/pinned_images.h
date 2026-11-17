@@ -1,7 +1,7 @@
 // Easnap - screenshots pinned to the screen (ADR-038).
 #pragma once
 
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
 #include "ui/control_ids.h"
 
 #include <cstddef>

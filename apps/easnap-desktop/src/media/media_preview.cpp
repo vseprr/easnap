@@ -20,9 +20,11 @@
 
 #include "media/mf_video_aperture.h"
 #include "platform/app_messages.h"
+#include "platform/bgra_image.h"
 #include "platform/paint_buffer.h"
 #include "media/preview_transport.h"
 #include "media/preview_video_endpoint.h"
+#include "platform/platform_utils.h"
 
 namespace easnap::media {
 namespace {

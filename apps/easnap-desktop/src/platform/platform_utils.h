@@ -105,12 +105,3 @@ public:
 HICON LoadAppIcon(int desired_size);
 
 }  // namespace easnap::platform
-
-// Transitional, removed by the next commit: the callers of this header still
-// expect everything it used to declare.
-#include "platform/bgra_image.h"
-#include "platform/files.h"
-#include "platform/graphics_device.h"
-#include "platform/image_output.h"
-#include "platform/screen_geometry.h"
-#include "platform/system_info.h"

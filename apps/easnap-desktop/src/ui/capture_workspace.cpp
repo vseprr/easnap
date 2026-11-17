@@ -1,4 +1,5 @@
 #include "ui/capture_workspace.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/native_controls.h"

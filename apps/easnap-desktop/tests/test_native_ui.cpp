@@ -1,6 +1,10 @@
 // Real production HWNDs, annotation compositor and MFPlay preview. Generated
 // media/pixels are test inputs only; no capture, export or UI logic is duplicated.
+#include "platform/bgra_image.h"
+#include "platform/graphics_device.h"
+#include "platform/image_output.h"
 #include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include <UIAutomation.h>
 #include <commctrl.h>
 #include <windowsx.h>

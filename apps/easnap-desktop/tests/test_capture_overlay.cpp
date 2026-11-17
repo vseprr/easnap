@@ -1,6 +1,8 @@
 #include "native_test_monitor.h"
 // Production overlay policy and native message routing. No capture backend or
 // clipboard mutation: the native pass uses a deterministic frozen image.
+#include "platform/bgra_image.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/native_controls.h"
 #include "ui/overlay.h"

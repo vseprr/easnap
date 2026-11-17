@@ -170,7 +170,7 @@ WIC target. It never captures the island or samples displayed image pixels.
 Copy publishes CF_DIB and PNG. The CF_DIB image is written bottom-up: .NET
 applications could not read the top-down bitmap Easnap wrote before
 (`Clipboard.GetImage` returns nothing for it; `MakeClipboardDib` in
-`platform/platform_utils.cpp`). Both formats are prepared, the PNG encoded,
+`platform/image_output.cpp`). Both formats are prepared, the PNG encoded,
 before the clipboard is opened, so other applications are not kept from the
 clipboard while a tall image is encoded. Save uses WIC and the native PNG/JPEG
 picker.

@@ -10,7 +10,7 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
 
 namespace easnap::test {
 // Independent observer of the compositor's monitor output, not a child HWND's

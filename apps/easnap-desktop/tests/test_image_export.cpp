@@ -4,6 +4,7 @@
 // written into a folder the test creates and removes; clipboard memory is
 // prepared but never published, so the user's clipboard is not touched.
 
+#include "platform/bgra_image.h"
 #include "platform/image_export.h"
 #include "temp_folder.h"
 

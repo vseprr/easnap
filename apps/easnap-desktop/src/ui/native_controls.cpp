@@ -16,6 +16,9 @@
 #include <gdiplus.h>
 
 #include "app/app_settings.h"
+#include "platform/files.h"
+#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 
 namespace easnap::ui {

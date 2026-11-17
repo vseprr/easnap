@@ -2,6 +2,8 @@
 
 #include "platform/app_messages.h"
 #include "platform/diagnostics.h"
+#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 
 #include <algorithm>
 #include <array>

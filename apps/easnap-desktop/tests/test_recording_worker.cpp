@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "capture/recording_capture_worker.h"
+#include "platform/bgra_image.h"
 
 namespace {
 

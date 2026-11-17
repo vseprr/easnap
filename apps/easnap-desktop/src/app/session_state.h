@@ -20,7 +20,8 @@
 #include "media/media_interfaces.h"
 #include "platform/app_messages.h"
 #include "platform/image_export.h"
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
+#include "platform/screen_geometry.h"
 #include "ui/capture_mode.h"
 #include "ui/control_ids.h"
 

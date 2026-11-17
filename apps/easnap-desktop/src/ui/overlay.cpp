@@ -14,6 +14,9 @@
 #include <optional>
 #include <string>
 
+#include "platform/bgra_image.h"
+#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/ui_theme.h"

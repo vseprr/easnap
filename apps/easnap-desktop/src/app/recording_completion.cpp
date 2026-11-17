@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "platform/files.h"
 #include "platform/platform_utils.h"
 #include "platform/windows_security.h"
 

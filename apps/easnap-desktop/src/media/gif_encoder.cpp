@@ -15,6 +15,9 @@
 
 #include <shlwapi.h>
 
+#include "platform/bgra_image.h"
+#include "platform/platform_utils.h"
+
 namespace easnap::media {
 namespace {
 

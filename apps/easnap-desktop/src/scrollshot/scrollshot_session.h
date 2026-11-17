@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "capture/capture_provider.h"
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
 #include "scrollshot/stitch_engine.h"
 
 namespace easnap::scrollshot {

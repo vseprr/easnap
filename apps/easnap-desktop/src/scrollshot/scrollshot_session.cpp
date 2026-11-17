@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cstring>
 
+#include "platform/screen_geometry.h"
+
 namespace easnap::scrollshot {
 namespace {
 

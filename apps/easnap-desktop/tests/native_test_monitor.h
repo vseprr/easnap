@@ -2,7 +2,7 @@
 #include <cstdio>
 #include <optional>
 #include <stdexcept>
-#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 
 namespace easnap::test {
 // Opt-in physical display selection for interactive tests. Fail explicitly if

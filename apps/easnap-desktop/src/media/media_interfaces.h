@@ -15,7 +15,7 @@
 
 #include "media/audio_format.h"
 #include "media/media_types.h"
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
 
 namespace easnap::media {
 

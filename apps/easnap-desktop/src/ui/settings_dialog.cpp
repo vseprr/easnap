@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/native_controls.h"
 #include "ui/ui_theme.h"
