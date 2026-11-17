@@ -29,10 +29,10 @@
 #include <mutex>
 #include <thread>
 
-#include "capture/recording_capture_worker.h"  // SaturatingCounter
 #include "media/audio_delivery_barrier.h"
 #include "media/audio_queue.h"
 #include "platform/platform_utils.h"
+#include "platform/saturating_counter.h"
 
 namespace easnap::media {
 
@@ -302,14 +302,14 @@ private:
     detail::AudioDeliveryBarrier delivery_barrier_;
 
     // Diagnostics — all atomic/saturating, safe to read from any thread.
-    capture::SaturatingCounter packets_acquired_;
-    capture::SaturatingCounter audio_frames_acquired_;
-    capture::SaturatingCounter bytes_acquired_;
-    capture::SaturatingCounter silent_packets_;
-    capture::SaturatingCounter discontinuities_;
-    capture::SaturatingCounter device_invalidations_;
-    capture::SaturatingCounter buffer_overruns_;
-    capture::SaturatingCounter capture_failures_;
+    platform::SaturatingCounter packets_acquired_;
+    platform::SaturatingCounter audio_frames_acquired_;
+    platform::SaturatingCounter bytes_acquired_;
+    platform::SaturatingCounter silent_packets_;
+    platform::SaturatingCounter discontinuities_;
+    platform::SaturatingCounter device_invalidations_;
+    platform::SaturatingCounter buffer_overruns_;
+    platform::SaturatingCounter capture_failures_;
     std::atomic<std::size_t> peak_queue_occupancy_{0};
     std::atomic<std::size_t> queue_capacity_{0};
     mutable std::mutex timestamp_diagnostics_mutex_;

@@ -348,7 +348,7 @@ void TestMonotonicFrameTimestamps() {
 
 void TestDropNewestOverloadPolicy() {
     easnap::media::FrameQueue<easnap::media::VideoFrame> queue(1);
-    easnap::capture::SaturatingCounter drops(2);
+    easnap::platform::SaturatingCounter drops(2);
 
     easnap::media::VideoFrame first;
     first.timestamp = easnap::media::MediaTime{1};

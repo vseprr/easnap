@@ -15,6 +15,7 @@
 #include "capture/capture_provider.h"
 #include "media/frame_queue.h"
 #include "media/media_interfaces.h"
+#include "platform/saturating_counter.h"
 
 namespace easnap::capture {
 
@@ -60,22 +61,6 @@ private:
     RecordingWorkerState state_{RecordingWorkerState::Stopped};
 };
 
-/// Atomic diagnostic counter that saturates instead of wrapping.
-class SaturatingCounter final {
-public:
-    explicit SaturatingCounter(uint64_t limit = (std::numeric_limits<uint64_t>::max)()) noexcept
-        : limit_(limit) {}
-
-    void Increment() noexcept { Add(1); }
-    void Add(uint64_t amount) noexcept;
-    void Reset() noexcept { value_.store(0, std::memory_order_relaxed); }
-    [[nodiscard]] uint64_t value() const noexcept { return value_.load(std::memory_order_relaxed); }
-
-private:
-    std::atomic<uint64_t> value_{0};
-    uint64_t limit_;
-};
-
 struct AggregateTiming {
     uint64_t count{0};
     uint64_t total_microseconds{0};
@@ -95,8 +80,8 @@ public:
     [[nodiscard]] AggregateTiming snapshot() const noexcept;
 
 private:
-    SaturatingCounter count_;
-    SaturatingCounter total_microseconds_;
+    platform::SaturatingCounter count_;
+    platform::SaturatingCounter total_microseconds_;
     std::atomic<uint64_t> minimum_microseconds_{(std::numeric_limits<uint64_t>::max)()};
     std::atomic<uint64_t> maximum_microseconds_{0};
 };
@@ -185,7 +170,7 @@ private:
 /// Explicit overload policy: retain queued frames and drop the newest frame.
 [[nodiscard]] bool TrySubmitVideoFrameOrDropNewest(media::FrameQueue<media::VideoFrame>& queue,
                                                    media::VideoFrame&& frame,
-                                                   SaturatingCounter& rejected_frames);
+                                                   platform::SaturatingCounter& rejected_frames);
 
 /// Owns the capture provider and its worker thread. The output queue is not
 /// owned and must outlive this object. Lifecycle commands are serialized and
@@ -275,16 +260,16 @@ private:
     std::chrono::steady_clock::duration accumulated_active_time_{};
     CaptureFailureDiagnostics capture_failure_diagnostics_;
 
-    SaturatingCounter capture_attempts_;
-    SaturatingCounter acquired_frames_;
-    SaturatingCounter fallback_frames_;
-    SaturatingCounter no_new_frames_;
-    SaturatingCounter reused_frames_;
-    SaturatingCounter failure_reused_frames_;
-    SaturatingCounter accepted_frames_;
-    SaturatingCounter queue_full_rejections_;
-    SaturatingCounter pacing_slots_missed_;
-    SaturatingCounter capture_failures_;
+    platform::SaturatingCounter capture_attempts_;
+    platform::SaturatingCounter acquired_frames_;
+    platform::SaturatingCounter fallback_frames_;
+    platform::SaturatingCounter no_new_frames_;
+    platform::SaturatingCounter reused_frames_;
+    platform::SaturatingCounter failure_reused_frames_;
+    platform::SaturatingCounter accepted_frames_;
+    platform::SaturatingCounter queue_full_rejections_;
+    platform::SaturatingCounter pacing_slots_missed_;
+    platform::SaturatingCounter capture_failures_;
     TimingAccumulator capture_attempt_timing_;
     TimingAccumulator acquisition_timing_;
     TimingAccumulator region_copy_timing_;

@@ -135,6 +135,7 @@ set(EASNAP_SOURCES
     src/platform/startup_entry.cpp
     src/ui/settings_dialog.h
     src/ui/settings_dialog.cpp
+    src/platform/saturating_counter.h
     src/platform/platform_utils.h
     src/platform/platform_utils.cpp)
 
