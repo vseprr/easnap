@@ -51,8 +51,8 @@ All paths below are under `apps/easnap-desktop/src`.
 
 | Area | Responsibility |
 |---|---|
-| `app/` | Coordinator, transition policy, settings, recording/finalization, trim and completion orchestration, opening a video file, command-line parsing and the video hand-over between instances |
-| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls, Scrollshot island and preview, trim view, pinned images, and the message and Settings dialogs |
+| `app/` | Coordinator, transition policy, settings, recording/finalization, trim and completion orchestration, opening a video file, command-line parsing and the video hand-over between instances, and the notification-area shell (`app/tray_shell`: the capture shortcut, tray commands, applying Settings) |
+| `ui/` | Workspace geometry and pointer policy, overlays, magnifier, native recording controls, Scrollshot island and preview, trim view, pinned images, the notification icon and its menu, and the message, Settings and About dialogs |
 | `editor/` | Screenshot document, commands/history, tools, reversible effects, the scrolled and zoomed view, inline rendering and full-resolution composite |
 | `capture/` | Desktop acquisition, per-output fallback and capture worker |
 | `scrollshot/` | Stitching engine and the capture session that feeds it |
@@ -60,7 +60,7 @@ All paths below are under `apps/easnap-desktop/src`.
 | `recording/` | Active-time recording session, cadence and audio timeline |
 | `media/` | Bounded queues, WASAPI, dual-source mixing/resampling, MP4/GIF writers/exporters, preview and the private session store |
 | `platform/` | Shared Win32/COM/GDI utilities, capture/image helpers, the data-folder path and contained deletion, log file and crash reports, the sign-in start entry |
-| `main.cpp` | The shell: single instance and the hand-over of a video to the running instance, notification icon and menu, the capture shortcut, Settings and About, session end |
+| `main.cpp` | Start-up: single instance and the hand-over of a video to the running instance, DLL search and DPI, the host window and its message loop, session end |
 
 Native Windows APIs also appear in UI, capture and media code. `ui_theme.h`
 centralizes shared workspace styling; individual surfaces retain their own

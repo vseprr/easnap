@@ -47,6 +47,8 @@ set(EASNAP_SOURCES
     src/app/app_settings.cpp
     src/app/session_state.h
     src/app/session_state.cpp
+    src/app/tray_shell.h
+    src/app/tray_shell.cpp
     src/ui/capture_mode.h
     src/ui/control_ids.h
     src/ui/ui_theme.h
