@@ -713,14 +713,13 @@ void StyleTooltip(HWND tooltip) {
     static_cast<void>(ExcludeFromCapture(tooltip));
     RefreshTooltip(tooltip);
 }
-void PaintNativePanel(HWND window, float scale, bool grip) {
+void PaintNativePanel(HWND window, float scale) {
     PAINTSTRUCT paint{};
     HDC dc = ::BeginPaint(window, &paint);
     RECT client{};
     ::GetClientRect(window, &client);
     platform::PaintBuffer buffer(dc, client);
     theme::DrawPanel(buffer.dc(), client, scale);
-    if (grip) { theme::DrawGrip(buffer.dc(), {0, 0, theme::Scaled(theme::kPanelGripWidth, scale), client.bottom}, scale); }
     buffer.Present();
     ::EndPaint(window, &paint);
 }

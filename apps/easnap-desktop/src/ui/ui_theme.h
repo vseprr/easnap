@@ -68,13 +68,9 @@ void NotifyWindows() noexcept;
 inline constexpr float kPaletteButtonMinimumWidth = 112.0f;
 inline constexpr float kPaletteButtonHeight = 36.0f;
 inline constexpr float kPalettePadding = 8.0f;
-inline constexpr float kPaletteTopMargin = 0.0f;
-inline constexpr float kHintHeight = 36.0f;
-inline constexpr float kHintBottomMargin = 52.0f;
 inline constexpr float kSelectionBorder = 2.0f;
 inline constexpr float kHandleSize = 9.0f;
 inline constexpr float kHandleHitRadius = 10.0f;
-inline constexpr float kCornerRadius = 8.0f;
 inline constexpr int kMagnifierGridPixels = 25;
 inline constexpr float kMagnifierCell = 4.0f;
 inline constexpr float kMagnifierWidth = 152.0f;
@@ -83,8 +79,6 @@ inline constexpr float kMagnifierLineHeight = 18.0f;
 inline constexpr float kMagnifierPointerGap = 18.0f;
 inline constexpr float kPanelRadius = 14.0f;
 inline constexpr float kControlRadius = 8.0f;
-inline constexpr float kControlHeight = 36.0f;
-inline constexpr float kPanelPadding = 16.0f;
 
 // Icons (ui/icons.cpp): paths on a 24-unit grid, stroked in grid units.
 inline constexpr float kIconGrid = 24.0f;         // Width and height of the icon grid.
@@ -118,7 +112,7 @@ inline constexpr float kIslandFadeMs = 160.0f;     // Fade of the editor's conte
 
 // Islands and panels.
 inline constexpr float kIslandGripWidth = 24.0f; // Grip of the mode, editor and Scrollshot islands.
-inline constexpr float kPanelGripWidth = 28.0f;  // Grip of the recording panel and native panels.
+inline constexpr float kPanelGripWidth = 28.0f;  // Grip of the recording panel (wider than the islands').
 inline constexpr int kIslandGap = 8;             // Between an island and the frame or another island.
 inline constexpr int kIslandMargin = 12;         // Between an island and the work area edge.
 

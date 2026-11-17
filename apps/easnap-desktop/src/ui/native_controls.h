@@ -132,7 +132,8 @@ void DrawSeparator(HDC dc, const RECT& rect, float scale);
 void SetAccessibleName(HWND control, const wchar_t* name);
 [[nodiscard]] bool StyleProgress(HWND progress);
 void StyleTooltip(HWND tooltip);
-void PaintNativePanel(HWND window, float scale, bool grip = false);
+/// Paints the uniform panel of a native window (dialogs, Settings, trim) in WM_PAINT.
+void PaintNativePanel(HWND window, float scale);
 [[nodiscard]] LRESULT ControlBackground(WPARAM dc, COLORREF text);
 [[nodiscard]] bool ActivateFocusedButton(MSG& message, HWND parent);
 
