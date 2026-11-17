@@ -40,7 +40,10 @@
 #include "platform/system_info.h"
 #include "resource.h"
 #include "strings/strings.h"
+#include "ui/about_dialog.h"
 #include "ui/settings_dialog.h"
+#include "ui/tray_icon.h"
+#include "ui/tray_menu.h"
 
 // Opt into the version 6 common controls so menus and dialogs use the modern
 // visual style. Doing it from the linker keeps the project free of a hand
@@ -65,112 +68,7 @@ constexpr wchar_t kSingleInstanceMutex[] = L"Local\\Easnap.SingleInstance";
 /// How long a second Easnap.exe waits for the running one to take a video.
 constexpr std::chrono::milliseconds kHandOverTimeout{5000};
 constexpr wchar_t kProductName[] = L"Easnap";
-constexpr UINT kTrayIconId = 1;
 
-/// Owns the notification-area icon for the lifetime of the process.
-class TrayIcon {
-public:
-    TrayIcon() = default;
-    ~TrayIcon() { Remove(); }
-
-    TrayIcon(const TrayIcon&) = delete;
-    TrayIcon& operator=(const TrayIcon&) = delete;
-
-    bool Add(HWND owner, const std::wstring& tooltip) {
-        owner_ = owner;
-        tooltip_ = tooltip;
-        // Added again after an Explorer restart: the icon is loaded once.
-        if (icon_ == nullptr) { icon_ = easnap::platform::LoadAppIcon(::GetSystemMetrics(SM_CXSMICON)); }
-
-        NOTIFYICONDATAW data = MakeData();
-        data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
-        data.uCallbackMessage = easnap::app::kMsgTrayIcon;
-        data.hIcon = icon_;
-        ::wcsncpy_s(data.szTip, tooltip_.c_str(), _TRUNCATE);
-
-        if (::Shell_NotifyIconW(NIM_ADD, &data) == FALSE) {
-            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_ADD) failed (error %lu)", ::GetLastError());
-            return false;
-        }
-        data.uVersion = NOTIFYICON_VERSION_4;
-        if (::Shell_NotifyIconW(NIM_SETVERSION, &data) == FALSE) {
-            // The icon keeps the old callbacks: clicks work, WM_CONTEXTMENU does not come.
-            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_SETVERSION) failed (error %lu)", ::GetLastError());
-        }
-        added_ = true;
-        return true;
-    }
-
-    void Remove() {
-        if (added_) {
-            NOTIFYICONDATAW data = MakeData();
-            ::Shell_NotifyIconW(NIM_DELETE, &data);
-            added_ = false;
-        }
-        if (icon_ != nullptr) {
-            ::DestroyIcon(icon_);
-            icon_ = nullptr;
-        }
-    }
-
-    /// Re-adds the icon after an Explorer restart (WM_TASKBARCREATED).
-    void Restore() {
-        added_ = false;
-        if (owner_ != nullptr) {
-            Add(owner_, tooltip_);
-        }
-    }
-
-    void SetTooltip(const std::wstring& tooltip) {
-        tooltip_ = tooltip;
-        if (!added_) {
-            return;
-        }
-        NOTIFYICONDATAW data = MakeData();
-        data.uFlags = NIF_TIP | NIF_SHOWTIP;
-        ::wcsncpy_s(data.szTip, tooltip_.c_str(), _TRUNCATE);
-        if (::Shell_NotifyIconW(NIM_MODIFY, &data) == FALSE) {
-            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_MODIFY) for the tooltip failed (error %lu)",
-                                         ::GetLastError());
-        }
-    }
-
-    /// True when the shell took the notification; false without an icon.
-    bool ShowBalloon(const wchar_t* title, const wchar_t* text) const {
-        if (!added_) {
-            return false;
-        }
-        NOTIFYICONDATAW data = MakeData();
-        data.uFlags = NIF_INFO;
-        data.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;
-        ::wcsncpy_s(data.szInfoTitle, title, _TRUNCATE);
-        ::wcsncpy_s(data.szInfo, text, _TRUNCATE);
-        if (::Shell_NotifyIconW(NIM_MODIFY, &data) == FALSE) {
-            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_MODIFY) for a notification failed (error %lu)",
-                                         ::GetLastError());
-            return false;
-        }
-        return true;
-    }
-
-    [[nodiscard]] bool added() const noexcept { return added_; }
-
-private:
-    [[nodiscard]] NOTIFYICONDATAW MakeData() const {
-        NOTIFYICONDATAW data{};
-        data.cbSize = sizeof(data);
-        data.hWnd = owner_;
-        data.uID = kTrayIconId;
-        return data;
-    }
-
-    HWND owner_{nullptr};
-    HICON icon_{nullptr};
-    std::wstring tooltip_;
-    bool added_{false};
-};
-
-constexpr wchar_t kWebsite[] = L"https://github.com/vseprr/easnap";
 // "Check for updates": a stable build opens the latest stable release; a
 // prerelease opens the list, where newer prereleases appear too.
 #if EASNAP_VERSION_IS_PRERELEASE
@@ -183,7 +81,7 @@ constexpr wchar_t kUpdatesPage[] = L"https://github.com/vseprr/easnap/releases/l
 constexpr wchar_t kActivateMessageName[] = L"Easnap.StartCapture";
 constexpr int kProbeHotkeyId = 2;
 
-TrayIcon g_tray;
+easnap::ui::TrayIcon g_tray;
 UINT g_taskbar_created_message = 0;
 UINT g_activate_message = 0;
 bool g_hotkey_registered = false;
@@ -222,76 +120,6 @@ easnap::strings::LanguagePreference ToLanguagePreference(easnap::app::LanguageSe
         case easnap::app::LanguageSetting::System: break;
     }
     return easnap::strings::LanguagePreference::System;
-}
-
-bool CopyTextToClipboard(HWND owner, const std::wstring& text) {
-    if (::OpenClipboard(owner) == FALSE) {
-        return false;
-    }
-    bool copied = false;
-    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
-    if (HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes)) {
-        if (void* target = ::GlobalLock(memory)) {
-            ::memcpy(target, text.c_str(), bytes);
-            ::GlobalUnlock(memory);
-            copied = ::EmptyClipboard() != FALSE && ::SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
-        }
-        if (!copied) { ::GlobalFree(memory); }
-    }
-    ::CloseClipboard();
-    return copied;
-}
-
-/// The capture shortcut as About reports it.
-struct AboutShortcut {
-    std::wstring display_text;
-    bool registered{false};
-};
-
-/// What a bug report needs, as plain text: versions and the display layout.
-/// No path, no file name, nothing the user created.
-std::wstring DiagnosticDetails(const AboutShortcut& shortcut) {
-    const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
-    std::wstring text = std::wstring(L"Easnap ") + EASNAP_VERSION_TEXT_W + L"\r\n";
-    text += L"Windows " + std::to_wstring(windows.major) + L"." + std::to_wstring(windows.minor) + L" build " +
-            std::to_wstring(windows.build) + L"\r\n";
-    text += std::wstring(L"Interface language: ") +
-            (easnap::strings::Current() == easnap::strings::Language::Turkish ? L"Turkish" : L"English") + L"\r\n";
-    text += std::wstring(L"Capture shortcut: ") + shortcut.display_text +
-            (shortcut.registered ? L"" : L" (not available)") + L"\r\n";
-    text += std::wstring(L"Scrollshot available: ") + (easnap::ui::CaptureExclusionSupported() ? L"yes" : L"no") + L"\r\n";
-    const auto monitors = easnap::platform::EnumerateMonitors();
-    text += L"Displays: " + std::to_wstring(monitors.size()) + L"\r\n";
-    for (const auto& monitor : monitors) {
-        text += L"  " + std::to_wstring(easnap::platform::RectWidth(monitor.bounds)) + L" x " +
-                std::to_wstring(easnap::platform::RectHeight(monitor.bounds)) + L" at " +
-                std::to_wstring(monitor.bounds.left) + L"," + std::to_wstring(monitor.bounds.top) + L", " +
-                std::to_wstring(std::lround(monitor.scale() * 100.0f)) + L"%" +
-                (monitor.primary ? L", primary" : L"") + L"\r\n";
-    }
-    return text;
-}
-
-/// About: version, shortcut and Windows build, with Copy details and Website.
-/// The shortcut is asked for again when the details are copied.
-void ShowAboutDialog(HWND owner, const std::function<AboutShortcut()>& shortcut) {
-    namespace strings = easnap::strings;
-    const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
-    const std::wstring text = strings::Format(
-        IDS_ABOUT_TEXT, {EASNAP_VERSION_TEXT_W, shortcut().display_text,
-                         std::to_wstring(windows.build)});
-    enum : int { kCopy = 100,
-                 kWeb = 101,
-                 kClose = 102 };
-    const int choice = easnap::ui::ShowChoice(
-        nullptr, text.c_str(), strings::Get(IDS_SHELL_ABOUT_TITLE),
-        {{kCopy, strings::Get(IDS_ABOUT_COPY_DETAILS)}, {kWeb, strings::Get(IDS_ABOUT_WEBSITE)}, {kClose, strings::Get(IDS_SHELL_CHROME_CLOSE)}},
-        kClose, kClose);
-    if (choice == kCopy) {
-        CopyTextToClipboard(owner, DiagnosticDetails(shortcut()));
-    } else if (choice == kWeb) {
-        ::ShellExecuteW(nullptr, L"open", kWebsite, nullptr, nullptr, SW_SHOWNORMAL);
-    }
 }
 
 /// The Settings dialog, and what accepting it changes outside the settings
@@ -427,77 +255,17 @@ void OpenDataFolder() {
     ::ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-/// What the tray menu shows, read when it opens.
-struct TrayMenuState {
-    bool hotkey_registered{false};
-    std::wstring hotkey_text;
-    /// Capture and Settings are offered while no session runs.
-    bool idle{false};
-    bool can_open_video{false};
-    bool capture_cursor{false};
-    bool appearance_follows_system{false};
-};
-
-/// Shows the tray menu at the pointer; the chosen command is posted to
-/// hwnd as WM_COMMAND.
-void ShowTrayMenu(HWND hwnd, const TrayMenuState& state) {
-    HMENU menu = ::CreatePopupMenu();
-    if (menu == nullptr) {
-        return;
-    }
-
-    namespace strings = easnap::strings;
-    // The tab in the pattern separates the label from the right-aligned shortcut.
-    const std::wstring capture_item = state.hotkey_registered
-                                          ? strings::Format(IDS_SHELL_TRAY_CAPTURE, {state.hotkey_text})
-                                          : std::wstring(strings::Get(IDS_TRAY_CAPTURE_NO_SHORTCUT));
-    const UINT capture_flags = state.idle ? MF_STRING : (MF_STRING | MF_GRAYED);
-
-    ::AppendMenuW(menu, capture_flags, IDM_TRAY_CAPTURE, capture_item.c_str());
-    // A video is opened only while idle, and one at a time (ADR-040).
-    ::AppendMenuW(menu, state.can_open_video ? MF_STRING : (MF_STRING | MF_GRAYED), IDM_TRAY_OPEN_VIDEO,
-                  strings::Get(IDS_TRAY_OPEN_VIDEO));
-    ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    ::AppendMenuW(menu, MF_STRING | (state.capture_cursor ? MF_CHECKED : MF_UNCHECKED),
-                  IDM_TRAY_CAPTURE_CURSOR, strings::Get(IDS_SHELL_TRAY_INCLUDE_CURSOR));
-    if (HMENU appearance = easnap::ui::CreateAppearanceMenu(state.appearance_follows_system)) {
-        ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(appearance), strings::Get(IDS_SHELL_TRAY_APPEARANCE));
-    }
-    // Settings change what a running session was built with: offered while idle.
-    ::AppendMenuW(menu, capture_flags, IDM_TRAY_SETTINGS, strings::Get(IDS_TRAY_SETTINGS));
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_OPEN_DATA_FOLDER, strings::Get(IDS_SHELL_TRAY_OPEN_DATA_FOLDER));
-    ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_CHECK_UPDATES, strings::Get(IDS_TRAY_CHECK_UPDATES));
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_ABOUT, strings::Get(IDS_SHELL_TRAY_ABOUT));
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_EXIT, strings::Get(IDS_SHELL_TRAY_EXIT));
-
-    POINT cursor{};
-    ::GetCursorPos(&cursor);
-    const HWND invoking_focus = ::GetFocus();
-    // Required so the menu closes when the user clicks elsewhere.
-    ::SetForegroundWindow(hwnd);
-    {
-        easnap::ui::PopupScope scope(invoking_focus);
-        easnap::ui::MenuThemeScope menu_theme(hwnd, menu);
-        const UINT command = ::TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
-                                                cursor.x, cursor.y, hwnd, nullptr);
-        if (command) { ::PostMessageW(hwnd, WM_COMMAND, command, 0); }
-    }
-    ::PostMessageW(hwnd, WM_NULL, 0, 0);
-    ::DestroyMenu(menu);
-}
-
 /// Opens the tray menu with the coordinator's current state.
 void OpenTrayMenu(HWND hwnd) {
     auto& coordinator = CaptureCoordinator::Instance();
-    TrayMenuState state;
+    easnap::ui::TrayMenuState state;
     state.hotkey_registered = g_hotkey_registered;
     state.hotkey_text = coordinator.settings().HotkeyDisplayText();
     state.idle = coordinator.state() == SessionState::Idle;
     state.can_open_video = coordinator.CanOpenVideo();
     state.capture_cursor = coordinator.settings().capture_cursor;
     state.appearance_follows_system = coordinator.settings().appearance_follows_system;
-    ShowTrayMenu(hwnd, state);
+    easnap::ui::ShowTrayMenu(hwnd, state);
 }
 
 void OnTrayCommand(HWND hwnd, UINT command) {
@@ -524,8 +292,8 @@ void OnTrayCommand(HWND hwnd, UINT command) {
             ::ShellExecuteW(nullptr, L"open", kUpdatesPage, nullptr, nullptr, SW_SHOWNORMAL);
             break;
         case IDM_TRAY_ABOUT:
-            ShowAboutDialog(hwnd, [] {
-                return AboutShortcut{CaptureCoordinator::Instance().settings().HotkeyDisplayText(), g_hotkey_registered};
+            easnap::ui::ShowAboutDialog(hwnd, [] {
+                return easnap::ui::AboutShortcut{CaptureCoordinator::Instance().settings().HotkeyDisplayText(), g_hotkey_registered};
             });
             break;
         case IDM_TRAY_EXIT:

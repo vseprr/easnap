@@ -61,6 +61,12 @@ set(EASNAP_SOURCES
     src/ui/message_dialog.cpp
     src/ui/window_chrome.h
     src/ui/window_chrome.cpp
+    src/ui/tray_icon.h
+    src/ui/tray_icon.cpp
+    src/ui/tray_menu.h
+    src/ui/tray_menu.cpp
+    src/ui/about_dialog.h
+    src/ui/about_dialog.cpp
     src/platform/paint_buffer.h
     src/ui/overlay.h
     src/ui/overlay.cpp
