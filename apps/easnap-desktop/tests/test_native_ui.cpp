@@ -22,6 +22,7 @@
 #include "app/app_settings.h"
 #include "editor/screenshot_editor.h"
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
 #include "strings/strings.h"
 #include "ui/overlay.h"
 #include "ui/recording_controls.h"

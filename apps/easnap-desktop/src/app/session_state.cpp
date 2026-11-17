@@ -1,5 +1,6 @@
 #include "ui/ui_theme.h"
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
 // Easnap - session state machine and capture coordinator implementation.
 #include "app/session_state.h"
 #include <dwmapi.h>

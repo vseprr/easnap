@@ -10,6 +10,7 @@
 #include "platform/platform_utils.h"
 #include "strings/strings.h"
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
 #include "ui/trim_window.h"
 
 namespace easnap::app {

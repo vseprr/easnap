@@ -26,6 +26,7 @@
 #include "strings/strings.h"
 #include "ui/recording_controls.h"
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
 #include "ui/scrollshot_controls.h"
 #include "ui/settings_dialog.h"
 #include "ui/ui_theme.h"

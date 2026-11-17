@@ -15,6 +15,7 @@
 #include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
 #include "ui/settings_dialog.h"
 
 #include <algorithm>

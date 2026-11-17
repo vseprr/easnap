@@ -18,6 +18,8 @@
 #include "ui/trim_layout.h"
 #include "ui/ui_theme.h"
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
+#include "ui/window_chrome.h"
 #include <UIAutomation.h>
 
 namespace easnap::ui {

@@ -17,6 +17,7 @@
 #include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
+#include "ui/message_dialog.h"
 #include "ui/native_controls.h"
 #include "ui/overlay.h"
 #include "ui/recording_controls.h"

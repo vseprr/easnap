@@ -1,4 +1,5 @@
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
 // Easnap - application entry point.
 //
 // Easnap is a tray-resident tool: there is no main window. A hidden top-level

@@ -558,6 +558,9 @@ add_executable(test_region_selector
     ../src/ui/region_selector.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/platform/bgra_image.cpp
     ../src/platform/files.cpp
     ../src/platform/graphics_device.cpp
@@ -717,6 +720,9 @@ add_executable(test_pinned_images
     ../src/ui/capture_workspace.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/platform/bgra_image.cpp
     ../src/platform/files.cpp
     ../src/platform/graphics_device.cpp
@@ -821,6 +827,9 @@ add_executable(test_capture_overlay
     ../src/ui/region_selector.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/platform/bgra_image.cpp
     ../src/platform/files.cpp
     ../src/platform/graphics_device.cpp
@@ -855,6 +864,9 @@ add_executable(test_capture_workspace
     ../src/ui/scrollshot_layout.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
@@ -912,6 +924,9 @@ add_executable(test_scrollshot_workspace
     ../src/ui/scrollshot_layout.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
@@ -960,6 +975,9 @@ add_executable(test_text_fit
     ../src/ui/scrollshot_layout.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
@@ -1006,6 +1024,9 @@ add_executable(test_data_safety
     ../src/ui/region_selector.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
@@ -1048,6 +1069,9 @@ add_executable(test_scrollshot_desktop
     ../src/ui/scrollshot_layout.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/platform/bgra_image.cpp
     ../src/platform/files.cpp
     ../src/platform/graphics_device.cpp
@@ -1085,6 +1109,9 @@ add_executable(test_scrollshot_realistic_desktop
     ../src/ui/scrollshot_layout.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/platform/bgra_image.cpp
     ../src/platform/files.cpp
     ../src/platform/graphics_device.cpp
@@ -1120,6 +1147,9 @@ add_executable(test_island_capture
     ../src/ui/scrollshot_layout.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/ui/settings_dialog.cpp
     ../src/app/app_settings.cpp
     ../src/app/recording_workflow.cpp
@@ -1154,6 +1184,9 @@ add_executable(test_native_ui
     ../src/app/session_transitions.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/ui/recording_controls.cpp
     ../src/ui/trim_window.cpp
     ../src/ui/trim_layout.cpp
@@ -1221,6 +1254,9 @@ add_executable(test_trim_flow
     ../src/app/session_transitions.cpp
     ../src/ui/ui_theme.cpp
     ../src/ui/native_controls.cpp
+    ../src/ui/icons.cpp
+    ../src/ui/message_dialog.cpp
+    ../src/ui/window_chrome.cpp
     ../src/ui/trim_window.cpp
     ../src/ui/trim_layout.cpp
     ../src/ui/timeline_accessibility.cpp
