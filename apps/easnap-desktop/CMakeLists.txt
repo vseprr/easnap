@@ -53,6 +53,8 @@ set(EASNAP_SOURCES
     src/ui/ui_theme.cpp
     src/ui/native_controls.cpp
     src/ui/native_controls.h
+    src/ui/image_export_outcome.h
+    src/ui/image_export_outcome.cpp
     src/ui/icons.h
     src/ui/icons.cpp
     src/ui/message_dialog.h

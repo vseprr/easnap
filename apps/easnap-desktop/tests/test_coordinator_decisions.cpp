@@ -7,6 +7,7 @@
 
 #include "app/display_change.h"
 #include "app/scrollshot_status.h"
+#include "ui/image_export_outcome.h"
 
 #include <cstdio>
 #include <optional>
@@ -21,6 +22,10 @@ using easnap::app::SessionState;
 using easnap::app::ScrollshotNotice;
 using easnap::app::ScrollshotStatus;
 using easnap::scrollshot::ScrollshotCondition;
+using easnap::ui::ChooseImageExportOutcome;
+using Outcome = easnap::ui::ImageExportOutcome;
+using Status = easnap::platform::ImageExportStatus;
+using Target = easnap::platform::ImageExportTarget;
 
 namespace {
 
@@ -260,6 +265,62 @@ void TestRecording() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// A finished copy or save, shared by the editor and the Scrollshot island
+
+struct ExportCase {
+    Status status;
+    Target target;
+    bool published;  // Only a prepared copy can reach the clipboard.
+    bool quick;
+    bool can_offer_dialog;
+    Outcome outcome;
+};
+
+const ExportCase kExportCases[] = {
+    {Status::Succeeded, Target::Clipboard, true, false, false, Outcome::Copied},
+    {Status::Succeeded, Target::Clipboard, true, false, true, Outcome::Copied},
+    {Status::Succeeded, Target::Clipboard, true, true, false, Outcome::Copied},
+    {Status::Succeeded, Target::Clipboard, true, true, true, Outcome::Copied},
+    // Prepared, but the clipboard could not be opened.
+    {Status::Succeeded, Target::Clipboard, false, false, false, Outcome::CopyFailed},
+    {Status::Succeeded, Target::Clipboard, false, false, true, Outcome::CopyFailed},
+    {Status::Succeeded, Target::Clipboard, false, true, false, Outcome::CopyFailed},
+    {Status::Succeeded, Target::Clipboard, false, true, true, Outcome::CopyFailed},
+    {Status::Succeeded, Target::File, false, false, false, Outcome::Saved},
+    {Status::Succeeded, Target::File, false, false, true, Outcome::Saved},
+    {Status::Succeeded, Target::File, false, true, false, Outcome::Saved},
+    {Status::Succeeded, Target::File, false, true, true, Outcome::Saved},
+    {Status::Failed, Target::Clipboard, false, false, false, Outcome::CopyFailed},
+    {Status::Failed, Target::Clipboard, false, false, true, Outcome::CopyFailed},
+    {Status::Failed, Target::Clipboard, false, true, false, Outcome::CopyFailed},
+    {Status::Failed, Target::Clipboard, false, true, true, Outcome::CopyFailed},
+    {Status::Failed, Target::File, false, false, false, Outcome::SaveFailed},
+    {Status::Failed, Target::File, false, false, true, Outcome::SaveFailed},
+    {Status::Failed, Target::File, false, true, false, Outcome::SaveFailed},
+    // Only a failed quick save, while the window can still ask, offers the dialog.
+    {Status::Failed, Target::File, false, true, true, Outcome::RetryWithDialog},
+    {Status::Cancelled, Target::Clipboard, false, false, false, Outcome::Cancelled},
+    {Status::Cancelled, Target::Clipboard, false, false, true, Outcome::Cancelled},
+    {Status::Cancelled, Target::Clipboard, false, true, false, Outcome::Cancelled},
+    {Status::Cancelled, Target::Clipboard, false, true, true, Outcome::Cancelled},
+    {Status::Cancelled, Target::File, false, false, false, Outcome::Cancelled},
+    {Status::Cancelled, Target::File, false, false, true, Outcome::Cancelled},
+    {Status::Cancelled, Target::File, false, true, false, Outcome::Cancelled},
+    {Status::Cancelled, Target::File, false, true, true, Outcome::Cancelled},
+};
+
+void TestImageExportOutcome() {
+    g_case = "image export outcome";
+    int cases = 0;
+    for (const ExportCase& item : kExportCases) {
+        CHECK(ChooseImageExportOutcome(item.status, item.target, item.published, item.quick, item.can_offer_dialog) ==
+              item.outcome);
+        ++cases;
+    }
+    CHECK(cases == 28);  // 3 statuses x 2 targets x quick x dialog, and a published copy.
+}
+
 }  // namespace
 
 int main() {
@@ -269,6 +330,7 @@ int main() {
     TestScreenshotEditing();
     TestSelection();
     TestRecording();
+    TestImageExportOutcome();
     std::printf("coordinator decisions: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

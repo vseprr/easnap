@@ -64,12 +64,14 @@ set_tests_properties(session_state_transitions PROPERTIES
     TIMEOUT 30)
 
 # Choices the capture coordinator takes from the session's facts: the
-# Scrollshot island's message line and what a display change does to the
-# session. Pure functions over tables.
+# Scrollshot island's message line, what a display change does to the
+# session, and the outcome of a finished image copy or save (shared with the
+# editor). Pure functions over tables.
 add_executable(test_coordinator_decisions
     test_coordinator_decisions.cpp
     ../src/app/scrollshot_status.cpp
     ../src/app/display_change.cpp
+    ../src/ui/image_export_outcome.cpp
     ../src/app/session_transitions.cpp
     ../src/platform/bgra_image.cpp
     ../src/platform/files.cpp
@@ -892,6 +894,7 @@ add_executable(test_capture_workspace
     ../src/ui/message_dialog.cpp
     ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/ui/image_export_outcome.cpp
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
@@ -969,6 +972,7 @@ add_executable(test_scrollshot_workspace
     ../src/ui/message_dialog.cpp
     ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/ui/image_export_outcome.cpp
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
@@ -1028,6 +1032,7 @@ add_executable(test_text_fit
     ../src/ui/message_dialog.cpp
     ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/ui/image_export_outcome.cpp
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
@@ -1085,6 +1090,7 @@ add_executable(test_data_safety
     ../src/ui/message_dialog.cpp
     ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/ui/image_export_outcome.cpp
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
@@ -1201,6 +1207,7 @@ add_executable(test_island_capture
     test_island_capture.cpp
     ../src/capture/capture_provider.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/ui/image_export_outcome.cpp
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
@@ -1265,6 +1272,7 @@ add_executable(test_native_ui
     ../src/ui/trim_layout.cpp
     ../src/ui/timeline_accessibility.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/ui/image_export_outcome.cpp
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp

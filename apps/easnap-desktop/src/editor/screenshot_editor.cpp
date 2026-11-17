@@ -13,6 +13,7 @@
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
 #include "ui/control_ids.h"
+#include "ui/image_export_outcome.h"
 #include "ui/native_controls.h"
 #include <commctrl.h>
 
@@ -1650,15 +1651,16 @@ void ScreenshotEditor::OnExportCompleted(platform::ImageExportJob::Generation ge
     std::shared_ptr<const platform::BgraImage> image = std::move(finished->image);
     const ui::ImageSaveDestination destination = std::move(finished->destination);
     ui::RefreshCursor();
-    const bool copy = result.target == platform::ImageExportTarget::Clipboard;
-    if (result.status == platform::ImageExportStatus::Succeeded) {
-        if (copy && platform::PublishClipboardImage(hwnd_, result.clipboard)) {
+    const bool published = result.status == platform::ImageExportStatus::Succeeded &&
+                           result.target == platform::ImageExportTarget::Clipboard &&
+                           platform::PublishClipboardImage(hwnd_, result.clipboard);
+    switch (ui::ChooseImageExportOutcome(result.status, result.target, published, destination.quick, visible_)) {
+        case ui::ImageExportOutcome::Copied:
             platform::LogMessage(L"Screenshot copied to the clipboard");
             ui::ShowCaptureCopiedNotice(region_);
             Close(true);
             return;
-        }
-        if (!copy) {
+        case ui::ImageExportOutcome::Saved:
             ui::RecordImageSaved(settings_, destination);
             if (destination.quick) {
                 platform::LogMessage(L"Screenshot saved without a dialog");
@@ -1668,22 +1670,26 @@ void ScreenshotEditor::OnExportCompleted(platform::ImageExportJob::Generation ge
             }
             Close(true);
             return;
+        case ui::ImageExportOutcome::RetryWithDialog: {
+            // The screenshots folder could not be written: the dialog offers
+            // every other place for the same image.
+            auto chosen = ChooseSaveDestination(false);
+            if (chosen && visible_ &&
+                StartExport(platform::ImageExportTarget::File, std::move(image), std::move(*chosen))) {
+                return;
+            }
+            break;
         }
-    }
-    if (result.status == platform::ImageExportStatus::Failed && !copy && destination.quick && visible_) {
-        // The screenshots folder could not be written: the dialog offers
-        // every other place for the same image.
-        auto chosen = ChooseSaveDestination(false);
-        if (chosen && visible_ && StartExport(platform::ImageExportTarget::File, std::move(image), std::move(*chosen))) {
-            return;
-        }
-    } else if (result.status == platform::ImageExportStatus::Failed) {
-        // Failure safety: the session stays open so no capture is lost.
-        ui::ShowCaptureStatusNotice(region_, strings::Get(copy ? IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE
-                                                               : IDS_EDITOR_NOTICE_SAVE_FAILED));
-    } else if (result.status == platform::ImageExportStatus::Succeeded) {
-        // Prepared, but the clipboard could not be opened.
-        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
+        case ui::ImageExportOutcome::CopyFailed:
+            // Failure safety: the session stays open so no capture is lost.
+            // Also when the image was prepared but the clipboard could not be
+            // opened.
+            ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
+            break;
+        case ui::ImageExportOutcome::SaveFailed:
+            ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED));
+            break;
+        case ui::ImageExportOutcome::Cancelled: break;
     }
     Invalidate();
     if (callbacks_.on_export_ended) { callbacks_.on_export_ended(); }

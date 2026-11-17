@@ -1,4 +1,5 @@
 #include "ui/ui_theme.h"
+#include "ui/image_export_outcome.h"
 #include "ui/native_controls.h"
 #include "ui/message_dialog.h"
 // Easnap - session state machine and capture coordinator implementation.
@@ -1357,10 +1358,12 @@ void CaptureCoordinator::OnImageExportCompleted(platform::ImageExportJob::Genera
         return;  // Nothing changes a session under its export; only its end drops it.
     }
     const bool copy = result->target == platform::ImageExportTarget::Clipboard;
-    const bool succeeded = result->status == platform::ImageExportStatus::Succeeded &&
-                           (!copy || platform::PublishClipboardImage(host_window_, result->clipboard));
-    if (succeeded) {
-        if (copy) {
+    const bool published = result->status == platform::ImageExportStatus::Succeeded && copy &&
+                           platform::PublishClipboardImage(host_window_, result->clipboard);
+    const ui::ImageExportOutcome outcome =
+        ui::ChooseImageExportOutcome(result->status, result->target, published, destination.quick, true);
+    if (outcome == ui::ImageExportOutcome::Copied || outcome == ui::ImageExportOutcome::Saved) {
+        if (outcome == ui::ImageExportOutcome::Copied) {
             platform::LogMessage(L"Scrollshot copied to the clipboard");
             ui::ShowCaptureCopiedNotice(scrollshot_region_);
         } else {
@@ -1372,7 +1375,7 @@ void CaptureCoordinator::OnImageExportCompleted(platform::ImageExportJob::Genera
         EndSession();
         return;
     }
-    if (!copy && result->status == platform::ImageExportStatus::Failed && destination.quick) {
+    if (outcome == ui::ImageExportOutcome::RetryWithDialog) {
         // The screenshots folder could not be written: the dialog offers
         // every other place for the same image.
         scrollshot_notice_ = ScrollshotNotice::None;
@@ -1383,12 +1386,13 @@ void CaptureCoordinator::OnImageExportCompleted(platform::ImageExportJob::Genera
         if (!initialized_ || state() != SessionState::ScrollshotReview) {
             return;
         }
-    } else if (result->status == platform::ImageExportStatus::Cancelled) {
+    } else if (outcome == ui::ImageExportOutcome::Cancelled) {
         scrollshot_notice_ = ScrollshotNotice::None;
     } else {
         // A very tall image can exceed what the clipboard accepts. The image
         // stays, and the status points to Save.
-        scrollshot_notice_ = copy ? ScrollshotNotice::CopyFailed : ScrollshotNotice::SaveFailed;
+        scrollshot_notice_ =
+            outcome == ui::ImageExportOutcome::CopyFailed ? ScrollshotNotice::CopyFailed : ScrollshotNotice::SaveFailed;
     }
     scrollshot_busy_ = false;
     if (scrollshot_controls_) { scrollshot_controls_->SetBusy(false); }
