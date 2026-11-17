@@ -214,7 +214,7 @@ uint64_t IconRasterHash(ui::Icon icon) {
         for (int size : {12, 18, 24, 34}) {
             hash = HashDrawing(hash, size + 6, size + 6, [&](HDC dc) {
                 ui::theme::FillSolid(dc, {0, 0, size + 6, size + 6}, background);
-                ui::DrawIcon(dc, {3, 3, 3 + size, 3 + size}, icon, color, 1.0f);
+                ui::DrawIcon(dc, {3, 3, 3 + size, 3 + size}, icon, color);
             });
         }
     }
@@ -268,8 +268,6 @@ void ControlRasterEvidence() {
         {Icon::Save, "Save", 0xc4fde2576123b77bull},
         {Icon::Discard, "Discard", 0x67c78e622fba8b72ull},
         {Icon::Appearance, "Appearance", 0x4bb5b65ced32b4ebull},
-        {Icon::Sun, "Sun", 0x32c152eb2561863bull},
-        {Icon::Moon, "Moon", 0x5420189935ab29d7ull},
         {Icon::Pen, "Pen", 0xf7cf807db8d7e8f2ull},
         {Icon::Arrow, "Arrow", 0xe2fc46d5cd9c82d7ull},
         {Icon::Rectangle, "Rectangle", 0x55b14d790b2c8d7full},
@@ -297,6 +295,7 @@ void ControlRasterEvidence() {
         {Icon::Help, "Help", 0xea6bc50e987e9520ull},
         {Icon::Pin, "Pin", 0x5a1110f310a9a797ull},
     };
+    static_assert(std::size(icons) == ui::kIconCount, "every icon has a row");
     for (const auto& test : icons) {
         const uint64_t hash = IconRasterHash(test.icon);
         std::printf("Icon raster %-17s %016llx\n", test.name, static_cast<unsigned long long>(hash));

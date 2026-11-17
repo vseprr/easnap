@@ -292,14 +292,14 @@ void PaintButtonFace(HDC dc, const ButtonPaintState& state) {
         }
     } else if (style.swatch) {
         theme::FillRoundedBordered(dc, icon, theme::Scaled(3, scale), style.content_color, p.control_border, 1);
-        if (checked) { DrawIcon(dc, icon, Icon::Check, GetRValue(style.content_color) + GetGValue(style.content_color) + GetBValue(style.content_color) > 500 ? RGB(30, 30, 30) : RGB(255, 255, 255), scale); }
+        if (checked) { DrawIcon(dc, icon, Icon::Check, GetRValue(style.content_color) + GetGValue(style.content_color) + GetBValue(style.content_color) > 500 ? RGB(30, 30, 30) : RGB(255, 255, 255)); }
     } else if (style.icon != Icon::None) {
-        DrawIcon(dc, icon, style.icon, ink, scale);
+        DrawIcon(dc, icon, style.icon, ink);
     }
     if (style.dropdown) {
         const LONG chevron = theme::Scaled(8, scale);
         const LONG right = face.right - theme::Scaled(3, scale);
-        DrawIcon(dc, {right - chevron, cy - chevron / 2, right, cy + chevron / 2}, Icon::ChevronDown, ink, scale);
+        DrawIcon(dc, {right - chevron, cy - chevron / 2, right, cy + chevron / 2}, Icon::ChevronDown, ink);
     }
     if (!style.icon_only && !style.swatch) {
         RECT label = face;
@@ -314,7 +314,7 @@ void PaintButtonFace(HDC dc, const ButtonPaintState& state) {
             RECT check{face.left + theme::Scaled(10, scale), cy - theme::Scaled(5, scale),
                        face.left + theme::Scaled(20, scale), cy + theme::Scaled(5, scale)};
             if (checked && type == BS_AUTOCHECKBOX) {
-                DrawIcon(dc, check, Icon::Check, ink, scale);
+                DrawIcon(dc, check, Icon::Check, ink);
             } else if (checked) {
                 theme::FillRounded(dc, check, theme::Scaled(5, scale), ink);
             }
@@ -816,7 +816,7 @@ struct MenuThemeScope::State {
                 icon.right = icon.left + theme::Scaled(16, self->scale);
                 icon.top = (icon.top + icon.bottom - theme::Scaled(16, self->scale)) / 2;
                 icon.bottom = icon.top + theme::Scaled(16, self->scale);
-                if (draw->itemState & ODS_CHECKED) { DrawIcon(draw->hDC, icon, Icon::Check, p.focus, self->scale); }
+                if (draw->itemState & ODS_CHECKED) { DrawIcon(draw->hDC, icon, Icon::Check, p.focus); }
                 if (item->submenu) {
                     const LONG x = draw->rcItem.right - theme::Scaled(14, self->scale), y = (draw->rcItem.top + draw->rcItem.bottom) / 2, d = theme::Scaled(3, self->scale);
                     theme::DrawSolidLine(draw->hDC, {x - d, y - d}, {x, y}, ink, 1);
