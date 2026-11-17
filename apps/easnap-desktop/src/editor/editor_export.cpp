@@ -6,6 +6,8 @@
 
 #include "editor/annotation_renderer.h"
 #include "platform/graphics_device.h"
+#include "strings/strings.h"
+#include "ui/capture_workspace.h"
 
 namespace easnap::editor {
 namespace {
@@ -99,6 +101,38 @@ platform::BgraImage CompositeAnnotations(const platform::BgraImage& base_image, 
     }
     output.MakeOpaque();
     return output;
+}
+
+bool EditorExport::Start(HWND notify, const RECT& notice_region, platform::ImageExportTarget target,
+                         std::shared_ptr<const platform::BgraImage> image, ui::ImageSaveDestination destination) {
+    platform::ImageExportRequest request{image, target, destination.path};
+    if (!job_.Start(notify, platform::kMsgImageExportCompleted, std::move(request))) { return false; }
+    running_ = true;
+    image_ = std::move(image);
+    destination_ = std::move(destination);
+    const bool copy = target == platform::ImageExportTarget::Clipboard;
+    notice_ = ui::ShowCaptureProgressNotice(
+        notice_region, strings::Get(copy ? IDS_SCROLLSHOT_STATUS_COPYING : IDS_SCROLLSHOT_STATUS_SAVING));
+    owner_.ExportStarted();
+    ui::RefreshCursor();
+    return true;
+}
+
+void EditorExport::End() {
+    running_ = false;
+    ui::CloseCaptureNotice(notice_);
+    notice_ = nullptr;
+    image_.reset();
+    destination_ = {};
+    owner_.ExportEnded();
+}
+
+std::optional<FinishedExport> EditorExport::TakeResult(platform::ImageExportJob::Generation generation) {
+    std::optional<platform::ImageExportResult> result = job_.TryTake(generation);
+    if (!result) { return std::nullopt; }
+    FinishedExport finished{std::move(*result), image_, destination_};
+    End();
+    return finished;
 }
 
 }  // namespace easnap::editor

@@ -197,7 +197,7 @@ void ScreenshotEditor::BrushMethodHovered() { context_panel_.OnBrushMethodHover(
 void ScreenshotEditor::SyncToolbarControls() const {
     if (!hwnd_) { return; }
     const auto style = ContextStyle();
-    toolbar_.SyncButtons(hwnd_, {ContextTool(), document_.CanUndo(), document_.CanRedo(), exporting_, has_image()}, toolbar_font_);
+    toolbar_.SyncButtons(hwnd_, {ContextTool(), document_.CanUndo(), document_.CanRedo(), exporting(), has_image()}, toolbar_font_);
     context_panel_.SyncButtons(style, toolbar_font_);
 }
 
@@ -450,7 +450,7 @@ void ScreenshotEditor::NotifyMutation(uint64_t previous_revision) {
 
 void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
     if (!visible_ || modal_active_) { return; }
-    if (exporting_) {
+    if (exporting()) {
         if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) { RefuseWhileExporting(); }
         return;
     }
@@ -487,7 +487,7 @@ void ScreenshotEditor::Keyboard(UINT message, WPARAM key, LPARAM flags) {
 }
 
 bool ScreenshotEditor::CompleteCopy() {
-    if (exporting_) {
+    if (exporting()) {
         RefuseWhileExporting();
         return false;
     }
@@ -507,7 +507,7 @@ bool ScreenshotEditor::CompleteCopy() {
 }
 
 bool ScreenshotEditor::CompletePin() {
-    if (exporting_) {
+    if (exporting()) {
         RefuseWhileExporting();
         return false;
     }
@@ -531,7 +531,7 @@ bool ScreenshotEditor::CompletePin() {
 
 void ScreenshotEditor::RequestDiscard() {
     if (modal_active_) { return; }  // Already asking, or a file dialog is open.
-    if (exporting_) {
+    if (exporting()) {
         // The image is being copied or saved; the editor closes when that ends.
         RefuseWhileExporting();
         return;
@@ -547,10 +547,10 @@ void ScreenshotEditor::RequestDiscard() {
 }
 
 void ScreenshotEditor::Close(bool exported) {
-    if (exporting_) {
+    if (exporting()) {
         // Only the end of the session closes an editor during an export.
-        export_job_.Discard();
-        EndExport();
+        export_.Discard();
+        export_.End();
     }
     Hide();
     if (hwnd_ != nullptr) {
@@ -569,8 +569,8 @@ void ScreenshotEditor::Close(bool exported) {
 }
 
 void ScreenshotEditor::Destroy() {
-    export_job_.Discard();
-    if (exporting_) { EndExport(); }
+    export_.Discard();
+    if (export_.running()) { export_.End(); }
     context_panel_.DestroyBrushPopup();
     text_editor_.DestroyHost();
     context_panel_.DestroyIsland();
@@ -722,7 +722,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         OnExportCompleted(static_cast<platform::ImageExportJob::Generation>(wparam));
         return 0;
     }
-    if (message == WM_SETCURSOR && exporting_) {
+    if (message == WM_SETCURSOR && exporting()) {
         ::SetCursor(::LoadCursorW(nullptr, IDC_APPSTARTING));
         return TRUE;
     }
@@ -947,7 +947,7 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
 }
 
 void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
-    if (exporting_) {
+    if (exporting()) {
         // Nothing may change or end the image while it is copied or saved.
         if (key != VK_CONTROL && key != VK_SHIFT && key != VK_MENU) { RefuseWhileExporting(); }
         return;
@@ -1059,7 +1059,7 @@ D2D1_POINT_2F ScreenshotEditor::ToImagePoint(POINT desktop_pt) const {
 }
 
 void ScreenshotEditor::OnToolbarActivated(ToolbarItem item) {
-    if (exporting_ && !(item.kind == ToolbarItem::Kind::Command && item.command == kCommandTheme)) {
+    if (exporting() && !(item.kind == ToolbarItem::Kind::Command && item.command == kCommandTheme)) {
         RefuseWhileExporting();
         return;
     }
@@ -1162,12 +1162,12 @@ void ScreenshotEditor::OnToolbarActivated(ToolbarItem item) {
 bool ScreenshotEditor::WantsPointer(POINT point) const {
     // While exporting, a click on the image is refused here instead of
     // completing the screenshot a second time.
-    if (exporting_ || text_editor_.editing() || transforming_ || dragging_ || selected_) { return true; }
+    if (exporting() || text_editor_.editing() || transforming_ || dragging_ || selected_) { return true; }
     const auto p = ToImagePoint(point);
     return tool_ != ToolId::Pointer || document_.HitTest(p, 5.0f / zoom_).has_value();
 }
 HCURSOR ScreenshotEditor::ImageCursor(POINT point) const {
-    if (exporting_) { return ::LoadCursorW(nullptr, IDC_APPSTARTING); }
+    if (exporting()) { return ::LoadCursorW(nullptr, IDC_APPSTARTING); }
     const auto p = ToImagePoint(point);
     if (selected_ && *selected_ < document_.annotations().size()) {
         const auto handles = document_.annotations()[*selected_].Handles();
@@ -1563,14 +1563,14 @@ platform::BgraImage ScreenshotEditor::CompositeCommitted() {
 }
 
 bool ScreenshotEditor::SaveToFile() {
-    if (exporting_) {
+    if (exporting()) {
         RefuseWhileExporting();
         return false;
     }
     if (!EnsureImage()) { return false; }
     text_editor_.Commit();
     // Committing the text can complete the screenshot, which copies it.
-    if (!visible_ || exporting_) { return false; }
+    if (!visible_ || exporting()) { return false; }
     platform::BgraImage composite = Composite();
     if (composite.empty()) {
         ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_SAVE));
@@ -1605,46 +1605,36 @@ std::optional<ui::ImageSaveDestination> ScreenshotEditor::ChooseSaveDestination(
 
 bool ScreenshotEditor::StartExport(platform::ImageExportTarget target, std::shared_ptr<const platform::BgraImage> image,
                                    ui::ImageSaveDestination destination) {
-    platform::ImageExportRequest request{image, target, destination.path};
-    if (!export_job_.Start(hwnd_, platform::kMsgImageExportCompleted, std::move(request))) {
+    if (!export_.Start(hwnd_, region_, target, std::move(image), std::move(destination))) {
         // Another export of Easnap is still running, from a pin or a Scrollshot.
         RefuseWhileExporting();
         return false;
     }
-    exporting_ = true;
-    export_image_ = std::move(image);
-    export_destination_ = std::move(destination);
-    const bool copy = target == platform::ImageExportTarget::Clipboard;
-    export_notice_ = ui::ShowCaptureProgressNotice(
-        region_, strings::Get(copy ? IDS_SCROLLSHOT_STATUS_COPYING : IDS_SCROLLSHOT_STATUS_SAVING));
+    return true;
+}
+
+void ScreenshotEditor::ExportStarted() {
     context_panel_.ShowBrushPopup(false);
     // The property island changes the image as well.
     if (context_panel_.island()) { ::EnableWindow(context_panel_.island(), FALSE); }
     SyncToolbarControls();
-    ui::RefreshCursor();
-    return true;
 }
 
-void ScreenshotEditor::EndExport() {
-    exporting_ = false;
-    ui::CloseCaptureNotice(export_notice_);
-    export_notice_ = nullptr;
-    export_image_.reset();
-    export_destination_ = {};
+void ScreenshotEditor::ExportEnded() {
     if (context_panel_.island()) { ::EnableWindow(context_panel_.island(), TRUE); }
     SyncToolbarControls();
 }
 
 void ScreenshotEditor::OnExportCompleted(platform::ImageExportJob::Generation generation) {
-    std::optional<platform::ImageExportResult> result = export_job_.TryTake(generation);
-    if (!result) { return; }  // From an export that was dropped.
-    std::shared_ptr<const platform::BgraImage> image = export_image_;
-    const ui::ImageSaveDestination destination = export_destination_;
-    EndExport();
+    std::optional<FinishedExport> finished = export_.TakeResult(generation);
+    if (!finished) { return; }  // From an export that was dropped.
+    platform::ImageExportResult& result = finished->result;
+    std::shared_ptr<const platform::BgraImage> image = std::move(finished->image);
+    const ui::ImageSaveDestination destination = std::move(finished->destination);
     ui::RefreshCursor();
-    const bool copy = result->target == platform::ImageExportTarget::Clipboard;
-    if (result->status == platform::ImageExportStatus::Succeeded) {
-        if (copy && platform::PublishClipboardImage(hwnd_, result->clipboard)) {
+    const bool copy = result.target == platform::ImageExportTarget::Clipboard;
+    if (result.status == platform::ImageExportStatus::Succeeded) {
+        if (copy && platform::PublishClipboardImage(hwnd_, result.clipboard)) {
             platform::LogMessage(L"Screenshot copied to the clipboard");
             ui::ShowCaptureCopiedNotice(region_);
             Close(true);
@@ -1662,18 +1652,18 @@ void ScreenshotEditor::OnExportCompleted(platform::ImageExportJob::Generation ge
             return;
         }
     }
-    if (result->status == platform::ImageExportStatus::Failed && !copy && destination.quick && visible_) {
+    if (result.status == platform::ImageExportStatus::Failed && !copy && destination.quick && visible_) {
         // The screenshots folder could not be written: the dialog offers
         // every other place for the same image.
         auto chosen = ChooseSaveDestination(false);
         if (chosen && visible_ && StartExport(platform::ImageExportTarget::File, std::move(image), std::move(*chosen))) {
             return;
         }
-    } else if (result->status == platform::ImageExportStatus::Failed) {
+    } else if (result.status == platform::ImageExportStatus::Failed) {
         // Failure safety: the session stays open so no capture is lost.
         ui::ShowCaptureStatusNotice(region_, strings::Get(copy ? IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE
                                                                : IDS_EDITOR_NOTICE_SAVE_FAILED));
-    } else if (result->status == platform::ImageExportStatus::Succeeded) {
+    } else if (result.status == platform::ImageExportStatus::Succeeded) {
         // Prepared, but the clipboard could not be opened.
         ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
     }

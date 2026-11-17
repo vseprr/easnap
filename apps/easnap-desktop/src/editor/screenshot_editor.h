@@ -28,6 +28,7 @@
 #include "editor/annotation_document.h"
 #include "editor/annotation_palette.h"
 #include "editor/editor_context_panel.h"
+#include "editor/editor_export.h"
 #include "editor/editor_toolbar.h"
 #include "editor/image_viewport.h"
 #include "editor/key_commands.h"
@@ -41,7 +42,10 @@
 namespace easnap::editor {
 
 /// Screenshot document/commands and movable native editing island.
-class ScreenshotEditor : private ToolbarButtonOwner, private ContextPanelOwner, private TextEditorOwner {
+class ScreenshotEditor : private ToolbarButtonOwner,
+                         private ContextPanelOwner,
+                         private TextEditorOwner,
+                         private EditorExportOwner {
 public:
     struct Callbacks {
         /// `exported` is true when the user copied or saved successfully.
@@ -128,10 +132,10 @@ public:
     bool CompleteCopy();
     /// A copy or save is running. The image cannot change and the editor
     /// cannot close until it ends; only the end of the session drops it.
-    [[nodiscard]] bool exporting() const noexcept { return exporting_; }
+    [[nodiscard]] bool exporting() const noexcept { return export_.running(); }
     /// Windows is ending the session: a save running is waited for, a copy
     /// is cancelled. Its result still arrives as a message.
-    void SettleExportForSessionEnd() noexcept { export_job_.SettleForSessionEnd(); }
+    void SettleExportForSessionEnd() noexcept { export_.SettleForSessionEnd(); }
     /// Pin to screen: hands the finished image to `Callbacks::on_pin` and
     /// closes as an export. False, with a notice, when it could not be pinned.
     bool CompletePin();
@@ -240,7 +244,7 @@ private:
     [[nodiscard]] ToolId current_tool() const override { return tool_; }
     [[nodiscard]] AnnotationStyle new_annotation_style() const override { return style_; }
     [[nodiscard]] TextEditorView text_view() const override;
-    [[nodiscard]] bool export_running() const override { return exporting_; }
+    [[nodiscard]] bool export_running() const override { return export_.running(); }
     [[nodiscard]] HWND editor_window() const override { return hwnd_; }
     HWND CreateTextHost(POINT desktop_point) override;
     void BeginTextTransaction() override;
@@ -267,8 +271,8 @@ private:
     /// Handles kMsgImageExportCompleted: publishes a copy, reports a save and
     /// closes, or keeps the image after a failure.
     void OnExportCompleted(platform::ImageExportJob::Generation generation);
-    /// Leaves the busy state of a running export.
-    void EndExport();
+    void ExportStarted() override;
+    void ExportEnded() override;
     /// A command that would change or end the image while it is exported.
     static void RefuseWhileExporting();
 
@@ -323,13 +327,8 @@ private:
     uint64_t redaction_revision_{UINT64_MAX};
     bool visible_{false};
     bool closed_reported_{false};
-    /// A copy or save running on `export_job_`, of `export_image_`.
-    bool exporting_{false};
-    platform::ImageExportJob export_job_;
-    std::shared_ptr<const platform::BgraImage> export_image_;
-    ui::ImageSaveDestination export_destination_;
-    /// "Copying..." or "Saving..." while the export lasts.
-    HWND export_notice_{nullptr};
+    /// The copy or save running, with its worker, image and notice.
+    EditorExport export_{*this};
 };
 
 }  // namespace easnap::editor
