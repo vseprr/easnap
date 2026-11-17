@@ -501,6 +501,92 @@ void OnTrayCommand(HWND hwnd, UINT command) {
     }
 }
 
+/// The notification icon's own messages: a click captures, a right-click opens
+/// the menu.
+LRESULT OnHostTrayIconMessage(HWND hwnd, LPARAM lparam) {
+    auto& coordinator = CaptureCoordinator::Instance();
+    switch (LOWORD(lparam)) {
+        case WM_LBUTTONUP:
+            coordinator.OnGlobalHotkey();
+            break;
+        case WM_CONTEXTMENU:
+        case WM_RBUTTONUP:
+            // Version 4 icons report one right-click as both messages;
+            // the second arrives inside the first menu's modal loop.
+            if (!easnap::ui::PopupActive()) { ShowTrayMenu(hwnd); }
+            break;
+        default:
+            break;
+    }
+    return 0;
+}
+
+/// A tray menu command, including the appearance submenu's.
+LRESULT OnHostCommand(HWND hwnd, WPARAM wparam) {
+    auto& coordinator = CaptureCoordinator::Instance();
+    if (LOWORD(wparam) == easnap::ui::kAppearanceLight || LOWORD(wparam) == easnap::ui::kAppearanceDark) {
+        coordinator.SetAppearanceTheme(LOWORD(wparam) == easnap::ui::kAppearanceDark
+                                           ? easnap::app::AppearanceTheme::Dark
+                                           : easnap::app::AppearanceTheme::Light);
+        return 0;
+    }
+    if (LOWORD(wparam) == easnap::ui::kAppearanceSystem) {
+        coordinator.SetAppearanceFollowsSystem();
+        return 0;
+    }
+    OnTrayCommand(hwnd, LOWORD(wparam));
+    return 0;
+}
+
+/// The host's own timers; nothing for a timer it does not know.
+std::optional<LRESULT> OnHostTimer(WPARAM wparam) {
+    auto& coordinator = CaptureCoordinator::Instance();
+    if (wparam == easnap::app::kTimerDeferredCleanup) {
+        coordinator.OnDeferredCleanup();
+        return 0;
+    }
+    if (wparam == easnap::app::kTimerVideoProbeRetry) {
+        coordinator.OnVideoProbeTimer();
+        return 0;
+    }
+    return std::nullopt;
+}
+
+LRESULT OnHostQueryEndSession(HWND hwnd) {
+    auto& coordinator = CaptureCoordinator::Instance();
+    // Sign-out or shutdown while work would be lost: Windows shows the
+    // reason and lets the user decide. A process without a visible
+    // window is only listed there when it gives a reason.
+    if (const wchar_t* reason = coordinator.ShutdownBlockReason()) {
+        ::ShutdownBlockReasonCreate(hwnd, reason);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+LRESULT OnHostEndSession(HWND hwnd, WPARAM wparam) {
+    auto& coordinator = CaptureCoordinator::Instance();
+    ::ShutdownBlockReasonDestroy(hwnd);
+    if (wparam != FALSE) {
+        coordinator.PrepareForSessionEnd();
+        easnap::platform::diagnostics::StopLog();
+    }
+    return 0;
+}
+
+LRESULT OnHostDestroy(HWND hwnd) {
+    auto& coordinator = CaptureCoordinator::Instance();
+    if (g_hotkey_registered) {
+        ::UnregisterHotKey(hwnd, IDH_EASNAP_CAPTURE);
+        g_hotkey_registered = false;
+    }
+    coordinator.PersistSettings(CaptureCoordinator::IfNotSaved::LogOnly);
+    coordinator.Shutdown();
+    g_tray.Remove();
+    ::PostQuitMessage(0);
+    return 0;
+}
+
 LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     auto& coordinator = CaptureCoordinator::Instance();
 
@@ -522,34 +608,10 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             return 0;
 
         case easnap::app::kMsgTrayIcon:
-            switch (LOWORD(lparam)) {
-                case WM_LBUTTONUP:
-                    coordinator.OnGlobalHotkey();
-                    break;
-                case WM_CONTEXTMENU:
-                case WM_RBUTTONUP:
-                    // Version 4 icons report one right-click as both messages;
-                    // the second arrives inside the first menu's modal loop.
-                    if (!easnap::ui::PopupActive()) { ShowTrayMenu(hwnd); }
-                    break;
-                default:
-                    break;
-            }
-            return 0;
+            return OnHostTrayIconMessage(hwnd, lparam);
 
         case WM_COMMAND:
-            if (LOWORD(wparam) == easnap::ui::kAppearanceLight || LOWORD(wparam) == easnap::ui::kAppearanceDark) {
-                coordinator.SetAppearanceTheme(LOWORD(wparam) == easnap::ui::kAppearanceDark
-                                                   ? easnap::app::AppearanceTheme::Dark
-                                                   : easnap::app::AppearanceTheme::Light);
-                return 0;
-            }
-            if (LOWORD(wparam) == easnap::ui::kAppearanceSystem) {
-                coordinator.SetAppearanceFollowsSystem();
-                return 0;
-            }
-            OnTrayCommand(hwnd, LOWORD(wparam));
-            return 0;
+            return OnHostCommand(hwnd, wparam);
 
         case easnap::app::kMsgSessionCleanup:
             coordinator.OnDeferredCleanup();
@@ -614,48 +676,21 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             return 0;
 
         case WM_TIMER:
-            if (wparam == easnap::app::kTimerDeferredCleanup) {
-                coordinator.OnDeferredCleanup();
-                return 0;
-            }
-            if (wparam == easnap::app::kTimerVideoProbeRetry) {
-                coordinator.OnVideoProbeTimer();
-                return 0;
-            }
+            if (const std::optional<LRESULT> result = OnHostTimer(wparam)) { return *result; }
             break;
 
         case WM_QUERYENDSESSION:
-            // Sign-out or shutdown while work would be lost: Windows shows the
-            // reason and lets the user decide. A process without a visible
-            // window is only listed there when it gives a reason.
-            if (const wchar_t* reason = coordinator.ShutdownBlockReason()) {
-                ::ShutdownBlockReasonCreate(hwnd, reason);
-                return FALSE;
-            }
-            return TRUE;
+            return OnHostQueryEndSession(hwnd);
 
         case WM_ENDSESSION:
-            ::ShutdownBlockReasonDestroy(hwnd);
-            if (wparam != FALSE) {
-                coordinator.PrepareForSessionEnd();
-                easnap::platform::diagnostics::StopLog();
-            }
-            return 0;
+            return OnHostEndSession(hwnd, wparam);
 
         case WM_CLOSE:
             if (coordinator.ConfirmExit()) { ::DestroyWindow(hwnd); }
             return 0;
 
         case WM_DESTROY:
-            if (g_hotkey_registered) {
-                ::UnregisterHotKey(hwnd, IDH_EASNAP_CAPTURE);
-                g_hotkey_registered = false;
-            }
-            coordinator.PersistSettings(CaptureCoordinator::IfNotSaved::LogOnly);
-            coordinator.Shutdown();
-            g_tray.Remove();
-            ::PostQuitMessage(0);
-            return 0;
+            return OnHostDestroy(hwnd);
 
         default:
             break;
