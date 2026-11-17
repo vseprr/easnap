@@ -1,7 +1,8 @@
 # ADR-039 — CaptureCoordinator gives trimming to a flow of its own
 
 **Status:** Accepted; S1 implemented on `feature/v1.2`, S2 on `feature/v1.3`,
-S3 not yet; recording stays in the coordinator (decided after S2)
+S3 on `refactor/structure`; recording stays in the coordinator (decided after
+S2); Scrollshot stays too (amendment 2026-11-18)
 **Date:** 2026-11-08
 
 ## Context
@@ -286,3 +287,46 @@ only through the coordinator's state machine.
   of 132 checks and left nothing in the temporary folder.
 - The owner ran the S2 checklist in the running application on the
   development PC on 2026-11-08 without a problem.
+
+## Amendment 2026-11-18: Scrollshot measured again
+
+Measured on `7a39ece`: the Scrollshot section of `session_state.cpp` held 18
+functions and 505 lines (546 with its constants and the two export helpers it
+shares with the editor), with 12 `scrollshot_*` members; 14 other coordinator
+members touch them. A `ScrollshotFlow` drafted at its narrowest would need 13
+services (machine, settings, host window, an overlay getter whose object it
+calls through 10 methods, and 9 callbacks, four of them workspace operations:
+rebuild the overlay, open the editor on a document, hide other islands, ask
+whether the tools frame is provisional) and 17 calls from the coordinator: 30
+crossings, against TrimFlow's 21 (9 services, 12 calls) with no workspace
+object. About 45 of `EditScrollshot`'s 78 lines would stay behind as callback
+bodies. Without the workspace only the review-state actions could run in a
+test, and their decisions are testable as pure functions without a flow.
+`ScrollshotFlow` was not created; Scrollshot stays in the coordinator.
+
+Extracted instead, each a pure function covered in the Fast tier by
+`coordinator_decisions` (unit):
+
+- **S3, the status text.** `app/scrollshot_status`: `ChooseScrollshotStatus`
+  picks the island's message and warning from the running capture's condition
+  and the coordinator's `ScrollshotNotice`. `UpdateScrollshotStatus` keeps the
+  guard and applies the result with the image size. All 40 combinations
+  (no capture and four conditions, eight notices) are checked.
+- **The decision of `OnDisplayChanged`.** `app/display_change`:
+  `DecideDisplayChange` maps the session's facts to one action in the existing
+  rule order: Idle does nothing, a running export defers, a Scrollshot keeps
+  its image, an edited stitched image returns to review, a visible workspace is
+  cancelled (before the recording rule, so a configuring recording with the
+  workspace on screen is cancelled as a selection), then a recording ends only
+  when its region left the desktop and otherwise repositions its chrome. The
+  coordinator carries the action out with the same effects and log lines. It
+  now compares the monitor layout on every call instead of only in three
+  branches; the comparison only reads.
+- **The outcome of a finished image copy or save.** `ui/image_export_outcome`:
+  `ChooseImageExportOutcome` is used by the coordinator's Scrollshot path and by
+  `ScreenshotEditor::OnExportCompleted`, which made the same choice; the
+  editor's extra condition for offering the Save dialog (it is still visible)
+  is a parameter. The Scrollshot save path and quick flag became one
+  `ui::ImageSaveDestination`.
+
+`session_state.cpp` went from 1916 to 1876 lines.
