@@ -384,7 +384,7 @@ void ScreenshotEditor::SyncWatermarkClear() {
     POINT cursor{};
     ::GetCursorPos(&cursor);
     const bool over = ::PtInRect(&field, cursor) != FALSE;
-    const bool show = !modal_active_ && ContextTool() == ToolId::Watermark && ::IsWindowVisible(context_) &&
+    const bool show = !modal_active_ && PropertiesOf(ContextTool()).watermark && ::IsWindowVisible(context_) &&
                       ::GetWindowTextLengthW(text) > 0 && over;
     const bool shown = (::GetWindowLongPtrW(clear, GWL_STYLE) & WS_VISIBLE) != 0;
     if (shown != show) {
@@ -446,7 +446,7 @@ void ScreenshotEditor::SyncContext(bool layout) {
     syncing_context_ = true;
     const auto tool = ContextTool();
     const auto style = ContextStyle();
-    const bool text = tool == ToolId::Text || tool == ToolId::Tag, watermark = tool == ToolId::Watermark;
+    const ToolProperties& shows = PropertiesOf(tool);
     const auto position = [&](int id, bool shown, float x, float y, float width, float height) {
         HWND child = Control(id);
         if (!child) { return; }
@@ -480,19 +480,19 @@ void ScreenshotEditor::SyncContext(bool layout) {
     const auto slider = [&](int id, float value) {
         if (::SendMessageW(Control(id), TBM_GETPOS, 0, 0) != static_cast<LPARAM>(value)) { ::SendMessageW(Control(id), TBM_SETPOS, TRUE, static_cast<LPARAM>(value)); }
     };
-    if (text && ::GetFocus() != Control(kFontSizeCombo) && !::IsChild(Control(kFontSizeCombo), ::GetFocus())) {
+    if (shows.font_size && ::GetFocus() != Control(kFontSizeCombo) && !::IsChild(Control(kFontSizeCombo), ::GetFocus())) {
         wchar_t value[32]{};
         ::swprintf_s(value, L"%g pt", static_cast<double>(style.font_size));
         label(kFontSizeCombo, value);
     }
-    if (watermark) {
+    if (shows.watermark) {
         const auto& annotations = document_.annotations();
         const auto found = std::find_if(annotations.begin(), annotations.end(), [](const auto& a) { return a.tool == ToolId::Watermark; });
         // Undo may clear selection while the input still owns focus. Always
         // synchronize from the document; unchanged typing never resets EDIT.
         label(kWatermarkTextEdit, found != annotations.end() ? found->text.c_str() : L"");
     }
-    if (watermark) {
+    if (shows.watermark) {
         RECT field{};
         ::GetClientRect(Control(kWatermarkTextEdit), &field);
         const LONG size = ui::theme::Scaled(32, scale_), inset = ui::theme::Scaled(2, scale_);
@@ -579,7 +579,7 @@ void ScreenshotEditor::PlaceContext(bool follow_frame) {
 }
 void ScreenshotEditor::ShowBrushPopup(bool show) {
     if (!brush_popup_) { return; }
-    if (show && visible_ && !modal_active_ && ContextTool() == ToolId::Mosaic) {
+    if (show && visible_ && !modal_active_ && PropertiesOf(ContextTool()).effect) {
         brush_popup_open_ = true;
         // Reserve all three islands as one group before showing the final one.
         // At the bottom edge, move the group upward instead of covering tools.
@@ -823,7 +823,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
                                     std::vector<RECT>& separators) {
         x = pad;
         y = 0;
-        const bool text = tool == ToolId::Text, tag = tool == ToolId::Tag, effect = tool == ToolId::Mosaic, spot = tool == ToolId::Spotlight, watermark = tool == ToolId::Watermark;
+        const ToolProperties& shows = PropertiesOf(tool);
         float widest = 0;
         const auto field = [&](int id, float width) {
             auto r = place(width * s);
@@ -855,62 +855,61 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             }
             items.push_back(item);
         };
-        option(kTextPlainButton, text);
-        option(kTextFilledButton, text);
-        option(kTextOutlinedButton, text);
-        option(kPixelateButton, effect);
-        option(kBlurButton, effect);
-        if (effect) { separator(); }
-        option(kBrushMethodButton, effect, 48);
-        option(kRegionMethodButton, effect);
-        if (effect) {
+        option(kTextPlainButton, shows.text_style);
+        option(kTextFilledButton, shows.text_style);
+        option(kTextOutlinedButton, shows.text_style);
+        option(kPixelateButton, shows.effect);
+        option(kBlurButton, shows.effect);
+        if (shows.effect) { separator(); }
+        option(kBrushMethodButton, shows.effect, 48);
+        option(kRegionMethodButton, shows.effect);
+        if (shows.effect) {
             separator();
             value_field(kEffectStrengthValue, 125, {strings::Format(IDS_EDITOR_BLUR_INTENSITY_VALUE, {L"100"}), strings::Format(IDS_EDITOR_BLOCK_SIZE_VALUE, {L"72"})});
             field(kEffectStrengthSlider, 155);
         }
-        option(kSpotlightRectangleButton, spot);
-        option(kSpotlightEllipseButton, spot);
-        option(kSpotlightRoundedButton, spot);
-        if (spot) {
+        option(kSpotlightRectangleButton, shows.spotlight);
+        option(kSpotlightEllipseButton, shows.spotlight);
+        option(kSpotlightRoundedButton, shows.spotlight);
+        if (shows.spotlight) {
             separator();
             value_field(kOpacityValue, 110, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
             field(kOpacitySlider, 155);
         }
-        if (text || tag) {
+        if (shows.font_size) {
             field(kFontSizeCombo, 96);
             separator();
         }
-        if (watermark) {
+        if (shows.watermark) {
             field(kWatermarkTextEdit, 140);
             separator();
         }
-        const bool stroke = tool != ToolId::Pointer && !text && !tag && !effect && !spot && !watermark;
         for (size_t i = 0; i < kThicknessOptions.size(); ++i) {
             ToolbarItem item;
             item.kind = ToolbarItem::Kind::Thickness;
             item.thickness = kThicknessOptions[i];
             item.identifier = kThicknessButtons.Id(static_cast<int>(i));
-            item.shown = stroke;
+            item.shown = shows.thickness;
             if (item.shown) {
                 item.rect = place(kToolButton * s);
                 widest = std::max(widest, item.rect.right + pad);
             }
             items.push_back(item);
         }
-        if (stroke) { separator(); }
+        if (shows.thickness) { separator(); }
         for (size_t i = 0; i < kAnnotationSwatchColors.size(); ++i) {
             ToolbarItem item;
             item.kind = ToolbarItem::Kind::Color;
             item.color = kAnnotationSwatchColors[i];
             item.identifier = kColorButtons.Id(static_cast<int>(i));
-            item.shown = tool != ToolId::Pointer && !effect && !spot;
+            item.shown = shows.colors;
             if (item.shown) {
                 item.rect = place(kSwatch * s);
                 widest = std::max(widest, item.rect.right + pad);
             }
             items.push_back(item);
         }
-        if (watermark) {
+        if (shows.watermark) {
             separator();
             value_field(kOpacityValue, 85, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
             field(kOpacitySlider, 100);
@@ -929,13 +928,13 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             item.rect = {left, callout + (row - kToolButton * s) / 2, left + kToolButton * s, callout + (row + kToolButton * s) / 2};
             items.push_back(item);
         }
-        return std::pair<float, float>{tool != ToolId::Pointer ? y + row : 0.0f, widest};
+        return std::pair<float, float>{shows.island ? y + row : 0.0f, widest};
     };
     context_fields_.clear();
     context_separators_.clear();
     const auto tool = ContextTool();
     const auto [context_height, widest] = layout_context(tool, toolbar_, context_fields_, context_separators_);
-    context_visible_ = tool != ToolId::Pointer;
+    context_visible_ = PropertiesOf(tool).island;
     context_width_ = static_cast<int>(std::ceil(std::min(available_width, std::max(widest, 200 * s))));
     context_height_ = context_visible_ ? static_cast<int>(std::ceil(context_height)) : 0;
     // The islands are placed around the frame with room for the tallest
@@ -1797,7 +1796,7 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
         return;
     }
     // The island writing the document's text into the field changes nothing.
-    if (id == kWatermarkTextEdit && notification == EN_CHANGE && !syncing_context_ && ContextTool() == ToolId::Watermark) {
+    if (id == kWatermarkTextEdit && notification == EN_CHANGE && !syncing_context_ && PropertiesOf(ContextTool()).watermark) {
         if (!FeatureUsed()) { return; }
         const int length = ::GetWindowTextLengthW(Control(kWatermarkTextEdit));
         std::wstring text(static_cast<size_t>(length) + 1, L'\0');
@@ -1862,7 +1861,7 @@ void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
         // In the watermark field Esc reverts what was typed since the field
         // took the focus. The focus stays there, so the next Esc reverts what
         // is typed after this one, however often it is pressed.
-        if (context_owns_transaction_ && ::GetFocus() == Control(kWatermarkTextEdit) && ContextTool() == ToolId::Watermark) {
+        if (context_owns_transaction_ && ::GetFocus() == Control(kWatermarkTextEdit) && PropertiesOf(ContextTool()).watermark) {
             document_.BeginTransaction();
         } else {
             context_owns_transaction_ = false;
