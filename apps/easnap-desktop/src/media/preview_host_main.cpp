@@ -1,5 +1,6 @@
 #include "media/preview_host_protocol.h"
 
+#include "platform/app_messages.h"
 #include "platform/diagnostics.h"
 
 #include <algorithm>
@@ -14,7 +15,6 @@ namespace easnap::media {
 namespace {
 
 namespace protocol = preview_host;
-constexpr UINT kPreviewChangedMessage = WM_APP + 1;
 constexpr wchar_t kHostWindowClass[] = L"Easnap.NativePreviewHost";
 constexpr ULONGLONG kSnapshotIntervalMs = 50;
 
@@ -117,7 +117,7 @@ private:
                                 reinterpret_cast<LONG_PTR>(host));
         }
         if (host == nullptr) return ::DefWindowProcW(window, message, wparam, lparam);
-        if (message == kPreviewChangedMessage) return 0;
+        if (message == kMsgPreviewHostChanged) return 0;
         // Preserve the presenter's last frame until its resize repaint.
         if (message == WM_ERASEBKGND && window == host->video_window_) return 1;
         if (message == WM_SIZE && window == host->video_window_) {
@@ -271,7 +271,7 @@ private:
         }
         // Open failures remain the adapter's own operation/HRESULT snapshot.
         static_cast<void>(preview_->Open(source, video_window_, owner_window_,
-                                         kPreviewChangedMessage));
+                                         kMsgPreviewHostChanged));
         return true;
     }
 

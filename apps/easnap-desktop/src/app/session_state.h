@@ -18,6 +18,7 @@
 #include "app/trim_flow.h"
 #include "capture/capture_provider.h"
 #include "media/media_interfaces.h"
+#include "platform/app_messages.h"
 #include "platform/image_export.h"
 #include "platform/platform_utils.h"
 
@@ -46,21 +47,6 @@ enum class RecordingStartFailure;
 
 namespace easnap::app {
 
-/// Posted to the host window so windows are destroyed outside their own
-/// window procedure (destroying a window from inside its callback is unsafe).
-inline constexpr UINT kMsgSessionCleanup = WM_APP + 11;
-/// Posted after the background finalizer has stopped every recording worker and
-/// closed (or safely aborted) the temporary MP4. WPARAM carries its generation.
-inline constexpr UINT kMsgRecordingFinalized = WM_APP + 12;
-// WM_APP + 13 is kMsgTrimExportCompleted, in app/trim_flow.h.
-/// Posted by a Scrollshot capture worker when its progress changed. WPARAM
-/// carries the capture's generation; pixels never travel in the message.
-inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
-// WM_APP + 15 is platform::kMsgImageExportCompleted, in platform/image_export.h.
-/// Posted when a save of the settings failed and the user may be told now.
-inline constexpr UINT kMsgSettingsNotSaved = WM_APP + 16;
-// WM_APP + 18 is kMsgVideoProbeCompleted, in app/external_video.h.
-// WM_APP + 19 is kMsgOpenVideoRequest, in app/video_handover.h.
 /// Timer on the host window: retired windows are destroyed once no dialog of
 /// theirs is running its own message loop any more.
 inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;

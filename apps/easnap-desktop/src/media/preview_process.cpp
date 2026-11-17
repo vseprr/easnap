@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "media/preview_host_protocol.h"
+#include "platform/app_messages.h"
 
 namespace easnap::media {
 namespace {
@@ -197,7 +198,7 @@ public:
             // Never poll recursively in layout or continuously repost while
             // waiting for the helper; the existing timer remains the fallback.
             if (!resize_poll_posted_ && owner_window_ != nullptr) {
-                resize_poll_posted_ = ::PostMessageW(owner_window_, kResizePollMessage, 0, 0) != FALSE;
+                resize_poll_posted_ = ::PostMessageW(owner_window_, kMsgPreviewProcessResizePoll, 0, 0) != FALSE;
             }
         }
     }
@@ -266,7 +267,6 @@ public:
 
 private:
     static constexpr UINT_PTR kPollTimer = 1;
-    static constexpr UINT kResizePollMessage = WM_APP + 1;
     static constexpr ULONGLONG kHeartbeatTimeoutMs = 3'000;
     static constexpr ULONGLONG kIntentTimeoutMs = 3'000;
     static constexpr ULONGLONG kOpenTimeoutMs = 5'000;
@@ -296,7 +296,7 @@ private:
             owner->Poll();
             return 0;
         }
-        if (message == kResizePollMessage && owner != nullptr) {
+        if (message == kMsgPreviewProcessResizePoll && owner != nullptr) {
             owner->resize_poll_posted_ = false;
             owner->Poll();
             return 0;

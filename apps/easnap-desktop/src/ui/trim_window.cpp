@@ -10,6 +10,7 @@
 #include <cwchar>
 #include <utility>
 
+#include "platform/app_messages.h"
 #include "platform/platform_utils.h"
 #include "strings/strings.h"
 #include "ui/trim_layout.h"
@@ -24,7 +25,6 @@ constexpr wchar_t kWindowClassName[] = L"EasnapTrimWindow";
 constexpr wchar_t kTimelineClassName[] = L"EasnapTrimTimeline";
 constexpr wchar_t kVideoClassName[] = L"EasnapTrimVideo";
 static_assert(kTrimChromeHeightDip == kWindowChromeHeight);
-constexpr UINT kPreviewEventMessage = WM_APP + 1;
 constexpr UINT_PTR kStatusTimerId = 1;
 constexpr UINT kStatusTimerIntervalMs = 100;
 constexpr int kIdPlayPause = 100;
@@ -192,7 +192,7 @@ bool TrimWindow::Open(const std::wstring& source_path,
 
     preview_ = media::CreateMfPlayPreview();
     if (preview_ == nullptr ||
-        !preview_->Open(source_path, video_, hwnd_, kPreviewEventMessage)) {
+        !preview_->Open(source_path, video_, hwnd_, kMsgTrimPreviewEvent)) {
         const bool external = source_.kind == app::TrimSourceKind::External;
         if (preview_ != nullptr) {
             SetStatus(PreviewFailureText(preview_->snapshot(), external), true);
@@ -475,7 +475,7 @@ LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
                 }
             }
             return 0;
-        case kPreviewEventMessage:
+        case kMsgTrimPreviewEvent:
             if (!closing_) { UpdatePreviewState(); }
             return 0;
         case WM_SIZE:

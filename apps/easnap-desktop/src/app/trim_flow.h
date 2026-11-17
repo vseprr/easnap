@@ -25,17 +25,13 @@
 #include "app/trim_workflow.h"
 #include "media/media_interfaces.h"
 #include "media/temp_session.h"
+#include "platform/app_messages.h"
 
 namespace easnap::ui {
 class TrimWindow;
 }  // namespace easnap::ui
 
 namespace easnap::app {
-
-/// Posted when the trim export worker has stopped and its result can be
-/// reconciled with the session on the UI thread. WPARAM carries the export's
-/// generation.
-inline constexpr UINT kMsgTrimExportCompleted = WM_APP + 13;
 
 /// The recording Save dialog's text in the active language.
 [[nodiscard]] SaveRecordingDialogText RecordingSaveDialogText();

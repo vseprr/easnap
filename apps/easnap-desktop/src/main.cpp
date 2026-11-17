@@ -28,6 +28,7 @@
 #include "app/session_state.h"
 #include "app/video_handover.h"
 #include "media/video_probe.h"
+#include "platform/app_messages.h"
 #include "platform/diagnostics.h"
 #include "platform/platform_utils.h"
 #include "platform/startup_entry.h"
@@ -58,7 +59,6 @@ constexpr wchar_t kSingleInstanceMutex[] = L"Local\\Easnap.SingleInstance";
 /// How long a second Easnap.exe waits for the running one to take a video.
 constexpr std::chrono::milliseconds kHandOverTimeout{5000};
 constexpr wchar_t kProductName[] = L"Easnap";
-constexpr UINT kMsgTrayIcon = WM_APP + 1;
 constexpr UINT kTrayIconId = 1;
 
 /// Owns the notification-area icon for the lifetime of the process.
@@ -78,7 +78,7 @@ public:
 
         NOTIFYICONDATAW data = MakeData();
         data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
-        data.uCallbackMessage = kMsgTrayIcon;
+        data.uCallbackMessage = easnap::app::kMsgTrayIcon;
         data.hIcon = icon_;
         ::wcsncpy_s(data.szTip, tooltip_.c_str(), _TRUNCATE);
 
@@ -516,7 +516,7 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             }
             return 0;
 
-        case kMsgTrayIcon:
+        case easnap::app::kMsgTrayIcon:
             switch (LOWORD(lparam)) {
                 case WM_LBUTTONUP:
                     coordinator.OnGlobalHotkey();

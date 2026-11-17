@@ -19,6 +19,7 @@
 #include <optional>
 
 #include "media/mf_video_aperture.h"
+#include "platform/app_messages.h"
 #include "ui/paint_buffer.h"
 #include "media/preview_transport.h"
 #include "media/preview_video_endpoint.h"
@@ -1274,7 +1275,7 @@ private:
                 reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
             ::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(owner));
         }
-        if (owner && message == kPresentationMessage) {
+        if (owner && message == kMsgMediaPreviewPresentation) {
             owner->ScheduleEndpointPresentation();
             return 0;
         }
@@ -1308,7 +1309,7 @@ private:
         if (!presentation_timer_) return false;
         presentation_wait_ = ::CreateThreadpoolWait(
             [](PTP_CALLBACK_INSTANCE, void* context, PTP_WAIT, TP_WAIT_RESULT) noexcept {
-                ::PostMessageW(static_cast<HWND>(context), kPresentationMessage, 0, 0);
+                ::PostMessageW(static_cast<HWND>(context), kMsgMediaPreviewPresentation, 0, 0);
             },
             owner_window_, nullptr);
         if (!presentation_wait_) return false;
@@ -1437,7 +1438,6 @@ private:
     MediaPreviewOperation failed_operation_{MediaPreviewOperation::None};
     PreviewTransport transport_;
     bool first_frame_pending_{false};
-    static constexpr UINT kPresentationMessage = WM_APP + 17;
     HANDLE presentation_timer_{nullptr};
     PTP_WAIT presentation_wait_{nullptr};
     HWND native_video_window_{nullptr};

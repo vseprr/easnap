@@ -2,6 +2,7 @@
 // Source pixels and annotation colors are deliberately outside this domain.
 #pragma once
 
+#include "platform/app_messages.h"
 #include "platform/platform_utils.h"
 #include "app/appearance_theme.h"
 
@@ -36,7 +37,6 @@ struct Palette {
 void ApplyPreference(app::AppearanceTheme preference) noexcept;
 void RefreshSystemColors() noexcept;
 void NotifyWindows() noexcept;
-inline constexpr UINT kChangedMessage = WM_APP + 0x310;
 
 [[nodiscard]] D2D1_COLOR_F D2DColor(COLORREF color, float alpha = 1.0f) noexcept;
 

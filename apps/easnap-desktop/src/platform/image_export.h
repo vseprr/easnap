@@ -9,6 +9,7 @@
 // (ADR-031, "Copying and saving a finished image").
 #pragma once
 
+#include "platform/app_messages.h"
 #include "platform/platform_utils.h"
 
 #include <atomic>
@@ -18,11 +19,6 @@
 #include <thread>
 
 namespace easnap::platform {
-
-/// Posted to the window that started an image export once its worker has
-/// finished: the editor, a pin or the host window (Scrollshot). WPARAM
-/// carries the export's generation; the result is taken with TryTake.
-inline constexpr UINT kMsgImageExportCompleted = WM_APP + 15;
 
 enum class ImageExportTarget { Clipboard,
                                File };
