@@ -25,6 +25,7 @@
 #include "media/preview_transport.h"
 #include "media/preview_video_endpoint.h"
 #include "platform/platform_utils.h"
+#include "platform/window_class.h"
 
 namespace easnap::media {
 namespace {
@@ -495,11 +496,7 @@ private:
 
     static LRESULT CALLBACK NativeVideoWindowProc(HWND window, UINT message,
                                                   WPARAM wparam, LPARAM lparam) noexcept {
-        auto* self = reinterpret_cast<MfPlayPreview*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (message == WM_NCCREATE) {
-            self = static_cast<MfPlayPreview*>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
-            ::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        }
+        auto* self = platform::BindWindowOwner<MfPlayPreview>(window, message, lparam);
         if (message == WM_NCHITTEST) return HTTRANSPARENT;
         if (message == WM_ERASEBKGND) return 1;
         if (message == WM_SIZE) {
@@ -521,11 +518,11 @@ private:
 
     bool CreateNativeVideoWindow() noexcept {
         constexpr wchar_t name[] = L"EasnapPreviewNativeVideo";
-        WNDCLASSW cls{};
+        WNDCLASSEXW cls{};
         cls.hInstance = ::GetModuleHandleW(nullptr);
         cls.lpfnWndProc = NativeVideoWindowProc;
         cls.lpszClassName = name;
-        if (!::RegisterClassW(&cls) && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
+        if (!platform::RegisterWindowClass(cls)) return false;
         RECT bounds{};
         ::GetClientRect(video_window_, &bounds);
         native_video_window_ = ::CreateWindowExW(0, name, nullptr,
@@ -536,12 +533,7 @@ private:
 
     static LRESULT CALLBACK StillFrameWindowProc(HWND window, UINT message,
                                                  WPARAM wparam, LPARAM lparam) noexcept {
-        auto* self = reinterpret_cast<MfPlayPreview*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (message == WM_NCCREATE) {
-            const auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
-            self = static_cast<MfPlayPreview*>(create->lpCreateParams);
-            ::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        }
+        auto* self = platform::BindWindowOwner<MfPlayPreview>(window, message, lparam);
         if (message == WM_NCHITTEST) return HTTRANSPARENT;
         if (message == WM_ERASEBKGND) return 1;
         if (message == WM_SIZE) {
@@ -620,11 +612,11 @@ private:
 
     bool CreateStillFrameWindow() noexcept {
         constexpr wchar_t class_name[] = L"EasnapPreviewStillFrame";
-        WNDCLASSW window_class{};
+        WNDCLASSEXW window_class{};
         window_class.hInstance = ::GetModuleHandleW(nullptr);
         window_class.lpfnWndProc = StillFrameWindowProc;
         window_class.lpszClassName = class_name;
-        if (!::RegisterClassW(&window_class) && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
+        if (!platform::RegisterWindowClass(window_class)) return false;
         RECT bounds{};
         ::GetClientRect(video_window_, &bounds);
         // A separate opaque surface prevents the native/GDI handoff from
@@ -1277,13 +1269,7 @@ private:
 
     static LRESULT CALLBACK OwnerWindowProc(HWND window, UINT message,
                                             WPARAM wparam, LPARAM lparam) noexcept {
-        auto* owner = reinterpret_cast<MfPlayPreview*>(
-            ::GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (message == WM_NCCREATE) {
-            owner = static_cast<MfPlayPreview*>(
-                reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
-            ::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(owner));
-        }
+        auto* owner = platform::BindWindowOwner<MfPlayPreview>(window, message, lparam);
         if (owner && message == kMsgMediaPreviewPresentation) {
             owner->ScheduleEndpointPresentation();
             return 0;
@@ -1297,12 +1283,11 @@ private:
 
     bool CreateOwnerWindow() noexcept {
         static const bool registered = [] {
-            WNDCLASSW descriptor{};
+            WNDCLASSEXW descriptor{};
             descriptor.lpfnWndProc = OwnerWindowProc;
             descriptor.hInstance = ::GetModuleHandleW(nullptr);
             descriptor.lpszClassName = L"Easnap.PreviewTransportOwner";
-            return ::RegisterClassW(&descriptor) != 0 ||
-                   ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+            return platform::RegisterWindowClass(descriptor);
         }();
         if (!registered) return false;
         owner_window_ = ::CreateWindowExW(0, L"Easnap.PreviewTransportOwner", L"", 0,

@@ -4,6 +4,7 @@
 #include "platform/diagnostics.h"
 #include "platform/platform_utils.h"
 #include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 
 #include <algorithm>
 #include <array>
@@ -36,12 +37,12 @@ public:
     }
 
     int Run() {
-        WNDCLASSW window_class{};
+        WNDCLASSEXW window_class{};
         window_class.lpfnWndProc = WindowProc;
         window_class.hInstance = ::GetModuleHandleW(nullptr);
         window_class.lpszClassName = kHostWindowClass;
         window_class.hbrBackground = static_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH));
-        if (::RegisterClassW(&window_class) == 0) {
+        if (!platform::RegisterWindowClass(window_class)) {
             Fail(HRESULT_FROM_WIN32(::GetLastError()), MediaPreviewOperation::Open);
             static_cast<void>(SendSnapshot());
             return 1;
@@ -110,14 +111,7 @@ private:
 
     static LRESULT CALLBACK WindowProc(HWND window, UINT message,
                                        WPARAM wparam, LPARAM lparam) {
-        auto* host = reinterpret_cast<PreviewHost*>(
-            ::GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (message == WM_NCCREATE) {
-            const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-            host = static_cast<PreviewHost*>(create->lpCreateParams);
-            ::SetWindowLongPtrW(window, GWLP_USERDATA,
-                                reinterpret_cast<LONG_PTR>(host));
-        }
+        auto* host = platform::BindWindowOwner<PreviewHost>(window, message, lparam);
         if (host == nullptr) return ::DefWindowProcW(window, message, wparam, lparam);
         if (message == kMsgPreviewHostChanged) return 0;
         // Preserve the presenter's last frame until its resize repaint.
@@ -145,7 +139,7 @@ private:
                 host->closing_ = true;
             }
             if (window == host->owner_window_) host->owner_window_ = nullptr;
-            ::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+            platform::UnbindWindowOwner(window);
         }
         return ::DefWindowProcW(window, message, wparam, lparam);
     }
