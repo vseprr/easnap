@@ -330,7 +330,7 @@ private:
                 ::GetClientRect(hwnd, &client);
                 const float scale = static_cast<float>(::GetDpiForWindow(hwnd)) / 96.0f;
                 {
-                    PaintBuffer buffer(dc, client);
+                    platform::PaintBuffer buffer(dc, client);
                     theme::DrawPanel(buffer.dc(), client, scale);
                     theme::DrawGrip(buffer.dc(), {0, 0, theme::Scaled(kGrip, scale), client.bottom}, scale);
                 }
@@ -422,7 +422,7 @@ private:
                 RECT client{};
                 ::GetClientRect(hwnd, &client);
                 {
-                    PaintBuffer buffer(dc, client);
+                    platform::PaintBuffer buffer(dc, client);
                     PaintPreview(buffer.dc(), client, static_cast<float>(::GetDpiForWindow(hwnd)) / 96.0f);
                 }
                 ::EndPaint(hwnd, &paint);

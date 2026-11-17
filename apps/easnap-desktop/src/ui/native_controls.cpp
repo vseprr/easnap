@@ -203,7 +203,7 @@ LRESULT CALLBACK ButtonProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         ::GetClientRect(hwnd, &r);
         // USER32 can request erase after WINDOWPOSCHANGED's paint, with the
         // final newly exposed region. Publish the complete control to that DC.
-        PaintBuffer buffer(dc, r);
+        platform::PaintBuffer buffer(dc, r);
         PaintButton(hwnd, buffer.dc(), *data);
         buffer.Present();
         if (message == WM_PAINT) { ::EndPaint(hwnd, &paint); }
@@ -645,7 +645,7 @@ LRESULT CALLBACK BufferedTextProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
         ::GetClientRect(hwnd, &r);
         const bool caret = ::HideCaret(hwnd) != FALSE;
         {
-            PaintBuffer buffer(target, r);
+            platform::PaintBuffer buffer(target, r);
             theme::FillSolid(buffer.dc(), r, theme::Current().panel);
             ::DefSubclassProc(hwnd, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(buffer.dc()), PRF_CLIENT);
         }
@@ -739,7 +739,7 @@ LRESULT CALLBACK InputProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam
         RECT r{};
         ::GetClientRect(hwnd, &r);
         const float scale = ::GetDpiForWindow(hwnd) / 96.0f;
-        PaintBuffer buffer(dc, r);
+        platform::PaintBuffer buffer(dc, r);
         dc = buffer.dc();
         theme::FillSolid(dc, r, theme::Current().panel);
         RECT face = r;
@@ -801,7 +801,7 @@ LRESULT CALLBACK ProgressProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpa
         RECT r{};
         ::GetClientRect(hwnd, &r);
         const float scale = ::GetDpiForWindow(hwnd) / 96.0f;
-        PaintBuffer buffer(dc, r);
+        platform::PaintBuffer buffer(dc, r);
         dc = buffer.dc();
         theme::FillSolid(dc, r, theme::Current().panel);
         ::InflateRect(&r, -theme::Scaled(4, scale), -theme::Scaled(4, scale));
@@ -977,7 +977,7 @@ void PaintNativePanel(HWND window, float scale, bool grip) {
     HDC dc = ::BeginPaint(window, &paint);
     RECT client{};
     ::GetClientRect(window, &client);
-    PaintBuffer buffer(dc, client);
+    platform::PaintBuffer buffer(dc, client);
     theme::DrawPanel(buffer.dc(), client, scale);
     if (grip) { theme::DrawGrip(buffer.dc(), {0, 0, theme::Scaled(28, scale), client.bottom}, scale); }
     buffer.Present();
@@ -1222,7 +1222,7 @@ LRESULT CALLBACK ChromeHeaderProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
             HDC target = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
             RECT r{};
             ::GetClientRect(hwnd, &r);
-            PaintBuffer buffer(target, r);
+            platform::PaintBuffer buffer(target, r);
             theme::FillSolid(buffer.dc(), r, theme::Current().panel);
             const float scale = ::GetDpiForWindow(hwnd) / 96.0f;
             wchar_t title[256]{};

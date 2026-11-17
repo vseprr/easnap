@@ -90,7 +90,7 @@ LRESULT CALLBACK NoticeProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         HDC dc = ::BeginPaint(hwnd, &paint);
         RECT client{};
         ::GetClientRect(hwnd, &client);
-        PaintBuffer buffer(dc, client);
+        platform::PaintBuffer buffer(dc, client);
         dc = buffer.dc();
         theme::FillSolid(dc, client, theme::Current().panel);
         RECT placement{};

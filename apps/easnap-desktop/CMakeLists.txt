@@ -48,7 +48,7 @@ set(EASNAP_SOURCES
     src/ui/ui_theme.cpp
     src/ui/native_controls.cpp
     src/ui/native_controls.h
-    src/ui/paint_buffer.h
+    src/platform/paint_buffer.h
     src/ui/overlay.h
     src/ui/overlay.cpp
     src/ui/capture_magnifier.h
@@ -153,7 +153,7 @@ add_executable(EasnapPreviewHost WIN32
     src/media/media_preview.cpp
     src/platform/app_messages.h
     src/media/mf_video_aperture.h
-    src/ui/paint_buffer.h
+    src/platform/paint_buffer.h
     src/media/preview_video_endpoint.cpp
     src/media/preview_transport.cpp
     src/platform/diagnostics.cpp

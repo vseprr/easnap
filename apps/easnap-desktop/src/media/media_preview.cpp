@@ -20,7 +20,7 @@
 
 #include "media/mf_video_aperture.h"
 #include "platform/app_messages.h"
-#include "ui/paint_buffer.h"
+#include "platform/paint_buffer.h"
 #include "media/preview_transport.h"
 #include "media/preview_video_endpoint.h"
 
@@ -565,7 +565,7 @@ private:
             Notify();
             return false;
         }
-        ui::PaintBuffer paint(dc, client);
+        platform::PaintBuffer paint(dc, client);
         dc = paint.dc();
         ::FillRect(dc, &client, static_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH)));
         const double scale = (std::min)(static_cast<double>(client.right) / frame.width,

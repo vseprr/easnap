@@ -5,7 +5,7 @@
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
 #include "ui/native_controls.h"
-#include "ui/paint_buffer.h"
+#include "platform/paint_buffer.h"
 #include "ui/pin_layout.h"
 #include "ui/ui_theme.h"
 
@@ -284,7 +284,7 @@ void PinnedImages::Window::PaintTo(HDC dc) {
     RECT client{};
     ::GetClientRect(hwnd_, &client);
     {
-        PaintBuffer buffer(dc, client);
+        platform::PaintBuffer buffer(dc, client);
         HDC target = buffer.dc();
         const theme::Palette& palette = theme::Current();
         theme::FillSolid(target, client, active_ ? palette.focus : palette.border);

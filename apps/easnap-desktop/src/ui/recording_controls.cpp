@@ -483,7 +483,7 @@ private:
                 RECT client{};
                 ::GetClientRect(hwnd, &client);
                 const float scale = ::GetDpiForWindow(hwnd) / 96.0f;
-                PaintBuffer buffer(dc, client);
+                platform::PaintBuffer buffer(dc, client);
                 dc = buffer.dc();
                 theme::DrawPanel(dc, client, scale);
                 if (owner_.state_ != app::SessionState::RecordingConfiguring) {

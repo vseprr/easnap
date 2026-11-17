@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ui/control_ids.h"
-#include "ui/paint_buffer.h"
+#include "platform/paint_buffer.h"
 
 #include "ui/ui_theme.h"
 

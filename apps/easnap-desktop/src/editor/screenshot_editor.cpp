@@ -1189,7 +1189,7 @@ void ScreenshotEditor::ShowBrushPopup(bool show) {
 void ScreenshotEditor::PaintContext(HDC dc, HWND window) const {
     RECT client{};
     ::GetClientRect(window, &client);
-    ui::PaintBuffer buffer(dc, client);
+    platform::PaintBuffer buffer(dc, client);
     dc = buffer.dc();
     ui::theme::DrawPanel(dc, client, scale_);
     if (window == context_)
@@ -3061,7 +3061,7 @@ LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd, UINT message, WPARAM 
         ::GetClientRect(hwnd, &client);
         ::HideCaret(hwnd);
         {
-            ui::PaintBuffer buffer(dc, client);
+            platform::PaintBuffer buffer(dc, client);
             self->PaintTextEditor(buffer.dc());
         }
         ::ShowCaret(hwnd);
@@ -3406,7 +3406,7 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
 void ScreenshotEditor::PaintToolbar(HDC dc) const {
     using namespace ui;
     RECT client{0, 0, client_width_, client_height_};
-    PaintBuffer buffer(dc, client);
+    platform::PaintBuffer buffer(dc, client);
     dc = buffer.dc();
     theme::DrawPanel(dc, client, scale_);
     theme::DrawGrip(dc, {0, 0, static_cast<LONG>(kIslandGrip * scale_), toolbar_rect_.bottom}, scale_);
