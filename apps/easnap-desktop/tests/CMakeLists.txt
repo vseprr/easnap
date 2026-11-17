@@ -868,6 +868,7 @@ add_executable(test_capture_workspace
     ../src/ui/message_dialog.cpp
     ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/editor/annotation_document.cpp
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
@@ -928,6 +929,7 @@ add_executable(test_scrollshot_workspace
     ../src/ui/message_dialog.cpp
     ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/editor/annotation_document.cpp
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
@@ -979,6 +981,7 @@ add_executable(test_text_fit
     ../src/ui/message_dialog.cpp
     ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/editor/annotation_document.cpp
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
@@ -1028,6 +1031,7 @@ add_executable(test_data_safety
     ../src/ui/message_dialog.cpp
     ../src/ui/window_chrome.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/editor/annotation_document.cpp
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
@@ -1136,6 +1140,7 @@ add_executable(test_island_capture
     test_island_capture.cpp
     ../src/capture/capture_provider.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/editor/annotation_document.cpp
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
@@ -1192,6 +1197,7 @@ add_executable(test_native_ui
     ../src/ui/trim_layout.cpp
     ../src/ui/timeline_accessibility.cpp
     ../src/editor/screenshot_editor.cpp
+    ../src/editor/annotation_document.cpp
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp

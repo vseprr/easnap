@@ -17,7 +17,6 @@
 // where a screenshot is shown one to one at the place it was captured.
 #pragma once
 
-#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -26,6 +25,7 @@
 
 #include "app/app_settings.h"
 #include "app/appearance_theme.h"
+#include "editor/annotation_document.h"
 #include "editor/annotation_palette.h"
 #include "editor/image_viewport.h"
 #include "editor/redaction_renderer.h"
@@ -35,117 +35,6 @@
 #include "ui/native_controls.h"
 
 namespace easnap::editor {
-
-using platform::ComPtr;
-
-enum class ToolId {
-    Pointer,    ///< Inspect only; does not draw.
-    Pen,        ///< Freehand polyline.
-    Arrow,      ///< Line with a filled head.
-    Rectangle,  ///< Outlined rectangle.
-    Ellipse,    ///< Outlined ellipse.
-    Text,       ///< Click, then type.
-    Mosaic,     ///< Smooth blur or block pixelation, brush or rectangle.
-    Line,
-    Tag,
-    Spotlight,
-    Watermark,
-};
-
-enum class TextMode { Plain,
-                      Fill,
-                      Outline };
-enum class EffectMode { Blur,
-                        Pixelate };
-enum class EffectMethod { Brush,
-                          Region };
-enum class SpotlightShape { Rectangle,
-                            Ellipse,
-                            Rounded };
-
-struct AnnotationStyle {
-    D2D1_COLOR_F color{kDefaultAnnotationColor};
-    float thickness{3.0f};
-    float font_size{16.0f}; // Points, applied to the whole object.
-    float image_scale{1.0f}; // Capture DPI/96, frozen with content.
-    TextMode text_mode{TextMode::Plain};
-    EffectMode effect{EffectMode::Blur};
-    EffectMethod method{EffectMethod::Brush};
-    SpotlightShape shape{SpotlightShape::Rectangle};
-    float strength{50.0f};
-    float opacity{50.0f};
-    /// Diameter of the mosaic brush in captured pixels.
-    float brush_size{32.0f};
-};
-
-/// One editing operation in image-space coordinates (origin = top-left of the
-/// captured region, 1 unit = 1 captured pixel).
-struct Annotation {
-    ToolId tool{ToolId::Pen};
-    AnnotationStyle style{};
-    std::vector<D2D1_POINT_2F> points;
-    std::wstring text;
-
-    [[nodiscard]] D2D1_RECT_F bounds() const;
-    [[nodiscard]] bool HitTest(D2D1_POINT_2F point, float tolerance = 5.0f) const;
-    [[nodiscard]] std::vector<D2D1_POINT_2F> Handles() const;
-    [[nodiscard]] bool Same(const Annotation& other) const;
-    [[nodiscard]] float FontPixels() const { return style.font_size * (96.0f / 72.0f) * style.image_scale; }
-};
-
-/// Vector command list with undo/redo. Compositing happens only on export.
-class IAnnotationDocument {
-public:
-    virtual ~IAnnotationDocument() = default;
-
-    virtual void Apply(Annotation annotation) = 0;
-    [[nodiscard]] virtual bool CanUndo() const = 0;
-    [[nodiscard]] virtual bool CanRedo() const = 0;
-    virtual bool Undo() = 0;
-    virtual bool Redo() = 0;
-    /// Undoable "remove everything" as one document operation.
-    virtual void Clear() = 0;
-    /// Non-undoable session reset: drops both stacks and the revision counter.
-    virtual void Reset() = 0;
-    [[nodiscard]] virtual const std::vector<Annotation>& annotations() const = 0;
-    /// Increments on every mutation; used as a cheap cache key.
-    [[nodiscard]] virtual uint64_t revision() const = 0;
-};
-
-class AnnotationDocument final : public IAnnotationDocument {
-public:
-    /// Undo keeps this many steps; older ones are dropped. Each step holds a
-    /// copy of the whole annotation list, so an unbounded history grew with
-    /// every nudge of an arrow key.
-    static constexpr size_t kUndoLimit = 200;
-
-    void Apply(Annotation annotation) override;
-    [[nodiscard]] bool CanUndo() const override { return !undo_stack_.empty(); }
-    [[nodiscard]] bool CanRedo() const override { return !redo_stack_.empty(); }
-    bool Undo() override;
-    bool Redo() override;
-    void Clear() override;
-    void Reset() override;
-    [[nodiscard]] const std::vector<Annotation>& annotations() const override { return annotations_; }
-    [[nodiscard]] uint64_t revision() const override { return revision_; }
-    [[nodiscard]] bool HasRedactions() const;
-    void Replace(size_t index, Annotation annotation);
-    void Remove(size_t index);
-    void BeginTransaction();
-    void CommitTransaction();
-    void CancelTransaction();
-    [[nodiscard]] bool in_transaction() const { return transaction_.has_value(); }
-    [[nodiscard]] std::optional<size_t> HitTest(D2D1_POINT_2F point, float tolerance = 5.0f) const;
-
-private:
-    std::vector<Annotation> annotations_;
-    void Checkpoint();
-    void PushUndo(std::vector<Annotation> snapshot);
-    std::deque<std::vector<Annotation>> undo_stack_;
-    std::vector<std::vector<Annotation>> redo_stack_;
-    std::optional<std::vector<Annotation>> transaction_;
-    uint64_t revision_{0};
-};
 
 /// Screenshot document/commands and movable native editing island.
 class ScreenshotEditor {
