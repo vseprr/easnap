@@ -18,6 +18,13 @@
 
 namespace easnap::editor {
 
+/// The pointer over the image while a tool is chosen and no annotation is under it.
+enum class ToolCursor {
+    Cross,  ///< Crosshair: the tool draws.
+    Arrow,  ///< Arrow: the tool only selects.
+    IBeam,  ///< Text cursor: the tool places text.
+};
+
 /// One annotation tool: how the tools island shows it and the decisions that
 /// depend only on the tool.
 struct ToolDefinition {
@@ -36,6 +43,7 @@ struct ToolDefinition {
     /// Its annotation can be selected and shows a selection frame; the
     /// watermark covers the whole image and is edited from its field instead.
     bool selectable{true};
+    ToolCursor cursor{ToolCursor::Cross};  ///< The pointer over the image while it is chosen.
 };
 
 /// How many tools there are.
@@ -43,15 +51,15 @@ inline constexpr std::size_t kToolCount = static_cast<std::size_t>(ToolId::Water
 
 /// Every tool, in ToolId order.
 inline constexpr std::array<ToolDefinition, kToolCount> kToolDefinitions{{
-    {.id = ToolId::Pointer, .identifier = kToolButtons.Id(0), .toolbar_position = 0, .name = IDS_EDITOR_TOOL_POINTER, .icon = ui::Icon::Cursor},
+    {.id = ToolId::Pointer, .identifier = kToolButtons.Id(0), .toolbar_position = 0, .name = IDS_EDITOR_TOOL_POINTER, .icon = ui::Icon::Cursor, .cursor = ToolCursor::Arrow},
     {.id = ToolId::Pen, .identifier = kToolButtons.Id(1), .toolbar_position = 5, .name = IDS_EDITOR_TOOL_PEN, .icon = ui::Icon::Pen},
     {.id = ToolId::Arrow, .identifier = kToolButtons.Id(2), .toolbar_position = 4, .name = IDS_EDITOR_TOOL_ARROW, .icon = ui::Icon::Arrow},
     {.id = ToolId::Rectangle, .identifier = kToolButtons.Id(3), .toolbar_position = 1, .name = IDS_EDITOR_TOOL_RECTANGLE, .icon = ui::Icon::Rectangle},
     {.id = ToolId::Ellipse, .identifier = kToolButtons.Id(4), .toolbar_position = 2, .name = IDS_EDITOR_TOOL_ELLIPSE, .icon = ui::Icon::Ellipse},
-    {.id = ToolId::Text, .identifier = kToolButtons.Id(5), .toolbar_position = 6, .name = IDS_EDITOR_TOOL_TEXT, .icon = ui::Icon::Text, .text_box = true},
+    {.id = ToolId::Text, .identifier = kToolButtons.Id(5), .toolbar_position = 6, .name = IDS_EDITOR_TOOL_TEXT, .icon = ui::Icon::Text, .text_box = true, .cursor = ToolCursor::IBeam},
     {.id = ToolId::Mosaic, .identifier = kToolButtons.Id(6), .toolbar_position = 8, .separator_before = true, .name = IDS_EDITOR_TOOL_MOSAIC, .icon = ui::Icon::Mosaic, .base_effect = true},
     {.id = ToolId::Line, .identifier = kToolButtons.Id(7), .toolbar_position = 3, .name = IDS_EDITOR_TOOL_LINE, .icon = ui::Icon::Line},
-    {.id = ToolId::Tag, .identifier = kToolButtons.Id(8), .toolbar_position = 7, .name = IDS_EDITOR_TOOL_TAG, .icon = ui::Icon::Tag, .text_box = true},
+    {.id = ToolId::Tag, .identifier = kToolButtons.Id(8), .toolbar_position = 7, .name = IDS_EDITOR_TOOL_TAG, .icon = ui::Icon::Tag, .text_box = true, .cursor = ToolCursor::IBeam},
     {.id = ToolId::Spotlight, .identifier = kToolButtons.Id(9), .toolbar_position = 9, .name = IDS_EDITOR_TOOL_SPOTLIGHT, .icon = ui::Icon::Spotlight, .base_effect = true},
     {.id = ToolId::Watermark, .identifier = kToolButtons.Id(10), .toolbar_position = 10, .name = IDS_EDITOR_TOOL_WATERMARK, .icon = ui::Icon::Watermark, .selectable = false},
 }};
@@ -94,6 +102,18 @@ inline constexpr std::array<ToolId, kToolCount> kToolbarOrder = [] {
 
 /// False for the tools whose annotation is never selected: Watermark.
 [[nodiscard]] constexpr bool IsSelectable(ToolId tool) noexcept { return Tool(tool).selectable; }
+
+/// The system cursor over the image while `tool` is chosen and no annotation
+/// is under the pointer: an arrow for Pointer, a text cursor for Text and Tag,
+/// a crosshair otherwise.
+[[nodiscard]] inline LPCWSTR CursorFor(ToolId tool) noexcept {
+    switch (Tool(tool).cursor) {
+        case ToolCursor::Arrow: return IDC_ARROW;
+        case ToolCursor::IBeam: return IDC_IBEAM;
+        case ToolCursor::Cross: break;
+    }
+    return IDC_CROSS;
+}
 
 /// True when `annotation` is a stroke that follows the pointer point by point:
 /// the pen, and the mosaic with the brush method.

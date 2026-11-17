@@ -2135,9 +2135,7 @@ HCURSOR ScreenshotEditor::ImageCursor(POINT point) const {
             }
     }
     const bool movable = document_.HitTest(p, 5.0f / zoom_).has_value();
-    return ::LoadCursorW(nullptr, movable ? IDC_SIZEALL : tool_ == ToolId::Pointer                    ? IDC_ARROW
-                                                      : tool_ == ToolId::Text || tool_ == ToolId::Tag ? IDC_IBEAM
-                                                                                                      : IDC_CROSS);
+    return ::LoadCursorW(nullptr, movable ? IDC_SIZEALL : CursorFor(tool_));
 }
 void ScreenshotEditor::BeginStroke(POINT point) {
     ShowBrushPopup(false);
