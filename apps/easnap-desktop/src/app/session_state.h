@@ -26,6 +26,7 @@
 #include "platform/screen_geometry.h"
 #include "ui/capture_mode.h"
 #include "ui/control_ids.h"
+#include "ui/native_controls.h"
 
 namespace easnap::ui {
 class OverlayController;
@@ -230,7 +231,7 @@ private:
     bool StartScrollshotSave(bool allow_quick);
     /// Copies or saves the stitched image on a worker; the island stays busy
     /// until OnImageExportCompleted.
-    bool StartScrollshotExport(platform::ImageExportTarget target, std::wstring path, bool quick);
+    bool StartScrollshotExport(platform::ImageExportTarget target, ui::ImageSaveDestination destination);
     /// The session's image is being copied or saved: the session must not
     /// change under it.
     [[nodiscard]] bool SessionExportRunning() const;
@@ -285,8 +286,7 @@ private:
     std::shared_ptr<platform::BgraImage> scrollshot_image_;
     platform::ImageExportJob scrollshot_export_;
     /// Where the running save writes, and whether quick save chose it.
-    std::wstring scrollshot_save_path_;
-    bool scrollshot_save_quick_{false};
+    ui::ImageSaveDestination scrollshot_save_;
     /// A display change or cancel arrived while the session's image was
     /// being exported; it is looked at when the export has ended.
     bool recheck_display_after_export_{false};

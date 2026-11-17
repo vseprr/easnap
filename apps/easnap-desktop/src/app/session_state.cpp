@@ -1280,7 +1280,7 @@ void CaptureCoordinator::CopyScrollshot() {
     const HCURSOR previous_cursor = ::SetCursor(::LoadCursorW(nullptr, IDC_WAIT));
     const bool stopped = StopScrollshotCapture();
     ::SetCursor(previous_cursor);
-    if (stopped && StartScrollshotExport(platform::ImageExportTarget::Clipboard, {}, false)) {
+    if (stopped && StartScrollshotExport(platform::ImageExportTarget::Clipboard, {})) {
         return;  // Busy until OnImageExportCompleted.
     }
     scrollshot_busy_ = false;
@@ -1327,20 +1327,20 @@ bool CaptureCoordinator::StartScrollshotSave(bool allow_quick) {
     }
     if (dialog && scrollshot_controls_) { scrollshot_controls_->SetFrame(scrollshot_region_); }
     return destination.has_value() &&
-           StartScrollshotExport(platform::ImageExportTarget::File, std::move(destination->path), destination->quick);
+           StartScrollshotExport(platform::ImageExportTarget::File, std::move(*destination));
 }
 
-bool CaptureCoordinator::StartScrollshotExport(platform::ImageExportTarget target, std::wstring path, bool quick) {
+bool CaptureCoordinator::StartScrollshotExport(platform::ImageExportTarget target,
+                                               ui::ImageSaveDestination destination) {
     if (!scrollshot_image_ || scrollshot_image_->empty()) {
         return false;
     }
-    platform::ImageExportRequest request{scrollshot_image_, target, path};
+    platform::ImageExportRequest request{scrollshot_image_, target, destination.path};
     if (!scrollshot_export_.Start(host_window_, platform::kMsgImageExportCompleted, std::move(request))) {
         ::MessageBeep(MB_ICONWARNING);  // Another export of Easnap is still running.
         return false;
     }
-    scrollshot_save_path_ = std::move(path);
-    scrollshot_save_quick_ = quick;
+    scrollshot_save_ = std::move(destination);
     ShowScrollshotNotice(target == platform::ImageExportTarget::Clipboard ? ScrollshotNotice::Copying
                                                                           : ScrollshotNotice::Saving);
     return true;
@@ -1351,9 +1351,7 @@ void CaptureCoordinator::OnImageExportCompleted(platform::ImageExportJob::Genera
     if (!result) {
         return;  // From an export the session dropped.
     }
-    const ui::ImageSaveDestination destination{std::move(scrollshot_save_path_), scrollshot_save_quick_};
-    scrollshot_save_path_.clear();
-    scrollshot_save_quick_ = false;
+    const ui::ImageSaveDestination destination = std::exchange(scrollshot_save_, {});
     if (!initialized_ || state() != SessionState::ScrollshotReview) {
         return;  // Nothing changes a session under its export; only its end drops it.
     }
@@ -1794,8 +1792,7 @@ void CaptureCoordinator::EndSession() {
     scrollshot_session_.reset();
     scrollshot_export_.Discard();
     scrollshot_image_.reset();
-    scrollshot_save_path_.clear();
-    scrollshot_save_quick_ = false;
+    scrollshot_save_ = {};
     recheck_display_after_export_ = false;
     scrollshot_notice_ = ScrollshotNotice::None;
     scrollshot_busy_ = false;
