@@ -38,7 +38,9 @@ declares a `platform::ModalLoopScope`, so that Exit, the capture shortcut and
 deferred cleanup know it is open.
 
 Bind each custom window procedure to its real owner during creation
-(`CreateWindowExW` creation parameter and the existing `WM_NCCREATE` pattern).
+(`CreateWindowExW` creation parameter bound on `WM_NCCREATE` through
+`platform/window_class.h`: `RegisterWindowClass`, `BindWindowOwner`,
+`BoundWindowProc`).
 Verify that paint, erase and size messages actually reach that owner; a generic
 control factory with a null parameter previously bypassed the video handlers.
 
@@ -55,7 +57,7 @@ Paths in this table are relative to `apps/easnap-desktop/src`.
 | Scrollshot island and preview | `ui/scrollshot_controls.cpp`: the Start/help island, the four-action island with status, and the live preview; placement in `ui/scrollshot_layout.cpp`. Capture-excluded like every surface that is visible during a capture. |
 | Pinned images | `ui/pinned_images.cpp`: `PinnedImages::Pin`, `CloseAll`, `Window::Create`, `Handle`, `PaintTo`, `Zoom`, `ShowMenu`, `RequestClose`, `EndBusy`; placement and zoom in `ui/pin_layout.cpp`. A pin asked to close during its own menu or Save dialog closes when that returns. |
 | Capture overlay, image, shade, palette and magnifier | `ui/overlay.cpp`: `OverlayController::Show`, `OverlayWindow::Create`/`Destroy` and their window procedures. Region clipping and layered-image submission here are intentional overlay behavior. |
-| Editor tools, context, brush and native text host | `editor/screenshot_editor.cpp`: `CreateToolbarControls`, `SyncContext`, `PlaceContext`, `SetFrameInteracting`, `WindowProc`, and the native EDIT/text-host creation path. Preserve temporary tool hiding during capture-frame interaction. |
+| Editor tools, context, brush and native text host | `editor/screenshot_editor.cpp`: `CreateToolbarControls`, `SyncContext`, `PlaceContext`, `SetFrameInteracting`, `HandleMessage`, and the native EDIT/text-host creation path. Preserve temporary tool hiding during capture-frame interaction. |
 | Recording configuration/active/paused/finalizing island and boundary HWNDs | `ui/recording_controls.cpp`: `RecordingControls::ShowConfiguring`, `RetireWorkspace`, nested `Window::Create`, `UpdateForState`, `Layout`, `HandlePanelMessage`, `Destroy` |
 | Preview process and native/still children | `media/preview_process.cpp`: `ProcessMediaPreview::UpdateVideo`, `SendResize`, `Poll`, `Close`; `media/preview_host_main.cpp`: host creation/resize dispatch; `media/media_preview.cpp`: `MfPlayPreview::UpdateVideo`, `NativeVideoWindowProc`, `StillFrameWindowProc`, `ShowStillFrame`, `PresentStillFrame` |
 | Timeline input and preview health | `ui/trim_window.cpp`: `HandleTimelineMessage`, `UpdateTimelineFromPoint`, `SeekTo`, `SetAccessibleTimelineValue`; `media/preview_transport.cpp`: `PreviewTransport::TakeNext`/`Complete`, `PreviewLiveness::Observe`; `media/media_preview.cpp`: `MfPlayPreview::DriveTransport`, `CheckLiveness`, `RequestRecovery` |
