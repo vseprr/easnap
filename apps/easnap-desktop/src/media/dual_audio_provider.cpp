@@ -46,6 +46,11 @@ constexpr MediaTime kEndpointQueueBudget{5'000'000};  // 500 ms
     return right > maximum - left ? maximum : left + right;
 }
 
+// What one look at the mixer state under its lock found.
+enum class MixerPoll { Stopped,
+                       Idle,
+                       Ready };
+
 class AudioCaptureProvider final : public IAudioCaptureProvider {
 public:
     AudioCaptureProvider() = default;
@@ -76,6 +81,31 @@ private:
     void OnEndpointPacket(detail::DualAudioInput input,
                           const AudioPacket& packet) noexcept;
     void MixerMain() noexcept;
+    /// Prepares both converters; on failure keeps the HRESULT for diagnostics.
+    bool InitializeMixerConverters(HRESULT com_result,
+                                   detail::AudioResampler& system_converter,
+                                   detail::AudioResampler& microphone_converter);
+    /// Tells Start whether the mixer initialised and stops it if it did not.
+    void PublishMixerInitialization(bool initialized);
+    /// Delivers mixed audio up to the look-behind watermark; false once stopped.
+    bool DeliverMixedUpToWatermark();
+    /// Reports whether a flush (pause or drain) was requested.
+    MixerPoll PollFlushRequest();
+    /// Mixes the converter tails, delivers all buffered audio and ends the flush.
+    void FlushMixer(detail::AudioResampler& system_converter,
+                    detail::AudioResampler& microphone_converter);
+    /// Takes one packet from the endpoint queues in fair alternation.
+    MixerPoll TakeEndpointPacket(bool& take_system, AudioPacket& source_packet,
+                                 detail::DualAudioInput& input);
+    /// Converts one endpoint packet and pushes it into the mixer.
+    void MixEndpointPacket(detail::DualAudioInput input,
+                           const AudioPacket& source_packet,
+                           detail::AudioResampler& system_converter,
+                           detail::AudioResampler& microphone_converter);
+    /// Waits up to 5 ms for endpoint packets, a flush request or stop.
+    void WaitForMixerWork();
+    /// Ends mixing after an exception and releases Start and a waiting drain.
+    void FailMixerAfterException() noexcept;
     void Deliver(AudioPacket packet) noexcept;
     [[nodiscard]] bool EndpointFailed() const noexcept;
     void StopDual() noexcept;
@@ -355,197 +385,42 @@ void AudioCaptureProvider::MixerMain() noexcept {
     try {
         detail::AudioResampler system_converter;
         detail::AudioResampler microphone_converter;
-        bool initialized = SUCCEEDED(com_result) && system_ && microphone_ &&
-                           system_converter.Initialize(
-                               system_->negotiated_format(), mix_format_) &&
-                           microphone_converter.Initialize(
-                               microphone_->negotiated_format(), mix_format_);
-        if (!initialized) {
-            const long converter_error =
-                system_converter.last_hresult() != 0
-                    ? system_converter.last_hresult()
-                    : microphone_converter.last_hresult();
-            mixer_failure_hresult_.store(
-                converter_error != 0 ? converter_error : com_result,
-                std::memory_order_release);
-        }
-        {
-            const std::scoped_lock lock(mixer_mutex_);
-            mixer_init_ok_ = initialized;
-            mixer_init_done_ = true;
-            if (!initialized) {
-                mixer_running_ = false;
-            }
-        }
-        mixer_initialized_.notify_all();
+        const bool initialized = InitializeMixerConverters(
+            com_result, system_converter, microphone_converter);
+        PublishMixerInitialization(initialized);
 
         bool take_system = true;
         while (initialized) {
             // 1. Drain all available mixed chunks up to the look-behind watermark.
             // Executing this in every loop iteration guarantees that continuous input
             // arrivals can never starve mixed-output delivery or overflow the bounded buffer.
-            std::vector<AudioPacket> mixed_chunks;
-            {
-                const std::scoped_lock lock(mixer_mutex_);
-                if (!mixer_running_) {
-                    break;
-                }
-                if (mixing_enabled_ && mixer_) {
-                    const std::optional<int64_t> now = CurrentQpc100ns();
-                    if (now.has_value() &&
-                        *now >= qpc_epoch_100ns_ + kMixLookBehind.count()) {
-                        const MediaTime watermark{
-                            *now - qpc_epoch_100ns_ - kMixLookBehind.count()};
-                        AudioPacket mixed;
-                        while (mixer_->PopUntil(watermark, mixed)) {
-                            mixed_chunks.push_back(std::move(mixed));
-                        }
-                    }
-                }
-            }
-            for (auto& mixed : mixed_chunks) {
-                Deliver(std::move(mixed));
+            if (!DeliverMixedUpToWatermark()) {
+                break;
             }
 
             // 2. Check for flush request (pause / drain).
-            bool flush_now = false;
-            {
-                const std::scoped_lock lock(mixer_mutex_);
-                if (!mixer_running_) {
-                    break;
-                }
-                if (flush_requested_) {
-                    flush_now = true;
-                }
+            const MixerPoll flush = PollFlushRequest();
+            if (flush == MixerPoll::Stopped) {
+                break;
             }
 
-            if (flush_now) {
-                std::vector<AudioPacket> system_tail;
-                std::vector<AudioPacket> microphone_tail;
-                const bool drained = system_converter.Drain(system_tail) &&
-                                     microphone_converter.Drain(microphone_tail);
-                if (!drained) {
-                    const HRESULT failure = FAILED(system_converter.last_hresult())
-                                                ? system_converter.last_hresult()
-                                                : microphone_converter.last_hresult();
-                    dual_failed_.store(true, std::memory_order_release);
-                    mixer_failure_hresult_.store(failure,
-                                                 std::memory_order_release);
-                }
-                MediaTime target{0};
-                {
-                    const std::scoped_lock lock(mixer_mutex_);
-                    for (const AudioPacket& packet : system_tail) {
-                        if (mixer_) {
-                            const auto push_res =
-                                mixer_->Push(detail::DualAudioInput::SystemAudio, packet);
-                            if (push_res == detail::DualAudioMixerPushResult::TruncatedOverflow ||
-                                push_res == detail::DualAudioMixerPushResult::CapacityExceeded) {
-                                dual_failed_.store(true, std::memory_order_release);
-                            }
-                        }
-                    }
-                    for (const AudioPacket& packet : microphone_tail) {
-                        if (mixer_) {
-                            const auto push_res =
-                                mixer_->Push(detail::DualAudioInput::Microphone, packet);
-                            if (push_res == detail::DualAudioMixerPushResult::TruncatedOverflow ||
-                                push_res == detail::DualAudioMixerPushResult::CapacityExceeded) {
-                                dual_failed_.store(true, std::memory_order_release);
-                            }
-                        }
-                    }
-                    if (mixer_) {
-                        target = mixer_->latest_buffered_end();
-                    }
-                }
-                while (drained) {
-                    AudioPacket mixed;
-                    {
-                        const std::scoped_lock lock(mixer_mutex_);
-                        if (!mixer_ || !mixer_->PopUntil(target, mixed)) {
-                            break;
-                        }
-                    }
-                    Deliver(std::move(mixed));
-                }
-                {
-                    const std::scoped_lock lock(mixer_mutex_);
-                    if (mixer_) {
-                        mixer_->Reset();
-                    }
-                    flush_requested_ = false;
-                    flush_done_ = true;
-                }
-                flush_completed_.notify_all();
+            if (flush == MixerPoll::Ready) {
+                FlushMixer(system_converter, microphone_converter);
                 continue;
             }
 
             // 3. Dequeue one packet from available inputs (fair alternation).
             AudioPacket source_packet;
             detail::DualAudioInput input = detail::DualAudioInput::SystemAudio;
-            bool have_source_packet = false;
-            {
-                const std::scoped_lock lock(mixer_mutex_);
-                if (!mixer_running_) {
-                    break;
-                }
-                EndpointQueue* first = take_system ? &system_queue_
-                                                   : &microphone_queue_;
-                EndpointQueue* second = take_system ? &microphone_queue_
-                                                    : &system_queue_;
-                if (!first->packets.empty() || !second->packets.empty()) {
-                    EndpointQueue* selected = !first->packets.empty() ? first : second;
-                    input = selected == &system_queue_
-                                ? detail::DualAudioInput::SystemAudio
-                                : detail::DualAudioInput::Microphone;
-                    source_packet = std::move(selected->packets.front());
-                    selected->packets.pop_front();
-                    selected->queued_frames -= source_packet.frame_count;
-                    have_source_packet = true;
-                    take_system = input != detail::DualAudioInput::SystemAudio;
-                }
+            const MixerPoll endpoint =
+                TakeEndpointPacket(take_system, source_packet, input);
+            if (endpoint == MixerPoll::Stopped) {
+                break;
             }
 
-            if (have_source_packet) {
-                std::vector<AudioPacket> converted;
-                detail::AudioResampler& converter =
-                    input == detail::DualAudioInput::SystemAudio
-                        ? system_converter
-                        : microphone_converter;
-                if (!converter.Convert(source_packet, converted)) {
-                    if (input == detail::DualAudioInput::SystemAudio) {
-                        system_resampler_failures_.fetch_add(1, std::memory_order_relaxed);
-                    } else {
-                        microphone_resampler_failures_.fetch_add(1, std::memory_order_relaxed);
-                    }
-                    dual_failed_.store(true, std::memory_order_release);
-                    mixer_failure_hresult_.store(converter.last_hresult(),
-                                                 std::memory_order_release);
-                } else {
-                    const std::scoped_lock lock(mixer_mutex_);
-                    for (const AudioPacket& packet : converted) {
-                        if (!mixer_) {
-                            break;
-                        }
-                        const auto push_result = mixer_->Push(input, packet);
-                        if (push_result == detail::DualAudioMixerPushResult::TruncatedOverflow ||
-                            push_result == detail::DualAudioMixerPushResult::CapacityExceeded) {
-                            dual_failed_.store(true, std::memory_order_release);
-                            mixer_failure_hresult_.store(
-                                HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW),
-                                std::memory_order_release);
-                            break;
-                        }
-                        if (push_result == detail::DualAudioMixerPushResult::InvalidPacket) {
-                            dual_failed_.store(true, std::memory_order_release);
-                            mixer_failure_hresult_.store(E_INVALIDARG,
-                                                         std::memory_order_release);
-                            break;
-                        }
-                        // LateDiscarded is recoverable timing reconciliation; do not fail!
-                    }
-                }
+            if (endpoint == MixerPoll::Ready) {
+                MixEndpointPacket(input, source_packet, system_converter,
+                                  microphone_converter);
                 if (EndpointFailed()) {
                     dual_failed_.store(true, std::memory_order_release);
                 }
@@ -556,32 +431,240 @@ void AudioCaptureProvider::MixerMain() noexcept {
                 dual_failed_.store(true, std::memory_order_release);
             }
 
-            std::unique_lock lock(mixer_mutex_);
-            mixer_changed_.wait_for(lock, std::chrono::milliseconds(5), [this] {
-                return !mixer_running_ || flush_requested_ ||
-                       !system_queue_.packets.empty() ||
-                       !microphone_queue_.packets.empty();
-            });
+            WaitForMixerWork();
         }
     } catch (...) {
-        // Out of memory while mixing: the audio of this recording fails
-        // through the usual path instead of ending Easnap. Start and a drain
-        // waiting for the mixer are released.
-        platform::LogMessage(L"[Audio] The mixer failed with an exception; mixing ended");
-        mixer_failure_hresult_.store(E_OUTOFMEMORY, std::memory_order_release);
-        dual_failed_.store(true, std::memory_order_release);
-        {
-            const std::scoped_lock lock(mixer_mutex_);
-            mixer_init_done_ = true;
-            mixer_running_ = false;
-            flush_done_ = true;
-        }
-        mixer_initialized_.notify_all();
-        flush_completed_.notify_all();
+        FailMixerAfterException();
     }
     if (SUCCEEDED(com_result)) {
         ::CoUninitialize();
     }
+}
+
+bool AudioCaptureProvider::InitializeMixerConverters(
+    HRESULT com_result, detail::AudioResampler& system_converter,
+    detail::AudioResampler& microphone_converter) {
+    const bool initialized = SUCCEEDED(com_result) && system_ && microphone_ &&
+                             system_converter.Initialize(
+                                 system_->negotiated_format(), mix_format_) &&
+                             microphone_converter.Initialize(
+                                 microphone_->negotiated_format(), mix_format_);
+    if (!initialized) {
+        const long converter_error =
+            system_converter.last_hresult() != 0
+                ? system_converter.last_hresult()
+                : microphone_converter.last_hresult();
+        mixer_failure_hresult_.store(
+            converter_error != 0 ? converter_error : com_result,
+            std::memory_order_release);
+    }
+    return initialized;
+}
+
+void AudioCaptureProvider::PublishMixerInitialization(bool initialized) {
+    {
+        const std::scoped_lock lock(mixer_mutex_);
+        mixer_init_ok_ = initialized;
+        mixer_init_done_ = true;
+        if (!initialized) {
+            mixer_running_ = false;
+        }
+    }
+    mixer_initialized_.notify_all();
+}
+
+bool AudioCaptureProvider::DeliverMixedUpToWatermark() {
+    std::vector<AudioPacket> mixed_chunks;
+    {
+        const std::scoped_lock lock(mixer_mutex_);
+        if (!mixer_running_) {
+            return false;
+        }
+        if (mixing_enabled_ && mixer_) {
+            const std::optional<int64_t> now = CurrentQpc100ns();
+            if (now.has_value() &&
+                *now >= qpc_epoch_100ns_ + kMixLookBehind.count()) {
+                const MediaTime watermark{
+                    *now - qpc_epoch_100ns_ - kMixLookBehind.count()};
+                AudioPacket mixed;
+                while (mixer_->PopUntil(watermark, mixed)) {
+                    mixed_chunks.push_back(std::move(mixed));
+                }
+            }
+        }
+    }
+    for (auto& mixed : mixed_chunks) {
+        Deliver(std::move(mixed));
+    }
+    return true;
+}
+
+MixerPoll AudioCaptureProvider::PollFlushRequest() {
+    const std::scoped_lock lock(mixer_mutex_);
+    if (!mixer_running_) {
+        return MixerPoll::Stopped;
+    }
+    if (flush_requested_) {
+        return MixerPoll::Ready;
+    }
+    return MixerPoll::Idle;
+}
+
+void AudioCaptureProvider::FlushMixer(detail::AudioResampler& system_converter,
+                                      detail::AudioResampler& microphone_converter) {
+    std::vector<AudioPacket> system_tail;
+    std::vector<AudioPacket> microphone_tail;
+    const bool drained = system_converter.Drain(system_tail) &&
+                         microphone_converter.Drain(microphone_tail);
+    if (!drained) {
+        const HRESULT failure = FAILED(system_converter.last_hresult())
+                                    ? system_converter.last_hresult()
+                                    : microphone_converter.last_hresult();
+        dual_failed_.store(true, std::memory_order_release);
+        mixer_failure_hresult_.store(failure,
+                                     std::memory_order_release);
+    }
+    MediaTime target{0};
+    {
+        const std::scoped_lock lock(mixer_mutex_);
+        for (const AudioPacket& packet : system_tail) {
+            if (mixer_) {
+                const auto push_res =
+                    mixer_->Push(detail::DualAudioInput::SystemAudio, packet);
+                if (push_res == detail::DualAudioMixerPushResult::TruncatedOverflow ||
+                    push_res == detail::DualAudioMixerPushResult::CapacityExceeded) {
+                    dual_failed_.store(true, std::memory_order_release);
+                }
+            }
+        }
+        for (const AudioPacket& packet : microphone_tail) {
+            if (mixer_) {
+                const auto push_res =
+                    mixer_->Push(detail::DualAudioInput::Microphone, packet);
+                if (push_res == detail::DualAudioMixerPushResult::TruncatedOverflow ||
+                    push_res == detail::DualAudioMixerPushResult::CapacityExceeded) {
+                    dual_failed_.store(true, std::memory_order_release);
+                }
+            }
+        }
+        if (mixer_) {
+            target = mixer_->latest_buffered_end();
+        }
+    }
+    while (drained) {
+        AudioPacket mixed;
+        {
+            const std::scoped_lock lock(mixer_mutex_);
+            if (!mixer_ || !mixer_->PopUntil(target, mixed)) {
+                break;
+            }
+        }
+        Deliver(std::move(mixed));
+    }
+    {
+        const std::scoped_lock lock(mixer_mutex_);
+        if (mixer_) {
+            mixer_->Reset();
+        }
+        flush_requested_ = false;
+        flush_done_ = true;
+    }
+    flush_completed_.notify_all();
+}
+
+MixerPoll AudioCaptureProvider::TakeEndpointPacket(bool& take_system,
+                                                   AudioPacket& source_packet,
+                                                   detail::DualAudioInput& input) {
+    const std::scoped_lock lock(mixer_mutex_);
+    if (!mixer_running_) {
+        return MixerPoll::Stopped;
+    }
+    EndpointQueue* first = take_system ? &system_queue_
+                                       : &microphone_queue_;
+    EndpointQueue* second = take_system ? &microphone_queue_
+                                        : &system_queue_;
+    if (!first->packets.empty() || !second->packets.empty()) {
+        EndpointQueue* selected = !first->packets.empty() ? first : second;
+        input = selected == &system_queue_
+                    ? detail::DualAudioInput::SystemAudio
+                    : detail::DualAudioInput::Microphone;
+        source_packet = std::move(selected->packets.front());
+        selected->packets.pop_front();
+        selected->queued_frames -= source_packet.frame_count;
+        take_system = input != detail::DualAudioInput::SystemAudio;
+        return MixerPoll::Ready;
+    }
+    return MixerPoll::Idle;
+}
+
+void AudioCaptureProvider::MixEndpointPacket(
+    detail::DualAudioInput input, const AudioPacket& source_packet,
+    detail::AudioResampler& system_converter,
+    detail::AudioResampler& microphone_converter) {
+    std::vector<AudioPacket> converted;
+    detail::AudioResampler& converter =
+        input == detail::DualAudioInput::SystemAudio
+            ? system_converter
+            : microphone_converter;
+    if (!converter.Convert(source_packet, converted)) {
+        if (input == detail::DualAudioInput::SystemAudio) {
+            system_resampler_failures_.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            microphone_resampler_failures_.fetch_add(1, std::memory_order_relaxed);
+        }
+        dual_failed_.store(true, std::memory_order_release);
+        mixer_failure_hresult_.store(converter.last_hresult(),
+                                     std::memory_order_release);
+    } else {
+        const std::scoped_lock lock(mixer_mutex_);
+        for (const AudioPacket& packet : converted) {
+            if (!mixer_) {
+                break;
+            }
+            const auto push_result = mixer_->Push(input, packet);
+            if (push_result == detail::DualAudioMixerPushResult::TruncatedOverflow ||
+                push_result == detail::DualAudioMixerPushResult::CapacityExceeded) {
+                dual_failed_.store(true, std::memory_order_release);
+                mixer_failure_hresult_.store(
+                    HRESULT_FROM_WIN32(ERROR_BUFFER_OVERFLOW),
+                    std::memory_order_release);
+                break;
+            }
+            if (push_result == detail::DualAudioMixerPushResult::InvalidPacket) {
+                dual_failed_.store(true, std::memory_order_release);
+                mixer_failure_hresult_.store(E_INVALIDARG,
+                                             std::memory_order_release);
+                break;
+            }
+            // LateDiscarded is recoverable timing reconciliation; do not fail!
+        }
+    }
+}
+
+void AudioCaptureProvider::WaitForMixerWork() {
+    std::unique_lock lock(mixer_mutex_);
+    mixer_changed_.wait_for(lock, std::chrono::milliseconds(5), [this] {
+        return !mixer_running_ || flush_requested_ ||
+               !system_queue_.packets.empty() ||
+               !microphone_queue_.packets.empty();
+    });
+}
+
+void AudioCaptureProvider::FailMixerAfterException() noexcept {
+    // Out of memory while mixing: the audio of this recording fails
+    // through the usual path instead of ending Easnap. Start and a drain
+    // waiting for the mixer are released.
+    platform::LogMessage(L"[Audio] The mixer failed with an exception; mixing ended");
+    mixer_failure_hresult_.store(E_OUTOFMEMORY, std::memory_order_release);
+    dual_failed_.store(true, std::memory_order_release);
+    {
+        const std::scoped_lock lock(mixer_mutex_);
+        mixer_init_done_ = true;
+        mixer_running_ = false;
+        flush_done_ = true;
+    }
+    mixer_initialized_.notify_all();
+    flush_completed_.notify_all();
 }
 
 void AudioCaptureProvider::PauseDeliveryAndDrain() noexcept {
