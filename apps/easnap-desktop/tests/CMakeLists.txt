@@ -871,6 +871,7 @@ add_executable(test_capture_workspace
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
+    ../src/editor/text_annotation_editor.cpp
     ../src/editor/context_panel_layout.cpp
     ../src/editor/annotation_document.cpp
     ../src/editor/annotation_renderer.cpp
@@ -946,6 +947,7 @@ add_executable(test_scrollshot_workspace
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
+    ../src/editor/text_annotation_editor.cpp
     ../src/editor/context_panel_layout.cpp
     ../src/editor/annotation_document.cpp
     ../src/editor/annotation_renderer.cpp
@@ -1003,6 +1005,7 @@ add_executable(test_text_fit
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
+    ../src/editor/text_annotation_editor.cpp
     ../src/editor/context_panel_layout.cpp
     ../src/editor/annotation_document.cpp
     ../src/editor/annotation_renderer.cpp
@@ -1058,6 +1061,7 @@ add_executable(test_data_safety
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
+    ../src/editor/text_annotation_editor.cpp
     ../src/editor/context_panel_layout.cpp
     ../src/editor/annotation_document.cpp
     ../src/editor/annotation_renderer.cpp
@@ -1172,6 +1176,7 @@ add_executable(test_island_capture
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
+    ../src/editor/text_annotation_editor.cpp
     ../src/editor/context_panel_layout.cpp
     ../src/editor/annotation_document.cpp
     ../src/editor/annotation_renderer.cpp
@@ -1234,6 +1239,7 @@ add_executable(test_native_ui
     ../src/editor/toolbar_item.cpp
     ../src/editor/editor_toolbar.cpp
     ../src/editor/editor_context_panel.cpp
+    ../src/editor/text_annotation_editor.cpp
     ../src/editor/context_panel_layout.cpp
     ../src/editor/annotation_document.cpp
     ../src/editor/annotation_renderer.cpp

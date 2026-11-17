@@ -31,6 +31,7 @@
 #include "editor/editor_toolbar.h"
 #include "editor/image_viewport.h"
 #include "editor/redaction_renderer.h"
+#include "editor/text_annotation_editor.h"
 #include "platform/bgra_image.h"
 #include "platform/image_export.h"
 #include "platform/platform_utils.h"
@@ -39,7 +40,7 @@
 namespace easnap::editor {
 
 /// Screenshot document/commands and movable native editing island.
-class ScreenshotEditor : private ToolbarButtonOwner, private ContextPanelOwner {
+class ScreenshotEditor : private ToolbarButtonOwner, private ContextPanelOwner, private TextEditorOwner {
 public:
     struct Callbacks {
         /// `exported` is true when the user copied or saved successfully.
@@ -169,7 +170,7 @@ private:
 
     bool CreateToolbarControls();
     void SyncToolbarControls() const;
-    void ReflowToolbar();
+    void ReflowToolbar() override;
     void Invalidate() const override;
     void InvalidateImage(const RECT& source_bounds) const;
     /// The desktop pixels, inside the viewport, that show `source_bounds`.
@@ -181,7 +182,7 @@ private:
     [[nodiscard]] RECT PendingDamage() const;
 
     /// Desktop point to image pixels through the current view.
-    [[nodiscard]] D2D1_POINT_2F ToImagePoint(POINT desktop_pt) const;
+    [[nodiscard]] D2D1_POINT_2F ToImagePoint(POINT desktop_pt) const override;
     /// A screenshot is shown one to one where it was captured.
     void ResetFixedView();
     /// Adopts a document view: viewport, scale and scroll position.
@@ -206,8 +207,6 @@ private:
     void UpdateStroke(POINT client_pt);
     void EndStroke(POINT client_pt);
     void CancelStroke();
-    void CommitPendingText();
-    void OnCharacter(wchar_t character);
     void Select(std::optional<size_t> index);
     /// The annotation the property island edits: the selection, or else,
     /// while the watermark tool is chosen, the image's watermark.
@@ -232,12 +231,21 @@ private:
     [[nodiscard]] bool modal_active() const override { return modal_active_; }
     [[nodiscard]] bool frame_interacting() const override { return frame_interacting_; }
     [[nodiscard]] const std::vector<Annotation>& island_annotations() const override { return document_.annotations(); }
-    void StartTextEditing(std::optional<size_t> index, POINT point);
-    void UpdateTextFromControl();
-    void LayoutTextEditor();
-    static LRESULT CALLBACK TextEditProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+    [[nodiscard]] AnnotationDocument& text_document() override { return document_; }
+    [[nodiscard]] std::optional<size_t> text_selection() const override { return selected_; }
+    void SetTextSelection(std::optional<size_t> index) override { selected_ = index; }
+    [[nodiscard]] ToolId current_tool() const override { return tool_; }
+    [[nodiscard]] AnnotationStyle new_annotation_style() const override { return style_; }
+    [[nodiscard]] TextEditorView text_view() const override;
+    [[nodiscard]] bool export_running() const override { return exporting_; }
+    [[nodiscard]] HWND editor_window() const override { return hwnd_; }
+    HWND CreateTextHost(POINT desktop_point) override;
+    void BeginTextTransaction() override;
+    void ForgetPendingStroke() override { has_pending_ = false; }
+    void BeginMoveFromText(POINT desktop_point) override;
+    void TextCommitted() override;
+    void RenderTextBackground(HDC dc, const RECT& desktop_bounds) override { RenderImage(dc, desktop_bounds); }
     void DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush) const;
-    void PaintTextEditor(HDC dc);
 
     /// Brings the derived blur/pixelation and spotlight pixels up to date with
     /// the effect list. Only the final composite reaches the clipboard or file.
@@ -265,11 +273,8 @@ private:
     app::AppSettings* settings_{nullptr};
 
     HWND hwnd_{nullptr};
-    HWND text_host_{nullptr}, text_edit_{nullptr};
-    HFONT text_font_{nullptr};
-    float text_font_pixels_{0};
-    unsigned text_dispatch_depth_{0};
-    bool text_layout_pending_{false};
+    /// The native text field of a Text or Tag annotation while it is typed.
+    TextAnnotationEditor text_editor_{*this};
     bool frame_interacting_{false};
     bool modal_active_{false};
     bool island_user_positioned_{false};
@@ -278,8 +283,6 @@ private:
     D2D1_POINT_2F drag_origin_{};
     int transform_handle_{-1};
     bool transforming_{false};
-    DWORD last_text_double_{0};
-    POINT last_text_point_{};
     HFONT toolbar_font_{nullptr};
     platform::BgraImage source_image_;    ///< Untouched capture.
     RECT source_bounds_{};               ///< Immutable snapshot placement.
@@ -298,9 +301,6 @@ private:
     bool has_pending_{false};
     bool dragging_{false};
     bool context_owns_transaction_{false};  ///< A property control opened the open transaction.
-    bool editing_text_{false};
-    /// Hidden while text is typed into the annotation, until it moves.
-    ui::TypingPointer typing_pointer_;
     ToolId tool_{ToolId::Pen};
     AnnotationStyle style_{};
 

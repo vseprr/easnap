@@ -121,10 +121,7 @@ void ScreenshotEditor::ChangeStyle(const AnnotationStyle& value) {
         annotation.style = value;
         document_.Replace(*target, std::move(annotation));
         if (own_transaction) { document_.CommitTransaction(); }
-        if (editing_text_) {
-            pending_ = document_.annotations()[*target];
-            LayoutTextEditor();
-        }
+        if (text_editor_.editing()) { text_editor_.Layout(); }
     } else {
         style_ = value;
     }
@@ -224,9 +221,9 @@ void ScreenshotEditor::ReflowToolbar() {
 
 bool ScreenshotEditor::ProcessDialogMessage(MSG& message) const {
     if (!visible_) { return false; }
-    for (HWND parent : {text_host_, context_panel_.brush_popup(), context_panel_.island(), hwnd_}) {
+    for (HWND parent : {text_editor_.host(), context_panel_.brush_popup(), context_panel_.island(), hwnd_}) {
         if (parent && (message.hwnd == parent || ::IsChild(parent, message.hwnd))) {
-            if (parent == text_host_) { return false; } // EDIT owns multiline Return, arrows and clipboard keys.
+            if (parent == text_editor_.host()) { return false; } // EDIT owns multiline Return, arrows and clipboard keys.
             if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
                 if (::SendMessageW(context_panel_.Control(kFontSizeCombo), CB_GETDROPPEDSTATE, 0, 0)) {
                     ::SendMessageW(context_panel_.Control(kFontSizeCombo), CB_SHOWDROPDOWN, FALSE, 0);
@@ -271,14 +268,10 @@ void ScreenshotEditor::ResetSession() {
     transforming_ = false;
     frame_interacting_ = false;
     island_user_positioned_ = false;
-    if (text_host_) {
-        ::DestroyWindow(text_host_);
-        text_host_ = text_edit_ = nullptr;
-    }
+    text_editor_.Reset();
     pending_ = Annotation{};
     has_pending_ = false;
     dragging_ = false;
-    editing_text_ = false;
     redaction_revision_ = UINT64_MAX;
     redaction_.Reset();
     image_bitmap_.Reset();
@@ -422,11 +415,11 @@ void ScreenshotEditor::Show() {
 
 void ScreenshotEditor::Hide() {
     visible_ = false;
-    typing_pointer_.Restore();
+    text_editor_.RestorePointer();
     context_panel_.ShowBrushPopup(false);
     ::ShowWindow(hwnd_, SW_HIDE);
     if (context_panel_.island()) { ::ShowWindow(context_panel_.island(), SW_HIDE); }
-    if (text_host_) { ::ShowWindow(text_host_, SW_HIDE); }
+    text_editor_.HideHost();
 }
 
 void ScreenshotEditor::SetRegion(const RECT& region, bool interacting) {
@@ -472,16 +465,12 @@ void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
             const auto hit = document_.HitTest(ToImagePoint(point), 5.0f / zoom_);
             if (hit && IsTextTool(document_.annotations()[*hit].tool)) {
                 CancelStroke();
-                StartTextEditing(hit, point);
-                if (text_edit_) {
-                    POINT local = point;
-                    ::ScreenToClient(text_edit_, &local);
-                    ::SendMessageW(text_edit_, WM_LBUTTONDBLCLK, MK_LBUTTON, MAKELPARAM(local.x, local.y));
-                }
-            } else if (editing_text_) {
+                text_editor_.Start(hit, point);
+                text_editor_.ForwardDoubleClick(point);
+            } else if (text_editor_.editing()) {
                 // A blank double-click is the continuation of the first press,
                 // not another creation request. It can only finish an edit.
-                CommitPendingText();
+                text_editor_.Commit();
                 Select({});
             } else if (!IsTextTool(tool_)) {
                 BeginStroke(point);
@@ -506,7 +495,7 @@ bool ScreenshotEditor::CompleteCopy() {
     }
     if (!EnsureImage()) { return false; }
     completing_ = true;
-    CommitPendingText();
+    text_editor_.Commit();
     completing_ = false;
     // Composited here: the worker never sees the editor's own pixels.
     platform::BgraImage image = Composite();
@@ -585,15 +574,9 @@ void ScreenshotEditor::Destroy() {
     export_job_.Discard();
     if (exporting_) { EndExport(); }
     context_panel_.DestroyBrushPopup();
-    if (text_host_) {
-        ::DestroyWindow(text_host_);
-        text_host_ = text_edit_ = nullptr;
-    }
+    text_editor_.DestroyHost();
     context_panel_.DestroyIsland();
-    if (text_font_) {
-        ::DeleteObject(text_font_);
-        text_font_ = nullptr;
-    }
+    text_editor_.ReleaseFont();
     ResetSession();
 
     toolbar_.DestroyTooltip();
@@ -654,7 +637,7 @@ void ScreenshotEditor::ApplyView(const ImageView& view, bool notify) {
     zoom_ = view.zoom;
     view_origin_ = view.origin();
     region_ = view.viewport;
-    if (editing_text_) { LayoutTextEditor(); }
+    if (text_editor_.editing()) { text_editor_.Layout(); }
     // The workspace moves its image plane before anything is repainted into it.
     if (notify && callbacks_.on_view_changed) { callbacks_.on_view_changed(view_); }
     if (moved && hwnd_ && !island_user_positioned_) { context_panel_.Place(true); }
@@ -747,10 +730,8 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
     }
     // The property island's timers, slider scrolls and font size list.
     if (const auto handled = context_panel_.HandleMessage(hwnd, message, wparam, lparam)) { return *handled; }
-    if (message == WM_TIMER && wparam == ui::kTypingPointerTimer) {
-        typing_pointer_.Poll();
-        return 0;
-    }
+    // The typing pointer's timer and the text field's control colour.
+    if (const auto handled = text_editor_.HandleMessage(message, wparam, lparam)) { return *handled; }
     const bool auxiliary = hwnd_ && hwnd != hwnd_;
     if (auxiliary) {
         if (message == WM_SIZE || message == WM_DPICHANGED || message == WM_GETMINMAXINFO) { return 0; }
@@ -758,7 +739,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         if (message == WM_PAINT || message == WM_PRINTCLIENT) {
             PAINTSTRUCT ps{};
             HDC dc = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
-            if (hwnd == text_host_) {
+            if (hwnd == text_editor_.host()) {
                 RECT bounds{};
                 ::GetWindowRect(hwnd, &bounds);
                 RenderImage(dc, bounds);
@@ -771,15 +752,6 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_MOUSEMOVE || message == WM_CAPTURECHANGED) { return 0; }
     }
     if (message == WM_CTLCOLOREDIT || message == WM_CTLCOLORLISTBOX || message == WM_CTLCOLORSTATIC) {
-        if (text_edit_ && reinterpret_cast<HWND>(lparam) == text_edit_) {
-            // EDIT can paint synchronously during input while WS_VISIBLE is
-            // retained for its native caret. Its GDI glyphs/backing are never
-            // the annotation presentation: only PaintTextEditor owns those.
-            // This DC belongs to the native draw and is reset on release; the
-            // custom paint pass obtains its own unrestricted client DC.
-            ::IntersectClipRect(reinterpret_cast<HDC>(wparam), 0, 0, 0, 0);
-            return reinterpret_cast<LRESULT>(::GetStockObject(NULL_BRUSH));
-        }
         return ui::ControlBackground(wparam, ui::theme::Current().text);
     }
     switch (message) {
@@ -938,7 +910,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         }
 
         case WM_CHAR:
-            OnCharacter(static_cast<wchar_t>(wparam));
+            text_editor_.OnCharacter(static_cast<wchar_t>(wparam));
             return 0;
 
         case WM_KEYDOWN:
@@ -963,10 +935,8 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
         RequestDiscard();
         return;
     }
-    if (id == kInlineTextEdit && notification == EN_CHANGE) {
-        UpdateTextFromControl();
-        return;
-    }
+    // The text field's EN_CHANGE.
+    if (text_editor_.HandleCommand(id, notification)) { return; }
     // The property island's font size box, watermark field and clear button.
     if (context_panel_.HandleCommand(id, notification) || context_panel_.syncing()) { return; }
     if (notification == BN_CLICKED) {
@@ -984,10 +954,7 @@ void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
         if (key != VK_CONTROL && key != VK_SHIFT && key != VK_MENU) { RefuseWhileExporting(); }
         return;
     }
-    if (editing_text_ && text_edit_) {
-        ::SendMessageW(text_edit_, WM_KEYDOWN, key, flags);
-        return;
-    }
+    if (text_editor_.ForwardKeyDown(key, flags)) { return; }
     if (key == VK_ESCAPE && (transforming_ || dragging_ || document_.in_transaction())) {
         // The rollback can remove the selected annotation (a watermark created in this transaction).
         CancelStroke();
@@ -1174,7 +1141,7 @@ void ScreenshotEditor::OnToolbarActivated(ToolbarItem item) {
     const auto revision = document_.revision();
     if (item.kind == ToolbarItem::Kind::Tool || item.kind == ToolbarItem::Kind::Command) {
         context_panel_.ShowBrushPopup(false);
-        CommitPendingText();
+        text_editor_.Commit();
         document_.CommitTransaction();
         CancelStroke();
     }
@@ -1239,7 +1206,7 @@ void ScreenshotEditor::OnToolbarActivated(ToolbarItem item) {
 bool ScreenshotEditor::WantsPointer(POINT point) const {
     // While exporting, a click on the image is refused here instead of
     // completing the screenshot a second time.
-    if (exporting_ || editing_text_ || transforming_ || dragging_ || selected_) { return true; }
+    if (exporting_ || text_editor_.editing() || transforming_ || dragging_ || selected_) { return true; }
     const auto p = ToImagePoint(point);
     return tool_ != ToolId::Pointer || document_.HitTest(p, 5.0f / zoom_).has_value();
 }
@@ -1259,24 +1226,19 @@ HCURSOR ScreenshotEditor::ImageCursor(POINT point) const {
 }
 void ScreenshotEditor::BeginStroke(POINT point) {
     context_panel_.ShowBrushPopup(false);
-    if (editing_text_) {
+    if (text_editor_.editing()) {
         // Repeated clicks on the active object keep its editing session alive.
         // Only an actual outside click commits; that click never creates text.
         if (selected_ && document_.annotations()[*selected_].HitTest(ToImagePoint(point), 5.0f / zoom_)) {
-            if (text_edit_) {
-                POINT local = point;
-                ::ScreenToClient(text_edit_, &local);
-                ::SendMessageW(text_edit_, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(local.x, local.y));
-                ::SendMessageW(text_edit_, WM_LBUTTONUP, 0, MAKELPARAM(local.x, local.y));
-            }
+            text_editor_.ForwardClick(point);
             return;
         }
-        CommitPendingText();
+        text_editor_.Commit();
         Select({});
         // Commit can remove an empty annotation and shift later indices.
         const auto hit = document_.HitTest(ToImagePoint(point), 5.0f / zoom_);
         if (hit && IsTextTool(document_.annotations()[*hit].tool)) {
-            StartTextEditing(hit, point);
+            text_editor_.Start(hit, point);
         }
         return;
     }
@@ -1317,7 +1279,7 @@ void ScreenshotEditor::BeginStroke(POINT point) {
     if (leave_text_selection) { return; }
     if (tool_ == ToolId::Pointer) { return; }
     if (IsTextTool(tool_)) {
-        StartTextEditing({}, point);
+        text_editor_.Start({}, point);
         return;
     }
     pending_ = {};
@@ -1430,324 +1392,37 @@ void ScreenshotEditor::CancelStroke() {
     // the paint that recomputes the effects invalidates what lies outside.
     InvalidateImage(damage);
 }
-void ScreenshotEditor::StartTextEditing(std::optional<size_t> index, POINT point) {
-    if (editing_text_ && index && index == selected_) {
-        ::SetFocus(text_edit_);
-        return;
-    }
-    // Committing an empty active box erases it, shifting later hit indices.
-    if (editing_text_ && index && selected_ && *selected_ < *index &&
-        document_.annotations()[*selected_].text.empty()) { --*index; }
-    CommitPendingText();
+// ---------------------------------------------------------------------------
+// Text field owner
+// ---------------------------------------------------------------------------
+
+TextEditorView ScreenshotEditor::text_view() const {
+    return {view_origin_, zoom_, scale_, document_mode_ ? region_ : source_bounds_, region_};
+}
+HWND ScreenshotEditor::CreateTextHost(POINT point) {
+    // This title identifies the text host to tests (FindWindow); it is not localized.
+    return ::CreateWindowExW(kEditorExStyle, kEditorClassName, L"Edit annotation text", kEditorStyle,
+                             point.x, point.y, 100, 50, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
+}
+void ScreenshotEditor::BeginTextTransaction() {
     context_owns_transaction_ = false;
     document_.BeginTransaction();
-    if (!index) {
-        Annotation a;
-        a.tool = tool_ == ToolId::Tag ? ToolId::Tag : ToolId::Text;
-        a.style = style_;
-        a.points = {ToImagePoint(point)};
-        document_.Apply(std::move(a));
-        index = document_.annotations().size() - 1;
-    }
-    selected_ = index;
-    pending_ = document_.annotations()[*index];
-    editing_text_ = true;
-    has_pending_ = false;
-    // This title identifies the text host to tests (FindWindow); it is not localized.
-    text_host_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, L"Edit annotation text", kEditorStyle,
-                                   point.x, point.y, 100, 50, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
-    if (text_host_) {
-        text_edit_ = ::CreateWindowExW(0, L"EDIT", pending_.text.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_MULTILINE | ES_WANTRETURN | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
-                                       0, 0, 100, 50, text_host_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kInlineTextEdit)), ::GetModuleHandleW(nullptr), nullptr);
-    }
-    if (!text_edit_) {
-        if (text_host_) {
-            ::DestroyWindow(text_host_);
-            text_host_ = nullptr;
-        }
-        document_.CancelTransaction();
-        editing_text_ = false;
-        selected_.reset();
-        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_TEXT_EDITOR_FAILED));
-        Invalidate();
-        return;
-    }
-    ::SendMessageW(text_edit_, EM_SETLIMITTEXT, 65535, 0);
-    last_text_double_ = 0;
-    ui::SetAccessibleName(text_edit_, strings::Get(IDS_EDITOR_TEXT_NAME));
-    ::SetWindowSubclass(text_edit_, TextEditProc, 1, reinterpret_cast<DWORD_PTR>(this));
-    static_cast<void>(ui::ExcludeFromCapture(text_host_));
-    LayoutTextEditor();
-    ::ShowWindow(text_host_, SW_SHOWNORMAL);
-    ::SetFocus(text_edit_);
-    POINT local = point;
-    ::ScreenToClient(text_edit_, &local);
-    const auto caret = ::SendMessageW(text_edit_, EM_CHARFROMPOS, 0, MAKELPARAM(std::max(0L, local.x), std::max(0L, local.y)));
-    ::SendMessageW(text_edit_, EM_SETSEL, LOWORD(caret), LOWORD(caret));
-    ReflowToolbar();
-    Invalidate();
 }
-void ScreenshotEditor::LayoutTextEditor() {
-    if (!text_host_ || !text_edit_ || !selected_) { return; }
-    pending_ = document_.annotations()[*selected_];
-    const auto box = pending_.bounds();
-    const float em = pending_.FontPixels();
-    // The native input follows the scale the text is shown at.
-    const float shown_em = em * zoom_;
-    if (!text_font_ || text_font_pixels_ != shown_em) {
-        HFONT next = ui::theme::CreateUiFont(shown_em, 1, false);
-        if (next) {
-            ::SendMessageW(text_edit_, WM_SETFONT, reinterpret_cast<WPARAM>(next), FALSE);
-            if (text_font_) { ::DeleteObject(text_font_); }
-            text_font_ = next;
-            text_font_pixels_ = shown_em;
-        }
-    }
-    if (reinterpret_cast<HFONT>(::SendMessageW(text_edit_, WM_GETFONT, 0, 0)) != text_font_) {
-        ::SendMessageW(text_edit_, WM_SETFONT, reinterpret_cast<WPARAM>(text_font_), FALSE);
-    }
-    const LONG pad = ui::theme::Scaled(5, scale_);
-    const LONG x = static_cast<LONG>(view_origin_.x) + static_cast<LONG>(std::floor(box.left * zoom_)) - pad;
-    const LONG y = static_cast<LONG>(view_origin_.y) + static_cast<LONG>(std::floor(box.top * zoom_)) - pad;
-    const LONG w = std::max(2 * pad + 8L, static_cast<LONG>(std::ceil((box.right - box.left) * zoom_)) + 2 * pad);
-    const LONG h = std::max(2 * pad + 8L, static_cast<LONG>(std::ceil((box.bottom - box.top) * zoom_)) + 2 * pad);
-    // Only what changed is changed: Windows takes every move, resize, z-order
-    // or region change of a window for pointer movement, and shows the
-    // pointer it hides while the user types. This runs on every key.
-    RECT placed{};
-    ::GetWindowRect(text_host_, &placed);
-    const bool shown = ::IsWindowVisible(text_host_) != FALSE;
-    if (!shown || placed.left != x || placed.top != y || platform::RectWidth(placed) != w || platform::RectHeight(placed) != h) {
-        // Topmost when it appears; afterwards it keeps its place.
-        ::SetWindowPos(text_host_, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | (shown ? SWP_NOZORDER : 0));
-    }
-    RECT input{};
-    ::GetClientRect(text_edit_, &input);
-    if (input.right != w || input.bottom != h) { ::MoveWindow(text_edit_, 0, 0, w, h, FALSE); }
-    // The input keeps its full layout/caret coordinates, but nothing (including
-    // its selection frame) may paint beyond the capture canvas.
-    RECT visible = platform::IntersectRects({x, y, x + w, y + h}, document_mode_ ? region_ : source_bounds_);
-    ::OffsetRect(&visible, -x, -y);
-    HRGN current = ::CreateRectRgn(0, 0, 0, 0);
-    const bool has_region = current && ::GetWindowRgn(text_host_, current) != ERROR;
-    if (visible.left == 0 && visible.top == 0 && visible.right == w && visible.bottom == h) {
-        // Wholly on the canvas: no region at all.
-        if (has_region) { ::SetWindowRgn(text_host_, nullptr, FALSE); }
-    } else if (HRGN clip = ::CreateRectRgn(visible.left, visible.top, visible.right, visible.bottom)) {
-        if ((has_region && ::EqualRgn(current, clip)) || !::SetWindowRgn(text_host_, clip, FALSE)) { ::DeleteObject(clip); }
-    }
-    if (current) { ::DeleteObject(current); }
-    const float inset = TextInset(pending_);
-    RECT format{pad + static_cast<LONG>((inset + TagMarkerWidth(pending_)) * zoom_), pad + static_cast<LONG>(inset * zoom_), 32760, 32760};
-    ::SendMessageW(text_edit_, EM_SETRECTNP, 0, reinterpret_cast<LPARAM>(&format));
-    ::InvalidateRect(text_edit_, nullptr, FALSE);
+void ScreenshotEditor::BeginMoveFromText(POINT point) {
+    if (!visible_ || !selected_) { return; }
+    original_ = document_.annotations()[*selected_];
+    drag_origin_ = ToImagePoint(point);
+    transform_handle_ = -1;
+    transforming_ = true;
+    context_owns_transaction_ = false;
+    document_.BeginTransaction();
+    ::SetCapture(hwnd_);
+    ::SetFocus(hwnd_);
 }
-void ScreenshotEditor::UpdateTextFromControl() {
-    if (!editing_text_ || !selected_ || !text_edit_) { return; }
-    const int length = ::GetWindowTextLengthW(text_edit_);
-    std::wstring value(static_cast<size_t>(length) + 1, L'\0');
-    ::GetWindowTextW(text_edit_, value.data(), length + 1);
-    value.resize(length);
-    auto a = document_.annotations()[*selected_];
-    a.text = std::move(value);
-    document_.Replace(*selected_, a);
-    pending_ = std::move(a);
-    if (text_dispatch_depth_) {
-        text_layout_pending_ = true;
-    } else {
-        LayoutTextEditor();
-    }
-    Invalidate();
-}
-LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR reference) {
-    auto* self = reinterpret_cast<ScreenshotEditor*>(reference);
-    if (message == WM_NCDESTROY) {
-        ::RemoveWindowSubclass(hwnd, TextEditProc, id);
-        return ::DefSubclassProc(hwnd, message, wparam, lparam);
-    }
-    if (message == WM_SHOWWINDOW) { ui::NativeRedrawGuard::VisibilityChanged(hwnd, wparam != 0); }
-    // The box grows with its text, and Windows shows the pointer it hides
-    // for typing at each such change: the editor keeps it hidden instead.
-    if (message == WM_CHAR) { self->typing_pointer_.Typed(self->hwnd_); }
-    if (message == WM_KILLFOCUS) { self->typing_pointer_.Restore(); }
-    if (message == WM_SETCURSOR || message == WM_LBUTTONDOWN) {
-        POINT point{};
-        ::GetCursorPos(&point);
-        ::ScreenToClient(hwnd, &point);
-        if (message == WM_LBUTTONDOWN) { point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)}; }
-        RECT client{};
-        ::GetClientRect(hwnd, &client);
-        const LONG edge = ui::theme::Scaled(4, self->scale_);
-        const bool border = point.x < edge || point.y < edge || point.x >= client.right - edge || point.y >= client.bottom - edge;
-        if (border) {
-            if (message == WM_SETCURSOR) {
-                ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL));
-                return TRUE;
-            }
-            ::ClientToScreen(hwnd, &point);
-            self->CommitPendingText();
-            if (self->visible_ && self->selected_) {
-                self->original_ = self->document_.annotations()[*self->selected_];
-                self->drag_origin_ = self->ToImagePoint(point);
-                self->transform_handle_ = -1;
-                self->transforming_ = true;
-                self->context_owns_transaction_ = false;
-                self->document_.BeginTransaction();
-                ::SetCapture(self->hwnd_);
-                ::SetFocus(self->hwnd_);
-            }
-            return 0;
-        }
-    }
-    if (message == WM_ERASEBKGND) { return 1; }
-    if (message == WM_PAINT || message == WM_PRINTCLIENT) {
-        PAINTSTRUCT ps{};
-        HDC dc = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
-        RECT client{};
-        ::GetClientRect(hwnd, &client);
-        ::HideCaret(hwnd);
-        {
-            platform::PaintBuffer buffer(dc, client);
-            self->PaintTextEditor(buffer.dc());
-        }
-        ::ShowCaret(hwnd);
-        if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
-        return 0;
-    }
-    if (message == WM_KEYDOWN && wparam == VK_ESCAPE) {
-        self->editing_text_ = false;
-        self->document_.CancelTransaction();
-        HWND host = self->text_host_;
-        self->text_host_ = self->text_edit_ = nullptr;
-        ::DestroyWindow(host);
-        self->selected_.reset();
-        self->ReflowToolbar();
-        self->Invalidate();
-        return 0;
-    }
-    if (message == WM_KEYDOWN && wparam == VK_RETURN && (::GetKeyState(VK_CONTROL) & 0x8000)) {
-        self->CommitPendingText();
-        return 0;
-    }
-    if (message == WM_KEYDOWN && wparam == 'A' && (::GetKeyState(VK_CONTROL) & 0x8000)) {
-        ::SendMessageW(hwnd, EM_SETSEL, 0, -1);
-        return 0;
-    }
-    if (message == WM_LBUTTONDBLCLK) {
-        self->last_text_double_ = ::GetTickCount();
-        self->last_text_point_ = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-    }
-    if (message == WM_LBUTTONDOWN && self->last_text_double_ && ::GetTickCount() - self->last_text_double_ <= ::GetDoubleClickTime() &&
-        std::abs(GET_X_LPARAM(lparam) - self->last_text_point_.x) <= ::GetSystemMetrics(SM_CXDOUBLECLK) &&
-        std::abs(GET_Y_LPARAM(lparam) - self->last_text_point_.y) <= ::GetSystemMetrics(SM_CYDOUBLECLK)) {
-        const size_t index = LOWORD(::SendMessageW(hwnd, EM_CHARFROMPOS, 0, lparam));
-        const auto& value = self->document_.annotations()[*self->selected_].text;
-        size_t start = std::min(index, value.size()), end = start;
-        while (start > 0 && value[start - 1] != L'\n') { --start; }
-        while (end < value.size() && value[end] != L'\n') { ++end; }
-        if (end < value.size()) { ++end; }
-        ::SendMessageW(hwnd, EM_SETSEL, start, end);
-        self->last_text_double_ = 0;
-        return 0;
-    }
-    const bool changes_pixels = (message >= WM_KEYFIRST && message <= WM_KEYLAST) ||
-                                (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || message == EM_SETSEL || message == EM_REPLACESEL ||
-                                message == WM_SETTEXT || message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_SIZE ||
-                                message == WM_CUT || message == WM_PASTE || message == WM_CLEAR || message == WM_UNDO || message == EM_UNDO ||
-                                message == WM_IME_COMPOSITION || message == WM_IME_ENDCOMPOSITION || message == WM_TIMER || message == WM_CAPTURECHANGED;
-    // The native caret stays hidden for the whole dispatch. EDIT would show it
-    // at its own GDI position first; it is placed against the rendered text
-    // below, by which time the control is invalid, and Windows does not erase
-    // a caret inside an update region. The first column would stay inverted
-    // until the next paint.
-    const bool caret_hidden = changes_pixels && ::HideCaret(hwnd) != FALSE;
-    const auto result = [&] {
-        ++self->text_dispatch_depth_;
-        // Typing is not suspended. Suspending redraw takes WS_VISIBLE away and
-        // gives it back, which Windows takes for pointer movement: the pointer
-        // it hides while the user types came back at every key. The control
-        // colour handler already keeps EDIT's own drawing off the screen.
-        const bool typing = message >= WM_KEYFIRST && message <= WM_KEYLAST;
-        ui::NativeRedrawGuard redraw(hwnd, changes_pixels && !typing);
-        // EDIT needs visibility for native caret/selection updates, even while
-        // its internal redraw flag suppresses synchronous GDI text painting.
-        const LONG_PTR style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
-        if (changes_pixels && (style & WS_VISIBLE) == 0) { ::SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_VISIBLE); }
-        const auto result = ::DefSubclassProc(hwnd, message, wparam, lparam);
-        --self->text_dispatch_depth_;
-        return result;
-    }();
-    if (!self->text_dispatch_depth_ && self->text_layout_pending_) {
-        self->text_layout_pending_ = false;
-        self->LayoutTextEditor();
-    }
-    if (changes_pixels && !self->text_dispatch_depth_ && ::IsWindow(hwnd) && ::GetFocus() == hwnd && self->selected_) {
-        DWORD start{}, end{};
-        ::SendMessageW(hwnd, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
-        // The native caret can be parked outside the old client bounds while
-        // typing grows the host. Position it against the rendered text after
-        // layout; native EDIT still owns selection, navigation and caret life.
-        if (start == end) {
-            const auto& a = self->document_.annotations()[*self->selected_];
-            auto layout = TextLayout(a);
-            float x{}, y{};
-            DWRITE_HIT_TEST_METRICS metrics{};
-            if (layout && SUCCEEDED(layout->HitTestTextPosition(start, FALSE, &x, &y, &metrics))) {
-                RECT format{};
-                ::SendMessageW(hwnd, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&format));
-                ::SetCaretPos(format.left + static_cast<int>(std::lround(x * self->zoom_)), format.top + static_cast<int>(std::lround(y * self->zoom_)));
-            }
-        }
-    }
-    // Fails harmlessly when the dispatch gave the caret away.
-    if (caret_hidden && ::IsWindow(hwnd)) { ::ShowCaret(hwnd); }
-    return result;
-}
-void ScreenshotEditor::PaintTextEditor(HDC dc) {
-    if (!text_edit_ || !selected_) { return; }
-    RECT bounds{};
-    ::GetWindowRect(text_edit_, &bounds);
-    RenderImage(dc, bounds);
-    DWORD start{}, end{};
-    ::SendMessageW(text_edit_, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
-    if (start == end) { return; }
-    const auto& a = document_.annotations()[*selected_];
-    auto layout = TextLayout(a);
-    if (!layout) { return; }
-    const float inset = TextInset(a);
-    // Layout units are image pixels; the host's pixels are scaled by the view.
-    const float x = (view_origin_.x - bounds.left) / zoom_ + a.points.front().x + inset + TagMarkerWidth(a), y = (view_origin_.y - bounds.top) / zoom_ + a.points.front().y + inset;
-    UINT32 count{};
-    layout->HitTestTextRange(start, end - start, x, y, nullptr, 0, &count);
-    std::vector<DWRITE_HIT_TEST_METRICS> ranges(count);
-    if (SUCCEEDED(layout->HitTestTextRange(start, end - start, x, y, ranges.data(), count, &count))) {
-        for (const auto& r : ranges) {
-            RECT area{static_cast<LONG>(r.left * zoom_), static_cast<LONG>(r.top * zoom_), static_cast<LONG>(std::ceil((r.left + r.width) * zoom_)), static_cast<LONG>(std::ceil((r.top + r.height) * zoom_))};
-            ::InvertRect(dc, &area);
-        }
-    }
-}
-void ScreenshotEditor::CommitPendingText() {
-    typing_pointer_.Restore();
-    if (!editing_text_) { return; }
-    UpdateTextFromControl();
-    editing_text_ = false;
-    if (selected_ && document_.annotations()[*selected_].text.empty()) {
-        document_.Remove(*selected_);
-        selected_.reset();
-    }
-    document_.CommitTransaction();
-    if (text_host_) {
-        HWND host = text_host_;
-        text_host_ = text_edit_ = nullptr;
-        ::DestroyWindow(host);
-    }
+void ScreenshotEditor::TextCommitted() {
     has_pending_ = false;
     if (callbacks_.on_document_committed) { callbacks_.on_document_committed(); }
     Invalidate();
-}
-void ScreenshotEditor::OnCharacter(wchar_t character) {
-    if (!exporting_ && editing_text_ && text_edit_) { ::SendMessageW(text_edit_, WM_CHAR, character, 0); }
 }
 void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush) const {
     if (!selected_ || *selected_ >= document_.annotations().size()) { return; }
@@ -2010,7 +1685,7 @@ platform::BgraImage ScreenshotEditor::Composite() {
 }
 platform::BgraImage ScreenshotEditor::CompositeCommitted() {
     completing_ = true;
-    CommitPendingText();
+    text_editor_.Commit();
     completing_ = false;
     return Composite();
 }
@@ -2021,7 +1696,7 @@ bool ScreenshotEditor::SaveToFile() {
         return false;
     }
     if (!EnsureImage()) { return false; }
-    CommitPendingText();
+    text_editor_.Commit();
     // Committing the text can complete the screenshot, which copies it.
     if (!visible_ || exporting_) { return false; }
     platform::BgraImage composite = Composite();
