@@ -30,6 +30,9 @@ struct ToolDefinition {
     /// Its annotation is text typed into a box (Text, Tag): a press places the
     /// text field, a double-click edits it, and its box is its text layout.
     bool text_box{false};
+    /// Its annotation changes the image pixels themselves (Mosaic, Spotlight):
+    /// it is applied to the base image, never drawn over it.
+    bool base_effect{false};
 };
 
 /// How many tools there are.
@@ -43,10 +46,10 @@ inline constexpr std::array<ToolDefinition, kToolCount> kToolDefinitions{{
     {.id = ToolId::Rectangle, .identifier = kToolButtons.Id(3), .toolbar_position = 1, .name = IDS_EDITOR_TOOL_RECTANGLE, .icon = ui::Icon::Rectangle},
     {.id = ToolId::Ellipse, .identifier = kToolButtons.Id(4), .toolbar_position = 2, .name = IDS_EDITOR_TOOL_ELLIPSE, .icon = ui::Icon::Ellipse},
     {.id = ToolId::Text, .identifier = kToolButtons.Id(5), .toolbar_position = 6, .name = IDS_EDITOR_TOOL_TEXT, .icon = ui::Icon::Text, .text_box = true},
-    {.id = ToolId::Mosaic, .identifier = kToolButtons.Id(6), .toolbar_position = 8, .separator_before = true, .name = IDS_EDITOR_TOOL_MOSAIC, .icon = ui::Icon::Mosaic},
+    {.id = ToolId::Mosaic, .identifier = kToolButtons.Id(6), .toolbar_position = 8, .separator_before = true, .name = IDS_EDITOR_TOOL_MOSAIC, .icon = ui::Icon::Mosaic, .base_effect = true},
     {.id = ToolId::Line, .identifier = kToolButtons.Id(7), .toolbar_position = 3, .name = IDS_EDITOR_TOOL_LINE, .icon = ui::Icon::Line},
     {.id = ToolId::Tag, .identifier = kToolButtons.Id(8), .toolbar_position = 7, .name = IDS_EDITOR_TOOL_TAG, .icon = ui::Icon::Tag, .text_box = true},
-    {.id = ToolId::Spotlight, .identifier = kToolButtons.Id(9), .toolbar_position = 9, .name = IDS_EDITOR_TOOL_SPOTLIGHT, .icon = ui::Icon::Spotlight},
+    {.id = ToolId::Spotlight, .identifier = kToolButtons.Id(9), .toolbar_position = 9, .name = IDS_EDITOR_TOOL_SPOTLIGHT, .icon = ui::Icon::Spotlight, .base_effect = true},
     {.id = ToolId::Watermark, .identifier = kToolButtons.Id(10), .toolbar_position = 10, .name = IDS_EDITOR_TOOL_WATERMARK, .icon = ui::Icon::Watermark},
 }};
 
@@ -82,6 +85,9 @@ inline constexpr std::array<ToolId, kToolCount> kToolbarOrder = [] {
 
 /// True for the tools whose annotation is typed text in a box: Text and Tag.
 [[nodiscard]] constexpr bool IsTextTool(ToolId tool) noexcept { return Tool(tool).text_box; }
+
+/// True for the tools that change the image pixels: Mosaic and Spotlight.
+[[nodiscard]] constexpr bool IsBaseEffect(ToolId tool) noexcept { return Tool(tool).base_effect; }
 
 /// True when `annotation` is a stroke that follows the pointer point by point:
 /// the pen, and the mosaic with the brush method.

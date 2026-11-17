@@ -2647,11 +2647,11 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorB
 // ---------------------------------------------------------------------------
 
 RECT ScreenshotEditor::RebuildRedactedBase(const RECT* painting) {
-    const bool effect_preview = has_pending_ && (pending_.tool == ToolId::Mosaic || pending_.tool == ToolId::Spotlight);
+    const bool effect_preview = has_pending_ && IsBaseEffect(pending_.tool);
     if ((redaction_revision_ == document_.revision() && !effect_preview) || !has_image()) { return {}; }
     std::vector<RedactionEffect> effects;
     const auto add = [&](const Annotation& a) {
-        if ((a.tool != ToolId::Mosaic && a.tool != ToolId::Spotlight) || a.points.empty()) { return; }
+        if (!IsBaseEffect(a.tool) || a.points.empty()) { return; }
         RedactionEffect effect;
         effect.box = a.bounds();
         effect.strength = a.style.strength;
@@ -2790,7 +2790,7 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
     for (const auto& annotation : document_.annotations()) {
         DrawAnnotation(image_target_.Get(), annotation, image_brush_.Get(), false);
     }
-    if (has_pending_ && pending_.tool != ToolId::Mosaic && pending_.tool != ToolId::Spotlight) {
+    if (has_pending_ && !IsBaseEffect(pending_.tool)) {
         DrawAnnotation(image_target_.Get(), pending_, image_brush_.Get(), true);
     }
     DrawSelection(image_target_.Get(), image_brush_.Get());
