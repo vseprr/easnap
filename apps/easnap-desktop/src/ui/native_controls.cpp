@@ -20,8 +20,6 @@
 
 namespace easnap::ui {
 namespace {
-constexpr UINT_PTR kButtonSubclass = 0xEA51;
-constexpr UINT_PTR kTooltipSubclass = 0xEA52;
 constexpr wchar_t kScreenContentProperty[] = L"Easnap.ScreenContent";
 struct ButtonData {
     ButtonStyle style;
@@ -277,7 +275,7 @@ void TypingPointer::Typed(HWND timer_owner) {
     if (hidden_ || timer_owner == nullptr) { return; }
     BOOL vanish = FALSE;
     if (!::SystemParametersInfoW(SPI_GETMOUSEVANISH, 0, &vanish, 0) || !vanish) { return; }
-    if (!::GetCursorPos(&origin_) || ::SetTimer(timer_owner, kTimerId, 30, nullptr) == 0) { return; }
+    if (!::GetCursorPos(&origin_) || ::SetTimer(timer_owner, kTypingPointerTimer, 30, nullptr) == 0) { return; }
     timer_owner_ = timer_owner;
     hidden_ = true;
     // The display count belongs to this thread: the pointer hides over its
@@ -291,7 +289,7 @@ void TypingPointer::Poll() {
 void TypingPointer::Restore() {
     if (!hidden_) { return; }
     hidden_ = false;
-    if (timer_owner_ != nullptr && ::IsWindow(timer_owner_)) { ::KillTimer(timer_owner_, kTimerId); }
+    if (timer_owner_ != nullptr && ::IsWindow(timer_owner_)) { ::KillTimer(timer_owner_, kTypingPointerTimer); }
     timer_owner_ = nullptr;
     ::ShowCursor(TRUE);
 }
@@ -926,7 +924,7 @@ bool DrawComboItem(const DRAWITEMSTRUCT& item) {
 void SetAccessibleName(HWND control, const wchar_t* name) {
     platform::ComPtr<IAccPropServices> properties;
     if (control && SUCCEEDED(::CoCreateInstance(CLSID_AccPropServices, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&properties))) &&
-        ::SetWindowSubclass(control, AccessibleNameProc, 0xEA56, 0)) {
+        ::SetWindowSubclass(control, AccessibleNameProc, kAccessibleNameSubclass, 0)) {
         properties->SetHwndPropStr(control, static_cast<DWORD>(OBJID_CLIENT), CHILDID_SELF, PROPID_ACC_NAME, name);
     }
 }
@@ -937,26 +935,26 @@ bool StyleProgress(HWND progress) {
     ::SetWindowLongPtrW(progress, GWL_STYLE, ::GetWindowLongPtrW(progress, GWL_STYLE) & ~WS_BORDER);
     ::SetWindowLongPtrW(progress, GWL_EXSTYLE, ::GetWindowLongPtrW(progress, GWL_EXSTYLE) & ~(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
     ::SetWindowPos(progress, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-    return ::SetWindowSubclass(progress, ProgressProc, 0xEA55, 0) != FALSE;
+    return ::SetWindowSubclass(progress, ProgressProc, kProgressSubclass, 0) != FALSE;
 }
-bool StyleSlider(HWND slider) { return slider && ::SetWindowSubclass(slider, SliderProc, 0xEA53, 0); }
-bool StyleLabel(HWND label) { return label && ::SetWindowSubclass(label, BufferedTextProc, 0xEA5A, 0); }
+bool StyleSlider(HWND slider) { return slider && ::SetWindowSubclass(slider, SliderProc, kSliderSubclass, 0); }
+bool StyleLabel(HWND label) { return label && ::SetWindowSubclass(label, BufferedTextProc, kBufferedTextSubclass, 0); }
 bool StyleInput(HWND input) {
     if (!input) { return false; }
     ::SetWindowTheme(input, L"", L"");
     ::SetWindowLongPtrW(input, GWL_STYLE, ::GetWindowLongPtrW(input, GWL_STYLE) & ~WS_BORDER);
     ::SetWindowLongPtrW(input, GWL_EXSTYLE, ::GetWindowLongPtrW(input, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
-    if (!::SetWindowSubclass(input, InputProc, 0xEA54, 0)) { return false; }
+    if (!::SetWindowSubclass(input, InputProc, kInputSubclass, 0)) { return false; }
     wchar_t cls[32]{};
     ::GetClassNameW(input, cls, 32);
     if (::lstrcmpiW(cls, L"EDIT") == 0) {
-        if (!::SetWindowSubclass(input, BufferedTextProc, 0xEA5A, kBufferedEdit)) { return false; }
+        if (!::SetWindowSubclass(input, BufferedTextProc, kBufferedTextSubclass, kBufferedEdit)) { return false; }
     } else {
         ::SetWindowLongPtrW(input, GWL_STYLE, ::GetWindowLongPtrW(input, GWL_STYLE) | WS_CLIPCHILDREN);
         COMBOBOXINFO info{sizeof(info)};
         if (::GetComboBoxInfo(input, &info) && info.hwndItem && info.hwndItem != input) {
             ::SetWindowTheme(info.hwndItem, L"", L"");
-            if (!::SetWindowSubclass(info.hwndItem, BufferedTextProc, 0xEA5A, kBufferedEdit)) { return false; }
+            if (!::SetWindowSubclass(info.hwndItem, BufferedTextProc, kBufferedTextSubclass, kBufferedEdit)) { return false; }
         }
     }
     ::SetWindowPos(input, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
@@ -1117,7 +1115,7 @@ struct MenuThemeScope::State {
     }
     std::vector<HBRUSH> brushes;
     ~State() {
-        if (owner) { ::RemoveWindowSubclass(owner, Proc, 0xEA57); }
+        if (owner) { ::RemoveWindowSubclass(owner, Proc, kMenuOwnerSubclass); }
         for (const auto& item : items) {
             MENUITEMINFOW info{sizeof(info)};
             info.fMask = MIIM_FTYPE | MIIM_DATA;
@@ -1139,12 +1137,11 @@ MenuThemeScope::MenuThemeScope(HWND owner, HMENU menu) : state_(std::make_unique
     state_->owner = owner;
     state_->scale = ::GetDpiForWindow(owner) / 96.0f;
     state_->font = theme::CreateUiFont(13, state_->scale, false);
-    if (::SetWindowSubclass(owner, State::Proc, 0xEA57, reinterpret_cast<DWORD_PTR>(state_.get()))) { state_->Add(menu); }
+    if (::SetWindowSubclass(owner, State::Proc, kMenuOwnerSubclass, reinterpret_cast<DWORD_PTR>(state_.get()))) { state_->Add(menu); }
 }
 MenuThemeScope::~MenuThemeScope() = default;
 
 namespace {
-constexpr UINT_PTR kChromeSubclass = 0xEA59;
 struct WindowChrome {
     HWND owner{}, header{}, close{}, minimize{}, maximize{};
     HFONT font{};

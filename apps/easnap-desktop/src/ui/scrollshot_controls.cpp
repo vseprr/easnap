@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "strings/strings.h"
+#include "ui/control_ids.h"
 #include "ui/native_controls.h"
 #include "ui/scrollshot_layout.h"
 #include "ui/ui_theme.h"
@@ -18,14 +19,6 @@ namespace {
 
 constexpr wchar_t kIslandClassName[] = L"EasnapScrollshotControls";
 constexpr wchar_t kPreviewClassName[] = L"EasnapScrollshotPreview";
-
-constexpr int kIdHelp = 200;
-constexpr int kIdEdit = 201;
-constexpr int kIdSave = 202;
-constexpr int kIdSize = 210;
-constexpr int kIdMessage = 211;
-// Start and Copy are IDOK, Discard is IDCANCEL: Enter and Esc reach them
-// through the native dialog navigation.
 
 constexpr DWORD kIslandStyle = WS_POPUP | WS_CLIPCHILDREN;
 constexpr DWORD kIslandExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTROLPARENT;
@@ -377,9 +370,9 @@ private:
                 switch (LOWORD(wparam)) {
                     case IDOK: owner_.Dispatch(owner_.view_ == View::Start ? Action::Start : Action::Copy); break;
                     case IDCANCEL: owner_.Dispatch(Action::Discard); break;
-                    case kIdHelp: owner_.Dispatch(Action::Help); break;
-                    case kIdEdit: owner_.Dispatch(Action::Edit); break;
-                    case kIdSave: owner_.Dispatch(Action::Save); break;
+                    case kScrollshotHelp: owner_.Dispatch(Action::Help); break;
+                    case kScrollshotEdit: owner_.Dispatch(Action::Edit); break;
+                    case kScrollshotSave: owner_.Dispatch(Action::Save); break;
                     default: break;
                 }
                 return 0;
@@ -498,14 +491,14 @@ private:
 
     [[nodiscard]] bool CreateControls() {
         start_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_START), WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDOK);
-        help_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_HELP), WS_TABSTOP | BS_PUSHBUTTON, kIdHelp);
-        size_ = CreateControl(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, kIdSize);
-        message_ = CreateControl(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, kIdMessage);
-        edit_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_EDIT), WS_TABSTOP | WS_GROUP | BS_PUSHBUTTON, kIdEdit);
-        save_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_SAVE), WS_TABSTOP | BS_PUSHBUTTON, kIdSave);
+        help_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_HELP), WS_TABSTOP | BS_PUSHBUTTON, kScrollshotHelp);
+        size_ = CreateControl(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, kScrollshotSize);
+        message_ = CreateControl(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, kScrollshotMessage);
+        edit_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_EDIT), WS_TABSTOP | WS_GROUP | BS_PUSHBUTTON, kScrollshotEdit);
+        save_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_SAVE), WS_TABSTOP | BS_PUSHBUTTON, kScrollshotSave);
         discard_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_DISCARD), WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
         // The default button, so Enter copies as it does in the editor.
-        copy_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_COPY), WS_TABSTOP | BS_PUSHBUTTON, kIdCopyAlias);
+        copy_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_COPY), WS_TABSTOP | BS_PUSHBUTTON, kScrollshotCopyAlias);
         for (HWND control : {start_, help_, size_, message_, edit_, save_, discard_, copy_}) {
             if (control == nullptr) { return false; }
         }
@@ -552,9 +545,6 @@ private:
         strong_font_ = strong;
         scale_ = scale;
     }
-
-    /// IDOK is taken by Start in the Start view; the handler maps it by view.
-    static constexpr int kIdCopyAlias = IDOK;
 
     ScrollshotControls& owner_;
     HWND island_{nullptr};

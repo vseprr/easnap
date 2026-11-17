@@ -15,6 +15,7 @@
 #include <string>
 
 #include "strings/strings.h"
+#include "ui/control_ids.h"
 #include "ui/ui_theme.h"
 
 namespace easnap::ui {
@@ -25,8 +26,6 @@ constexpr wchar_t kChromeClassName[] = L"EasnapOverlayChrome";
 constexpr wchar_t kImageClassName[] = L"EasnapCaptureImage";
 constexpr wchar_t kMagnifierClassName[] = L"EasnapCaptureMagnifier";
 constexpr wchar_t kModeToolbarClassName[] = L"EasnapCaptureModes";
-constexpr UINT_PTR kNoticeTimerId = 1;
-constexpr UINT_PTR kModeFadeTimerId = 2;
 constexpr UINT kNoticeTimeoutMs = 2600;
 
 struct PaletteButton {
@@ -38,7 +37,7 @@ struct PaletteButton {
 /// Order of the mode buttons, left to right.
 constexpr std::array<app::CaptureMode, 3> kModes{
     app::CaptureMode::Screenshot, app::CaptureMode::Scrollshot, app::CaptureMode::Record};
-constexpr int kFirstModeCommand = 3000;
+static_assert(kModeIslandButtons.count == static_cast<int>(kModes.size()));
 
 /// Reusable GDI surface shared by one monitor's serial dim/chrome/magnifier paints.
 class BackBuffer {
@@ -328,7 +327,7 @@ public:
                 mode_buttons_[i] = ::CreateWindowExW(0, L"BUTTON", buttons[i].label,
                                                      WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_RADIOBUTTON | BS_PUSHLIKE | (i == 0 ? WS_GROUP : 0),
                                                      r.left, r.top, r.right - r.left, r.bottom - r.top, mode_toolbar_,
-                                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kFirstModeCommand + static_cast<int>(i))), instance, nullptr);
+                                                     reinterpret_cast<HMENU>(static_cast<INT_PTR>(kModeIslandButtons.Id(static_cast<int>(i)))), instance, nullptr);
                 ButtonStyle style;
                 style.icon = icons[i];
                 style.preserve_disabled_visual = true;
@@ -384,7 +383,7 @@ public:
     }
 
     void Hide() const {
-        ::KillTimer(dim_, kModeFadeTimerId);
+        ::KillTimer(dim_, kOverlayModeFadeTimer);
         if (mode_toolbar_) { ::ShowWindow(mode_toolbar_, SW_HIDE); }
         ::ShowWindow(image_, SW_HIDE);
         if (shade_) { ::ShowWindow(shade_, SW_HIDE); }
@@ -417,7 +416,7 @@ public:
     }
 
     void FinishModeFade() const {
-        ::KillTimer(dim_, kModeFadeTimerId);
+        ::KillTimer(dim_, kOverlayModeFadeTimer);
         ::ShowWindow(mode_toolbar_, SW_HIDE);
     }
 
@@ -475,11 +474,11 @@ public:
     }
 
     void ArmModeFade() const {
-        if (UpdateModeToolbar() && !::SetTimer(dim_, kModeFadeTimerId, 16, nullptr)) { FinishModeFade(); }
+        if (UpdateModeToolbar() && !::SetTimer(dim_, kOverlayModeFadeTimer, 16, nullptr)) { FinishModeFade(); }
     }
 
     void Destroy() {
-        if (dim_) { ::KillTimer(dim_, kModeFadeTimerId); }
+        if (dim_) { ::KillTimer(dim_, kOverlayModeFadeTimer); }
         if (mode_toolbar_) {
             ::SetWindowLongPtrW(mode_toolbar_, GWLP_USERDATA, 0);
             ::DestroyWindow(mode_toolbar_);
@@ -1028,12 +1027,12 @@ private:
                 return 0;
 
             case WM_TIMER:
-                if (wparam == kModeFadeTimerId) {
+                if (wparam == kOverlayModeFadeTimer) {
                     UpdateModeToolbar();
                     return 0;
                 }
-                if (wparam == kNoticeTimerId) {
-                    ::KillTimer(hwnd, kNoticeTimerId);
+                if (wparam == kOverlayNoticeTimer) {
+                    ::KillTimer(hwnd, kOverlayNoticeTimer);
                     controller_.SetNotice({});
                 }
                 return 0;
@@ -1079,9 +1078,8 @@ private:
 
             case WM_COMMAND:
                 if (hwnd == mode_toolbar_ && HIWORD(wparam) == BN_CLICKED &&
-                    LOWORD(wparam) >= kFirstModeCommand &&
-                    LOWORD(wparam) < kFirstModeCommand + static_cast<int>(kModes.size())) {
-                    OnPaletteClicked(LOWORD(wparam) - kFirstModeCommand);
+                    kModeIslandButtons.Contains(LOWORD(wparam))) {
+                    OnPaletteClicked(kModeIslandButtons.Index(LOWORD(wparam)));
                 }
                 return 0;
             case WM_KEYDOWN:
@@ -1311,7 +1309,7 @@ private:
             }
         }
         controller_.SetNotice(strings::Get(copied ? IDS_SHELL_COLOR_COPIED : (color ? IDS_SHELL_COLOR_COPY_FAILED : IDS_SHELL_COLOR_UNAVAILABLE)));
-        ::SetTimer(dim_, kNoticeTimerId, kNoticeTimeoutMs, nullptr);
+        ::SetTimer(dim_, kOverlayNoticeTimer, kNoticeTimeoutMs, nullptr);
     }
 
     void PaintMagnifier(HDC dc, const RECT& client) const {

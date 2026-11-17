@@ -21,6 +21,7 @@
 #include "platform/app_messages.h"
 #include "platform/image_export.h"
 #include "platform/platform_utils.h"
+#include "ui/control_ids.h"
 
 namespace easnap::ui {
 class OverlayController;
@@ -47,12 +48,6 @@ enum class RecordingStartFailure;
 
 namespace easnap::app {
 
-/// Timer on the host window: retired windows are destroyed once no dialog of
-/// theirs is running its own message loop any more.
-inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
-/// Timer on the host window: a checked video waits until no dialog of
-/// Easnap's runs its own message loop any more.
-inline constexpr UINT_PTR kTimerVideoProbeRetry = 0xEA51;
 
 /// The session lifecycle; session_transitions.cpp lists the legal transitions.
 ///

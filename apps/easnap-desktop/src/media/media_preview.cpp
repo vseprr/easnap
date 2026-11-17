@@ -27,6 +27,9 @@
 namespace easnap::media {
 namespace {
 
+/// Timer on the preview's own message-only window: polls the transport.
+constexpr UINT_PTR kOwnerPollTimer = 1;
+
 using Microsoft::WRL::ComPtr;
 
 MediaPreviewOperation OperationForCommand(
@@ -1237,7 +1240,7 @@ private:
         }
         DestroyStillFrameWindow();
         if (owner_window_ != nullptr) {
-            ::KillTimer(owner_window_, 1);
+            ::KillTimer(owner_window_, kOwnerPollTimer);
             ::DestroyWindow(owner_window_);
             owner_window_ = nullptr;
         }
@@ -1313,7 +1316,7 @@ private:
             },
             owner_window_, nullptr);
         if (!presentation_wait_) return false;
-        return ::SetTimer(owner_window_, 1, 100, nullptr) != 0;
+        return ::SetTimer(owner_window_, kOwnerPollTimer, 100, nullptr) != 0;
     }
 
     void CheckLiveness() noexcept {

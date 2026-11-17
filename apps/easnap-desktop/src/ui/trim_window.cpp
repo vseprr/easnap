@@ -13,6 +13,7 @@
 #include "platform/app_messages.h"
 #include "platform/platform_utils.h"
 #include "strings/strings.h"
+#include "ui/control_ids.h"
 #include "ui/trim_layout.h"
 #include "ui/ui_theme.h"
 #include "ui/native_controls.h"
@@ -25,13 +26,7 @@ constexpr wchar_t kWindowClassName[] = L"EasnapTrimWindow";
 constexpr wchar_t kTimelineClassName[] = L"EasnapTrimTimeline";
 constexpr wchar_t kVideoClassName[] = L"EasnapTrimVideo";
 static_assert(kTrimChromeHeightDip == kWindowChromeHeight);
-constexpr UINT_PTR kStatusTimerId = 1;
 constexpr UINT kStatusTimerIntervalMs = 100;
-constexpr int kIdPlayPause = 100;
-constexpr int kIdSetIn = 101;
-constexpr int kIdSetOut = 102;
-constexpr int kIdCancelExport = 103;
-constexpr int kIdCopy = 104;
 
 constexpr DWORD kWindowStyle = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
 // Per-control buffers alone leave holes while USER32 relocates a child tree.
@@ -203,7 +198,7 @@ bool TrimWindow::Open(const std::wstring& source_path,
     }
 
     visible_ = true;
-    ::SetTimer(hwnd_, kStatusTimerId, kStatusTimerIntervalMs, nullptr);
+    ::SetTimer(hwnd_, kTrimStatusTimer, kStatusTimerIntervalMs, nullptr);
     ::ShowWindow(hwnd_, SW_SHOW);
     ::SetForegroundWindow(hwnd_);
     ::SetFocus(play_pause_);
@@ -313,7 +308,7 @@ void TrimWindow::Hide() {
     closing_ = true;
     visible_ = false;
     if (hwnd_ != nullptr) {
-        ::KillTimer(hwnd_, kStatusTimerId);
+        ::KillTimer(hwnd_, kTrimStatusTimer);
         if (::GetCapture() == timeline_) { ::ReleaseCapture(); }
         timeline_drag_ = TimelineDrag::None;
         timeline_seek_position_.reset();
@@ -327,7 +322,7 @@ void TrimWindow::ReleaseMedia() {
         preview_.reset();
     }
     if (hwnd_ != nullptr) {
-        ::KillTimer(hwnd_, kStatusTimerId);
+        ::KillTimer(hwnd_, kTrimStatusTimer);
     }
 }
 
@@ -338,7 +333,7 @@ void TrimWindow::Destroy() {
     ReleaseMedia();
     timeline_accessibility_.reset();
     if (hwnd_ != nullptr) {
-        ::KillTimer(hwnd_, kStatusTimerId);
+        ::KillTimer(hwnd_, kTrimStatusTimer);
         ::SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
         ::DestroyWindow(hwnd_);
         hwnd_ = nullptr;
@@ -467,7 +462,7 @@ LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
             if (!closing_) { RequestClose(); }
             return 0;
         case WM_TIMER:
-            if (wparam == kStatusTimerId && !closing_) {
+            if (wparam == kTrimStatusTimer && !closing_) {
                 if (exporting_ && !::IsWindowVisible(progress_) && ::GetTickCount64() >= export_indicator_due_ms_) { UpdateStatusLayout(); }
                 UpdatePosition();
                 if (!closing_ && callbacks_.on_status_tick) {
@@ -736,19 +731,19 @@ bool TrimWindow::CreateControls() {
         WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 1, 1, hwnd_, nullptr,
         ::GetModuleHandleW(nullptr), this);
     play_pause_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_PLAY_BUTTON),
-                                WS_TABSTOP | BS_PUSHBUTTON, kIdPlayPause);
+                                WS_TABSTOP | BS_PUSHBUTTON, kTrimPlayPause);
     set_in_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SET_IN_BUTTON),
-                            WS_TABSTOP | BS_PUSHBUTTON, kIdSetIn);
+                            WS_TABSTOP | BS_PUSHBUTTON, kTrimSetIn);
     set_out_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SET_OUT_BUTTON),
-                             WS_TABSTOP | BS_PUSHBUTTON, kIdSetOut);
+                             WS_TABSTOP | BS_PUSHBUTTON, kTrimSetOut);
     save_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SAVE_BUTTON),
                           WS_TABSTOP | BS_DEFPUSHBUTTON, IDOK);
     copy_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_COPY_BUTTON),
-                          WS_TABSTOP | BS_PUSHBUTTON, kIdCopy);
+                          WS_TABSTOP | BS_PUSHBUTTON, kTrimCopy);
     cancel_export_ = CreateControl(L"BUTTON",
                                    strings::Get(IDS_TRIM_CANCEL_EXPORT_BUTTON),
                                    WS_TABSTOP | BS_PUSHBUTTON,
-                                   kIdCancelExport);
+                                   kTrimCancelExport);
     // The same cell either way: a recording is discarded, an opened video is
     // only closed and never deleted (ADR-040).
     discard_ = CreateControl(L"BUTTON",
@@ -1021,22 +1016,22 @@ void TrimWindow::UpdateEnabledState() {
 
 void TrimWindow::HandleCommand(int identifier) {
     switch (identifier) {
-        case kIdPlayPause:
+        case kTrimPlayPause:
             TogglePlayback();
             break;
-        case kIdSetIn:
+        case kTrimSetIn:
             SetInFromCurrent();
             break;
-        case kIdSetOut:
+        case kTrimSetOut:
             SetOutFromCurrent();
             break;
         case IDOK:
             BeginSave();
             break;
-        case kIdCopy:
+        case kTrimCopy:
             BeginCopy();
             break;
-        case kIdCancelExport:
+        case kTrimCancelExport:
             if (exporting_ && !cancelling_ && callbacks_.on_cancel_export) {
                 cancelling_ = true;
                 SetExporting(true, true);

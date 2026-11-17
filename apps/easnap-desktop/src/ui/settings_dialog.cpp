@@ -16,7 +16,6 @@
 namespace easnap::ui {
 namespace {
 
-constexpr UINT_PTR kShortcutSubclass = 0xEA70;
 constexpr int kDialogWidth = 600;   // DIP
 constexpr int kMargin = 24;
 constexpr int kLabelWidth = 204;
@@ -199,7 +198,7 @@ struct Dialog {
         HWND shortcut = make(L"BUTTON", L"", WS_TABSTOP | BS_PUSHBUTTON, kSettingsShortcut, Dip(kFieldLeft), y, field_width,
                              Dip(kRowHeight));
         ok = ok && StyleButton(shortcut) &&
-             ::SetWindowSubclass(shortcut, ShortcutProc, kShortcutSubclass, reinterpret_cast<DWORD_PTR>(this)) != FALSE;
+             ::SetWindowSubclass(shortcut, ShortcutProc, kShortcutFieldSubclass, reinterpret_cast<DWORD_PTR>(this)) != FALSE;
         y += Dip(kRowHeight + 2);
         // Two lines: the instruction while a shortcut is awaited, or why one was refused.
         HWND hint = make(L"STATIC", L"", SS_LEFT | SS_NOPREFIX, kSettingsShortcutHint, Dip(kFieldLeft), y, field_width,

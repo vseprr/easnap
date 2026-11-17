@@ -43,6 +43,7 @@ set(EASNAP_SOURCES
     src/app/app_settings.cpp
     src/app/session_state.h
     src/app/session_state.cpp
+    src/ui/control_ids.h
     src/ui/ui_theme.h
     src/ui/ui_theme.cpp
     src/ui/native_controls.cpp

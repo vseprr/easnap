@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/control_ids.h"
 #include "ui/paint_buffer.h"
 
 #include "ui/ui_theme.h"
@@ -99,15 +100,14 @@ public:
     TypingPointer(const TypingPointer&) = delete;
     TypingPointer& operator=(const TypingPointer&) = delete;
     /// After a typed character: hides the pointer if the setting asks for it.
-    /// `timer_owner` receives kTimerId to watch for movement.
+    /// `timer_owner` receives kTypingPointerTimer to watch for movement.
     void Typed(HWND timer_owner);
-    /// From the owner's WM_TIMER with kTimerId: shows the pointer once it moved.
+    /// From the owner's WM_TIMER with kTypingPointerTimer: shows the pointer once it moved.
     void Poll();
     /// Shows the pointer again: typing ended, the input lost the focus or its
     /// window closes.
     void Restore();
     [[nodiscard]] bool hidden() const noexcept { return hidden_; }
-    static constexpr UINT_PTR kTimerId = 0xEA70;
 
 private:
     HWND timer_owner_{};
@@ -159,9 +159,6 @@ void PaintNativePanel(HWND window, float scale, bool grip = false);
 [[nodiscard]] LRESULT ControlBackground(WPARAM dc, COLORREF text);
 [[nodiscard]] bool ActivateFocusedButton(MSG& message, HWND parent);
 
-inline constexpr UINT kAppearanceLight = 41001;
-inline constexpr UINT kAppearanceDark = 41002;
-inline constexpr UINT kAppearanceSystem = 41003;
 /// Same as Windows, Light, Dark. `follows_system` marks the first one.
 [[nodiscard]] HMENU CreateAppearanceMenu(bool follows_system);
 

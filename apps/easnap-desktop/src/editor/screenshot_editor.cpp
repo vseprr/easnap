@@ -4,6 +4,7 @@
 #include "ui/island_layout.h"
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
+#include "ui/control_ids.h"
 #include "ui/native_controls.h"
 #include <commctrl.h>
 
@@ -64,10 +65,6 @@ enum CommandId {
     kCommandScrollshot,
     kCommandPin,
 };
-
-/// Tooltip tool on the island itself: a disabled button receives no mouse
-/// messages, so its reason for being disabled is shown through the parent.
-constexpr UINT_PTR kScrollshotDisabledTip = 0xEA70;
 
 constexpr std::array<D2D1_COLOR_F, 8> kPaletteColors = {{
     {0.898f, 0.243f, 0.259f, 1.0f},  // red
@@ -719,7 +716,7 @@ bool ScreenshotEditor::CreateToolbarControls() {
                 style.icon = tools[static_cast<size_t>(item.tool)];
                 break;
             case ToolbarItem::Kind::Color:
-                name = strings::Get(colors[static_cast<size_t>(item.identifier - 2100)]);
+                name = strings::Get(colors[static_cast<size_t>(kColorButtons.Index(item.identifier))]);
                 style.swatch = true;
                 style.content_color = RGB(static_cast<BYTE>(std::lround(item.color.r * 255)),
                                           static_cast<BYTE>(std::lround(item.color.g * 255)), static_cast<BYTE>(std::lround(item.color.b * 255)));
@@ -727,7 +724,7 @@ bool ScreenshotEditor::CreateToolbarControls() {
             case ToolbarItem::Kind::Thickness:
                 name = strings::Format(IDS_EDITOR_THICKNESS_BUTTON, {std::to_wstring(static_cast<int>(item.thickness))});
                 style.sample = 2;
-                style.sample_size = kBrushSizeOptions[static_cast<size_t>(item.identifier - 2200)];
+                style.sample_size = kBrushSizeOptions[static_cast<size_t>(kThicknessButtons.Index(item.identifier))];
                 break;
             case ToolbarItem::Kind::BrushSize:
                 name = strings::Format(IDS_EDITOR_BRUSH_SIZE_BUTTON, {std::to_wstring(static_cast<int>(item.brush_size))});
@@ -736,19 +733,19 @@ bool ScreenshotEditor::CreateToolbarControls() {
                 break;
             case ToolbarItem::Kind::Option:
                 style.segmented = true;
-                if (item.identifier == 2500) { style.icon = Icon::Text; }
-                if (item.identifier == 2501) { style.icon = Icon::TextFill; }
-                if (item.identifier == 2502) { style.icon = Icon::TextOutline; }
-                if (item.identifier == 2510) { style.icon = Icon::Droplet; }
-                if (item.identifier == 2511) { style.icon = Icon::Mosaic; }
-                if (item.identifier == 2520) {
+                if (item.identifier == kTextPlainButton) { style.icon = Icon::Text; }
+                if (item.identifier == kTextFilledButton) { style.icon = Icon::TextFill; }
+                if (item.identifier == kTextOutlinedButton) { style.icon = Icon::TextOutline; }
+                if (item.identifier == kBlurButton) { style.icon = Icon::Droplet; }
+                if (item.identifier == kPixelateButton) { style.icon = Icon::Mosaic; }
+                if (item.identifier == kBrushMethodButton) {
                     style.icon = Icon::Hand;
                     style.dropdown = true;
                 }
-                if (item.identifier == 2521) { style.icon = Icon::Region; }
-                if (item.identifier == 2530) { style.icon = Icon::Rectangle; }
-                if (item.identifier == 2531) { style.icon = Icon::Ellipse; }
-                if (item.identifier == 2532) { style.icon = Icon::RoundedRectangle; }
+                if (item.identifier == kRegionMethodButton) { style.icon = Icon::Region; }
+                if (item.identifier == kSpotlightRectangleButton) { style.icon = Icon::Rectangle; }
+                if (item.identifier == kSpotlightEllipseButton) { style.icon = Icon::Ellipse; }
+                if (item.identifier == kSpotlightRoundedButton) { style.icon = Icon::RoundedRectangle; }
                 break;
             case ToolbarItem::Kind::Command:
                 style.icon_only = true;
@@ -791,15 +788,15 @@ bool ScreenshotEditor::CreateToolbarControls() {
                 break;
         }
         const DWORD type = item.kind == ToolbarItem::Kind::Command ? BS_PUSHBUTTON : BS_RADIOBUTTON | BS_PUSHLIKE;
-        const bool first = item.identifier == 2000 || item.identifier == 2100 || item.identifier == 2200 ||
-                           item.identifier == 2300 || item.identifier == 2401 ||
-                           item.identifier == 2400 + kCommandScrollshot;
+        const bool first = item.identifier == kToolButtons.first || item.identifier == kColorButtons.first ||
+                           item.identifier == kThicknessButtons.first || item.identifier == kBrushSizeButtons.first ||
+                           item.identifier == CommandButton(kCommandUndo) || item.identifier == CommandButton(kCommandScrollshot);
         const HWND parent = item.kind == ToolbarItem::Kind::Tool || item.kind == ToolbarItem::Kind::Command ? hwnd_ : item.kind == ToolbarItem::Kind::BrushSize ? brush_popup_
                                                                                                                                                                 : context_;
         HWND button = ::CreateWindowExW(0, L"BUTTON", name.c_str(), WS_CHILD | WS_TABSTOP | type | (first ? WS_GROUP : 0),
                                         0, 0, 1, 1, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(item.identifier)), ::GetModuleHandleW(nullptr), nullptr);
         if (!button || !StyleButton(button, style) ||
-            !::SetWindowSubclass(button, ToolbarButtonProc, 1, reinterpret_cast<DWORD_PTR>(this))) { return false; }
+            !::SetWindowSubclass(button, ToolbarButtonProc, kToolbarButtonSubclass, reinterpret_cast<DWORD_PTR>(this))) { return false; }
         if (tooltip_) {
             TOOLINFOW info{sizeof(info)};
             info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
@@ -822,7 +819,7 @@ bool ScreenshotEditor::CreateToolbarControls() {
 }
 
 HWND ScreenshotEditor::Control(int id) const {
-    if (id == 2605) { return context_ ? ::GetDlgItem(::GetDlgItem(context_, 2604), id) : nullptr; }
+    if (id == kWatermarkClearButton) { return context_ ? ::GetDlgItem(::GetDlgItem(context_, kWatermarkTextEdit), id) : nullptr; }
     if (const auto child = ::GetDlgItem(hwnd_, id)) { return child; }
     if (const auto child = context_ ? ::GetDlgItem(context_, id) : nullptr) { return child; }
     return brush_popup_ ? ::GetDlgItem(brush_popup_, id) : nullptr;
@@ -891,27 +888,27 @@ void ScreenshotEditor::CreateContextControls() {
         }
         return child;
     };
-    HWND font = make(L"COMBOBOX", strings::Get(IDS_EDITOR_FONT_SIZE_NAME), CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS, 2600);
+    HWND font = make(L"COMBOBOX", strings::Get(IDS_EDITOR_FONT_SIZE_NAME), CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS, kFontSizeCombo);
     if (font) {
         for (const wchar_t* value : {L"12 pt", L"16 pt", L"24 pt", L"36 pt", L"48 pt", L"60 pt", L"72 pt", L"96 pt"}) { ::SendMessageW(font, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value)); }
         ::SendMessageW(font, CB_LIMITTEXT, 10, 0);
         static_cast<void>(ui::StyleInput(font));
         ui::SetAccessibleName(font, strings::Get(IDS_EDITOR_FONT_SIZE_NAME));
     }
-    for (int id : {2601, 2602, 2603}) {
-        HWND slider = make(TRACKBAR_CLASSW, strings::Get(id == 2601 ? IDS_EDITOR_EFFECT_STRENGTH_NAME : id == 2602 ? IDS_EDITOR_OPACITY_NAME
-                                                                                                                   : IDS_EDITOR_WATERMARK_SIZE_NAME),
+    for (int id : {kEffectStrengthSlider, kOpacitySlider, kFontSizeSlider}) {
+        HWND slider = make(TRACKBAR_CLASSW, strings::Get(id == kEffectStrengthSlider ? IDS_EDITOR_EFFECT_STRENGTH_NAME : id == kOpacitySlider ? IDS_EDITOR_OPACITY_NAME
+                                                                                                                                              : IDS_EDITOR_WATERMARK_SIZE_NAME),
                            TBS_HORZ | TBS_NOTICKS, id);
-        ::SendMessageW(slider, TBM_SETRANGE, TRUE, MAKELPARAM(id == 2603 ? 8 : 0, id == 2603 ? 96 : 100));
+        ::SendMessageW(slider, TBM_SETRANGE, TRUE, MAKELPARAM(id == kFontSizeSlider ? 8 : 0, id == kFontSizeSlider ? 96 : 100));
         ::SendMessageW(slider, TBM_SETPAGESIZE, 0, 10);
         static_cast<void>(ui::StyleSlider(slider));
     }
-    HWND text = make(L"EDIT", L"", ES_AUTOHSCROLL, 2604);
+    HWND text = make(L"EDIT", L"", ES_AUTOHSCROLL, kWatermarkTextEdit);
     ::SendMessageW(text, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(strings::Get(IDS_EDITOR_WATERMARK_TEXT_CUE)));
     ::SendMessageW(text, EM_SETLIMITTEXT, 16, 0);
     static_cast<void>(ui::StyleInput(text));
     ui::SetAccessibleName(text, strings::Get(IDS_EDITOR_WATERMARK_TEXT_NAME));
-    HWND clear = make(L"BUTTON", strings::Get(IDS_EDITOR_WATERMARK_CLEAR_BUTTON), BS_PUSHBUTTON, 2605);
+    HWND clear = make(L"BUTTON", strings::Get(IDS_EDITOR_WATERMARK_CLEAR_BUTTON), BS_PUSHBUTTON, kWatermarkClearButton);
     ui::ButtonStyle clear_style;
     clear_style.icon = ui::Icon::Discard;
     clear_style.icon_only = true;
@@ -922,10 +919,10 @@ void ScreenshotEditor::CreateContextControls() {
     ::SetWindowSubclass(clear, PropertyProc, 1, reinterpret_cast<DWORD_PTR>(this));
     ::SetParent(clear, text);
     ::SetWindowLongPtrW(text, GWL_STYLE, ::GetWindowLongPtrW(text, GWL_STYLE) | WS_CLIPCHILDREN);
-    for (int id : {2611, 2612, 2613}) { make(L"STATIC", L"", SS_CENTERIMAGE, id); }
+    for (int id : {kEffectStrengthValue, kOpacityValue, kFontSizeValue}) { make(L"STATIC", L"", SS_CENTERIMAGE, id); }
 }
 void ScreenshotEditor::SyncWatermarkClear() {
-    const HWND text = Control(2604), clear = Control(2605);
+    const HWND text = Control(kWatermarkTextEdit), clear = Control(kWatermarkClearButton);
     if (!text || !clear) { return; }
     RECT field{};
     ::GetWindowRect(text, &field);
@@ -938,9 +935,9 @@ void ScreenshotEditor::SyncWatermarkClear() {
     if (shown != show) {
         ::ShowWindow(clear, show ? SW_SHOWNOACTIVATE : SW_HIDE);
         if (show) {
-            ::SetTimer(context_, 0xEA63, 40, nullptr);
+            ::SetTimer(context_, kWatermarkClearHoverTimer, 40, nullptr);
         } else {
-            ::KillTimer(context_, 0xEA63);
+            ::KillTimer(context_, kWatermarkClearHoverTimer);
         }
     }
 }
@@ -951,14 +948,14 @@ LRESULT CALLBACK ScreenshotEditor::PropertyProc(HWND hwnd, UINT message, WPARAM 
         return ::DefSubclassProc(hwnd, message, wparam, lparam);
     }
     const int control = ::GetDlgCtrlID(hwnd);
-    if (control == 2604 && message == WM_COMMAND && LOWORD(wparam) == 2605) { return self->HandleMessage(self->context_, message, wparam, lparam); }
-    const bool clear_hover = (control == 2604 || control == 2605) &&
+    if (control == kWatermarkTextEdit && message == WM_COMMAND && LOWORD(wparam) == kWatermarkClearButton) { return self->HandleMessage(self->context_, message, wparam, lparam); }
+    const bool clear_hover = (control == kWatermarkTextEdit || control == kWatermarkClearButton) &&
                              (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_SETFOCUS || message == WM_KILLFOCUS);
     if (clear_hover && message == WM_MOUSEMOVE) {
         TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, hwnd, 0};
         ::TrackMouseEvent(&track);
     }
-    const bool slider = control >= 2601 && control <= 2603;
+    const bool slider = kPropertySliders.Contains(control);
     if (!self->syncing_context_ && ((slider && (message == WM_LBUTTONDOWN || message == WM_KEYDOWN)) || (!slider && message == WM_SETFOCUS))) {
         // Only a transaction opened here is committed here: a text edit or a
         // transform that is already open keeps its own undo boundary.
@@ -1004,21 +1001,21 @@ void ScreenshotEditor::SyncContext(bool layout) {
             ::GetWindowRect(child, &old);
             ::MapWindowPoints(nullptr, context_, reinterpret_cast<POINT*>(&old), 2);
             const RECT next{static_cast<LONG>(x * scale_), static_cast<LONG>(y * scale_), static_cast<LONG>((x + width) * scale_), static_cast<LONG>((y + height) * scale_)};
-            if (old.left != next.left || old.top != next.top || old.right != next.right || (id != 2600 && old.bottom != next.bottom)) {
+            if (old.left != next.left || old.top != next.top || old.right != next.right || (id != kFontSizeCombo && old.bottom != next.bottom)) {
                 ::SetWindowPos(child, nullptr, next.left, next.top, next.right - next.left, next.bottom - next.top, SWP_NOZORDER | SWP_NOACTIVATE);
             }
         }
         if (reinterpret_cast<HFONT>(::SendMessageW(child, WM_GETFONT, 0, 0)) != toolbar_font_) { ::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(toolbar_font_), TRUE); }
     };
     if (layout)
-        for (int id : {2600, 2601, 2602, 2603, 2604, 2611, 2612, 2613}) {
+        for (int id : {kFontSizeCombo, kEffectStrengthSlider, kOpacitySlider, kFontSizeSlider, kWatermarkTextEdit, kEffectStrengthValue, kOpacityValue, kFontSizeValue}) {
             const auto it = std::find_if(context_fields_.begin(), context_fields_.end(), [id](const auto& field) { return field.first == id; });
             if (it == context_fields_.end()) {
                 position(id, false, 0, 0, 1, 1);
                 continue;
             }
             const auto r = it->second;
-            position(id, true, r.left / scale_, r.top / scale_, (r.right - r.left) / scale_, id == 2600 ? 280.0f : (r.bottom - r.top) / scale_);
+            position(id, true, r.left / scale_, r.top / scale_, (r.right - r.left) / scale_, id == kFontSizeCombo ? 280.0f : (r.bottom - r.top) / scale_);
         }
     const auto label = [&](int id, const wchar_t* value) {
         wchar_t old[256]{};
@@ -1028,45 +1025,45 @@ void ScreenshotEditor::SyncContext(bool layout) {
     const auto slider = [&](int id, float value) {
         if (::SendMessageW(Control(id), TBM_GETPOS, 0, 0) != static_cast<LPARAM>(value)) { ::SendMessageW(Control(id), TBM_SETPOS, TRUE, static_cast<LPARAM>(value)); }
     };
-    if (text && ::GetFocus() != Control(2600) && !::IsChild(Control(2600), ::GetFocus())) {
+    if (text && ::GetFocus() != Control(kFontSizeCombo) && !::IsChild(Control(kFontSizeCombo), ::GetFocus())) {
         wchar_t value[32]{};
         ::swprintf_s(value, L"%g pt", static_cast<double>(style.font_size));
-        label(2600, value);
+        label(kFontSizeCombo, value);
     }
     if (watermark) {
         const auto& annotations = document_.annotations();
         const auto found = std::find_if(annotations.begin(), annotations.end(), [](const auto& a) { return a.tool == ToolId::Watermark; });
         // Undo may clear selection while the input still owns focus. Always
         // synchronize from the document; unchanged typing never resets EDIT.
-        label(2604, found != annotations.end() ? found->text.c_str() : L"");
+        label(kWatermarkTextEdit, found != annotations.end() ? found->text.c_str() : L"");
     }
     if (watermark) {
         RECT field{};
-        ::GetClientRect(Control(2604), &field);
+        ::GetClientRect(Control(kWatermarkTextEdit), &field);
         const LONG size = ui::theme::Scaled(32, scale_), inset = ui::theme::Scaled(2, scale_);
         // Moved and the margin set only when they change: this runs on every
         // key, and a window moved under the pointer makes Windows re-send it.
         const RECT place{field.right - size - inset, field.top + (field.bottom - field.top - size) / 2,
                          field.right - inset, field.top + (field.bottom - field.top - size) / 2 + size};
         RECT current{};
-        ::GetWindowRect(Control(2605), &current);
-        ::MapWindowPoints(nullptr, Control(2604), reinterpret_cast<POINT*>(&current), 2);
+        ::GetWindowRect(Control(kWatermarkClearButton), &current);
+        ::MapWindowPoints(nullptr, Control(kWatermarkTextEdit), reinterpret_cast<POINT*>(&current), 2);
         if (::EqualRect(&current, &place) == FALSE) {
-            ::SetWindowPos(Control(2605), HWND_TOP, place.left, place.top, size, size, SWP_NOACTIVATE);
+            ::SetWindowPos(Control(kWatermarkClearButton), HWND_TOP, place.left, place.top, size, size, SWP_NOACTIVATE);
         }
         const LONG margin = size + inset * 2;
-        if (static_cast<LONG>(HIWORD(::SendMessageW(Control(2604), EM_GETMARGINS, 0, 0))) != margin) {
-            ::SendMessageW(Control(2604), EM_SETMARGINS, EC_RIGHTMARGIN, MAKELPARAM(0, margin));
+        if (static_cast<LONG>(HIWORD(::SendMessageW(Control(kWatermarkTextEdit), EM_GETMARGINS, 0, 0))) != margin) {
+            ::SendMessageW(Control(kWatermarkTextEdit), EM_SETMARGINS, EC_RIGHTMARGIN, MAKELPARAM(0, margin));
         }
     }
     SyncWatermarkClear();
-    slider(2601, style.strength);
-    slider(2602, style.opacity);
-    slider(2603, style.font_size);
+    slider(kEffectStrengthSlider, style.strength);
+    slider(kOpacitySlider, style.opacity);
+    slider(kFontSizeSlider, style.font_size);
     const std::wstring strength = strings::Format(style.effect == EffectMode::Blur ? IDS_EDITOR_BLUR_INTENSITY_VALUE : IDS_EDITOR_BLOCK_SIZE_VALUE, {std::to_wstring(static_cast<int>(style.effect == EffectMode::Blur ? style.strength : 2 + style.strength * 0.7f))});
-    label(2611, strength.c_str());
-    label(2612, strings::Format(IDS_EDITOR_OPACITY_VALUE, {std::to_wstring(static_cast<int>(style.opacity))}).c_str());
-    label(2613, strings::Format(IDS_EDITOR_SIZE_VALUE, {std::to_wstring(static_cast<int>(style.font_size))}).c_str());
+    label(kEffectStrengthValue, strength.c_str());
+    label(kOpacityValue, strings::Format(IDS_EDITOR_OPACITY_VALUE, {std::to_wstring(static_cast<int>(style.opacity))}).c_str());
+    label(kFontSizeValue, strings::Format(IDS_EDITOR_SIZE_VALUE, {std::to_wstring(static_cast<int>(style.font_size))}).c_str());
     syncing_context_ = false;
 }
 SIZE ScreenshotEditor::island_group_size() const noexcept {
@@ -1114,10 +1111,10 @@ void ScreenshotEditor::PlaceContext(bool follow_frame) {
     if (show && !::IsWindowVisible(context_) && ui::theme::AnimationsEnabled()) {
         context_fade_started_ = ::GetTickCount64();
         ::SetLayeredWindowAttributes(context_, 0, 0, LWA_ALPHA);
-        ::SetTimer(context_, 0xEA61, 15, nullptr);
+        ::SetTimer(context_, kContextFadeTimer, 15, nullptr);
     }
     if (!show) {
-        ::KillTimer(context_, 0xEA61);
+        ::KillTimer(context_, kContextFadeTimer);
         context_fade_started_ = 0;
         ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
     }
@@ -1136,7 +1133,7 @@ void ScreenshotEditor::ShowBrushPopup(bool show) {
             return;
         }
         RECT anchor{}, context{};
-        ::GetWindowRect(Control(2520), &anchor);
+        ::GetWindowRect(Control(kBrushMethodButton), &anchor);
         ::GetWindowRect(context_, &context);
         const LONG width = ui::theme::Scaled(132, scale_), height = ui::theme::Scaled(kToolbarRowHeight + 6, scale_), gap = ui::theme::Scaled(8, scale_);
         const auto work = platform::MonitorForRect(anchor).work_area;
@@ -1151,18 +1148,18 @@ void ScreenshotEditor::ShowBrushPopup(bool show) {
         if (shape && pointer) { ::CombineRgn(shape, shape, pointer, RGN_OR); }
         if (pointer) { ::DeleteObject(pointer); }
         if (shape && !::SetWindowRgn(brush_popup_, shape, FALSE)) { ::DeleteObject(shape); }
-        for (int id = 2300; id < 2303; ++id) {
+        for (int id = kBrushSizeButtons.first; kBrushSizeButtons.Contains(id); ++id) {
             const auto item = std::find_if(toolbar_.begin(), toolbar_.end(), [id](const auto& value) { return value.identifier == id; });
             if (item != toolbar_.end()) { ::SetWindowPos(Control(id), nullptr, static_cast<int>(item->rect.left), static_cast<int>(item->rect.top), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE); }
         }
         ::SetWindowPos(brush_popup_, HWND_TOPMOST, r.left, r.top, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
         ::InvalidateRect(brush_popup_, nullptr, FALSE);
         brush_leave_started_ = 0;
-        ::SetTimer(context_, 0xEA62, 30, nullptr);
+        ::SetTimer(context_, kBrushPopupHoverTimer, 30, nullptr);
     } else {
         brush_popup_open_ = false;
         ::ShowWindow(brush_popup_, SW_HIDE);
-        ::KillTimer(context_, 0xEA62);
+        ::KillTimer(context_, kBrushPopupHoverTimer);
         brush_hover_started_ = brush_leave_started_ = 0;
     }
 }
@@ -1196,15 +1193,15 @@ LRESULT CALLBACK ScreenshotEditor::ToolbarButtonProc(HWND hwnd, UINT message, WP
         return ::DefSubclassProc(hwnd, message, wparam, lparam);
     }
     if (ui::ConsumePopupInput(message, wparam)) { return 0; }
-    if (message == WM_MOUSEMOVE && ::GetDlgCtrlID(hwnd) == 2520) {
+    if (message == WM_MOUSEMOVE && ::GetDlgCtrlID(hwnd) == kBrushMethodButton) {
         if (!self->brush_hover_started_) { self->brush_hover_started_ = ::GetTickCount64(); }
-        ::SetTimer(self->context_, 0xEA62, 30, nullptr);
+        ::SetTimer(self->context_, kBrushPopupHoverTimer, 30, nullptr);
     }
     // Every other control fixes the screenshot on its first press. Cancel,
     // the theme switch and Scrollshot must not acquire an image.
     if ((message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) &&
-        ::GetDlgCtrlID(hwnd) != 2400 + kCommandCancel && ::GetDlgCtrlID(hwnd) != 2400 + kCommandTheme &&
-        ::GetDlgCtrlID(hwnd) != 2400 + kCommandScrollshot && !self->FeatureUsed()) { return 0; }
+        ::GetDlgCtrlID(hwnd) != CommandButton(kCommandCancel) && ::GetDlgCtrlID(hwnd) != CommandButton(kCommandTheme) &&
+        ::GetDlgCtrlID(hwnd) != CommandButton(kCommandScrollshot) && !self->FeatureUsed()) { return 0; }
     if (message == WM_KEYDOWN && (wparam == VK_ESCAPE || (::GetKeyState(VK_CONTROL) & 0x8000) != 0)) {
         return self->HandleMessage(self->hwnd_, message, wparam, lparam);
     }
@@ -1237,10 +1234,10 @@ void ScreenshotEditor::SyncToolbarControls() const {
             case ToolbarItem::Kind::Thickness: selected = item.thickness == style.thickness; break;
             case ToolbarItem::Kind::BrushSize: selected = item.brush_size == style.brush_size; break;
             case ToolbarItem::Kind::Option:
-                selected = (item.identifier >= 2500 && item.identifier <= 2502 && static_cast<int>(style.text_mode) == item.identifier - 2500) ||
-                           (item.identifier >= 2510 && item.identifier <= 2511 && static_cast<int>(style.effect) == item.identifier - 2510) ||
-                           (item.identifier >= 2520 && item.identifier <= 2521 && static_cast<int>(style.method) == item.identifier - 2520) ||
-                           (item.identifier >= 2530 && item.identifier <= 2532 && static_cast<int>(style.shape) == item.identifier - 2530);
+                selected = (kTextModeButtons.Contains(item.identifier) && static_cast<int>(style.text_mode) == kTextModeButtons.Index(item.identifier)) ||
+                           (kEffectButtons.Contains(item.identifier) && static_cast<int>(style.effect) == kEffectButtons.Index(item.identifier)) ||
+                           (kEffectMethodButtons.Contains(item.identifier) && static_cast<int>(style.method) == kEffectMethodButtons.Index(item.identifier)) ||
+                           (kSpotlightShapeButtons.Contains(item.identifier) && static_cast<int>(style.shape) == kSpotlightShapeButtons.Index(item.identifier));
                 break;
             case ToolbarItem::Kind::Command:
                 if (item.command == kCommandUndo || item.command == kCommandClear) { enabled = document_.CanUndo(); }
@@ -1292,8 +1289,8 @@ bool ScreenshotEditor::ProcessDialogMessage(MSG& message) const {
         if (parent && (message.hwnd == parent || ::IsChild(parent, message.hwnd))) {
             if (parent == text_host_) { return false; } // EDIT owns multiline Return, arrows and clipboard keys.
             if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
-                if (::SendMessageW(Control(2600), CB_GETDROPPEDSTATE, 0, 0)) {
-                    ::SendMessageW(Control(2600), CB_SHOWDROPDOWN, FALSE, 0);
+                if (::SendMessageW(Control(kFontSizeCombo), CB_GETDROPPEDSTATE, 0, 0)) {
+                    ::SendMessageW(Control(kFontSizeCombo), CB_SHOWDROPDOWN, FALSE, 0);
                 } else {
                     ::SendMessageW(hwnd_, WM_KEYDOWN, VK_ESCAPE, message.lParam);
                 }
@@ -1336,7 +1333,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         }
         ToolbarItem item;
         item.tool = entry.tool;
-        item.identifier = 2000 + static_cast<int>(entry.tool);
+        item.identifier = kToolButtons.Id(static_cast<int>(entry.tool));
         item.label = item.tooltip = strings::Get(entry.name);
         item.rect = place(kToolButton * s);
         toolbar_.push_back(item);
@@ -1351,7 +1348,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         ToolbarItem item;
         item.kind = ToolbarItem::Kind::Command;
         item.command = kCommandScrollshot;
-        item.identifier = 2400 + kCommandScrollshot;
+        item.identifier = CommandButton(kCommandScrollshot);
         item.label = item.tooltip = strings::Get(IDS_SCROLLSHOT_TOOL);
         item.rect = place(kCommandButton * s);
         toolbar_.push_back(item);
@@ -1368,7 +1365,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         ToolbarItem item;
         item.kind = ToolbarItem::Kind::Command;
         item.command = entry.id;
-        item.identifier = 2400 + entry.id;
+        item.identifier = CommandButton(entry.id);
         item.label = item.tooltip = entry.name;
         item.rect = place(kCommandButton * s);
         toolbar_.push_back(item);
@@ -1412,33 +1409,33 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             }
             items.push_back(item);
         };
-        option(2500, IDS_EDITOR_OPTION_PLAIN_TEXT, text);
-        option(2501, IDS_EDITOR_OPTION_FILLED_TEXT, text);
-        option(2502, IDS_EDITOR_OPTION_OUTLINED_TEXT, text);
-        option(2511, IDS_EDITOR_OPTION_PIXELATE, effect);
-        option(2510, IDS_EDITOR_OPTION_BLUR, effect);
+        option(kTextPlainButton, IDS_EDITOR_OPTION_PLAIN_TEXT, text);
+        option(kTextFilledButton, IDS_EDITOR_OPTION_FILLED_TEXT, text);
+        option(kTextOutlinedButton, IDS_EDITOR_OPTION_OUTLINED_TEXT, text);
+        option(kPixelateButton, IDS_EDITOR_OPTION_PIXELATE, effect);
+        option(kBlurButton, IDS_EDITOR_OPTION_BLUR, effect);
         if (effect) { separator(); }
-        option(2520, IDS_EDITOR_OPTION_BRUSH, effect, 48);
-        option(2521, IDS_EDITOR_OPTION_REGION, effect);
+        option(kBrushMethodButton, IDS_EDITOR_OPTION_BRUSH, effect, 48);
+        option(kRegionMethodButton, IDS_EDITOR_OPTION_REGION, effect);
         if (effect) {
             separator();
-            value_field(2611, 125, {strings::Format(IDS_EDITOR_BLUR_INTENSITY_VALUE, {L"100"}), strings::Format(IDS_EDITOR_BLOCK_SIZE_VALUE, {L"72"})});
-            field(2601, 155);
+            value_field(kEffectStrengthValue, 125, {strings::Format(IDS_EDITOR_BLUR_INTENSITY_VALUE, {L"100"}), strings::Format(IDS_EDITOR_BLOCK_SIZE_VALUE, {L"72"})});
+            field(kEffectStrengthSlider, 155);
         }
-        option(2530, IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE, spot);
-        option(2531, IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE, spot);
-        option(2532, IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED, spot);
+        option(kSpotlightRectangleButton, IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE, spot);
+        option(kSpotlightEllipseButton, IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE, spot);
+        option(kSpotlightRoundedButton, IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED, spot);
         if (spot) {
             separator();
-            value_field(2612, 110, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
-            field(2602, 155);
+            value_field(kOpacityValue, 110, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
+            field(kOpacitySlider, 155);
         }
         if (text || tag) {
-            field(2600, 96);
+            field(kFontSizeCombo, 96);
             separator();
         }
         if (watermark) {
-            field(2604, 140);
+            field(kWatermarkTextEdit, 140);
             separator();
         }
         const bool stroke = tool != ToolId::Pointer && !text && !tag && !effect && !spot && !watermark;
@@ -1446,7 +1443,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             ToolbarItem item;
             item.kind = ToolbarItem::Kind::Thickness;
             item.thickness = kThicknessOptions[i];
-            item.identifier = 2200 + static_cast<int>(i);
+            item.identifier = kThicknessButtons.Id(static_cast<int>(i));
             item.tooltip = L"Stroke width";
             item.shown = stroke;
             if (item.shown) {
@@ -1460,7 +1457,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             ToolbarItem item;
             item.kind = ToolbarItem::Kind::Color;
             item.color = kPaletteColors[i];
-            item.identifier = 2100 + static_cast<int>(i);
+            item.identifier = kColorButtons.Id(static_cast<int>(i));
             item.tooltip = L"Annotation color";
             item.shown = tool != ToolId::Pointer && !effect && !spot;
             if (item.shown) {
@@ -1471,17 +1468,17 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         }
         if (watermark) {
             separator();
-            value_field(2612, 85, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
-            field(2602, 100);
+            value_field(kOpacityValue, 85, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
+            field(kOpacitySlider, 100);
             separator();
-            value_field(2613, 65, {strings::Format(IDS_EDITOR_SIZE_VALUE, {L"96"})});
-            field(2603, 100);
+            value_field(kFontSizeValue, 65, {strings::Format(IDS_EDITOR_SIZE_VALUE, {L"96"})});
+            field(kFontSizeSlider, 100);
         }
         for (size_t i = 0; i < kBrushSizeOptions.size(); ++i) {
             ToolbarItem item;
             item.kind = ToolbarItem::Kind::BrushSize;
             item.brush_size = kBrushSizeOptions[i];
-            item.identifier = 2300 + static_cast<int>(i);
+            item.identifier = kBrushSizeButtons.Id(static_cast<int>(i));
             item.tooltip = L"Brush size";
             item.shown = true;
             const float left = pad + static_cast<float>(i) * (kToolButton + kItemGap) * s;
@@ -1663,7 +1660,7 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
         return false;
     }
     CreateContextControls();
-    if (!Control(2600) || !Control(2601) || !Control(2604)) {
+    if (!Control(kFontSizeCombo) || !Control(kEffectStrengthSlider) || !Control(kWatermarkTextEdit)) {
         Destroy();
         return false;
     }
@@ -2031,20 +2028,20 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         ::SetCursor(::LoadCursorW(nullptr, IDC_APPSTARTING));
         return TRUE;
     }
-    if (message == WM_TIMER && wparam == 0xEA63) {
+    if (message == WM_TIMER && wparam == kWatermarkClearHoverTimer) {
         SyncWatermarkClear();
         return 0;
     }
-    if (message == WM_TIMER && wparam == ui::TypingPointer::kTimerId) {
+    if (message == WM_TIMER && wparam == ui::kTypingPointerTimer) {
         typing_pointer_.Poll();
         return 0;
     }
-    if (message == WM_TIMER && wparam == 0xEA62) {
+    if (message == WM_TIMER && wparam == kBrushPopupHoverTimer) {
         POINT point{};
         ::GetCursorPos(&point);
         const auto over = [&](HWND window) { RECT r{}; ::GetWindowRect(window,&r); return ::IsWindowVisible(window) && ::PtInRect(&r,point); };
         const auto now = ::GetTickCount64();
-        const bool hand = over(Control(2520));
+        const bool hand = over(Control(kBrushMethodButton));
         if (hand || over(brush_popup_)) {
             brush_leave_started_ = 0;
             if (hand && brush_hover_started_ && now - brush_hover_started_ >= 350 && !::IsWindowVisible(brush_popup_)) { ShowBrushPopup(true); }
@@ -2055,11 +2052,11 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return 0;
     }
-    if (message == WM_TIMER && wparam == 0xEA61 && hwnd == context_) {
+    if (message == WM_TIMER && wparam == kContextFadeTimer && hwnd == context_) {
         const float progress = std::clamp(static_cast<float>(::GetTickCount64() - context_fade_started_) / 160.0f, 0.0f, 1.0f);
         ::SetLayeredWindowAttributes(context_, 0, static_cast<BYTE>(255 * progress), LWA_ALPHA);
         if (progress >= 1 || !ui::theme::AnimationsEnabled()) {
-            ::KillTimer(context_, 0xEA61);
+            ::KillTimer(context_, kContextFadeTimer);
             ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
         }
         return 0;
@@ -2099,9 +2096,9 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         const int id = ::GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
         auto value = ContextStyle();
         const float position = static_cast<float>(::SendMessageW(reinterpret_cast<HWND>(lparam), TBM_GETPOS, 0, 0));
-        if (id == 2601) { value.strength = position; }
-        if (id == 2602) { value.opacity = position; }
-        if (id == 2603) { value.font_size = position; }
+        if (id == kEffectStrengthSlider) { value.strength = position; }
+        if (id == kOpacitySlider) { value.opacity = position; }
+        if (id == kFontSizeSlider) { value.font_size = position; }
         ChangeStyle(value);
         if (LOWORD(wparam) == TB_ENDTRACK) { CommitContextTransaction(); }
         return 0;
@@ -2301,9 +2298,9 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
         RequestDiscard();
         return;
     }
-    if (id == 2600 && notification == CBN_DROPDOWN) {
+    if (id == kFontSizeCombo && notification == CBN_DROPDOWN) {
         COMBOBOXINFO info{sizeof(info)};
-        ::GetComboBoxInfo(Control(2600), &info);
+        ::GetComboBoxInfo(Control(kFontSizeCombo), &info);
         ::SetWindowLongPtrW(info.hwndList, GWL_STYLE, ::GetWindowLongPtrW(info.hwndList, GWL_STYLE) & ~WS_BORDER);
         ::SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE, ::GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
         ui::RoundWindow(info.hwndList);
@@ -2312,17 +2309,17 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
         static_cast<void>(ui::ExcludeFromCapture(info.hwndList));
         return;
     }
-    if (id == 2700 && notification == EN_CHANGE) {
+    if (id == kInlineTextEdit && notification == EN_CHANGE) {
         UpdateTextFromControl();
         return;
     }
     if (syncing_context_) { return; }
-    if (id == 2600 && (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS)) {
+    if (id == kFontSizeCombo && (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS)) {
         wchar_t text[32]{};
         if (notification == CBN_SELCHANGE) {
-            ::SendMessageW(Control(2600), CB_GETLBTEXT, ::SendMessageW(Control(2600), CB_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(text));
+            ::SendMessageW(Control(kFontSizeCombo), CB_GETLBTEXT, ::SendMessageW(Control(kFontSizeCombo), CB_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(text));
         } else {
-            ::GetWindowTextW(Control(2600), text, 32);
+            ::GetWindowTextW(Control(kFontSizeCombo), text, 32);
         }
         wchar_t* end = nullptr;
         const double size = std::wcstod(text, &end);
@@ -2340,16 +2337,16 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
         if (notification == CBN_KILLFOCUS) { CommitContextTransaction(); }
         return;
     }
-    if (id == 2605 && notification == BN_CLICKED) {
+    if (id == kWatermarkClearButton && notification == BN_CLICKED) {
         // The clearing is kept, with what the field held before it.
         document_.BeginTransaction();
-        ::SetWindowTextW(Control(2604), L"");
+        ::SetWindowTextW(Control(kWatermarkTextEdit), L"");
         document_.CommitTransaction();
         context_owns_transaction_ = false;
-        ::SetFocus(Control(2604));
+        ::SetFocus(Control(kWatermarkTextEdit));
         // A field that kept the focus gets no WM_SETFOCUS to open the next
         // edit: open it here, so that Esc reverts what is typed after this.
-        if (::GetFocus() == Control(2604) && !document_.in_transaction()) {
+        if (::GetFocus() == Control(kWatermarkTextEdit) && !document_.in_transaction()) {
             context_owns_transaction_ = true;
             document_.BeginTransaction();
         }
@@ -2357,17 +2354,17 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
         return;
     }
     // The island writing the document's text into the field changes nothing.
-    if (id == 2604 && notification == EN_CHANGE && !syncing_context_ && ContextTool() == ToolId::Watermark) {
+    if (id == kWatermarkTextEdit && notification == EN_CHANGE && !syncing_context_ && ContextTool() == ToolId::Watermark) {
         if (!FeatureUsed()) { return; }
-        const int length = ::GetWindowTextLengthW(Control(2604));
+        const int length = ::GetWindowTextLengthW(Control(kWatermarkTextEdit));
         std::wstring text(static_cast<size_t>(length) + 1, L'\0');
-        ::GetWindowTextW(Control(2604), text.data(), length + 1);
+        ::GetWindowTextW(Control(kWatermarkTextEdit), text.data(), length + 1);
         text.resize(std::min(length, 16));
         if (!text.empty() && text.back() >= 0xd800 && text.back() <= 0xdbff) { text.pop_back(); }
         if (text.size() != static_cast<size_t>(length)) {
             syncing_context_ = true;
-            ::SetWindowTextW(Control(2604), text.c_str());
-            ::SendMessageW(Control(2604), EM_SETSEL, text.size(), text.size());
+            ::SetWindowTextW(Control(kWatermarkTextEdit), text.c_str());
+            ::SendMessageW(Control(kWatermarkTextEdit), EM_SETSEL, text.size(), text.size());
             syncing_context_ = false;
         }
         if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
@@ -2422,7 +2419,7 @@ void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
         // In the watermark field Esc reverts what was typed since the field
         // took the focus. The focus stays there, so the next Esc reverts what
         // is typed after this one, however often it is pressed.
-        if (context_owns_transaction_ && ::GetFocus() == Control(2604) && ContextTool() == ToolId::Watermark) {
+        if (context_owns_transaction_ && ::GetFocus() == Control(kWatermarkTextEdit) && ContextTool() == ToolId::Watermark) {
             document_.BeginTransaction();
         } else {
             context_owns_transaction_ = false;
@@ -2454,7 +2451,7 @@ void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
         return;
     }
     if (key == VK_TAB) {
-        ::SetFocus(::GetDlgItem(hwnd_, 2000));
+        ::SetFocus(::GetDlgItem(hwnd_, kToolButtons.first));
         return;
     }
     const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -2599,7 +2596,7 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
         return;
     }
     if (!FeatureUsed()) { return; }
-    if (item.identifier == 2520 && ContextStyle().method == EffectMethod::Brush) {
+    if (item.identifier == kBrushMethodButton && ContextStyle().method == EffectMethod::Brush) {
         ShowBrushPopup(!::IsWindowVisible(brush_popup_));
         return;
     }
@@ -2647,9 +2644,9 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
             ShowBrushPopup(false);
             break;
         case ToolbarItem::Kind::Option:
-            if (item.identifier >= 2500 && item.identifier <= 2502) { style.text_mode = static_cast<TextMode>(item.identifier - 2500); }
-            if (item.identifier >= 2510 && item.identifier <= 2511) { style.effect = static_cast<EffectMode>(item.identifier - 2510); }
-            if (item.identifier >= 2520 && item.identifier <= 2521) {
+            if (kTextModeButtons.Contains(item.identifier)) { style.text_mode = static_cast<TextMode>(kTextModeButtons.Index(item.identifier)); }
+            if (kEffectButtons.Contains(item.identifier)) { style.effect = static_cast<EffectMode>(kEffectButtons.Index(item.identifier)); }
+            if (kEffectMethodButtons.Contains(item.identifier)) {
                 // Application method is a new-tool default. Existing region or
                 // brush geometry retains its transform contract.
                 if (selected_) {
@@ -2657,9 +2654,9 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
                     style = style_;
                 }
                 tool_ = ToolId::Mosaic;
-                style.method = static_cast<EffectMethod>(item.identifier - 2520);
+                style.method = static_cast<EffectMethod>(kEffectMethodButtons.Index(item.identifier));
             }
-            if (item.identifier >= 2530 && item.identifier <= 2532) { style.shape = static_cast<SpotlightShape>(item.identifier - 2530); }
+            if (kSpotlightShapeButtons.Contains(item.identifier)) { style.shape = static_cast<SpotlightShape>(kSpotlightShapeButtons.Index(item.identifier)); }
             ChangeStyle(style);
             break;
         case ToolbarItem::Kind::Command:
@@ -2673,7 +2670,7 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
     ReflowToolbar();
     Invalidate();
     NotifyMutation(revision);
-    if (item.identifier == 2520) { ShowBrushPopup(true); }
+    if (item.identifier == kBrushMethodButton) { ShowBrushPopup(true); }
 }
 
 bool ScreenshotEditor::WantsPointer(POINT point) const {
@@ -2901,7 +2898,7 @@ void ScreenshotEditor::StartTextEditing(std::optional<size_t> index, POINT point
                                    point.x, point.y, 100, 50, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
     if (text_host_) {
         text_edit_ = ::CreateWindowExW(0, L"EDIT", pending_.text.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_MULTILINE | ES_WANTRETURN | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
-                                       0, 0, 100, 50, text_host_, reinterpret_cast<HMENU>(2700), ::GetModuleHandleW(nullptr), nullptr);
+                                       0, 0, 100, 50, text_host_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kInlineTextEdit)), ::GetModuleHandleW(nullptr), nullptr);
     }
     if (!text_edit_) {
         if (text_host_) {
@@ -3532,10 +3529,10 @@ std::optional<ui::ImageSaveDestination> ScreenshotEditor::ChooseSaveDestination(
         dialog = true;
         modal_active_ = true;
         ShowBrushPopup(false);
-        ::KillTimer(context_, 0xEA61);
+        ::KillTimer(context_, kContextFadeTimer);
         context_fade_started_ = 0;
-        ::KillTimer(context_, 0xEA63);
-        ::SendMessageW(Control(2600), CB_SHOWDROPDOWN, FALSE, 0);
+        ::KillTimer(context_, kWatermarkClearHoverTimer);
+        ::SendMessageW(Control(kFontSizeCombo), CB_SHOWDROPDOWN, FALSE, 0);
         if (tooltip_) {
             ::SendMessageW(tooltip_, TTM_POP, 0, 0);
             ::SendMessageW(tooltip_, TTM_ACTIVATE, FALSE, 0);

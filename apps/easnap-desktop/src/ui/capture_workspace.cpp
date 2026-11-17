@@ -1,5 +1,6 @@
 #include "ui/capture_workspace.h"
 #include "strings/strings.h"
+#include "ui/control_ids.h"
 #include "ui/native_controls.h"
 #include <algorithm>
 #include <cmath>
@@ -56,9 +57,6 @@ bool InsideThreshold(POINT point, POINT origin, LONG width, LONG height) noexcep
     return ::PtInRect(&box, point) != FALSE;
 }
 constexpr UINT kNoticeTextFormat = DT_WORDBREAK | DT_CENTER | DT_NOPREFIX;
-/// A notice's timers: the end of its life, and the moment a progress notice appears.
-constexpr UINT_PTR kNoticeExpireTimer = 1;
-constexpr UINT_PTR kNoticeAppearTimer = 2;
 /// Work that ends sooner shows no progress notice at all.
 constexpr UINT kProgressNoticeDelayMs = 300;
 std::wstring NoticeText(HWND hwnd) {
@@ -113,8 +111,8 @@ LRESULT CALLBACK NoticeProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         ::EndPaint(hwnd, &paint);
         return 0;
     }
-    if (message == WM_TIMER && wparam == kNoticeAppearTimer) {
-        ::KillTimer(hwnd, kNoticeAppearTimer);
+    if (message == WM_TIMER && wparam == kWorkspaceNoticeAppearTimer) {
+        ::KillTimer(hwnd, kWorkspaceNoticeAppearTimer);
         ::ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         return 0;
     }
@@ -199,13 +197,13 @@ HWND ShowCaptureNotice(const RECT& region, const std::wstring& text, NoticeKind 
     ::SetWindowLongPtrW(notice, GWLP_USERDATA, kind != NoticeKind::Done);
     if (kind == NoticeKind::Progress) {
         // Shown a moment later, and removed by its owner instead of a timer.
-        if (::SetTimer(notice, kNoticeAppearTimer, kProgressNoticeDelayMs, nullptr) == 0) {
+        if (::SetTimer(notice, kWorkspaceNoticeAppearTimer, kProgressNoticeDelayMs, nullptr) == 0) {
             ::DestroyWindow(notice);
             return nullptr;
         }
         return notice;
     }
-    if (::SetTimer(notice, kNoticeExpireTimer, status ? 4000 : 1400, nullptr) == 0) {
+    if (::SetTimer(notice, kWorkspaceNoticeExpireTimer, status ? 4000 : 1400, nullptr) == 0) {
         ::DestroyWindow(notice);
         return nullptr;
     }

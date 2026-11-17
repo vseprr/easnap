@@ -7,6 +7,7 @@
 
 #include "platform/platform_utils.h"
 #include "strings/strings.h"
+#include "ui/control_ids.h"
 #include "ui/island_layout.h"
 #include "ui/ui_theme.h"
 #include "ui/native_controls.h"
@@ -18,27 +19,9 @@ namespace {
 
 constexpr wchar_t kPanelClassName[] = L"EasnapRecordingControls";
 constexpr wchar_t kBoundaryClassName[] = L"EasnapRecordingBoundary";
-constexpr UINT_PTR kStatusTimerId = 1;
 constexpr UINT kStatusTimerIntervalMs = 250;
 constexpr int kPanelWidthDip = 390;
 constexpr int kActivePanelWidthDip = 310;
-
-constexpr int kIdTitle = 100;
-constexpr int kIdElapsed = 101;
-constexpr int kIdStatus = 103;
-constexpr int kIdFormatLabel = 104;
-constexpr int kIdFormatMp4 = 105;
-constexpr int kIdFormatGif = 106;
-constexpr int kIdGifQualityLabel = 107;
-constexpr int kIdGifHighQuality = 108;
-constexpr int kIdGifLowSize = 109;
-constexpr int kIdAudioLabel = 102;
-constexpr int kIdAppearance = 115;
-constexpr int kIdAudioSystem = 111;
-constexpr int kIdAudioMicrophone = 112;
-constexpr int kIdIncludeCursor = 113;
-constexpr int kIdPauseResume = 120;
-constexpr int kIdStop = 121;
 
 constexpr DWORD kPanelStyle = WS_POPUP | WS_CLIPCHILDREN;
 constexpr DWORD kPanelExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTROLPARENT;
@@ -163,7 +146,7 @@ public:
             tooltip_ = nullptr;
         }
         if (panel_ != nullptr) {
-            ::KillTimer(panel_, kStatusTimerId);
+            ::KillTimer(panel_, kRecordingStatusTimer);
             ::DestroyWindow(panel_);
             panel_ = nullptr;
         }
@@ -242,10 +225,10 @@ public:
         ::SendMessageW(pause_resume_, BM_SETCHECK, policy.can_resume ? BST_CHECKED : BST_UNCHECKED, 0);
         ::InvalidateRect(elapsed_, nullptr, FALSE);
 
-        ::KillTimer(panel_, kStatusTimerId);
+        ::KillTimer(panel_, kRecordingStatusTimer);
         if (owner_.state_ == app::SessionState::RecordingActive ||
             owner_.state_ == app::SessionState::RecordingPaused || finalizing) {
-            ::SetTimer(panel_, kStatusTimerId, kStatusTimerIntervalMs, nullptr);
+            ::SetTimer(panel_, kRecordingStatusTimer, kStatusTimerIntervalMs, nullptr);
         }
 
         Layout(initial_placement, false, initial_placement);
@@ -388,7 +371,7 @@ public:
 
     void Hide() const noexcept {
         if (panel_ != nullptr) {
-            ::KillTimer(panel_, kStatusTimerId);
+            ::KillTimer(panel_, kRecordingStatusTimer);
             ::ShowWindow(panel_, SW_HIDE);
         }
         for (HWND boundary : boundaries_) {
@@ -528,7 +511,7 @@ private:
                 HandleCancelOrStop();
                 return 0;
             case WM_TIMER:
-                if (wparam == kStatusTimerId && owner_.callbacks_.on_status_tick) {
+                if (wparam == kRecordingStatusTimer && owner_.callbacks_.on_status_tick) {
                     owner_.callbacks_.on_status_tick();
                 }
                 return 0;
@@ -597,24 +580,24 @@ private:
     }
 
     [[nodiscard]] bool CreatePanelControls() {
-        title_ = CreateControl(L"STATIC", L"Record screen", SS_LEFT, kIdTitle);
+        title_ = CreateControl(L"STATIC", L"Record screen", SS_LEFT, kRecordingTitle);
         start_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_START), WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDOK);
-        appearance_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_APPEARANCE), WS_TABSTOP | BS_PUSHBUTTON, kIdAppearance);
-        format_label_ = CreateControl(L"STATIC", L"Format", SS_LEFT, kIdFormatLabel);
-        format_mp4_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_FORMAT_MP4), WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdFormatMp4);
-        format_gif_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_FORMAT_GIF), WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdFormatGif);
-        audio_label_ = CreateControl(L"STATIC", strings::Get(IDS_SESSION_RECORD_AUDIO_LABEL), SS_LEFT, kIdAudioLabel);
-        audio_system_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_SYSTEM_AUDIO), WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdAudioSystem);
-        audio_microphone_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_MICROPHONE), WS_TABSTOP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdAudioMicrophone);
-        gif_quality_label_ = CreateControl(L"STATIC", strings::Get(IDS_SESSION_RECORD_GIF_QUALITY_LABEL), SS_LEFT, kIdGifQualityLabel);
-        gif_high_quality_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_GIF_HIGH_QUALITY), WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdGifHighQuality);
-        gif_low_size_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_GIF_LOW_SIZE), WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdGifLowSize);
-        include_cursor_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_INCLUDE_CURSOR), WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdIncludeCursor);
+        appearance_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_APPEARANCE), WS_TABSTOP | BS_PUSHBUTTON, kRecordingAppearance);
+        format_label_ = CreateControl(L"STATIC", L"Format", SS_LEFT, kRecordingFormatLabel);
+        format_mp4_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_FORMAT_MP4), WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kRecordingFormatMp4);
+        format_gif_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_FORMAT_GIF), WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kRecordingFormatGif);
+        audio_label_ = CreateControl(L"STATIC", strings::Get(IDS_SESSION_RECORD_AUDIO_LABEL), SS_LEFT, kRecordingAudioLabel);
+        audio_system_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_SYSTEM_AUDIO), WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kRecordingAudioSystem);
+        audio_microphone_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_MICROPHONE), WS_TABSTOP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kRecordingAudioMicrophone);
+        gif_quality_label_ = CreateControl(L"STATIC", strings::Get(IDS_SESSION_RECORD_GIF_QUALITY_LABEL), SS_LEFT, kRecordingGifQualityLabel);
+        gif_high_quality_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_GIF_HIGH_QUALITY), WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kRecordingGifHighQuality);
+        gif_low_size_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_GIF_LOW_SIZE), WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kRecordingGifLowSize);
+        include_cursor_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_INCLUDE_CURSOR), WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kRecordingIncludeCursor);
         cancel_ = CreateControl(L"BUTTON", strings::Get(IDS_DIALOG_CANCEL), WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
-        elapsed_ = CreateControl(L"STATIC", L"00:00:00", SS_CENTER | SS_CENTERIMAGE, kIdElapsed);
-        status_ = CreateControl(L"STATIC", L"", SS_LEFT, kIdStatus);
-        pause_resume_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_PAUSE), WS_TABSTOP | BS_CHECKBOX | BS_PUSHLIKE, kIdPauseResume);
-        stop_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_STOP), WS_TABSTOP | BS_PUSHBUTTON, kIdStop);
+        elapsed_ = CreateControl(L"STATIC", L"00:00:00", SS_CENTER | SS_CENTERIMAGE, kRecordingElapsed);
+        status_ = CreateControl(L"STATIC", L"", SS_LEFT, kRecordingStatus);
+        pause_resume_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_PAUSE), WS_TABSTOP | BS_CHECKBOX | BS_PUSHLIKE, kRecordingPauseResume);
+        stop_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_STOP), WS_TABSTOP | BS_PUSHBUTTON, kRecordingStop);
         for (HWND control : {title_, start_, appearance_, format_label_, format_mp4_, format_gif_, audio_label_,
                              audio_system_, audio_microphone_, gif_quality_label_, gif_high_quality_, gif_low_size_, include_cursor_,
                              cancel_, elapsed_, status_, pause_resume_, stop_}) {
@@ -663,7 +646,7 @@ private:
         const app::RecordingControlPolicy policy =
             app::RecordingControlsForState(owner_.state_);
         switch (id) {
-            case kIdAppearance:
+            case kRecordingAppearance:
                 if (policy.can_start) { ShowAppearanceMenu(appearance_); }
                 break;
             case kAppearanceLight:
@@ -674,11 +657,11 @@ private:
                                                         : app::AppearanceTheme::Light);
                 }
                 break;
-            case kIdAudioSystem:
-            case kIdAudioMicrophone:
+            case kRecordingAudioSystem:
+            case kRecordingAudioMicrophone:
                 if (policy.can_start) { owner_.configuration_.mp4_audio = SelectedAudioSource(); }
                 break;
-            case kIdIncludeCursor:
+            case kRecordingIncludeCursor:
                 if (policy.can_start) { owner_.configuration_.include_cursor = ::SendMessageW(include_cursor_, BM_GETCHECK, 0, 0) == BST_CHECKED; }
                 break;
             case IDOK:
@@ -690,21 +673,21 @@ private:
                     owner_.callbacks_.on_start(owner_.configuration_);
                 }
                 break;
-            case kIdFormatMp4:
-            case kIdFormatGif:
+            case kRecordingFormatMp4:
+            case kRecordingFormatGif:
                 if (!policy.can_start) { break; }
                 owner_.configuration_.mp4_audio = SelectedAudioSource();
                 owner_.configuration_.format =
-                    id == kIdFormatGif ? media::RecordingFormat::Gif
-                                       : media::RecordingFormat::Mp4;
+                    id == kRecordingFormatGif ? media::RecordingFormat::Gif
+                                              : media::RecordingFormat::Mp4;
                 UpdateForState();
                 break;
-            case kIdGifHighQuality:
+            case kRecordingGifHighQuality:
                 if (!policy.can_start) { break; }
                 owner_.configuration_.gif.preset =
                     app::GifExportPreset::HighQuality;
                 break;
-            case kIdGifLowSize:
+            case kRecordingGifLowSize:
                 if (!policy.can_start) { break; }
                 owner_.configuration_.gif.preset =
                     app::GifExportPreset::LowSize;
@@ -712,14 +695,14 @@ private:
             case IDCANCEL:
                 HandleCancelOrStop();
                 break;
-            case kIdPauseResume:
+            case kRecordingPauseResume:
                 if (policy.can_pause && owner_.callbacks_.on_pause) {
                     owner_.callbacks_.on_pause();
                 } else if (policy.can_resume && owner_.callbacks_.on_resume) {
                     owner_.callbacks_.on_resume();
                 }
                 break;
-            case kIdStop:
+            case kRecordingStop:
                 if (policy.can_stop && owner_.callbacks_.on_stop) {
                     owner_.callbacks_.on_stop();
                 }
