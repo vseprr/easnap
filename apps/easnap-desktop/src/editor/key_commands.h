@@ -37,6 +37,7 @@ enum class KeyCommand {
     Save,               ///< Saves the finished image.
     Pin,                ///< Pins the finished image to the screen and closes.
     Discard,            ///< Closes, asking first when work would be lost.
+    None,               ///< No command: the default of a row, which every row must replace.
 };
 
 /// Whether a modifier key must be held, must not be held, or does not matter.
@@ -52,7 +53,7 @@ struct KeyBinding {
     KeyModifier control{KeyModifier::Any};     ///< What Ctrl must be.
     KeyModifier shift{KeyModifier::Any};       ///< What Shift must be.
     bool document_only{false};                 ///< Applies only while a document is shown.
-    KeyCommand command{KeyCommand::Discard};   ///< What it does.
+    KeyCommand command{KeyCommand::None};      ///< What it does.
 };
 
 /// Every shortcut, in order of precedence.
@@ -100,6 +101,15 @@ inline constexpr auto kKeyBindings = std::to_array<KeyBinding>({
     }
     return std::nullopt;
 }
+
+/// True when every row names a command.
+[[nodiscard]] constexpr bool EveryKeyBindingHasCommand() noexcept {
+    for (const auto& binding : kKeyBindings) {
+        if (binding.command == KeyCommand::None) { return false; }
+    }
+    return true;
+}
+static_assert(EveryKeyBindingHasCommand(), "a key binding needs a command");
 
 // Precedence that the rows above must keep.
 static_assert(FindKeyCommand('Z', true, false, false) == KeyCommand::Undo);

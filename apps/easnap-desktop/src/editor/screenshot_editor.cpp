@@ -21,7 +21,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstring>
 #include <cwchar>
 #include <iterator>
 #include <deque>
@@ -1063,6 +1062,7 @@ void ScreenshotEditor::RunKeyCommand(KeyCommand command) {
             CompletePin();
             return;
         case KeyCommand::Discard: RequestDiscard(); return;
+        case KeyCommand::None: return;  // No row names it; see EveryKeyBindingHasCommand.
     }
 }
 
