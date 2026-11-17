@@ -3,6 +3,7 @@
 
 #include "editor/annotation_renderer.h"
 #include "editor/annotation_tools.h"
+#include "editor/toolbar_item.h"
 #include "platform/graphics_device.h"
 #include "platform/image_output.h"
 #include "platform/screen_geometry.h"
@@ -33,16 +34,6 @@ constexpr wchar_t kEditorClassName[] = L"EasnapScreenshotEditor";
 constexpr DWORD kEditorStyle = WS_POPUP | WS_CLIPCHILDREN;
 constexpr DWORD kEditorExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTROLPARENT;
 
-// Toolbar metrics in device-independent pixels.
-constexpr float kToolbarRowHeight = 48.0f;
-constexpr float kToolButton = 34.0f;
-constexpr float kCommandButton = 34.0f;
-constexpr float kSwatch = 32.0f;
-constexpr float kItemGap = 4.0f;
-constexpr float kGroupGap = 14.0f;
-constexpr float kEdgePadding = 10.0f;
-constexpr float kCanvasGap = 8.0f;
-
 // Smallest useful window, in device-independent pixels of the client area.
 constexpr float kMinClientWidth = 460.0f;
 constexpr float kMinClientHeight = kToolbarRowHeight;
@@ -53,93 +44,6 @@ constexpr float kMinClientHeight = kToolbarRowHeight;
 constexpr int kWholeBitmapRows = 8192;
 constexpr int kPreviewBandRows = 4096;
 constexpr int kCompositeBandRows = 2048;
-
-/// Preferred tool island width, clamped to the current monitor. One row of
-/// tools and commands, with 28 DIPs to spare after the last command.
-constexpr float kIslandWidth = 870.0f;
-
-enum CommandId {
-    kCommandUndo = 1,
-    kCommandRedo,
-    kCommandClear,
-    kCommandCopy,
-    kCommandSave,
-    kCommandCancel,
-    kCommandTheme,
-    kCommandScrollshot,
-    kCommandPin,
-};
-
-/// How one tool, option or command button of the editor looks: the same for
-/// every session, so it is fixed here rather than where the button is placed.
-struct EditorButtonLook {
-    int identifier;                                 ///< The button's control identifier.
-    ui::Icon icon;                                  ///< The icon it shows.
-    UINT tooltip;                                   ///< String id of its tooltip and accessible name.
-    ui::ButtonRole role{ui::ButtonRole::Standard};  ///< Its semantic role.
-    bool dropdown{false};                           ///< True when it shows a trailing chevron.
-};
-
-/// Every option and command button of the editor with its look. The tool
-/// buttons take theirs from the tool records (editor/annotation_tools.h).
-constexpr std::array<EditorButtonLook, 19> kEditorButtonLooks{{
-    {kTextPlainButton, ui::Icon::Text, IDS_EDITOR_OPTION_PLAIN_TEXT},
-    {kTextFilledButton, ui::Icon::TextFill, IDS_EDITOR_OPTION_FILLED_TEXT},
-    {kTextOutlinedButton, ui::Icon::TextOutline, IDS_EDITOR_OPTION_OUTLINED_TEXT},
-    {kBlurButton, ui::Icon::Droplet, IDS_EDITOR_OPTION_BLUR},
-    {kPixelateButton, ui::Icon::Mosaic, IDS_EDITOR_OPTION_PIXELATE},
-    {kBrushMethodButton, ui::Icon::Hand, IDS_EDITOR_OPTION_BRUSH, ui::ButtonRole::Standard, true},
-    {kRegionMethodButton, ui::Icon::Region, IDS_EDITOR_OPTION_REGION},
-    {kSpotlightRectangleButton, ui::Icon::Rectangle, IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE},
-    {kSpotlightEllipseButton, ui::Icon::Ellipse, IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE},
-    {kSpotlightRoundedButton, ui::Icon::RoundedRectangle, IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED},
-    {CommandButton(kCommandUndo), ui::Icon::Undo, IDS_EDITOR_UNDO_BUTTON},
-    {CommandButton(kCommandRedo), ui::Icon::Redo, IDS_EDITOR_REDO_BUTTON},
-    {CommandButton(kCommandClear), ui::Icon::Clear, IDS_EDITOR_CLEAR_BUTTON},
-    {CommandButton(kCommandCopy), ui::Icon::Check, IDS_EDITOR_COPY_BUTTON, ui::ButtonRole::Success},
-    {CommandButton(kCommandSave), ui::Icon::Save, IDS_EDITOR_SAVE_BUTTON},
-    {CommandButton(kCommandCancel), ui::Icon::Discard, IDS_EDITOR_DISCARD_BUTTON},
-    {CommandButton(kCommandTheme), ui::Icon::Appearance, IDS_EDITOR_THEME_BUTTON},
-    {CommandButton(kCommandScrollshot), ui::Icon::Scissors, IDS_SCROLLSHOT_TOOL},
-    {CommandButton(kCommandPin), ui::Icon::Pin, IDS_EDITOR_PIN_BUTTON},
-}};
-
-/// The look of the button `identifier`; null when it has none in the table.
-constexpr const EditorButtonLook* FindButtonLook(int identifier) noexcept {
-    for (const auto& look : kEditorButtonLooks) {
-        if (look.identifier == identifier) { return &look; }
-    }
-    return nullptr;
-}
-
-/// True when every button of `range` has a look.
-constexpr bool RangeHasLooks(ui::ControlRange range) noexcept {
-    for (int index = 0; index < range.count; ++index) {
-        if (FindButtonLook(range.Id(index)) == nullptr) { return false; }
-    }
-    return true;
-}
-
-static_assert(RangeHasLooks(kTextModeButtons) && RangeHasLooks(kEffectButtons) &&
-                  RangeHasLooks(kEffectMethodButtons) && RangeHasLooks(kSpotlightShapeButtons) &&
-                  RangeHasLooks({CommandButton(kCommandUndo), kCommandPin - kCommandUndo + 1}),
-              "every option and command button needs a look");
-
-/// The look of a tool, option or command button: a tool's from its record,
-/// the others' from the table, which the static_assert above shows complete.
-EditorButtonLook ButtonLook(int identifier) noexcept {
-    if (kToolButtons.Contains(identifier)) {
-        const ToolDefinition& tool = Tool(static_cast<ToolId>(kToolButtons.Index(identifier)));
-        return {identifier, tool.icon, tool.name};
-    }
-    return *FindButtonLook(identifier);
-}
-
-constexpr std::array<float, 3> kThicknessOptions = {2.0f, 4.0f, 7.0f};
-
-/// Mosaic brush diameters in captured pixels (independent of the preview zoom).
-constexpr std::array<float, 3> kBrushSizeOptions = {16.0f, 32.0f, 64.0f};
-
 
 /// Grows `rect` by the non-client frame of `style`. Uses the per-monitor aware
 /// entry point when the running build of Windows offers it (capability probing,
@@ -174,104 +78,19 @@ float TextPixelWidth(HFONT font, const std::wstring& text) {
 
 }  // namespace
 
-// ---------------------------------------------------------------------------
-// ScreenshotEditor - toolbar model
-// ---------------------------------------------------------------------------
-
-struct ScreenshotEditor::ToolbarItem {
-    enum class Kind { Tool,
-                      Color,
-                      Thickness,
-                      BrushSize,
-                      Option,
-                      Command };
-
-    Kind kind{Kind::Tool};
-    ToolId tool{ToolId::Pointer};
-    D2D1_COLOR_F color{};
-    float thickness{0.0f};
-    float brush_size{0.0f};
-    int command{0};
-    const wchar_t* label{L""};
-    const wchar_t* tooltip{L""};
-    D2D1_RECT_F rect{};
-    int identifier{};
-    bool shown{true};
-};
-
 ScreenshotEditor::ScreenshotEditor(Callbacks callbacks) : callbacks_(std::move(callbacks)) {}
 
 ScreenshotEditor::~ScreenshotEditor() { Destroy(); }
 
 bool ScreenshotEditor::CreateToolbarControls() {
-    using namespace ui;
-    constexpr std::array<UINT, 8> colors{IDS_EDITOR_COLOR_RED, IDS_EDITOR_COLOR_AMBER, IDS_EDITOR_COLOR_GREEN, IDS_EDITOR_COLOR_BLUE,
-                                         IDS_EDITOR_COLOR_VIOLET, IDS_EDITOR_COLOR_WHITE, IDS_EDITOR_COLOR_BLACK, IDS_EDITOR_COLOR_GRAY};
-    tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
-                                 WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, hwnd_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-    StyleTooltip(tooltip_);
     // The tools island's buttons first, then the property island's: the order
     // inside each parent window is its tab and z-order.
-    for (const auto* items : {&main_items_, &context_items_})
-        for (const auto& item : *items) {
-            ButtonStyle style;
-            std::wstring name = item.tooltip;
-            style.icon_only = true;
-            switch (item.kind) {
-                case ToolbarItem::Kind::Tool:
-                case ToolbarItem::Kind::Option:
-                case ToolbarItem::Kind::Command: {
-                    const EditorButtonLook& look = ButtonLook(item.identifier);
-                    style.icon = look.icon;
-                    style.role = look.role;
-                    style.dropdown = look.dropdown;
-                    style.segmented = item.kind == ToolbarItem::Kind::Option;
-                    break;
-                }
-                case ToolbarItem::Kind::Color:
-                    name = strings::Get(colors[static_cast<size_t>(kColorButtons.Index(item.identifier))]);
-                    style.swatch = true;
-                    style.content_color = RGB(static_cast<BYTE>(std::lround(item.color.r * 255)),
-                                              static_cast<BYTE>(std::lround(item.color.g * 255)), static_cast<BYTE>(std::lround(item.color.b * 255)));
-                    break;
-                case ToolbarItem::Kind::Thickness:
-                    name = strings::Format(IDS_EDITOR_THICKNESS_BUTTON, {std::to_wstring(static_cast<int>(item.thickness))});
-                    style.sample = 2;
-                    style.sample_size = kBrushSizeOptions[static_cast<size_t>(kThicknessButtons.Index(item.identifier))];
-                    break;
-                case ToolbarItem::Kind::BrushSize:
-                    name = strings::Format(IDS_EDITOR_BRUSH_SIZE_BUTTON, {std::to_wstring(static_cast<int>(item.brush_size))});
-                    style.sample = 2;
-                    style.sample_size = item.brush_size;
-                    break;
-            }
-            const DWORD type = item.kind == ToolbarItem::Kind::Command ? BS_PUSHBUTTON : BS_RADIOBUTTON | BS_PUSHLIKE;
-            const bool first = item.identifier == kToolButtons.first || item.identifier == kColorButtons.first ||
-                               item.identifier == kThicknessButtons.first || item.identifier == kBrushSizeButtons.first ||
-                               item.identifier == CommandButton(kCommandUndo) || item.identifier == CommandButton(kCommandScrollshot);
-            const HWND parent = item.kind == ToolbarItem::Kind::Tool || item.kind == ToolbarItem::Kind::Command ? hwnd_ : item.kind == ToolbarItem::Kind::BrushSize ? brush_popup_
-                                                                                                                                                                    : context_;
-            HWND button = ::CreateWindowExW(0, L"BUTTON", name.c_str(), WS_CHILD | WS_TABSTOP | type | (first ? WS_GROUP : 0),
-                                            0, 0, 1, 1, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(item.identifier)), ::GetModuleHandleW(nullptr), nullptr);
-            if (!button || !StyleButton(button, style) ||
-                !::SetWindowSubclass(button, ToolbarButtonProc, kToolbarButtonSubclass, reinterpret_cast<DWORD_PTR>(this))) { return false; }
-            if (tooltip_) {
-                TOOLINFOW info{sizeof(info)};
-                info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-                info.hwnd = parent;
-                info.uId = reinterpret_cast<UINT_PTR>(button);
-                info.lpszText = name.data();
-                ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
-            }
-        }
-    if (tooltip_) {
-        TOOLINFOW info{sizeof(info)};
-        info.uFlags = TTF_SUBCLASS;
-        info.hwnd = hwnd_;
-        info.uId = kScrollshotDisabledTip;
-        info.lpszText = const_cast<wchar_t*>(strings::Get(IDS_SCROLLSHOT_TOOL_FIXED));
-        ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
+    if (!toolbar_.CreateButtons(hwnd_, *this)) { return false; }
+    for (const auto& item : context_items_) {
+        const HWND parent = item.kind == ToolbarItem::Kind::BrushSize ? brush_popup_ : context_;
+        if (!CreateToolbarButton(item, parent, toolbar_.tooltip(), *this)) { return false; }
     }
+    toolbar_.AddScrollshotDisabledTip(hwnd_);
     SyncToolbarControls();
     return true;
 }
@@ -643,93 +462,45 @@ void ScreenshotEditor::SetFrameInteracting(bool interacting) {
     }
 }
 
-LRESULT CALLBACK ScreenshotEditor::ToolbarButtonProc(HWND hwnd, UINT message, WPARAM wparam,
-                                                     LPARAM lparam, UINT_PTR identifier, DWORD_PTR reference) {
-    auto* self = reinterpret_cast<ScreenshotEditor*>(reference);
-    if (message == WM_NCDESTROY) {
-        ::RemoveWindowSubclass(hwnd, ToolbarButtonProc, identifier);
-        return ::DefSubclassProc(hwnd, message, wparam, lparam);
-    }
-    if (ui::ConsumePopupInput(message, wparam)) { return 0; }
-    if (message == WM_MOUSEMOVE && ::GetDlgCtrlID(hwnd) == kBrushMethodButton) {
-        if (!self->brush_hover_started_) { self->brush_hover_started_ = ::GetTickCount64(); }
-        ::SetTimer(self->context_, kBrushPopupHoverTimer, 30, nullptr);
-    }
-    // Every other control fixes the screenshot on its first press. Cancel,
-    // the theme switch and Scrollshot must not acquire an image.
-    if ((message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) &&
-        ::GetDlgCtrlID(hwnd) != CommandButton(kCommandCancel) && ::GetDlgCtrlID(hwnd) != CommandButton(kCommandTheme) &&
-        ::GetDlgCtrlID(hwnd) != CommandButton(kCommandScrollshot) && !self->FeatureUsed()) { return 0; }
-    if (message == WM_KEYDOWN && (wparam == VK_ESCAPE || (::GetKeyState(VK_CONTROL) & 0x8000) != 0)) {
-        return self->HandleMessage(self->hwnd_, message, wparam, lparam);
-    }
-    return ::DefSubclassProc(hwnd, message, wparam, lparam);
+LRESULT ScreenshotEditor::ForwardButtonKey(UINT message, WPARAM key, LPARAM flags) {
+    return HandleMessage(hwnd_, message, key, flags);
+}
+
+void ScreenshotEditor::BrushMethodHovered() {
+    if (!brush_hover_started_) { brush_hover_started_ = ::GetTickCount64(); }
+    ::SetTimer(context_, kBrushPopupHoverTimer, 30, nullptr);
 }
 
 void ScreenshotEditor::SyncToolbarControls() const {
     if (!hwnd_) { return; }
     const auto style = ContextStyle();
-    for (const auto* items : {&main_items_, &context_items_})
-        for (const auto& item : *items) {
-            HWND button = Control(item.identifier);
-            if (!button) { continue; }
-            if (((::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE) != 0) != item.shown) { ::ShowWindow(button, item.shown ? SW_SHOWNA : SW_HIDE); }
-            if (item.shown) {
-                const RECT rect{static_cast<LONG>(item.rect.left), static_cast<LONG>(item.rect.top),
-                                static_cast<LONG>(item.rect.right), static_cast<LONG>(item.rect.bottom)};
-                RECT old{};
-                ::GetWindowRect(button, &old);
-                ::MapWindowPoints(nullptr, ::GetParent(button), reinterpret_cast<POINT*>(&old), 2);
-                if (!::EqualRect(&rect, &old)) { ::MoveWindow(button, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, TRUE); }
-            }
-            if (reinterpret_cast<HFONT>(::SendMessageW(button, WM_GETFONT, 0, 0)) != toolbar_font_) {
-                ::SendMessageW(button, WM_SETFONT, reinterpret_cast<WPARAM>(toolbar_font_), TRUE);
-            }
-            bool selected = false;
-            bool enabled = true;
-            switch (item.kind) {
-                case ToolbarItem::Kind::Tool: selected = item.tool == ContextTool(); break;
-                case ToolbarItem::Kind::Color: selected = item.color.r == style.color.r && item.color.g == style.color.g && item.color.b == style.color.b; break;
-                case ToolbarItem::Kind::Thickness: selected = item.thickness == style.thickness; break;
-                case ToolbarItem::Kind::BrushSize: selected = item.brush_size == style.brush_size; break;
-                case ToolbarItem::Kind::Option:
-                    selected = (kTextModeButtons.Contains(item.identifier) && static_cast<int>(style.text_mode) == kTextModeButtons.Index(item.identifier)) ||
-                               (kEffectButtons.Contains(item.identifier) && static_cast<int>(style.effect) == kEffectButtons.Index(item.identifier)) ||
-                               (kEffectMethodButtons.Contains(item.identifier) && static_cast<int>(style.method) == kEffectMethodButtons.Index(item.identifier)) ||
-                               (kSpotlightShapeButtons.Contains(item.identifier) && static_cast<int>(style.shape) == kSpotlightShapeButtons.Index(item.identifier));
-                    break;
-                case ToolbarItem::Kind::Command:
-                    if (item.command == kCommandUndo || item.command == kCommandClear) { enabled = document_.CanUndo(); }
-                    if (item.command == kCommandCopy || item.command == kCommandSave || item.command == kCommandPin) {
-                        enabled = !exporting_;
-                    }
-                    if (item.command == kCommandRedo) { enabled = document_.CanRedo(); }
-                    if (item.command == kCommandScrollshot) {
-                    // A scrolling capture starts from a provisional frame only.
-                        enabled = !has_image() && ui::CaptureExclusionSupported();
-                        if (tooltip_ && item.shown) {
-                            TOOLINFOW info{sizeof(info)};
-                            info.hwnd = hwnd_;
-                            info.uId = kScrollshotDisabledTip;
-                            info.rect = RECT{static_cast<LONG>(item.rect.left), static_cast<LONG>(item.rect.top),
-                                             static_cast<LONG>(item.rect.right), static_cast<LONG>(item.rect.bottom)};
-                            ::SendMessageW(tooltip_, TTM_NEWTOOLRECTW, 0, reinterpret_cast<LPARAM>(&info));
-                        }
-                    }
-                    break;
-            }
-            if ((::IsWindowEnabled(button) != FALSE) != enabled) { ::EnableWindow(button, enabled); }
-            const WPARAM checked = selected ? BST_CHECKED : BST_UNCHECKED;
-            if (item.kind != ToolbarItem::Kind::Command && ::SendMessageW(button, BM_GETCHECK, 0, 0) != static_cast<LRESULT>(checked)) {
-                ::SendMessageW(button, BM_SETCHECK, checked, 0);
-            }
+    toolbar_.SyncButtons(hwnd_, {ContextTool(), document_.CanUndo(), document_.CanRedo(), exporting_, has_image()}, toolbar_font_);
+    for (const auto& item : context_items_) {
+        HWND button = Control(item.identifier);
+        if (!button) { continue; }
+        PlaceToolbarButton(button, item, toolbar_font_);
+        bool selected = false;
+        switch (item.kind) {
+            case ToolbarItem::Kind::Color: selected = item.color.r == style.color.r && item.color.g == style.color.g && item.color.b == style.color.b; break;
+            case ToolbarItem::Kind::Thickness: selected = item.thickness == style.thickness; break;
+            case ToolbarItem::Kind::BrushSize: selected = item.brush_size == style.brush_size; break;
+            case ToolbarItem::Kind::Option:
+                selected = (kTextModeButtons.Contains(item.identifier) && static_cast<int>(style.text_mode) == kTextModeButtons.Index(item.identifier)) ||
+                           (kEffectButtons.Contains(item.identifier) && static_cast<int>(style.effect) == kEffectButtons.Index(item.identifier)) ||
+                           (kEffectMethodButtons.Contains(item.identifier) && static_cast<int>(style.method) == kEffectMethodButtons.Index(item.identifier)) ||
+                           (kSpotlightShapeButtons.Contains(item.identifier) && static_cast<int>(style.shape) == kSpotlightShapeButtons.Index(item.identifier));
+                break;
+            case ToolbarItem::Kind::Tool:
+            case ToolbarItem::Kind::Command: break;
         }
+        MarkToolbarButton(button, item, selected, true);
+    }
 }
 
 void ScreenshotEditor::ReflowToolbar() {
     if (!hwnd_) { return; }
-    BuildToolbar(static_cast<float>(client_width_));
-    const int height = toolbar_rect_.bottom;
+    BuildToolbar(static_cast<float>(toolbar_.client_width()));
+    const int height = toolbar_.height();
     RECT current{};
     ::GetWindowRect(hwnd_, &current);
     const auto monitor = platform::MonitorForRect(current);
@@ -766,62 +537,12 @@ bool ScreenshotEditor::ProcessDialogMessage(MSG& message) const {
 // ---------------------------------------------------------------------------
 
 void ScreenshotEditor::BuildToolbar(float available_width) {
-    main_items_.clear();
+    toolbar_.Build(available_width, scale_);
     context_items_.clear();
-    main_separators_.clear();
-    const float s = scale_, pad = kEdgePadding * s, gap = kItemGap * s, row = kToolbarRowHeight * s;
-    const float limit = std::max(available_width - pad, pad + kToolButton * s);
-    float x = pad + ui::theme::kIslandGripWidth * s, y = 0;
-    const auto place = [&](float width) {
-        if (x > pad && x + width > limit) {
-            x = pad;
-            y += row;
-        }
-        const D2D1_RECT_F r{x, y + (row - kToolButton * s) / 2, x + width, y + (row + kToolButton * s) / 2};
-        x += width + gap;
-        return r;
-    };
-    for (const ToolId tool : kToolbarOrder) {
-        const ToolDefinition& definition = Tool(tool);
-        if (definition.separator_before) {
-            const auto split = place(8 * s);
-            main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
-        }
-        ToolbarItem item;
-        item.tool = tool;
-        item.identifier = definition.identifier;
-        item.label = item.tooltip = strings::Get(definition.name);
-        item.rect = place(kToolButton * s);
-        main_items_.push_back(item);
-    }
-    {
-        const auto split = place(kGroupGap * s);
-        main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
-    }
-    {
-        // Scrollshot is a different kind of capture, not an annotation tool or
-        // an edit command, so it stands alone between the two groups.
-        ToolbarItem item;
-        item.kind = ToolbarItem::Kind::Command;
-        item.command = kCommandScrollshot;
-        item.identifier = CommandButton(kCommandScrollshot);
-        item.label = item.tooltip = strings::Get(ButtonLook(item.identifier).tooltip);
-        item.rect = place(kCommandButton * s);
-        main_items_.push_back(item);
-        const auto split = place(8 * s);
-        main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
-    }
-    constexpr int commands[] = {kCommandUndo, kCommandRedo, kCommandClear, kCommandTheme, kCommandPin, kCommandSave, kCommandCancel, kCommandCopy};
-    for (const int command : commands) {
-        ToolbarItem item;
-        item.kind = ToolbarItem::Kind::Command;
-        item.command = command;
-        item.identifier = CommandButton(command);
-        item.label = item.tooltip = strings::Get(ButtonLook(item.identifier).tooltip);
-        item.rect = place(kCommandButton * s);
-        main_items_.push_back(item);
-    }
-    toolbar_rect_ = {0, 0, static_cast<LONG>(available_width), static_cast<LONG>(std::ceil(y + row))};
+    ToolbarFlow flow(available_width, scale_);
+    const float s = flow.s, pad = flow.pad, row = flow.row;
+    float &x = flow.x, &y = flow.y;
+    const auto place = [&](float width) { return flow.Place(width); };
     // The property island of `tool`, wrapped in the width of the tools island.
     // Returns its height (0 for the pointer, which has none) and its widest row.
     const auto layout_context = [&](ToolId tool, std::vector<ToolbarItem>& items, std::vector<std::pair<int, RECT>>& fields,
@@ -958,25 +679,11 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
 }
 
 void ScreenshotEditor::LayoutClient(int client_width, int client_height) {
-    client_width_ = std::max(1, client_width);
-    client_height_ = std::max(1, client_height);
-    BuildToolbar(static_cast<float>(client_width_));
-    toolbar_rect_.right = client_width_;
+    toolbar_.Resize(client_width, client_height);
+    // The rows span the client width, which BuildToolbar is given.
+    BuildToolbar(static_cast<float>(toolbar_.client_width()));
     if (!document_mode_) { ResetFixedView(); }
     SyncToolbarControls();
-}
-
-RECT ScreenshotEditor::InitialWindowRect(const RECT& screen_region) const {
-    const auto monitor = platform::MonitorForRect(screen_region);
-    RECT work = monitor.work_area;
-    work.top = std::max(work.top, monitor.bounds.top + ui::theme::Scaled(
-                                                           ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, monitor.scale()));
-    const LONG width = std::min(platform::RectWidth(work), static_cast<LONG>(kIslandWidth * scale_));
-    const LONG height = toolbar_rect_.bottom;
-    const LONG margin = static_cast<LONG>(kCanvasGap * scale_);
-    const LONG left = screen_region.left + (platform::RectWidth(screen_region) - width) / 2;
-    const LONG top = std::min(work.bottom - height - margin, screen_region.bottom + margin);
-    return platform::ClampRectToBounds(RECT{left, top, left + width, top + height}, work);
 }
 
 // ---------------------------------------------------------------------------
@@ -1081,7 +788,7 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
 
     BuildToolbar(std::min(kIslandWidth * scale_,
                           static_cast<float>(platform::RectWidth(platform::MonitorForRect(screen_region).work_area))));
-    const RECT window = InitialWindowRect(screen_region);
+    const RECT window = toolbar_.InitialWindowRect(screen_region, scale_);
     hwnd_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, strings::Get(IDS_EDITOR_WINDOW_TITLE), kEditorStyle,
                               static_cast<int>(window.left), static_cast<int>(window.top),
                               static_cast<int>(platform::RectWidth(window)),
@@ -1323,10 +1030,7 @@ void ScreenshotEditor::Destroy() {
     }
     ResetSession();
 
-    if (tooltip_) {
-        ::DestroyWindow(tooltip_);
-        tooltip_ = nullptr;
-    }
+    toolbar_.DestroyTooltip();
     image_target_.Reset();
     image_bitmap_.Reset();
     image_brush_.Reset();
@@ -1572,7 +1276,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             OnCommand(LOWORD(wparam), HIWORD(wparam));
             return 0;
         case WM_PRINTCLIENT:
-            PaintToolbar(reinterpret_cast<HDC>(wparam));
+            toolbar_.Paint(reinterpret_cast<HDC>(wparam), scale_);
             return 0;
         case WM_NCHITTEST: {
             POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
@@ -1602,7 +1306,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         case WM_PAINT: {
             PAINTSTRUCT ps{};
             HDC dc = ::BeginPaint(hwnd, &ps);
-            PaintToolbar(dc);
+            toolbar_.Paint(dc, scale_);
             ::EndPaint(hwnd, &ps);
             return 0;
         }
@@ -1639,7 +1343,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                                                                                  ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, scale_));
                 const LONG width = std::min(platform::RectWidth(available), static_cast<LONG>(kIslandWidth * scale_));
                 BuildToolbar(static_cast<float>(width));
-                const LONG height = toolbar_rect_.bottom;
+                const LONG height = toolbar_.height();
                 const RECT placement = platform::ClampRectToBounds(
                     RECT{suggested->left, suggested->top, suggested->left + width, suggested->top + height}, available);
                 ::SetWindowPos(hwnd, nullptr, placement.left, placement.top, platform::RectWidth(placement),
@@ -1677,7 +1381,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         case WM_LBUTTONDOWN: {
             ::SetFocus(hwnd);
             const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            if (const auto item = HitTestToolbar(pt)) {
+            if (const auto item = toolbar_.HitTest(pt)) {
                 OnToolbarActivated(*item);
             } else {
                 FeatureUsed();
@@ -1840,13 +1544,12 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
         return;
     }
     if (notification == BN_CLICKED) {
-        for (const auto* items : {&main_items_, &context_items_}) {
-            const auto found = std::find_if(items->begin(), items->end(), [id](const auto& item) { return item.identifier == id; });
-            if (found != items->end()) {
-                OnToolbarActivated(*found);
-                return;
-            }
+        if (const auto item = toolbar_.Find(id)) {
+            OnToolbarActivated(*item);
+            return;
         }
+        const auto found = std::find_if(context_items_.begin(), context_items_.end(), [id](const auto& item) { return item.identifier == id; });
+        if (found != context_items_.end()) { OnToolbarActivated(*found); }
     }
 }
 
@@ -2005,20 +1708,6 @@ D2D1_POINT_2F ScreenshotEditor::ToImagePoint(POINT desktop_pt) const {
     const float zoom = zoom_ > 0.0f ? zoom_ : 1.0f;
     return D2D1::Point2F((static_cast<float>(desktop_pt.x) - view_origin_.x) / zoom,
                          (static_cast<float>(desktop_pt.y) - view_origin_.y) / zoom);
-}
-
-std::optional<ScreenshotEditor::ToolbarItem> ScreenshotEditor::HitTestToolbar(POINT client_pt) const {
-    if (::PtInRect(&toolbar_rect_, client_pt) == FALSE) {
-        return std::nullopt;
-    }
-    const float x = static_cast<float>(client_pt.x - toolbar_rect_.left);
-    const float y = static_cast<float>(client_pt.y - toolbar_rect_.top);
-    for (const ToolbarItem& item : main_items_) {
-        if (item.shown && x >= item.rect.left && x <= item.rect.right && y >= item.rect.top && y <= item.rect.bottom) {
-            return item;
-        }
-    }
-    return std::nullopt;
 }
 
 void ScreenshotEditor::OnToolbarActivated(ToolbarItem item) {
@@ -2802,16 +2491,6 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
     }
 }
 
-void ScreenshotEditor::PaintToolbar(HDC dc) const {
-    using namespace ui;
-    RECT client{0, 0, client_width_, client_height_};
-    platform::PaintBuffer buffer(dc, client);
-    dc = buffer.dc();
-    theme::DrawPanel(dc, client, scale_);
-    theme::DrawGrip(dc, {0, 0, static_cast<LONG>(ui::theme::kIslandGripWidth * scale_), toolbar_rect_.bottom}, scale_);
-    for (const auto& split : main_separators_) { DrawSeparator(dc, split, scale_); }
-}
-
 // ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
@@ -2944,15 +2623,12 @@ std::optional<ui::ImageSaveDestination> ScreenshotEditor::ChooseSaveDestination(
         context_fade_started_ = 0;
         ::KillTimer(context_, kWatermarkClearHoverTimer);
         ::SendMessageW(Control(kFontSizeCombo), CB_SHOWDROPDOWN, FALSE, 0);
-        if (tooltip_) {
-            ::SendMessageW(tooltip_, TTM_POP, 0, 0);
-            ::SendMessageW(tooltip_, TTM_ACTIVATE, FALSE, 0);
-        }
+        toolbar_.SuspendTooltips();
         ::ShowWindow(context_, SW_HIDE);
     });
     if (dialog) {
         modal_active_ = false;
-        if (tooltip_) { ::SendMessageW(tooltip_, TTM_ACTIVATE, TRUE, 0); }
+        toolbar_.ResumeTooltips();
         if (visible_) { PlaceContext(); }
     }
     return destination;

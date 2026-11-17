@@ -27,6 +27,7 @@
 #include "app/appearance_theme.h"
 #include "editor/annotation_document.h"
 #include "editor/annotation_palette.h"
+#include "editor/editor_toolbar.h"
 #include "editor/image_viewport.h"
 #include "editor/redaction_renderer.h"
 #include "platform/bgra_image.h"
@@ -37,7 +38,7 @@
 namespace easnap::editor {
 
 /// Screenshot document/commands and movable native editing island.
-class ScreenshotEditor {
+class ScreenshotEditor : private ToolbarButtonOwner {
 public:
     struct Callbacks {
         /// `exported` is true when the user copied or saved successfully.
@@ -143,8 +144,6 @@ public:
     [[nodiscard]] HWND hwnd() const noexcept { return hwnd_; }
 
 private:
-    struct ToolbarItem;
-
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
     LRESULT HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
 
@@ -153,8 +152,6 @@ private:
     void BuildToolbar(float available_width);
     /// Lays out the island; image coordinates remain physical desktop pixels.
     void LayoutClient(int client_width, int client_height);
-    /// Places the island beside/below the region, contained by its monitor.
-    [[nodiscard]] RECT InitialWindowRect(const RECT& screen_region) const;
     /// Forgets every trace of the previous editing session.
     void ResetSession();
     /// Resets tools and styles for a new session on `frame`.
@@ -162,16 +159,16 @@ private:
     /// Creates the island, its context island and their controls beside `screen_region`.
     bool CreateWindows(const RECT& screen_region, HWND owner);
     void CreateTextFormats();
-    bool FeatureUsed();
+    bool FeatureUsed() override;
+    /// A key pressed on an island button, handled as the tools island's own.
+    LRESULT ForwardButtonKey(UINT message, WPARAM key, LPARAM flags) override;
+    void BrushMethodHovered() override;
     bool EnsureImage();
     void NotifyMutation(uint64_t previous_revision);
 
     bool CreateToolbarControls();
     void SyncToolbarControls() const;
     void ReflowToolbar();
-    void PaintToolbar(HDC dc) const;
-    static LRESULT CALLBACK ToolbarButtonProc(HWND hwnd, UINT message, WPARAM wparam,
-                                              LPARAM lparam, UINT_PTR identifier, DWORD_PTR reference);
     void Invalidate() const;
     void InvalidateImage(const RECT& source_bounds) const;
     /// The desktop pixels, inside the viewport, that show `source_bounds`.
@@ -196,9 +193,6 @@ private:
     /// Makes the base bitmap hold image rows [first, end) and returns the rows
     /// it actually covers from `first` on, or 0 on failure.
     [[nodiscard]] int EnsureBaseRows(int first, int end);
-    /// The tools island's item under `client_pt`, as a copy: activating it
-    /// rebuilds the items.
-    [[nodiscard]] std::optional<ToolbarItem> HitTestToolbar(POINT client_pt) const;
 
     /// The WM_COMMAND and WM_KEYDOWN arms of `HandleMessage`. Reached only
     /// through it, so `ui::ConsumePopupInput` sees every message first.
@@ -279,7 +273,7 @@ private:
     bool context_visible_{false}, island_user_positioned_{false};
     ULONGLONG context_fade_started_{0};
     std::optional<size_t> selected_;
-    std::vector<RECT> main_separators_, context_separators_;
+    std::vector<RECT> context_separators_;
     std::vector<std::pair<int, RECT>> context_fields_;
     Annotation original_;
     D2D1_POINT_2F drag_origin_{};
@@ -288,7 +282,6 @@ private:
     DWORD last_text_double_{0};
     POINT last_text_point_{};
     HFONT toolbar_font_{nullptr};
-    HWND tooltip_{nullptr};
     platform::BgraImage source_image_;    ///< Untouched capture.
     RECT source_bounds_{};               ///< Immutable snapshot placement.
     RECT region_{};                      ///< Provisional frame, fixed when pixels arrive.
@@ -299,7 +292,7 @@ private:
     RedactionRenderer redaction_;         ///< Capture with pixel effects applied.
 
     AnnotationDocument document_;
-    std::vector<ToolbarItem> main_items_;     ///< The tools island: tools, Scrollshot, commands.
+    EditorToolbar toolbar_;  ///< The tools island: tools, Scrollshot, commands.
     /// The property island's options, thicknesses and colours, and the brush
     /// size pop-up's sizes.
     std::vector<ToolbarItem> context_items_;
@@ -313,9 +306,6 @@ private:
     ToolId tool_{ToolId::Pen};
     AnnotationStyle style_{};
 
-    int client_width_{0};      ///< Client area width in physical pixels.
-    int client_height_{0};     ///< Client area height in physical pixels.
-    RECT toolbar_rect_{};      ///< Toolbar strip, client pixels (docked to top).
     /// Desktop-to-image mapping. A screenshot keeps scale 1 at its captured
     /// place; a document scrolls and zooms inside `view_area_`.
     ImageView view_{};

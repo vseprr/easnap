@@ -91,6 +91,10 @@ set(EASNAP_SOURCES
     src/editor/annotation_palette.h
     src/editor/screenshot_editor.h
     src/editor/screenshot_editor.cpp
+    src/editor/toolbar_item.h
+    src/editor/toolbar_item.cpp
+    src/editor/editor_toolbar.h
+    src/editor/editor_toolbar.cpp
     src/editor/image_viewport.h
     src/editor/image_viewport.cpp
     src/editor/redaction_renderer.h
