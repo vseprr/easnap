@@ -927,80 +927,25 @@ private:
                 return 0;
             }
 
-            case WM_SETCURSOR: {
-                if (controller_.workspace().scrollshot_locked()) {
-                    ::SetCursor(::LoadCursorW(nullptr, IDC_ARROW));
-                    return TRUE;
-                }
-                POINT pt{};
-                ::GetCursorPos(&pt);
-                const auto annotation_cursor = controller_.AnnotationCursor(pt);
-                if (annotation_cursor && !ToolbarContains(pt) && !controller_.MagnifierContains(pt)) {
-                    ::SetCursor(annotation_cursor);
-                    return TRUE;
-                }
-                const LPCWSTR cursor = ToolbarContains(pt) || controller_.MagnifierContains(pt) ? IDC_ARROW : (controller_.UsesAnnotationTool() && controller_.selector().HitTest(pt) == SelectionHandle::Body ? IDC_CROSS : (controller_.workspace().screenshot_fixed() ? IDC_ARROW : controller_.selector().CursorForPoint(pt)));
-                ::SetCursor(::LoadCursorW(nullptr, cursor));
-                return TRUE;
-            }
+            case WM_SETCURSOR:
+                return OnDimSetCursor();
 
-            case WM_MOUSEMOVE: {
-                const POINT pt = ToVirtual(lparam);
-                controller_.UpdatePointer(pt);
-                controller_.PointerMove(pt, (wparam & MK_LBUTTON) != 0);
-                const int hovered = PaletteHitTest(pt);
-                if (hovered != hover_button_) {
-                    hover_button_ = hovered;
-                    if (mode_toolbar_) { ::InvalidateRect(mode_toolbar_, nullptr, FALSE); }
-                }
-                return 0;
-            }
+            case WM_MOUSEMOVE:
+                return OnDimPointerMove(wparam, lparam);
             case WM_LBUTTONDOWN:
-            case WM_LBUTTONDBLCLK: {
-                controller_.color_readout().CancelPress();
-                const POINT pt = ToVirtual(lparam);
-                const bool toolbar = ToolbarContains(pt);
-                const bool excluded = toolbar || controller_.MagnifierContains(pt);
-                controller_.UpdatePointer(pt);
-                if (!controller_.workspace().recording_visible()) { ::SetFocus(hwnd); }
-                controller_.PointerDown(pt, message == WM_LBUTTONDBLCLK, excluded,
-                                        static_cast<DWORD>(::GetMessageTime()));
-                ::SetCapture(hwnd);
-                if (toolbar) { OnPaletteClicked(PaletteHitTest(pt)); }
-                return 0;
-            }
+            case WM_LBUTTONDBLCLK:
+                return OnDimPointerDown(hwnd, message, lparam);
             case WM_LBUTTONUP:
                 controller_.PointerUp(ToVirtual(lparam));
                 if (::GetCapture() == hwnd) { ::ReleaseCapture(); }
                 return 0;
 
             case WM_RBUTTONUP:
-                // A locked Scrollshot leaves the way Esc does: Discard asks
-                // first when the user has scrolled for the image.
-                if (controller_.workspace().scrollshot_locked()) {
-                    controller_.RequestScrollshotCommand(ScrollshotCommand::Discard);
-                } else {
-                    controller_.HandleCancelled();
-                }
-                return 0;
+                return OnDimRightButtonUp();
 
             case WM_MOUSEWHEEL:
-            case WM_MOUSEHWHEEL: {
-                const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-                const RECT frame = controller_.selector().selection();
-                if (controller_.workspace().scrollshot_capturing()) {
-                    // With "scroll inactive windows" off, Windows sends the wheel
-                    // here instead of to the content under the pointer.
-                    if (::PtInRect(&frame, pt)) { controller_.RequestScrollshotCommand(ScrollshotCommand::WheelBlocked); }
-                } else if (controller_.workspace().screenshot_fixed()) {
-                    const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
-                    const WORD keys = GET_KEYSTATE_WPARAM(wparam);
-                    const bool horizontal = message == WM_MOUSEHWHEEL;
-                    controller_.EditorWheel(horizontal ? -delta : delta, (keys & MK_CONTROL) != 0,
-                                            horizontal || (keys & MK_SHIFT) != 0, pt);
-                }
-                return 0;
-            }
+            case WM_MOUSEHWHEEL:
+                return OnDimWheel(message, wparam, lparam);
 
             case WM_CHAR:
                 if (controller_.workspace().screenshot_visible()) {
@@ -1009,33 +954,7 @@ private:
                 return 0;
 
             case WM_KEYDOWN:
-                if (controller_.workspace().scrollshot_locked()) {
-                    const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
-                    if (wparam == VK_ESCAPE) {
-                        controller_.RequestScrollshotCommand(ScrollshotCommand::Discard);
-                    } else if (wparam == VK_RETURN || (control && wparam == 'C')) {
-                        controller_.RequestScrollshotCommand(ScrollshotCommand::Copy);
-                    } else if (control && wparam == 'S') {
-                        controller_.RequestScrollshotCommand(ScrollshotCommand::Save);
-                    }
-                    return 0;
-                }
-                if (wparam == VK_TAB && mode_toolbar_ && controller_.workspace().can_switch_mode()) {
-                    ::SetForegroundWindow(mode_toolbar_);
-                    ::SetFocus(mode_buttons_[0]);
-                    return 0;
-                }
-                if (controller_.workspace().screenshot_visible()) {
-                    const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
-                    if (controller_.workspace().screenshot_fixed() || (!(wparam >= VK_LEFT && wparam <= VK_DOWN) && !(control && wparam == 'A'))) {
-                        controller_.EditorKey(message, wparam, lparam);
-                        return 0;
-                    }
-                }
-                controller_.color_readout().OnKeyDown(wparam, (lparam & (1LL << 30)) != 0,
-                                                      (::GetKeyState(VK_CONTROL) & 0x8000) != 0,
-                                                      (::GetKeyState(VK_MENU) & 0x8000) != 0);
-                return HandleKey(wparam);
+                return OnDimKeyDown(message, wparam, lparam);
 
             case WM_KEYUP:
                 if (controller_.workspace().magnifier_visible() && controller_.color_readout().OnKeyUp(wparam)) {
@@ -1053,15 +972,7 @@ private:
                 return 0;
 
             case WM_TIMER:
-                if (wparam == kOverlayModeFadeTimer) {
-                    UpdateModeToolbar();
-                    return 0;
-                }
-                if (wparam == kOverlayNoticeTimer) {
-                    ::KillTimer(hwnd, kOverlayNoticeTimer);
-                    controller_.SetNotice({});
-                }
-                return 0;
+                return OnDimTimer(hwnd, wparam);
 
             case WM_DISPLAYCHANGE:
                 // A locked Scrollshot holds captured content: the coordinator
@@ -1073,6 +984,119 @@ private:
                 break;
         }
         return ::DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+
+    LRESULT OnDimSetCursor() {
+        if (controller_.workspace().scrollshot_locked()) {
+            ::SetCursor(::LoadCursorW(nullptr, IDC_ARROW));
+            return TRUE;
+        }
+        POINT pt{};
+        ::GetCursorPos(&pt);
+        const auto annotation_cursor = controller_.AnnotationCursor(pt);
+        if (annotation_cursor && !ToolbarContains(pt) && !controller_.MagnifierContains(pt)) {
+            ::SetCursor(annotation_cursor);
+            return TRUE;
+        }
+        const LPCWSTR cursor = ToolbarContains(pt) || controller_.MagnifierContains(pt) ? IDC_ARROW : (controller_.UsesAnnotationTool() && controller_.selector().HitTest(pt) == SelectionHandle::Body ? IDC_CROSS : (controller_.workspace().screenshot_fixed() ? IDC_ARROW : controller_.selector().CursorForPoint(pt)));
+        ::SetCursor(::LoadCursorW(nullptr, cursor));
+        return TRUE;
+    }
+
+    LRESULT OnDimPointerMove(WPARAM wparam, LPARAM lparam) {
+        const POINT pt = ToVirtual(lparam);
+        controller_.UpdatePointer(pt);
+        controller_.PointerMove(pt, (wparam & MK_LBUTTON) != 0);
+        const int hovered = PaletteHitTest(pt);
+        if (hovered != hover_button_) {
+            hover_button_ = hovered;
+            if (mode_toolbar_) { ::InvalidateRect(mode_toolbar_, nullptr, FALSE); }
+        }
+        return 0;
+    }
+
+    LRESULT OnDimPointerDown(HWND hwnd, UINT message, LPARAM lparam) {
+        controller_.color_readout().CancelPress();
+        const POINT pt = ToVirtual(lparam);
+        const bool toolbar = ToolbarContains(pt);
+        const bool excluded = toolbar || controller_.MagnifierContains(pt);
+        controller_.UpdatePointer(pt);
+        if (!controller_.workspace().recording_visible()) { ::SetFocus(hwnd); }
+        controller_.PointerDown(pt, message == WM_LBUTTONDBLCLK, excluded,
+                                static_cast<DWORD>(::GetMessageTime()));
+        ::SetCapture(hwnd);
+        if (toolbar) { OnPaletteClicked(PaletteHitTest(pt)); }
+        return 0;
+    }
+
+    LRESULT OnDimRightButtonUp() {
+        // A locked Scrollshot leaves the way Esc does: Discard asks
+        // first when the user has scrolled for the image.
+        if (controller_.workspace().scrollshot_locked()) {
+            controller_.RequestScrollshotCommand(ScrollshotCommand::Discard);
+        } else {
+            controller_.HandleCancelled();
+        }
+        return 0;
+    }
+
+    LRESULT OnDimWheel(UINT message, WPARAM wparam, LPARAM lparam) {
+        const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        const RECT frame = controller_.selector().selection();
+        if (controller_.workspace().scrollshot_capturing()) {
+            // With "scroll inactive windows" off, Windows sends the wheel
+            // here instead of to the content under the pointer.
+            if (::PtInRect(&frame, pt)) { controller_.RequestScrollshotCommand(ScrollshotCommand::WheelBlocked); }
+        } else if (controller_.workspace().screenshot_fixed()) {
+            const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+            const WORD keys = GET_KEYSTATE_WPARAM(wparam);
+            const bool horizontal = message == WM_MOUSEHWHEEL;
+            controller_.EditorWheel(horizontal ? -delta : delta, (keys & MK_CONTROL) != 0,
+                                    horizontal || (keys & MK_SHIFT) != 0, pt);
+        }
+        return 0;
+    }
+
+    LRESULT OnDimKeyDown(UINT message, WPARAM wparam, LPARAM lparam) {
+        if (controller_.workspace().scrollshot_locked()) {
+            const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            if (wparam == VK_ESCAPE) {
+                controller_.RequestScrollshotCommand(ScrollshotCommand::Discard);
+            } else if (wparam == VK_RETURN || (control && wparam == 'C')) {
+                controller_.RequestScrollshotCommand(ScrollshotCommand::Copy);
+            } else if (control && wparam == 'S') {
+                controller_.RequestScrollshotCommand(ScrollshotCommand::Save);
+            }
+            return 0;
+        }
+        if (wparam == VK_TAB && mode_toolbar_ && controller_.workspace().can_switch_mode()) {
+            ::SetForegroundWindow(mode_toolbar_);
+            ::SetFocus(mode_buttons_[0]);
+            return 0;
+        }
+        if (controller_.workspace().screenshot_visible()) {
+            const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            if (controller_.workspace().screenshot_fixed() || (!(wparam >= VK_LEFT && wparam <= VK_DOWN) && !(control && wparam == 'A'))) {
+                controller_.EditorKey(message, wparam, lparam);
+                return 0;
+            }
+        }
+        controller_.color_readout().OnKeyDown(wparam, (lparam & (1LL << 30)) != 0,
+                                              (::GetKeyState(VK_CONTROL) & 0x8000) != 0,
+                                              (::GetKeyState(VK_MENU) & 0x8000) != 0);
+        return HandleKey(wparam);
+    }
+
+    LRESULT OnDimTimer(HWND hwnd, WPARAM wparam) {
+        if (wparam == kOverlayModeFadeTimer) {
+            UpdateModeToolbar();
+            return 0;
+        }
+        if (wparam == kOverlayNoticeTimer) {
+            ::KillTimer(hwnd, kOverlayNoticeTimer);
+            controller_.SetNotice({});
+        }
+        return 0;
     }
 
     LRESULT HandleChromeMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -1090,16 +1114,7 @@ private:
                 }
                 break;
             case WM_MOVING:
-                if (hwnd == mode_toolbar_ && lparam) {
-                    auto* r = reinterpret_cast<RECT*>(lparam);
-                    RECT current{};
-                    ::GetWindowRect(hwnd, &current);
-                    const LONG height = r->bottom - r->top;
-                    r->top = current.top;
-                    r->bottom = r->top + height;
-                    *r = platform::ClampRectToBounds(*r, monitor_.work_area);
-                    return TRUE;
-                }
+                if (hwnd == mode_toolbar_ && lparam) { return OnModeIslandMoving(hwnd, lparam); }
                 break;
 
             case WM_COMMAND:
@@ -1112,14 +1127,7 @@ private:
                 if (hwnd == mode_toolbar_) { return HandleKey(wparam); }
                 break;
             case WM_PRINTCLIENT:
-                if (hwnd == mode_toolbar_) {
-                    DrawPalette(reinterpret_cast<HDC>(wparam));
-                } else if (hwnd == magnifier_) {
-                    RECT client{};
-                    ::GetClientRect(hwnd, &client);
-                    PaintMagnifier(reinterpret_cast<HDC>(wparam), client);
-                }
-                return 0;
+                return OnChromePrintClient(hwnd, wparam);
             case theme::kChangedMessage:
                 ::InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
@@ -1127,44 +1135,74 @@ private:
                 return 1;
 
             case WM_NCHITTEST:
-                if (hwnd == mode_toolbar_) {
-                    POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-                    ::ScreenToClient(hwnd, &point);
-                    return ::ChildWindowFromPointEx(hwnd, point, CWP_SKIPINVISIBLE) == hwnd ? HTCAPTION : HTCLIENT;
-                }
-                return HTTRANSPARENT;  // Image and chrome remain click-through.
+                return OnChromeHitTest(hwnd, lparam);
 
-            case WM_PAINT: {
-                if (hwnd != image_) {
-                    buffer_.Paint(hwnd, [this, hwnd](HDC dc, const RECT& client) {
-                        if (hwnd == magnifier_) {
-                            PaintMagnifier(dc, client);
-                        } else if (hwnd == mode_toolbar_) {
-                            theme::FillSolid(dc, client, theme::kChromeColorKey);
-                            DrawPalette(dc);
-                        } else if (hwnd == shade_ || IsShadeStrip(hwnd)) {
-                            theme::FillSolid(dc, client, theme::kDim);
-                        } else {
-                            PaintChrome(dc);
-                        }
-                    });
-                    return 0;
-                }
-                PAINTSTRUCT ps{};
-                HDC dc = ::BeginPaint(hwnd, &ps);
-                if (dc != nullptr) {
-                    RECT bounds{};
-                    ::GetWindowRect(hwnd, &bounds);
-                    controller_.PaintImage(dc, bounds, ps.rcPaint);
-                }
-                ::EndPaint(hwnd, &ps);
-                return 0;
-            }
+            case WM_PAINT:
+                return OnChromePaint(hwnd);
 
             default:
                 break;
         }
         return ::DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+
+    /// The mode island moves sideways only and stays in the work area.
+    LRESULT OnModeIslandMoving(HWND hwnd, LPARAM lparam) {
+        auto* r = reinterpret_cast<RECT*>(lparam);
+        RECT current{};
+        ::GetWindowRect(hwnd, &current);
+        const LONG height = r->bottom - r->top;
+        r->top = current.top;
+        r->bottom = r->top + height;
+        *r = platform::ClampRectToBounds(*r, monitor_.work_area);
+        return TRUE;
+    }
+
+    LRESULT OnChromePrintClient(HWND hwnd, WPARAM wparam) {
+        if (hwnd == mode_toolbar_) {
+            DrawPalette(reinterpret_cast<HDC>(wparam));
+        } else if (hwnd == magnifier_) {
+            RECT client{};
+            ::GetClientRect(hwnd, &client);
+            PaintMagnifier(reinterpret_cast<HDC>(wparam), client);
+        }
+        return 0;
+    }
+
+    LRESULT OnChromeHitTest(HWND hwnd, LPARAM lparam) {
+        if (hwnd == mode_toolbar_) {
+            POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            ::ScreenToClient(hwnd, &point);
+            return ::ChildWindowFromPointEx(hwnd, point, CWP_SKIPINVISIBLE) == hwnd ? HTCAPTION : HTCLIENT;
+        }
+        return HTTRANSPARENT;  // Image and chrome remain click-through.
+    }
+
+    LRESULT OnChromePaint(HWND hwnd) {
+        if (hwnd != image_) {
+            buffer_.Paint(hwnd, [this, hwnd](HDC dc, const RECT& client) {
+                if (hwnd == magnifier_) {
+                    PaintMagnifier(dc, client);
+                } else if (hwnd == mode_toolbar_) {
+                    theme::FillSolid(dc, client, theme::kChromeColorKey);
+                    DrawPalette(dc);
+                } else if (hwnd == shade_ || IsShadeStrip(hwnd)) {
+                    theme::FillSolid(dc, client, theme::kDim);
+                } else {
+                    PaintChrome(dc);
+                }
+            });
+            return 0;
+        }
+        PAINTSTRUCT ps{};
+        HDC dc = ::BeginPaint(hwnd, &ps);
+        if (dc != nullptr) {
+            RECT bounds{};
+            ::GetWindowRect(hwnd, &bounds);
+            controller_.PaintImage(dc, bounds, ps.rcPaint);
+        }
+        ::EndPaint(hwnd, &ps);
+        return 0;
     }
 
     LRESULT HandleKey(WPARAM key) {
