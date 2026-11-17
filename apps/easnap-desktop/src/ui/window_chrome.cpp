@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "platform/paint_buffer.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/icons.h"
@@ -87,11 +88,7 @@ struct WindowChrome {
     }
 };
 LRESULT CALLBACK ChromeHeaderProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-    auto* data = reinterpret_cast<WindowChrome*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    if (message == WM_NCCREATE) {
-        data = static_cast<WindowChrome*>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(data));
-    }
+    auto* data = platform::BindWindowOwner<WindowChrome>(hwnd, message, lparam);
     if (!data) { return ::DefWindowProcW(hwnd, message, wparam, lparam); }
     switch (message) {
         case WM_NCHITTEST: {
@@ -202,13 +199,13 @@ LRESULT CALLBACK ChromeParentProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
 }  // namespace
 bool StyleWindowChrome(HWND window, bool resizable) {
     static const bool registered = [] {
-        WNDCLASSEXW cls{sizeof(cls)};
+        WNDCLASSEXW cls{};
         cls.style = CS_DBLCLKS;
         cls.lpfnWndProc = ChromeHeaderProc;
         cls.hInstance = ::GetModuleHandleW(nullptr);
         cls.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
         cls.lpszClassName = L"EasnapWindowChrome";
-        return ::RegisterClassExW(&cls) != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+        return platform::RegisterWindowClass(cls);
     }();
     if (!registered) { return false; }
     auto data = std::make_unique<WindowChrome>();

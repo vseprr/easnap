@@ -84,12 +84,6 @@ private:
                               In,
                               Out };
 
-    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam,
-                                       LPARAM lparam);
-    static LRESULT CALLBACK TimelineProc(HWND hwnd, UINT message, WPARAM wparam,
-                                         LPARAM lparam);
-    static LRESULT CALLBACK VideoProc(HWND hwnd, UINT message, WPARAM wparam,
-                                      LPARAM lparam);
     LRESULT HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
     LRESULT HandleTimelineMessage(HWND hwnd, UINT message, WPARAM wparam,
                                   LPARAM lparam);

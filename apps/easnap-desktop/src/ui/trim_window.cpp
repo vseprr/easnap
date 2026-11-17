@@ -13,6 +13,7 @@
 #include "platform/app_messages.h"
 #include "platform/platform_utils.h"
 #include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/trim_layout.h"
@@ -361,7 +362,7 @@ void TrimWindow::Destroy() {
     timeline_accessibility_.reset();
     if (hwnd_ != nullptr) {
         ::KillTimer(hwnd_, kTrimStatusTimer);
-        ::SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
+        platform::UnbindWindowOwner(hwnd_);
         ::DestroyWindow(hwnd_);
         hwnd_ = nullptr;
     }
@@ -403,47 +404,6 @@ bool TrimWindow::ProcessDialogMessage(MSG& message) const {
     return hwnd_ != nullptr && visible_ && (message.hwnd == hwnd_ || ::IsChild(hwnd_, message.hwnd)) &&
            (ConsumePopupInput(message.message, message.wParam) || ActivateFocusedButton(message, hwnd_) ||
             ::IsDialogMessageW(hwnd_, &message) != FALSE);
-}
-
-LRESULT CALLBACK TrimWindow::WindowProc(HWND hwnd, UINT message, WPARAM wparam,
-                                        LPARAM lparam) {
-    if (message == WM_NCCREATE) {
-        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-    }
-    auto* self = reinterpret_cast<TrimWindow*>(
-        ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    return self != nullptr ? self->HandleMessage(hwnd, message, wparam, lparam)
-                           : ::DefWindowProcW(hwnd, message, wparam, lparam);
-}
-
-LRESULT CALLBACK TrimWindow::TimelineProc(HWND hwnd, UINT message,
-                                          WPARAM wparam, LPARAM lparam) {
-    if (message == WM_NCCREATE) {
-        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-    }
-    auto* self = reinterpret_cast<TrimWindow*>(
-        ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    return self != nullptr
-               ? self->HandleTimelineMessage(hwnd, message, wparam, lparam)
-               : ::DefWindowProcW(hwnd, message, wparam, lparam);
-}
-
-LRESULT CALLBACK TrimWindow::VideoProc(HWND hwnd, UINT message, WPARAM wparam,
-                                       LPARAM lparam) {
-    if (message == WM_NCCREATE) {
-        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-    }
-    auto* self = reinterpret_cast<TrimWindow*>(
-        ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    return self != nullptr
-               ? self->HandleVideoMessage(hwnd, message, wparam, lparam)
-               : ::DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
 LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
@@ -705,9 +665,8 @@ LRESULT TrimWindow::HandleVideoMessage(HWND hwnd, UINT message, WPARAM wparam,
 bool TrimWindow::EnsureWindowClasses() {
     static const bool registered = [] {
         WNDCLASSEXW window_class{};
-        window_class.cbSize = sizeof(window_class);
         window_class.style = 0;
-        window_class.lpfnWndProc = WindowProc;
+        window_class.lpfnWndProc = platform::BoundWindowProc<TrimWindow, &TrimWindow::HandleMessage>;
         window_class.hInstance = ::GetModuleHandleW(nullptr);
         window_class.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
         window_class.hIcon = platform::LoadAppIcon(::GetSystemMetrics(SM_CXICON));
@@ -715,39 +674,34 @@ bool TrimWindow::EnsureWindowClasses() {
             platform::LoadAppIcon(::GetSystemMetrics(SM_CXSMICON));
         window_class.hbrBackground = nullptr; // Every exposed pixel is painted by us.
         window_class.lpszClassName = kWindowClassName;
-        if (::RegisterClassExW(&window_class) == 0 &&
-            ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        if (!platform::RegisterWindowClass(window_class)) {
             return false;
         }
 
         WNDCLASSEXW timeline_class{};
-        timeline_class.cbSize = sizeof(timeline_class);
         timeline_class.style = CS_HREDRAW | CS_VREDRAW;
-        timeline_class.lpfnWndProc = TimelineProc;
+        timeline_class.lpfnWndProc = platform::BoundWindowProc<TrimWindow, &TrimWindow::HandleTimelineMessage>;
         timeline_class.hInstance = ::GetModuleHandleW(nullptr);
         timeline_class.hCursor = ::LoadCursorW(nullptr, IDC_HAND);
         timeline_class.hbrBackground = nullptr;
         timeline_class.lpszClassName = kTimelineClassName;
-        if (::RegisterClassExW(&timeline_class) == 0 &&
-            ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        if (!platform::RegisterWindowClass(timeline_class)) {
             return false;
         }
 
         WNDCLASSEXW video_class{};
-        video_class.cbSize = sizeof(video_class);
-        video_class.lpfnWndProc = VideoProc;
+        video_class.lpfnWndProc = platform::BoundWindowProc<TrimWindow, &TrimWindow::HandleVideoMessage>;
         video_class.hInstance = ::GetModuleHandleW(nullptr);
         video_class.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
         video_class.hbrBackground = nullptr;
         video_class.lpszClassName = kVideoClassName;
-        return ::RegisterClassExW(&video_class) != 0 ||
-               ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+        return platform::RegisterWindowClass(video_class);
     }();
     return registered;
 }
 
 bool TrimWindow::CreateControls() {
-    // VideoProc dispatches through GWLP_USERDATA just like TimelineProc. The
+    // The video child dispatches through its bound owner like the timeline. The
     // generic control factory supplies no owner, leaving paint/resize handlers
     // unreachable and exposing stale pixels around the asynchronous presenter.
     video_ = ::CreateWindowExW(0, kVideoClassName, L"",
