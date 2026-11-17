@@ -33,6 +33,9 @@ struct ToolDefinition {
     /// Its annotation changes the image pixels themselves (Mosaic, Spotlight):
     /// it is applied to the base image, never drawn over it.
     bool base_effect{false};
+    /// Its annotation can be selected and shows a selection frame; the
+    /// watermark covers the whole image and is edited from its field instead.
+    bool selectable{true};
 };
 
 /// How many tools there are.
@@ -50,7 +53,7 @@ inline constexpr std::array<ToolDefinition, kToolCount> kToolDefinitions{{
     {.id = ToolId::Line, .identifier = kToolButtons.Id(7), .toolbar_position = 3, .name = IDS_EDITOR_TOOL_LINE, .icon = ui::Icon::Line},
     {.id = ToolId::Tag, .identifier = kToolButtons.Id(8), .toolbar_position = 7, .name = IDS_EDITOR_TOOL_TAG, .icon = ui::Icon::Tag, .text_box = true},
     {.id = ToolId::Spotlight, .identifier = kToolButtons.Id(9), .toolbar_position = 9, .name = IDS_EDITOR_TOOL_SPOTLIGHT, .icon = ui::Icon::Spotlight, .base_effect = true},
-    {.id = ToolId::Watermark, .identifier = kToolButtons.Id(10), .toolbar_position = 10, .name = IDS_EDITOR_TOOL_WATERMARK, .icon = ui::Icon::Watermark},
+    {.id = ToolId::Watermark, .identifier = kToolButtons.Id(10), .toolbar_position = 10, .name = IDS_EDITOR_TOOL_WATERMARK, .icon = ui::Icon::Watermark, .selectable = false},
 }};
 
 /// The record of `tool`.
@@ -88,6 +91,9 @@ inline constexpr std::array<ToolId, kToolCount> kToolbarOrder = [] {
 
 /// True for the tools that change the image pixels: Mosaic and Spotlight.
 [[nodiscard]] constexpr bool IsBaseEffect(ToolId tool) noexcept { return Tool(tool).base_effect; }
+
+/// False for the tools whose annotation is never selected: Watermark.
+[[nodiscard]] constexpr bool IsSelectable(ToolId tool) noexcept { return Tool(tool).selectable; }
 
 /// True when `annotation` is a stroke that follows the pointer point by point:
 /// the pen, and the mosaic with the brush method.

@@ -335,7 +335,7 @@ void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
 }
 
 void DrawSelectionChrome(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, const Annotation& a, float unit) {
-    if (a.tool == ToolId::Watermark || a.points.empty()) { return; }
+    if (!IsSelectable(a.tool) || a.points.empty()) { return; }
     brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
     const float width = kSelectionStroke * unit;
     const auto box = NormalizedD2DRect(a.points.front(), a.points.back());
