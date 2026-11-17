@@ -357,10 +357,7 @@ public:
         // the first drag allocate/repaint it stalls that input on larger screens.
         // Every later selection changes only the compositor's clipping mask.
         ::ShowWindow(shade_, SW_SHOWNOACTIVATE);
-        if (HDC shade_dc = ::GetDC(shade_)) {
-            theme::FillSolid(shade_dc, {0, 0, width, height}, theme::kDim);
-            ::ReleaseDC(shade_, shade_dc);
-        } else {
+        if (!FillShade(shade_)) {
             Destroy();
             return false;
         }
@@ -654,6 +651,17 @@ public:
         }
     }
 
+    /// Fills a shown shading window at once instead of waiting for WM_PAINT.
+    static bool FillShade(HWND window) {
+        HDC dc = ::GetDC(window);
+        if (dc == nullptr) { return false; }
+        RECT client{};
+        ::GetClientRect(window, &client);
+        theme::FillSolid(dc, client, theme::kDim);
+        ::ReleaseDC(window, dc);
+        return true;
+    }
+
     void UpdateShade() const {
         if (!shade_) { return; }
         const RECT selection = platform::IntersectRects(controller_.selector().selection(), monitor_.bounds);
@@ -665,6 +673,7 @@ public:
                                               {monitor.left, selection.bottom, monitor.right, monitor.bottom},
                                               {monitor.left, selection.top, selection.left, selection.bottom},
                                               {selection.right, selection.top, monitor.right, selection.bottom}}};
+            std::array<HWND, 4> appearing{};
             for (size_t i = 0; i < strips.size(); ++i) {
                 HWND strip = shade_strips_[i];
                 if (platform::IsEmptyRect(strips[i])) {
@@ -673,14 +682,42 @@ public:
                 }
                 RECT current{};
                 ::GetWindowRect(strip, &current);
-                if (::IsWindowVisible(strip) && ::EqualRect(&current, &strips[i])) { continue; }
+                const bool visible = ::IsWindowVisible(strip) != FALSE;
+                if (visible && ::EqualRect(&current, &strips[i])) { continue; }
+                // A strip that appears stays transparent until it is filled.
+                if (!visible && ::SetLayeredWindowAttributes(strip, 0, 0, LWA_ALPHA)) { appearing[i] = strip; }
                 // Below the image and chrome windows, like the shading it replaces.
                 ::SetWindowPos(strip, image_, strips[i].left, strips[i].top, platform::RectWidth(strips[i]),
                                platform::RectHeight(strips[i]), SWP_NOACTIVATE | SWP_SHOWWINDOW);
-                ::RedrawWindow(strip, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+                static_cast<void>(FillShade(strip));
+            }
+            ::GdiFlush();
+            // Windows composes the filled content a frame later than a change
+            // of opacity: shaded before that, a strip would show nothing.
+            if (std::any_of(appearing.begin(), appearing.end(), [](HWND strip) { return strip != nullptr; })) {
+                ::DwmFlush();
+            }
+            // Every strip shades at once, and the single window leaves only then.
+            for (HWND strip : appearing) {
+                if (strip) { ::SetLayeredWindowAttributes(strip, 0, theme::kDimAlpha, LWA_ALPHA); }
             }
             if (::IsWindowVisible(shade_)) { ::ShowWindow(shade_, SW_HIDE); }
             return;
+        }
+        // A hidden layered window has lost its surface, and shown again it is
+        // empty until painted; a WM_PAINT would come only after the strips had
+        // gone, and the screen outside the frame would flash bright. As when
+        // the workspace is created: shown transparent without a region and
+        // filled at once; then, once Windows has composed that content, cut
+        // around the frame and shaded.
+        const bool appearing = ::IsWindowVisible(shade_) == FALSE;
+        if (appearing) {
+            ::SetLayeredWindowAttributes(shade_, 0, 0, LWA_ALPHA);
+            ::SetWindowRgn(shade_, nullptr, FALSE);
+            ::ShowWindow(shade_, SW_SHOWNOACTIVATE);
+            static_cast<void>(FillShade(shade_));
+            ::GdiFlush();
+            ::DwmFlush();
         }
         HRGN outside = ::CreateRectRgn(0, 0, client_width(), client_height());
         if (controller_.selector().has_selection() && !platform::IsEmptyRect(selection)) {
@@ -693,7 +730,7 @@ public:
         const bool same = ::GetWindowRgn(shade_, previous) != ERROR && ::EqualRgn(previous, outside);
         ::DeleteObject(previous);
         if (same || !::SetWindowRgn(shade_, outside, FALSE)) { ::DeleteObject(outside); }
-        if (!::IsWindowVisible(shade_)) { ::ShowWindow(shade_, SW_SHOWNOACTIVATE); }
+        if (appearing) { ::SetLayeredWindowAttributes(shade_, 0, theme::kDimAlpha, LWA_ALPHA); }
         HideShadeStrips();
     }
 

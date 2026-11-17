@@ -74,6 +74,22 @@ shading split. The lab VM, which has no GPU, shows no shift either way. The inpu
 plane (opacity 1 of 255) and the colour-keyed chrome window were measured to
 have no such effect.
 
+The swap in either direction must not show the desktop unshaded. A hidden
+layered window loses its surface, and one shown again is empty until it is
+painted. The single window used to be shown at full shade and left to a
+`WM_PAINT` that came only after the picture had been handed to the editor: in
+v1.3.0 the screen outside the frame flashed bright when the first tool fixed
+a screenshot. A window that takes the shading over is now shown transparent,
+filled at once through its own device context (as when the workspace is
+created; `RedrawWindow` did not paint these windows on the test's isolated
+desktop); after `DwmFlush`, once Windows has composed that content, it is
+given its shade, and only then does the window it replaces leave. Without
+the wait the flash remained on the owner's PC: the new opacity took effect a
+frame before the content. A diagnostic build that left the shading whole
+showed no flash, and one that only logged the path showed that the capture
+always kept the workspace visible (no hiding fallback). `scrollshot_workspace_production` records each swap and fails when a
+window appears shaded or leaves before the other has shaded.
+
 ### Desktop Duplication, where it is available
 
 Windows lets a process duplicate an output once. The workspace's own provider,

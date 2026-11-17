@@ -114,6 +114,113 @@ bool Overlaps(const RECT& a, const RECT& b) {
     return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
+/// True when a shading window shades at the workspace's level.
+bool FullyShaded(HWND window) {
+    BYTE alpha = 0;
+    DWORD flags = 0;
+    return ::GetLayeredWindowAttributes(window, nullptr, &alpha, &flags) && (flags & LWA_ALPHA) != 0 &&
+           alpha == ui::theme::kDimAlpha;
+}
+
+/// Records when the shading windows of this thread appear and leave, with the
+/// opacity of each at that moment. A layered window shown again is empty until
+/// it is filled, so a window that takes the shading over must appear
+/// transparent and shade fully before the window it replaces leaves;
+/// otherwise the desktop outside the frame flashes bright or dark.
+class ShadingRecorder {
+public:
+    ShadingRecorder() {
+        current_ = this;
+        ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM) -> BOOL {
+            if (WindowText(window) == L"Easnap outside shading") {
+                const auto original = reinterpret_cast<WNDPROC>(
+                    ::SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&ShadingRecorder::Proc)));
+                if (original != nullptr) { current_->windows_.push_back({window, original}); }
+            }
+            return TRUE; }, 0);
+    }
+    ~ShadingRecorder() {
+        for (const auto& [window, original] : windows_) {
+            ::SetWindowLongPtrW(window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(original));
+        }
+        current_ = nullptr;
+    }
+    ShadingRecorder(const ShadingRecorder&) = delete;
+    ShadingRecorder& operator=(const ShadingRecorder&) = delete;
+
+    [[nodiscard]] size_t window_count() const noexcept { return windows_.size(); }
+    void Clear() noexcept { events_.clear(); }
+
+    /// True when every window in `incoming` appeared transparent, and every
+    /// window in `outgoing` left only once all of `incoming` shaded fully.
+    [[nodiscard]] bool TookOver(const std::vector<HWND>& incoming, const std::vector<HWND>& outgoing) const {
+        if (incoming.empty() || outgoing.empty()) { return false; }
+        for (HWND window : incoming) {
+            const Event* shown = Find(window, false);
+            if (shown == nullptr || Opacity(*shown, window) != 0) { return false; }
+        }
+        for (HWND window : outgoing) {
+            const Event* hidden = Find(window, true);
+            if (hidden == nullptr) { return false; }
+            for (HWND other : incoming) {
+                if (Opacity(*hidden, other) != ui::theme::kDimAlpha) { return false; }
+            }
+        }
+        return true;
+    }
+
+private:
+    struct Event {
+        HWND window;
+        bool hidden;
+        std::vector<std::pair<HWND, int>> opacity;  // Of every recorded window; -1 while hidden.
+    };
+
+    [[nodiscard]] const Event* Find(HWND window, bool hidden) const {
+        for (const Event& event : events_) {
+            if (event.window == window && event.hidden == hidden) { return &event; }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] static int Opacity(const Event& event, HWND window) {
+        for (const auto& [recorded, value] : event.opacity) {
+            if (recorded == window) { return value; }
+        }
+        return -1;
+    }
+
+    void Record(HWND window, bool hidden) {
+        Event event{window, hidden, {}};
+        for (const auto& recorded : windows_) {
+            BYTE alpha = 0;
+            DWORD flags = 0;
+            const bool shown = recorded.first == window ? !hidden : ::IsWindowVisible(recorded.first) != FALSE;
+            const bool read = ::GetLayeredWindowAttributes(recorded.first, nullptr, &alpha, &flags) && (flags & LWA_ALPHA) != 0;
+            event.opacity.push_back({recorded.first, shown && read ? alpha : -1});
+        }
+        events_.push_back(std::move(event));
+    }
+
+    static LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+        ShadingRecorder* self = current_;
+        WNDPROC original = nullptr;
+        for (const auto& [recorded, proc] : self->windows_) {
+            if (recorded == window) { original = proc; }
+        }
+        if (message == WM_WINDOWPOSCHANGED) {
+            const auto* position = reinterpret_cast<const WINDOWPOS*>(lparam);
+            if ((position->flags & SWP_SHOWWINDOW) != 0) { self->Record(window, false); }
+            if ((position->flags & SWP_HIDEWINDOW) != 0) { self->Record(window, true); }
+        }
+        return ::CallWindowProcW(original, window, message, wparam, lparam);
+    }
+
+    static inline ShadingRecorder* current_ = nullptr;
+    std::vector<std::pair<HWND, WNDPROC>> windows_;
+    std::vector<Event> events_;
+};
+
 /// The visible windows that darken the desktop outside the frame on `monitor`.
 std::vector<HWND> VisibleShading(const RECT& monitor) {
     struct Query {
@@ -351,7 +458,8 @@ void OverlayPhases() {
         around_frame = around_frame && !Overlaps(rect, frame) && rect.left >= monitor.bounds.left &&
                        rect.top >= monitor.bounds.top && rect.right <= monitor.bounds.right &&
                        rect.bottom <= monitor.bounds.bottom && ::GetWindowDisplayAffinity(strip, &affinity) &&
-                       affinity == 0x11 && (::GetWindowLongPtrW(strip, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0;
+                       affinity == 0x11 && (::GetWindowLongPtrW(strip, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0 &&
+                       FullyShaded(strip);
     }
     CHECK(around_frame);
     CHECK(shaded_area == static_cast<LONGLONG>(platform::RectWidth(monitor.bounds)) * platform::RectHeight(monitor.bounds) -
@@ -406,12 +514,29 @@ void OverlayPhases() {
     CHECK(commands.size() == 1 && wheel_delta == 0);
     commands.clear();
 
-    overlay.StopScrollshotCapture();
-    CHECK(overlay.workspace().scrollshot_locked() && !overlay.workspace().scrollshot_capturing());
-    CHECK(::GetWindowRgn(dim, region) == ERROR);  // Closed again; the frame stays locked.
-    shading = VisibleShading(monitor.bounds);  // Nothing is captured any more: one window again.
-    CHECK(!overlay.frame_exposed() && shading.size() == 1 && ::GetWindowRect(shading[0], &shade_rect) &&
-          ::EqualRect(&shade_rect, &monitor.bounds));
+    const std::vector<HWND> strips = VisibleShading(monitor.bounds);
+    {
+        ShadingRecorder recorder;
+        CHECK(strips.size() == 4 && recorder.window_count() == 5);
+        overlay.StopScrollshotCapture();
+        CHECK(overlay.workspace().scrollshot_locked() && !overlay.workspace().scrollshot_capturing());
+        CHECK(::GetWindowRgn(dim, region) == ERROR);  // Closed again; the frame stays locked.
+        shading = VisibleShading(monitor.bounds);  // Nothing is captured any more: one window again.
+        CHECK(!overlay.frame_exposed() && shading.size() == 1 && ::GetWindowRect(shading[0], &shade_rect) &&
+              ::EqualRect(&shade_rect, &monitor.bounds));
+        // The single window appears transparent and shades before the strips
+        // leave, so the desktop outside the frame never flashes; the same
+        // holds the other way round.
+        CHECK(FullyShaded(shading[0]) && recorder.TookOver(shading, strips));
+        const std::vector<HWND> single = shading;
+        recorder.Clear();
+        overlay.ExposeFrame(true);
+        shading = VisibleShading(monitor.bounds);
+        CHECK(shading.size() == 4 && recorder.TookOver(shading, single));
+        CHECK(std::all_of(shading.begin(), shading.end(), FullyShaded));
+        overlay.ExposeFrame(false);
+        CHECK(!overlay.frame_exposed() && VisibleShading(monitor.bounds) == single);
+    }
     ::SendMessageW(dim, WM_KEYDOWN, VK_RETURN, 0);
     CHECK(commands.size() == 1 && commands.back() == ScrollshotCommand::Copy);
 
