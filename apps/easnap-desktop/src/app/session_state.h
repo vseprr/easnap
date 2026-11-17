@@ -12,6 +12,7 @@
 
 #include "app/session_transitions.h"
 #include "app/app_settings.h"
+#include "app/display_change.h"
 #include "app/external_video.h"
 #include "app/recording_completion.h"
 #include "app/recording_finalizer.h"
@@ -241,6 +242,13 @@ private:
     void ShowScrollshotHelp();
     void UpdateScrollshotStatus();
     void StopScrollshotForShutdown();
+
+    /// What OnDisplayChanged decides from: the session's state and surfaces now.
+    [[nodiscard]] DisplayChangeFacts CurrentDisplayChangeFacts() const;
+    /// The display layout changed during a Scrollshot capture or review.
+    void KeepScrollshotAfterDisplayChange();
+    /// The display layout changed while the editor showed a stitched image.
+    void ReturnScrollshotDocumentToReview();
 
     void EndSession();
     void ScheduleCleanup();
