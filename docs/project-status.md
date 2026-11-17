@@ -40,9 +40,11 @@ and the individual runs in the [validation records](releases/validation-history.
   `island_capture_exclusion` drags those dialogs and reads the themed menu as
   the user sees them.
 
-## After v1.3.0
+## v1.3.1
 
-Corrections on `main` that no release contains yet.
+A maintenance release with the corrections below, reported by the owner on
+v1.3.0 and prepared on the branch `fix/v1.3.1` on 2026-11-17. Its notes are
+[v1.3.1](releases/v1.3.1.md).
 
 - **No flash around the frame when a screenshot is fixed.** Reported by the
   owner on v1.3.0: touching the tool island, or any tool, made the screen
