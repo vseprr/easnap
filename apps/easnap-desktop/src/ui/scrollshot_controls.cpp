@@ -32,10 +32,8 @@ constexpr float kPreviewWidth = 160.0f;
 constexpr float kPreviewPadding = 4.0f;
 constexpr float kIslandHeight = 72.0f;
 constexpr float kStartHeight = 56.0f;
-constexpr float kGrip = 24.0f;
 constexpr float kButton = 40.0f;
 constexpr float kStatusWidth = 250.0f;
-constexpr float kGap = 12.0f;
 
 /// The height of one line of `font`, as a static label draws it.
 [[nodiscard]] LONG LineHeight(HFONT font) {
@@ -144,7 +142,7 @@ public:
         const bool start = owner_.view_ == View::Start;
         const LONG padding = theme::Scaled(8, scale);
         const LONG button = theme::Scaled(kButton, scale);
-        const LONG grip = theme::Scaled(kGrip, scale);
+        const LONG grip = theme::Scaled(theme::kIslandGripWidth, scale);
         const LONG height = theme::Scaled(start ? kStartHeight : kIslandHeight, scale);
         const LONG start_width = TextWidth(ui_font_, strings::Get(IDS_SCROLLSHOT_START)) + theme::Scaled(64, scale);
         const LONG status_width = theme::Scaled(kStatusWidth, scale);
@@ -154,7 +152,7 @@ public:
         const LONG preview_width = PreviewPixelWidth(owner_.frame_) + 2 * theme::Scaled(kPreviewPadding, scale);
         const LONG preview_room = std::max<LONG>(preview_width, platform::RectHeight(anchor.work_area));
         const ScrollshotPlacement placement = PlaceScrollshotSurfaces(
-            owner_.frame_, monitors, SIZE{width, height}, preview_width, preview_room, theme::Scaled(kGap, scale));
+            owner_.frame_, monitors, SIZE{width, height}, preview_width, preview_room, theme::Scaled(theme::kIslandMargin, scale));
         owner_.island_over_frame_ = placement.island_over_frame;
         owner_.preview_over_frame_ = placement.preview_over_frame;
         preview_area_ = placement.preview;
@@ -334,7 +332,7 @@ private:
                 {
                     platform::PaintBuffer buffer(dc, client);
                     theme::DrawPanel(buffer.dc(), client, scale);
-                    theme::DrawGrip(buffer.dc(), {0, 0, theme::Scaled(kGrip, scale), client.bottom}, scale);
+                    theme::DrawGrip(buffer.dc(), {0, 0, theme::Scaled(theme::kIslandGripWidth, scale), client.bottom}, scale);
                 }
                 if (message == WM_PAINT) { ::EndPaint(hwnd, &paint); }
                 return 0;
@@ -530,8 +528,8 @@ private:
     }
 
     void RebuildFonts(float scale) {
-        HFONT ui = theme::CreateUiFont(13.0f, scale, false);
-        HFONT strong = theme::CreateUiFont(13.0f, scale, true);
+        HFONT ui = theme::CreateUiFont(theme::kBodyFontSize, scale, false);
+        HFONT strong = theme::CreateUiFont(theme::kBodyFontSize, scale, true);
         if (ui == nullptr || strong == nullptr) {
             if (ui != nullptr) { ::DeleteObject(ui); }
             if (strong != nullptr) { ::DeleteObject(strong); }

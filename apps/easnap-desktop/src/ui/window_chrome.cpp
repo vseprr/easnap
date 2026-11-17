@@ -37,7 +37,7 @@ struct WindowChrome {
         const float scale = ::GetDpiForWindow(owner) / 96.0f;
         RECT r{};
         ::GetClientRect(owner, &r);
-        const int height = theme::Scaled(kWindowChromeHeight, scale), button = theme::Scaled(34, scale), gap = theme::Scaled(6, scale);
+        const int height = theme::Scaled(kWindowChromeHeight, scale), button = theme::Scaled(theme::kCaptionButtonSize, scale), gap = theme::Scaled(theme::kCaptionButtonGap, scale);
         constexpr UINT flags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW;
         ::SetWindowPos(header, nullptr, 0, 0, r.right, height, flags);
         HDWP batch = ::BeginDeferWindowPos(3);
@@ -57,7 +57,7 @@ struct WindowChrome {
         }
         const UINT dpi = ::GetDpiForWindow(owner);
         if (!font || font_dpi != dpi) {
-            HFONT next = theme::CreateUiFont(13, scale, true);
+            HFONT next = theme::CreateUiFont(theme::kBodyFontSize, scale, true);
             if (next) {
                 if (font) { ::DeleteObject(font); }
                 font = next;
@@ -82,7 +82,7 @@ LRESULT CALLBACK ChromeHeaderProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
             if (data->resizable && !::IsZoomed(data->owner)) {
                 RECT r{};
                 ::GetWindowRect(data->owner, &r);
-                const int edge = theme::Scaled(6, ::GetDpiForWindow(hwnd) / 96.0f);
+                const int edge = theme::Scaled(theme::kResizeEdge, ::GetDpiForWindow(hwnd) / 96.0f);
                 if (GET_X_LPARAM(lparam) < r.left + edge || GET_X_LPARAM(lparam) >= r.right - edge || GET_Y_LPARAM(lparam) < r.top + edge) { return HTTRANSPARENT; }
             }
             return HTCLIENT;
@@ -99,8 +99,8 @@ LRESULT CALLBACK ChromeHeaderProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
             const float scale = ::GetDpiForWindow(hwnd) / 96.0f;
             wchar_t title[256]{};
             ::GetWindowTextW(data->owner, title, 256);
-            r.left = theme::Scaled(20, scale);
-            r.right -= theme::Scaled(data->resizable ? 130.0f : 52.0f, scale);
+            r.left = theme::Scaled(theme::kCaptionTitleInset, scale);
+            r.right -= theme::Scaled(data->resizable ? theme::kCaptionTitleReserveResizable : theme::kCaptionTitleReserveFixed, scale);
             theme::DrawLabel(buffer.dc(), r, title, theme::Current().muted_text, data->font, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
             buffer.Present();
             if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
@@ -165,7 +165,7 @@ LRESULT CALLBACK ChromeParentProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM
     if (message == WM_NCHITTEST && data->resizable && !::IsZoomed(hwnd)) {
         RECT r{};
         ::GetWindowRect(hwnd, &r);
-        const int edge = theme::Scaled(6, ::GetDpiForWindow(hwnd) / 96.0f);
+        const int edge = theme::Scaled(theme::kResizeEdge, ::GetDpiForWindow(hwnd) / 96.0f);
         const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
         const bool left = x < r.left + edge, right = x >= r.right - edge, top = y < r.top + edge, bottom = y >= r.bottom - edge;
         if (top) { return left ? HTTOPLEFT : right ? HTTOPRIGHT

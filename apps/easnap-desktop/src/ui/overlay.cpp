@@ -30,6 +30,13 @@ constexpr wchar_t kImageClassName[] = L"EasnapCaptureImage";
 constexpr wchar_t kMagnifierClassName[] = L"EasnapCaptureMagnifier";
 constexpr wchar_t kModeToolbarClassName[] = L"EasnapCaptureModes";
 constexpr UINT kNoticeTimeoutMs = 2600;
+/// Width a mode button adds to its widest label, in DIP. The button painter's
+/// insets add up to 52 (face 6, icon inset 10, icon 18, gap 6, label inset 6,
+/// and 6 more on the right); the island has always used 60. Not derived from
+/// the button metrics, so the mode buttons keep their width.
+constexpr float kModeButtonAllowance = 60.0f;
+/// Shortest the document scroll thumb gets, in DIP.
+constexpr float kScrollThumbMinimum = 24.0f;
 
 struct PaletteButton {
     CaptureMode mode;
@@ -291,8 +298,8 @@ public:
             platform::LogMessage(L"SetLayeredWindowAttributes(chrome) failed (error %lu)", ::GetLastError());
         }
 
-        label_font_ = theme::CreateUiFont(13.0f, monitor_.scale(), false);
-        button_font_ = theme::CreateUiFont(15.0f, monitor_.scale(), true);
+        label_font_ = theme::CreateUiFont(theme::kBodyFontSize, monitor_.scale(), false);
+        button_font_ = theme::CreateUiFont(theme::kHeadingFontSize, monitor_.scale(), true);
         MeasureModeButtons();
         if (owns_palette_) {
             const RECT panel = ToolbarPanel();
@@ -450,7 +457,7 @@ public:
         const RegionSelector& selector = controller_.selector();
         const RECT frame = selector.has_selection() ? selector.selection() : RECT{};
         const RECT target = PlaceModeIsland(mode_home_, frame, monitor_.work_area.left, monitor_.work_area.right,
-                                            theme::Scaled(8, monitor_.scale()));
+                                            theme::Scaled(theme::kIslandGap, monitor_.scale()));
         RECT current{};
         ::GetWindowRect(mode_toolbar_, &current);
         if (::EqualRect(&current, &target) == FALSE) {
@@ -1222,9 +1229,8 @@ private:
             ::SelectObject(dc, previous);
             ::DeleteDC(dc);
         }
-        // Face inset 6, icon inset 10, icon 18, gap 6, label inset 6 each side.
         mode_button_width_ = std::max<LONG>(theme::Scaled(theme::kPaletteButtonMinimumWidth, scale),
-                                            widest + theme::Scaled(60, scale));
+                                            widest + theme::Scaled(kModeButtonAllowance, scale));
     }
 
     /// Palette buttons in this window's client coordinates.
@@ -1233,7 +1239,7 @@ private:
         const LONG button_width = mode_button_width_;
         const LONG button_height = theme::Scaled(theme::kPaletteButtonHeight, scale);
         const LONG padding = theme::Scaled(theme::kPalettePadding, scale);
-        const LONG grip = theme::Scaled(24, scale);
+        const LONG grip = theme::Scaled(theme::kIslandGripWidth, scale);
         const LONG count = static_cast<LONG>(kModes.size());
         const LONG panel_width = button_width * count + padding * (count + 1) + grip;
         const LONG panel_left = local ? 0 : (client_width() - panel_width) / 2;
@@ -1271,7 +1277,7 @@ private:
     [[nodiscard]] RECT ToolbarPanel() const {
         const auto buttons = PaletteLayout();
         const LONG padding = theme::Scaled(theme::kPalettePadding, monitor_.scale());
-        return RECT{buttons.front().rect.left - padding - theme::Scaled(24, monitor_.scale()), buttons.front().rect.top - padding,
+        return RECT{buttons.front().rect.left - padding - theme::Scaled(theme::kIslandGripWidth, monitor_.scale()), buttons.front().rect.top - padding,
                     buttons.back().rect.right + padding, buttons.back().rect.bottom + padding};
     }
 
@@ -1419,7 +1425,7 @@ private:
         const RECT track = DocumentScrollRect();
         const LONG length = platform::RectHeight(track);
         if (length <= 0) { return; }
-        const LONG shortest = std::min<LONG>(length, theme::Scaled(24, scale));
+        const LONG shortest = std::min<LONG>(length, theme::Scaled(kScrollThumbMinimum, scale));
         const LONG thumb = std::clamp<LONG>(static_cast<LONG>(visible * static_cast<float>(length)), shortest, length);
         const LONG top = track.top + static_cast<LONG>(std::min(controller_.document_top_fraction() / (1.0f - visible), 1.0f) *
                                                        static_cast<float>(length - thumb));
@@ -1447,7 +1453,7 @@ private:
         const LONG padding = theme::Scaled(theme::kPalettePadding, monitor_.scale());
         const RECT panel{0, 0, buttons.back().rect.right + padding, buttons.back().rect.bottom + padding};
         theme::DrawPanel(dc, panel, monitor_.scale());
-        theme::DrawGrip(dc, {0, 0, theme::Scaled(24, monitor_.scale()), panel.bottom}, monitor_.scale());
+        theme::DrawGrip(dc, {0, 0, theme::Scaled(theme::kIslandGripWidth, monitor_.scale()), panel.bottom}, monitor_.scale());
     }
 
     void DrawNotice(HDC dc) const {

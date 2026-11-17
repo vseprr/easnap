@@ -65,7 +65,7 @@ std::wstring NoticeText(HWND hwnd) {
     text.resize(static_cast<size_t>(std::max(0, ::GetWindowTextW(hwnd, text.data(), static_cast<int>(text.size())))));
     return text;
 }
-HFONT CreateNoticeFont(float scale) { return theme::CreateUiFont(15.0f, scale, true); }
+HFONT CreateNoticeFont(float scale) { return theme::CreateUiFont(theme::kHeadingFontSize, scale, true); }
 SIZE NoticePadding(float scale) noexcept { return SIZE{theme::Scaled(14.0f, scale), theme::Scaled(8.0f, scale)}; }
 /// Size of `text` in the notice font: in one line when `wrap_width` is 0,
 /// otherwise wrapped at that width.

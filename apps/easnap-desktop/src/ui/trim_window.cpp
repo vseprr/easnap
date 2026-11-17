@@ -894,7 +894,7 @@ void TrimWindow::UpdateStatusLayout() {
 }
 
 void TrimWindow::RebuildFonts() {
-    HFONT new_ui = theme::CreateUiFont(12.5f, scale_, false);
+    HFONT new_ui = theme::CreateUiFont(theme::kTrimFontSize, scale_, false);
     if (new_ui == nullptr) { return; }
     for (HWND control : {time_label_, range_label_, status_, help_, play_pause_,
                          set_in_, set_out_, save_, copy_, cancel_export_,

@@ -26,7 +26,7 @@ struct ButtonData {
     bool hot{false};
     float depth{1}, from{1}, target{1}, hover{0};
     ULONGLONG started{0};
-    float duration{140};
+    float duration{theme::kButtonSettleMs};
 };
 void Advance(ButtonData& data) {
     if (!data.started) { return; }
@@ -46,10 +46,10 @@ void Retarget(HWND hwnd, ButtonData& data) {
     data.from = data.depth;
     data.target = target;
     data.started = ::GetTickCount64();
-    data.duration = pressed ? 85.0f : checked ? 160.0f
-                                              : 145.0f;
+    data.duration = pressed ? theme::kButtonPressMs : checked ? theme::kButtonCheckMs
+                                                              : theme::kButtonHoverMs;
     if (theme::AnimationsEnabled() && ::IsWindowVisible(hwnd)) {
-        ::SetTimer(hwnd, kButtonSubclass, 15, nullptr);
+        ::SetTimer(hwnd, kButtonSubclass, theme::kAnimationTickMs, nullptr);
     } else {
         data.depth = target;
         data.started = 0;
@@ -253,7 +253,7 @@ void PaintButtonFace(HDC dc, const ButtonPaintState& state) {
     const RECT& client = state.client;
     theme::FillSolid(dc, client, p.panel);
     RECT face = client;
-    ::InflateRect(&face, -theme::Scaled(6, scale), -theme::Scaled(6, scale));
+    ::InflateRect(&face, -theme::Scaled(theme::kButtonFaceInset, scale), -theme::Scaled(theme::kButtonFaceInset, scale));
     const bool enabled = state.window_enabled || style.preserve_disabled_visual;
     const bool pressed = state.pressed;
     const bool checked = state.checked;
@@ -271,14 +271,14 @@ void PaintButtonFace(HDC dc, const ButtonPaintState& state) {
     theme::DrawMaterial(dc, face, face_radius, scale, fill, state.depth, style.circular);
     if (state.focused && !style.hide_focus_line && !state.focus_cues_hidden) {
         // Keyboard focus is a neutral underline, independent of latched depth.
-        const LONG inset = theme::Scaled(10, scale);
+        const LONG inset = theme::Scaled(theme::kButtonFocusInset, scale);
         theme::DrawSolidLine(dc, {face.left + inset, face.bottom + 2}, {face.right - inset, face.bottom + 2}, p.text, 1);
     }
-    const LONG size = theme::Scaled(style.circular ? 12.0f : 18.0f, scale);
+    const LONG size = theme::Scaled(style.circular ? theme::kButtonCircularIconSize : theme::kButtonIconSize, scale);
     const LONG cy = (face.top + face.bottom) / 2;
-    RECT icon{face.left + theme::Scaled(10, scale), cy - size / 2, 0, cy - size / 2 + size};
+    RECT icon{face.left + theme::Scaled(theme::kButtonIconInset, scale), cy - size / 2, 0, cy - size / 2 + size};
     if (style.icon_only || style.swatch) { icon.left = (face.left + face.right - size) / 2; }
-    if (style.icon_only && style.dropdown) { icon.left -= theme::Scaled(5, scale); }
+    if (style.icon_only && style.dropdown) { icon.left -= theme::Scaled(theme::kButtonDropdownShift, scale); }
     icon.right = icon.left + size;
     if (style.sample != 0) {
         icon.left = (face.left + face.right - size) / 2;
@@ -291,34 +291,34 @@ void PaintButtonFace(HDC dc, const ButtonPaintState& state) {
             theme::FillRounded(dc, {cx - radius, cy - radius, cx + radius, cy + radius}, radius, ink);
         }
     } else if (style.swatch) {
-        theme::FillRoundedBordered(dc, icon, theme::Scaled(3, scale), style.content_color, p.control_border, 1);
+        theme::FillRoundedBordered(dc, icon, theme::Scaled(theme::kSwatchRadius, scale), style.content_color, p.control_border, 1);
         if (checked) { DrawIcon(dc, icon, Icon::Check, GetRValue(style.content_color) + GetGValue(style.content_color) + GetBValue(style.content_color) > theme::kSwatchCheckThreshold ? theme::kSwatchCheckDark : theme::kSwatchCheckLight); }
     } else if (style.icon != Icon::None) {
         DrawIcon(dc, icon, style.icon, ink);
     }
     if (style.dropdown) {
-        const LONG chevron = theme::Scaled(8, scale);
-        const LONG right = face.right - theme::Scaled(3, scale);
+        const LONG chevron = theme::Scaled(theme::kButtonChevronSize, scale);
+        const LONG right = face.right - theme::Scaled(theme::kButtonChevronInset, scale);
         DrawIcon(dc, {right - chevron, cy - chevron / 2, right, cy + chevron / 2}, Icon::ChevronDown, ink);
     }
     if (!style.icon_only && !style.swatch) {
         RECT label = face;
-        ::InflateRect(&label, -theme::Scaled(6, scale), 0);
+        ::InflateRect(&label, -theme::Scaled(theme::kButtonLabelInset, scale), 0);
         UINT format = DT_CENTER | DT_VCENTER | DT_SINGLELINE;
         if (style.icon != Icon::None) {
-            label.left = icon.right + theme::Scaled(6, scale);
+            label.left = icon.right + theme::Scaled(theme::kButtonIconLabelGap, scale);
             format = DT_LEFT | DT_VCENTER | DT_SINGLELINE;
         }
         const auto type = state.type;
         if ((type == BS_AUTOCHECKBOX || type == BS_AUTORADIOBUTTON || type == BS_RADIOBUTTON) && style.icon == Icon::None && !style.segmented) {
-            RECT check{face.left + theme::Scaled(10, scale), cy - theme::Scaled(5, scale),
-                       face.left + theme::Scaled(20, scale), cy + theme::Scaled(5, scale)};
+            RECT check{face.left + theme::Scaled(theme::kButtonCheckInset, scale), cy - theme::Scaled(theme::kButtonCheckSize / 2, scale),
+                       face.left + theme::Scaled(theme::kButtonCheckInset + theme::kButtonCheckSize, scale), cy + theme::Scaled(theme::kButtonCheckSize / 2, scale)};
             if (checked && type == BS_AUTOCHECKBOX) {
                 DrawIcon(dc, check, Icon::Check, ink);
             } else if (checked) {
-                theme::FillRounded(dc, check, theme::Scaled(5, scale), ink);
+                theme::FillRounded(dc, check, theme::Scaled(theme::kButtonCheckSize / 2, scale), ink);
             }
-            label.left = check.right + theme::Scaled(8, scale);
+            label.left = check.right + theme::Scaled(theme::kButtonCheckLabelGap, scale);
             format = DT_LEFT | DT_VCENTER | DT_SINGLELINE;
         }
         theme::DrawLabel(dc, label, state.text, ink, state.font, format);
@@ -360,14 +360,14 @@ int ButtonContentWidth(HWND button) {
     }
     // The same insets PaintButton applies: 6 around the face, 6 beside the
     // caption, and what an icon or a check mark takes on the left.
-    int lead = theme::Scaled(6, scale);
+    int lead = theme::Scaled(theme::kButtonLabelInset, scale);
     const auto type = ::GetWindowLongPtrW(button, GWL_STYLE) & BS_TYPEMASK;
     if (style.icon != Icon::None) {
-        lead = theme::Scaled(10 + 18 + 6, scale);
+        lead = theme::Scaled(theme::kButtonIconInset + theme::kButtonIconSize + theme::kButtonIconLabelGap, scale);
     } else if ((type == BS_AUTOCHECKBOX || type == BS_AUTORADIOBUTTON || type == BS_RADIOBUTTON) && !style.segmented) {
-        lead = theme::Scaled(10 + 10 + 8, scale);
+        lead = theme::Scaled(theme::kButtonCheckInset + theme::kButtonCheckSize + theme::kButtonCheckLabelGap, scale);
     }
-    return 2 * theme::Scaled(6, scale) + lead + static_cast<int>(extent.cx) + theme::Scaled(6, scale);
+    return 2 * theme::Scaled(theme::kButtonFaceInset, scale) + lead + static_cast<int>(extent.cx) + theme::Scaled(theme::kButtonLabelInset, scale);
 }
 namespace {
 /// BufferedTextProc's reference data for an EDIT; a label has 0.
@@ -709,7 +709,7 @@ void StyleTooltip(HWND tooltip) {
     ::SetWindowTheme(tooltip, L"", L"");
     ::SetWindowSubclass(tooltip, TooltipProc, kTooltipSubclass, 0);
     ::SendMessageW(tooltip, TTM_SETMAXTIPWIDTH, 0,
-                   theme::Scaled(360, static_cast<float>(::GetDpiForWindow(tooltip)) / 96.0f));
+                   theme::Scaled(theme::kTooltipMaxWidth, static_cast<float>(::GetDpiForWindow(tooltip)) / 96.0f));
     static_cast<void>(ExcludeFromCapture(tooltip));
     RefreshTooltip(tooltip);
 }
@@ -720,7 +720,7 @@ void PaintNativePanel(HWND window, float scale, bool grip) {
     ::GetClientRect(window, &client);
     platform::PaintBuffer buffer(dc, client);
     theme::DrawPanel(buffer.dc(), client, scale);
-    if (grip) { theme::DrawGrip(buffer.dc(), {0, 0, theme::Scaled(28, scale), client.bottom}, scale); }
+    if (grip) { theme::DrawGrip(buffer.dc(), {0, 0, theme::Scaled(theme::kPanelGripWidth, scale), client.bottom}, scale); }
     buffer.Present();
     ::EndPaint(window, &paint);
 }
@@ -779,8 +779,8 @@ struct MenuThemeScope::State {
                 ::GetTextExtentPoint32W(dc, item->text.c_str(), static_cast<int>(item->text.size()), &text);
                 ::SelectObject(dc, old);
                 ::ReleaseDC(hwnd, dc);
-                measure->itemWidth = static_cast<UINT>(text.cx + theme::Scaled(72, self->scale));
-                measure->itemHeight = theme::Scaled((item->type & MFT_SEPARATOR) ? 10.0f : 36.0f, self->scale);
+                measure->itemWidth = static_cast<UINT>(text.cx + theme::Scaled(theme::kMenuTextAllowance, self->scale));
+                measure->itemHeight = theme::Scaled((item->type & MFT_SEPARATOR) ? theme::kMenuSeparatorHeight : theme::kMenuItemHeight, self->scale);
                 return TRUE;
             }
         }
@@ -794,31 +794,31 @@ struct MenuThemeScope::State {
                     RECT line = draw->rcItem;
                     line.top = (line.top + line.bottom) / 2;
                     line.bottom = line.top + 1;
-                    ::InflateRect(&line, -theme::Scaled(12, self->scale), 0);
+                    ::InflateRect(&line, -theme::Scaled(theme::kMenuSeparatorInset, self->scale), 0);
                     theme::FillSolid(draw->hDC, line, p.border);
                     return TRUE;
                 }
                 if (draw->itemState & ODS_SELECTED) {
                     RECT face = draw->rcItem;
-                    ::InflateRect(&face, -theme::Scaled(6, self->scale), -theme::Scaled(4, self->scale));
-                    theme::DrawMaterial(draw->hDC, face, 6, self->scale, p.panel, -0.8f);
+                    ::InflateRect(&face, -theme::Scaled(theme::kMenuSelectionInsetX, self->scale), -theme::Scaled(theme::kMenuSelectionInsetY, self->scale));
+                    theme::DrawMaterial(draw->hDC, face, theme::kMenuSelectionRadius, self->scale, p.panel, theme::kMenuSelectionDepth);
                 }
                 const auto ink = draw->itemState & ODS_DISABLED ? p.disabled : p.text;
                 RECT label = draw->rcItem;
-                label.left += theme::Scaled(34, self->scale);
-                label.right -= theme::Scaled(24, self->scale);
+                label.left += theme::Scaled(theme::kMenuLabelInset, self->scale);
+                label.right -= theme::Scaled(theme::kMenuLabelTrailing, self->scale);
                 const auto split = item->text.find(L'\t');
                 const auto title = item->text.substr(0, split);
                 theme::DrawLabel(draw->hDC, label, title.c_str(), ink, self->font, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
                 if (split != std::wstring::npos) { theme::DrawLabel(draw->hDC, label, item->text.substr(split + 1).c_str(), p.muted_text, self->font, DT_RIGHT | DT_VCENTER | DT_SINGLELINE); }
                 RECT icon = draw->rcItem;
-                icon.left += theme::Scaled(9, self->scale);
-                icon.right = icon.left + theme::Scaled(16, self->scale);
-                icon.top = (icon.top + icon.bottom - theme::Scaled(16, self->scale)) / 2;
-                icon.bottom = icon.top + theme::Scaled(16, self->scale);
+                icon.left += theme::Scaled(theme::kMenuCheckInset, self->scale);
+                icon.right = icon.left + theme::Scaled(theme::kMenuCheckSize, self->scale);
+                icon.top = (icon.top + icon.bottom - theme::Scaled(theme::kMenuCheckSize, self->scale)) / 2;
+                icon.bottom = icon.top + theme::Scaled(theme::kMenuCheckSize, self->scale);
                 if (draw->itemState & ODS_CHECKED) { DrawIcon(draw->hDC, icon, Icon::Check, p.focus); }
                 if (item->submenu) {
-                    const LONG x = draw->rcItem.right - theme::Scaled(14, self->scale), y = (draw->rcItem.top + draw->rcItem.bottom) / 2, d = theme::Scaled(3, self->scale);
+                    const LONG x = draw->rcItem.right - theme::Scaled(theme::kMenuArrowInset, self->scale), y = (draw->rcItem.top + draw->rcItem.bottom) / 2, d = theme::Scaled(theme::kMenuArrowSize, self->scale);
                     theme::DrawSolidLine(draw->hDC, {x - d, y - d}, {x, y}, ink, 1);
                     theme::DrawSolidLine(draw->hDC, {x, y}, {x - d, y + d}, ink, 1);
                     // Windows draws its own submenu arrow into the item after
@@ -877,7 +877,7 @@ struct MenuThemeScope::State {
 MenuThemeScope::MenuThemeScope(HWND owner, HMENU menu) : state_(std::make_unique<State>()) {
     state_->owner = owner;
     state_->scale = ::GetDpiForWindow(owner) / 96.0f;
-    state_->font = theme::CreateUiFont(13, state_->scale, false);
+    state_->font = theme::CreateUiFont(theme::kBodyFontSize, state_->scale, false);
     if (::SetWindowSubclass(owner, State::Proc, kMenuOwnerSubclass, reinterpret_cast<DWORD_PTR>(state_.get()))) { state_->Add(menu); }
 }
 MenuThemeScope::~MenuThemeScope() = default;

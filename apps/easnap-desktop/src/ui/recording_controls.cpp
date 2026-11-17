@@ -291,7 +291,7 @@ public:
         AdjustPanelRect(outer, monitor.dpi);
         const int outer_width = static_cast<int>(outer.right - outer.left);
         const int outer_height = static_cast<int>(outer.bottom - outer.top);
-        const LONG margin = ScaleDip(12, scale);
+        const LONG margin = ScaleDip(theme::kIslandMargin, scale);
 
         LONG x = have_current_rect ? current_rect.left : owner_.region_.left;
         LONG y = have_current_rect ? current_rect.top : owner_.region_.top;
@@ -347,7 +347,7 @@ public:
                                                       theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
         const RECT placed = PlaceIslandForFrame(
                                 owner_.region_, monitor.bounds, available,
-                                SIZE{platform::RectWidth(current), platform::RectHeight(current)}, ScaleDip(12, monitor.scale()), RECT{})
+                                SIZE{platform::RectWidth(current), platform::RectHeight(current)}, ScaleDip(theme::kIslandMargin, monitor.scale()), RECT{})
                                 .rect;
         if (placed.left != current.left || placed.top != current.top) {
             ::SetWindowPos(panel_, nullptr, placed.left, placed.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -488,7 +488,7 @@ private:
                 dc = buffer.dc();
                 theme::DrawPanel(dc, client, scale);
                 if (owner_.state_ != app::SessionState::RecordingConfiguring) {
-                    theme::DrawGrip(dc, {0, 0, theme::Scaled(28, scale), client.bottom}, scale);
+                    theme::DrawGrip(dc, {0, 0, theme::Scaled(theme::kPanelGripWidth, scale), client.bottom}, scale);
                 }
                 buffer.Present();
                 if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
@@ -808,9 +808,9 @@ private:
     }
 
     void RebuildFonts(float scale) {
-        HFONT new_ui = theme::CreateUiFont(13.0f, scale, false);
-        HFONT new_title = theme::CreateUiFont(15.0f, scale, true);
-        HFONT new_elapsed = theme::CreateUiFont(15.0f, scale, true);
+        HFONT new_ui = theme::CreateUiFont(theme::kBodyFontSize, scale, false);
+        HFONT new_title = theme::CreateUiFont(theme::kHeadingFontSize, scale, true);
+        HFONT new_elapsed = theme::CreateUiFont(theme::kHeadingFontSize, scale, true);
         if (new_ui == nullptr || new_title == nullptr || new_elapsed == nullptr) {
             if (new_ui != nullptr) {
                 ::DeleteObject(new_ui);

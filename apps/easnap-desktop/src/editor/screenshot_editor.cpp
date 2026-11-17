@@ -55,7 +55,6 @@ constexpr int kCompositeBandRows = 2048;
 /// Preferred tool island width, clamped to the current monitor. One row of
 /// tools and commands, with 28 DIPs to spare after the last command.
 constexpr float kIslandWidth = 870.0f;
-constexpr float kIslandGrip = 24.0f;
 
 enum CommandId {
     kCommandUndo = 1,
@@ -1096,7 +1095,7 @@ SIZE ScreenshotEditor::island_group_size() const noexcept {
     RECT main{};
     if (!hwnd_ || !::GetWindowRect(hwnd_, &main)) { return {}; }
     const LONG context = std::max(context_visible_ ? context_height_ : 0, reserved_context_height_);
-    return SIZE{main.right - main.left, main.bottom - main.top + (context > 0 ? ui::theme::Scaled(8, scale_) + context : 0)};
+    return SIZE{main.right - main.left, main.bottom - main.top + (context > 0 ? ui::theme::Scaled(ui::theme::kIslandGap, scale_) + context : 0)};
 }
 void ScreenshotEditor::PlaceContext(bool follow_frame) {
     if (!hwnd_ || !context_ || repositioning_ || modal_active_) { return; }
@@ -1105,7 +1104,7 @@ void ScreenshotEditor::PlaceContext(bool follow_frame) {
     ::GetWindowRect(hwnd_, &main);
     const auto monitor = platform::MonitorForRect(follow_frame ? region_ : main);
     const auto work = monitor.work_area;
-    const LONG gap = ui::theme::Scaled(8, scale_);
+    const LONG gap = ui::theme::Scaled(ui::theme::kIslandGap, scale_);
     const LONG width = main.right - main.left;
     const LONG height = main.bottom - main.top;
     const LONG popup_space = brush_popup_open_ ? gap + ui::theme::Scaled(kToolbarRowHeight + 6, scale_) : 0;
@@ -1137,7 +1136,7 @@ void ScreenshotEditor::PlaceContext(bool follow_frame) {
     if (show && !::IsWindowVisible(context_) && ui::theme::AnimationsEnabled()) {
         context_fade_started_ = ::GetTickCount64();
         ::SetLayeredWindowAttributes(context_, 0, 0, LWA_ALPHA);
-        ::SetTimer(context_, kContextFadeTimer, 15, nullptr);
+        ::SetTimer(context_, kContextFadeTimer, ui::theme::kAnimationTickMs, nullptr);
     }
     if (!show) {
         ::KillTimer(context_, kContextFadeTimer);
@@ -1161,7 +1160,7 @@ void ScreenshotEditor::ShowBrushPopup(bool show) {
         RECT anchor{}, context{};
         ::GetWindowRect(Control(kBrushMethodButton), &anchor);
         ::GetWindowRect(context_, &context);
-        const LONG width = ui::theme::Scaled(132, scale_), height = ui::theme::Scaled(kToolbarRowHeight + 6, scale_), gap = ui::theme::Scaled(8, scale_);
+        const LONG width = ui::theme::Scaled(132, scale_), height = ui::theme::Scaled(kToolbarRowHeight + 6, scale_), gap = ui::theme::Scaled(ui::theme::kIslandGap, scale_);
         const auto work = platform::MonitorForRect(anchor).work_area;
         const LONG center = (anchor.left + anchor.right) / 2, callout = ui::theme::Scaled(6, scale_);
         const LONG top = context.bottom + gap;
@@ -1337,7 +1336,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
     main_separators_.clear();
     const float s = scale_, pad = kEdgePadding * s, gap = kItemGap * s, row = kToolbarRowHeight * s;
     const float limit = std::max(available_width - pad, pad + kToolButton * s);
-    float x = pad + kIslandGrip * s, y = 0;
+    float x = pad + ui::theme::kIslandGripWidth * s, y = 0;
     const auto place = [&](float width) {
         if (x > pad && x + width > limit) {
             x = pad;
@@ -1575,7 +1574,7 @@ void ScreenshotEditor::ResetSession() {
 }
 
 void ScreenshotEditor::CreateTextFormats() {
-    HFONT font = ui::theme::CreateUiFont(13.0f, scale_, false);
+    HFONT font = ui::theme::CreateUiFont(ui::theme::kBodyFontSize, scale_, false);
     if (font) {
         if (toolbar_font_) { ::DeleteObject(toolbar_font_); }
         toolbar_font_ = font;
@@ -2068,7 +2067,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         return 0;
     }
     if (message == WM_TIMER && wparam == kContextFadeTimer && hwnd == context_) {
-        const float progress = std::clamp(static_cast<float>(::GetTickCount64() - context_fade_started_) / 160.0f, 0.0f, 1.0f);
+        const float progress = std::clamp(static_cast<float>(::GetTickCount64() - context_fade_started_) / ui::theme::kIslandFadeMs, 0.0f, 1.0f);
         ::SetLayeredWindowAttributes(context_, 0, static_cast<BYTE>(255 * progress), LWA_ALPHA);
         if (progress >= 1 || !ui::theme::AnimationsEnabled()) {
             ::KillTimer(context_, kContextFadeTimer);
@@ -3412,7 +3411,7 @@ void ScreenshotEditor::PaintToolbar(HDC dc) const {
     platform::PaintBuffer buffer(dc, client);
     dc = buffer.dc();
     theme::DrawPanel(dc, client, scale_);
-    theme::DrawGrip(dc, {0, 0, static_cast<LONG>(kIslandGrip * scale_), toolbar_rect_.bottom}, scale_);
+    theme::DrawGrip(dc, {0, 0, static_cast<LONG>(ui::theme::kIslandGripWidth * scale_), toolbar_rect_.bottom}, scale_);
     for (const auto& split : main_separators_) { DrawSeparator(dc, split, scale_); }
 }
 

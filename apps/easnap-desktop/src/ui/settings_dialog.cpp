@@ -138,7 +138,7 @@ struct Dialog {
         static_cast<void>(ExcludeFromCapture(hwnd));
         if (!StyleWindowChrome(hwnd, false)) { return false; }
         scale = static_cast<float>(::GetDpiForWindow(hwnd)) / 96.0f;
-        font = theme::CreateUiFont(14, scale, false);
+        font = theme::CreateUiFont(theme::kDialogFontSize, scale, false);
         POINT cursor{};
         ::GetCursorPos(&cursor);
         const platform::MonitorInfo monitor = platform::MonitorForPoint(cursor);

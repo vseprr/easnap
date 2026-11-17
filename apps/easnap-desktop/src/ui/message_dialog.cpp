@@ -42,7 +42,7 @@ INT_PTR CALLBACK MessageDialogProc(HWND hwnd, UINT message, WPARAM wparam, LPARA
         const float scale = ::GetDpiForWindow(hwnd) / 96.0f;
         const auto dip = [&](int n) { return theme::Scaled(static_cast<float>(n), scale); };
         const auto monitor = platform::MonitorForRect([&] { RECT r{}; if(HWND owner=::GetWindow(hwnd,GW_OWNER)) { ::GetWindowRect(owner,&r); } else { ::GetCursorPos(reinterpret_cast<POINT*>(&r)); r.right=r.left+1; r.bottom=r.top+1; } return r; }());
-        data->font = theme::CreateUiFont(14, scale, false);
+        data->font = theme::CreateUiFont(theme::kDialogFontSize, scale, false);
         std::vector<DialogChoice> buttons = data->choices;
         size_t default_index = 0;
         if (buttons.empty()) {

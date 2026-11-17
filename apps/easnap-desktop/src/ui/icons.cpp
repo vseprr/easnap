@@ -200,7 +200,7 @@ void DrawTextGlyph(IconCanvas& canvas, Icon variant) {
         ink = Gdiplus::Color(255, GetRValue(c), GetGValue(c), GetBValue(c));
     }
     if (variant == Icon::TextOutline) {
-        canvas.pen.SetWidth(1.2f);
+        canvas.pen.SetWidth(theme::kIconOutlineStroke);
         canvas.graphics.DrawPath(&canvas.pen, &glyph);
     } else {
         Gdiplus::SolidBrush fill(ink);
@@ -334,8 +334,8 @@ void DrawIcon(HDC dc, const RECT& r, Icon icon, COLORREF color) {
     Gdiplus::Graphics graphics(dc);
     graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
     graphics.TranslateTransform(static_cast<float>(r.left), static_cast<float>(r.top));
-    graphics.ScaleTransform((r.right - r.left) / 24.0f, (r.bottom - r.top) / 24.0f);
-    Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)), 1.8f);
+    graphics.ScaleTransform((r.right - r.left) / theme::kIconGrid, (r.bottom - r.top) / theme::kIconGrid);
+    Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)), theme::kIconStroke);
     pen.SetStartCap(Gdiplus::LineCapRound);
     pen.SetEndCap(Gdiplus::LineCapRound);
     pen.SetLineJoin(Gdiplus::LineJoinRound);
