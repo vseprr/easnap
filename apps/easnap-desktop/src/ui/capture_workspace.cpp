@@ -1,5 +1,6 @@
 #include "ui/capture_workspace.h"
 #include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/native_controls.h"
@@ -168,11 +169,10 @@ enum class NoticeKind { Done,
 HWND ShowCaptureNotice(const RECT& region, const std::wstring& text, NoticeKind kind) {
     static const bool registered = [] {
         WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
         wc.lpfnWndProc = NoticeProc;
         wc.hInstance = ::GetModuleHandleW(nullptr);
         wc.lpszClassName = L"EasnapCaptureCopiedNotice";
-        return ::RegisterClassExW(&wc) != 0;
+        return platform::RegisterWindowClass(wc);
     }();
     if (!registered) { return nullptr; }
     const bool status = kind == NoticeKind::Status;

@@ -33,6 +33,7 @@
 #include "platform/graphics_device.h"
 #include "platform/platform_utils.h"
 #include "platform/system_info.h"
+#include "platform/window_class.h"
 #include "resource.h"
 #include "strings/strings.h"
 
@@ -255,13 +256,12 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
 
 HWND CreateHostWindow(HINSTANCE instance) {
     WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = HostWindowProc;
     wc.hInstance = instance;
     wc.lpszClassName = kHostClassName;
     wc.hIcon = ::LoadIconW(instance, MAKEINTRESOURCEW(IDI_EASNAP_APP));
     wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-    if (::RegisterClassExW(&wc) == 0) {
+    if (!easnap::platform::RegisterWindowClass(wc)) {
         return nullptr;
     }
 

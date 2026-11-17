@@ -17,6 +17,7 @@
 #include "platform/bgra_image.h"
 #include "platform/platform_utils.h"
 #include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
 #include "ui/control_ids.h"
 #include "ui/ui_theme.h"
@@ -506,7 +507,7 @@ public:
     void Destroy() {
         if (dim_) { ::KillTimer(dim_, kOverlayModeFadeTimer); }
         if (mode_toolbar_) {
-            ::SetWindowLongPtrW(mode_toolbar_, GWLP_USERDATA, 0);
+            platform::UnbindWindowOwner(mode_toolbar_);
             ::DestroyWindow(mode_toolbar_);
             mode_toolbar_ = nullptr;
             mode_buttons_ = {};
@@ -521,17 +522,17 @@ public:
             button_font_ = nullptr;
         }
         if (magnifier_ != nullptr) {
-            ::SetWindowLongPtrW(magnifier_, GWLP_USERDATA, 0);
+            platform::UnbindWindowOwner(magnifier_);
             ::DestroyWindow(magnifier_);
             magnifier_ = nullptr;
         }
         if (chrome_ != nullptr) {
-            ::SetWindowLongPtrW(chrome_, GWLP_USERDATA, 0);
+            platform::UnbindWindowOwner(chrome_);
             ::DestroyWindow(chrome_);
             chrome_ = nullptr;
         }
         if (image_ != nullptr) {
-            ::SetWindowLongPtrW(image_, GWLP_USERDATA, 0);
+            platform::UnbindWindowOwner(image_);
             ::DestroyWindow(image_);
             image_ = nullptr;
         }
@@ -541,7 +542,7 @@ public:
             shade_ = nullptr;
         }
         if (dim_ != nullptr) {
-            ::SetWindowLongPtrW(dim_, GWLP_USERDATA, 0);
+            platform::UnbindWindowOwner(dim_);
             ::DestroyWindow(dim_);
             dim_ = nullptr;
         }
@@ -669,7 +670,7 @@ public:
     void DestroyShadeStrips() noexcept {
         for (HWND& strip : shade_strips_) {
             if (strip) {
-                ::SetWindowLongPtrW(strip, GWLP_USERDATA, 0);
+                platform::UnbindWindowOwner(strip);
                 ::DestroyWindow(strip);
                 strip = nullptr;
             }
@@ -850,17 +851,15 @@ private:
     static bool EnsureWindowClasses() {
         static const bool registered = [] {
             WNDCLASSEXW dim{};
-            dim.cbSize = sizeof(dim);
             dim.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
-            dim.lpfnWndProc = &OverlayWindow::DimWindowProc;
+            dim.lpfnWndProc = platform::BoundWindowProc<OverlayWindow, &OverlayWindow::HandleDimMessage>;
             dim.hInstance = ::GetModuleHandleW(nullptr);
             dim.hCursor = nullptr;  // The selector decides which cursor to show.
             dim.lpszClassName = kDimClassName;
 
             WNDCLASSEXW chrome{};
-            chrome.cbSize = sizeof(chrome);
             chrome.style = CS_HREDRAW | CS_VREDRAW;
-            chrome.lpfnWndProc = &OverlayWindow::ChromeWindowProc;
+            chrome.lpfnWndProc = platform::BoundWindowProc<OverlayWindow, &OverlayWindow::HandleChromeMessage>;
             chrome.hInstance = ::GetModuleHandleW(nullptr);
             chrome.hCursor = nullptr;
             chrome.lpszClassName = kChromeClassName;
@@ -871,33 +870,11 @@ private:
             magnifier.lpszClassName = kMagnifierClassName;
             WNDCLASSEXW modes = chrome;
             modes.lpszClassName = kModeToolbarClassName;
-            return ::RegisterClassExW(&dim) != 0 && ::RegisterClassExW(&chrome) != 0 &&
-                   ::RegisterClassExW(&magnifier) != 0 && ::RegisterClassExW(&image) != 0 &&
-                   ::RegisterClassExW(&modes) != 0;
+            return platform::RegisterWindowClass(dim) && platform::RegisterWindowClass(chrome) &&
+                   platform::RegisterWindowClass(magnifier) && platform::RegisterWindowClass(image) &&
+                   platform::RegisterWindowClass(modes);
         }();
         return registered;
-    }
-
-    static OverlayWindow* FromHandle(HWND hwnd, UINT message, LPARAM lparam) {
-        if (message == WM_NCCREATE) {
-            auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
-            ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-        }
-        return reinterpret_cast<OverlayWindow*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    }
-
-    static LRESULT CALLBACK DimWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-        if (OverlayWindow* self = FromHandle(hwnd, message, lparam); self != nullptr) {
-            return self->HandleDimMessage(hwnd, message, wparam, lparam);
-        }
-        return ::DefWindowProcW(hwnd, message, wparam, lparam);
-    }
-
-    static LRESULT CALLBACK ChromeWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-        if (OverlayWindow* self = FromHandle(hwnd, message, lparam); self != nullptr) {
-            return self->HandleChromeMessage(hwnd, message, wparam, lparam);
-        }
-        return ::DefWindowProcW(hwnd, message, wparam, lparam);
     }
 
     [[nodiscard]] POINT ToVirtual(LPARAM lparam) const {
