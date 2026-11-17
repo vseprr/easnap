@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -214,7 +215,7 @@ void UnregisterCaptureHotkey(HWND hwnd) {
     }
 }
 
-easnap::strings::LanguagePreference ToPreference(easnap::app::LanguageSetting language) {
+easnap::strings::LanguagePreference ToLanguagePreference(easnap::app::LanguageSetting language) {
     switch (language) {
         case easnap::app::LanguageSetting::English: return easnap::strings::LanguagePreference::English;
         case easnap::app::LanguageSetting::Turkish: return easnap::strings::LanguagePreference::Turkish;
@@ -241,18 +242,23 @@ bool CopyTextToClipboard(HWND owner, const std::wstring& text) {
     return copied;
 }
 
+/// The capture shortcut as About reports it.
+struct AboutShortcut {
+    std::wstring display_text;
+    bool registered{false};
+};
+
 /// What a bug report needs, as plain text: versions and the display layout.
 /// No path, no file name, nothing the user created.
-std::wstring DiagnosticDetails() {
-    const auto& settings = CaptureCoordinator::Instance().settings();
+std::wstring DiagnosticDetails(const AboutShortcut& shortcut) {
     const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
     std::wstring text = std::wstring(L"Easnap ") + EASNAP_VERSION_TEXT_W + L"\r\n";
     text += L"Windows " + std::to_wstring(windows.major) + L"." + std::to_wstring(windows.minor) + L" build " +
             std::to_wstring(windows.build) + L"\r\n";
     text += std::wstring(L"Interface language: ") +
             (easnap::strings::Current() == easnap::strings::Language::Turkish ? L"Turkish" : L"English") + L"\r\n";
-    text += std::wstring(L"Capture shortcut: ") + settings.HotkeyDisplayText() +
-            (g_hotkey_registered ? L"" : L" (not available)") + L"\r\n";
+    text += std::wstring(L"Capture shortcut: ") + shortcut.display_text +
+            (shortcut.registered ? L"" : L" (not available)") + L"\r\n";
     text += std::wstring(L"Scrollshot available: ") + (easnap::ui::CaptureExclusionSupported() ? L"yes" : L"no") + L"\r\n";
     const auto monitors = easnap::platform::EnumerateMonitors();
     text += L"Displays: " + std::to_wstring(monitors.size()) + L"\r\n";
@@ -266,11 +272,13 @@ std::wstring DiagnosticDetails() {
     return text;
 }
 
-void ShowAboutDialog(HWND owner) {
+/// About: version, shortcut and Windows build, with Copy details and Website.
+/// The shortcut is asked for again when the details are copied.
+void ShowAboutDialog(HWND owner, const std::function<AboutShortcut()>& shortcut) {
     namespace strings = easnap::strings;
     const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
     const std::wstring text = strings::Format(
-        IDS_ABOUT_TEXT, {EASNAP_VERSION_TEXT_W, CaptureCoordinator::Instance().settings().HotkeyDisplayText(),
+        IDS_ABOUT_TEXT, {EASNAP_VERSION_TEXT_W, shortcut().display_text,
                          std::to_wstring(windows.build)});
     enum : int { kCopy = 100,
                  kWeb = 101,
@@ -280,7 +288,7 @@ void ShowAboutDialog(HWND owner) {
         {{kCopy, strings::Get(IDS_ABOUT_COPY_DETAILS)}, {kWeb, strings::Get(IDS_ABOUT_WEBSITE)}, {kClose, strings::Get(IDS_SHELL_CHROME_CLOSE)}},
         kClose, kClose);
     if (choice == kCopy) {
-        CopyTextToClipboard(owner, DiagnosticDetails());
+        CopyTextToClipboard(owner, DiagnosticDetails(shortcut()));
     } else if (choice == kWeb) {
         ::ShellExecuteW(nullptr, L"open", kWebsite, nullptr, nullptr, SW_SHOWNORMAL);
     }
@@ -333,7 +341,7 @@ void ShowSettings(HWND hwnd) {
     }
 
     settings.language = model.language;
-    strings::SetPreference(ToPreference(settings.language));
+    strings::SetPreference(ToLanguagePreference(settings.language));
     settings.appearance_follows_system = model.appearance_follows_system;
     settings.appearance_theme = model.appearance_theme;
     coordinator.RefreshAppearance();
@@ -419,28 +427,40 @@ void OpenDataFolder() {
     ::ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-void ShowTrayMenu(HWND hwnd) {
+/// What the tray menu shows, read when it opens.
+struct TrayMenuState {
+    bool hotkey_registered{false};
+    std::wstring hotkey_text;
+    /// Capture and Settings are offered while no session runs.
+    bool idle{false};
+    bool can_open_video{false};
+    bool capture_cursor{false};
+    bool appearance_follows_system{false};
+};
+
+/// Shows the tray menu at the pointer; the chosen command is posted to
+/// hwnd as WM_COMMAND.
+void ShowTrayMenu(HWND hwnd, const TrayMenuState& state) {
     HMENU menu = ::CreatePopupMenu();
     if (menu == nullptr) {
         return;
     }
 
     namespace strings = easnap::strings;
-    auto& coordinator = CaptureCoordinator::Instance();
     // The tab in the pattern separates the label from the right-aligned shortcut.
-    const std::wstring capture_item = g_hotkey_registered
-                                          ? strings::Format(IDS_SHELL_TRAY_CAPTURE, {coordinator.settings().HotkeyDisplayText()})
+    const std::wstring capture_item = state.hotkey_registered
+                                          ? strings::Format(IDS_SHELL_TRAY_CAPTURE, {state.hotkey_text})
                                           : std::wstring(strings::Get(IDS_TRAY_CAPTURE_NO_SHORTCUT));
-    const UINT capture_flags = coordinator.state() == SessionState::Idle ? MF_STRING : (MF_STRING | MF_GRAYED);
+    const UINT capture_flags = state.idle ? MF_STRING : (MF_STRING | MF_GRAYED);
 
     ::AppendMenuW(menu, capture_flags, IDM_TRAY_CAPTURE, capture_item.c_str());
     // A video is opened only while idle, and one at a time (ADR-040).
-    ::AppendMenuW(menu, coordinator.CanOpenVideo() ? MF_STRING : (MF_STRING | MF_GRAYED), IDM_TRAY_OPEN_VIDEO,
+    ::AppendMenuW(menu, state.can_open_video ? MF_STRING : (MF_STRING | MF_GRAYED), IDM_TRAY_OPEN_VIDEO,
                   strings::Get(IDS_TRAY_OPEN_VIDEO));
     ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    ::AppendMenuW(menu, MF_STRING | (coordinator.settings().capture_cursor ? MF_CHECKED : MF_UNCHECKED),
+    ::AppendMenuW(menu, MF_STRING | (state.capture_cursor ? MF_CHECKED : MF_UNCHECKED),
                   IDM_TRAY_CAPTURE_CURSOR, strings::Get(IDS_SHELL_TRAY_INCLUDE_CURSOR));
-    if (HMENU appearance = easnap::ui::CreateAppearanceMenu(coordinator.settings().appearance_follows_system)) {
+    if (HMENU appearance = easnap::ui::CreateAppearanceMenu(state.appearance_follows_system)) {
         ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(appearance), strings::Get(IDS_SHELL_TRAY_APPEARANCE));
     }
     // Settings change what a running session was built with: offered while idle.
@@ -467,6 +487,19 @@ void ShowTrayMenu(HWND hwnd) {
     ::DestroyMenu(menu);
 }
 
+/// Opens the tray menu with the coordinator's current state.
+void OpenTrayMenu(HWND hwnd) {
+    auto& coordinator = CaptureCoordinator::Instance();
+    TrayMenuState state;
+    state.hotkey_registered = g_hotkey_registered;
+    state.hotkey_text = coordinator.settings().HotkeyDisplayText();
+    state.idle = coordinator.state() == SessionState::Idle;
+    state.can_open_video = coordinator.CanOpenVideo();
+    state.capture_cursor = coordinator.settings().capture_cursor;
+    state.appearance_follows_system = coordinator.settings().appearance_follows_system;
+    ShowTrayMenu(hwnd, state);
+}
+
 void OnTrayCommand(HWND hwnd, UINT command) {
     auto& coordinator = CaptureCoordinator::Instance();
     switch (command) {
@@ -491,7 +524,9 @@ void OnTrayCommand(HWND hwnd, UINT command) {
             ::ShellExecuteW(nullptr, L"open", kUpdatesPage, nullptr, nullptr, SW_SHOWNORMAL);
             break;
         case IDM_TRAY_ABOUT:
-            ShowAboutDialog(hwnd);
+            ShowAboutDialog(hwnd, [] {
+                return AboutShortcut{CaptureCoordinator::Instance().settings().HotkeyDisplayText(), g_hotkey_registered};
+            });
             break;
         case IDM_TRAY_EXIT:
             if (coordinator.ConfirmExit()) { ::DestroyWindow(hwnd); }
@@ -513,7 +548,7 @@ LRESULT OnHostTrayIconMessage(HWND hwnd, LPARAM lparam) {
         case WM_RBUTTONUP:
             // Version 4 icons report one right-click as both messages;
             // the second arrives inside the first menu's modal loop.
-            if (!easnap::ui::PopupActive()) { ShowTrayMenu(hwnd); }
+            if (!easnap::ui::PopupActive()) { OpenTrayMenu(hwnd); }
             break;
         default:
             break;
@@ -522,7 +557,7 @@ LRESULT OnHostTrayIconMessage(HWND hwnd, LPARAM lparam) {
 }
 
 /// A tray menu command, including the appearance submenu's.
-LRESULT OnHostCommand(HWND hwnd, WPARAM wparam) {
+LRESULT OnTrayMenuCommand(HWND hwnd, WPARAM wparam) {
     auto& coordinator = CaptureCoordinator::Instance();
     if (LOWORD(wparam) == easnap::ui::kAppearanceLight || LOWORD(wparam) == easnap::ui::kAppearanceDark) {
         coordinator.SetAppearanceTheme(LOWORD(wparam) == easnap::ui::kAppearanceDark
@@ -576,10 +611,7 @@ LRESULT OnHostEndSession(HWND hwnd, WPARAM wparam) {
 
 LRESULT OnHostDestroy(HWND hwnd) {
     auto& coordinator = CaptureCoordinator::Instance();
-    if (g_hotkey_registered) {
-        ::UnregisterHotKey(hwnd, IDH_EASNAP_CAPTURE);
-        g_hotkey_registered = false;
-    }
+    UnregisterCaptureHotkey(hwnd);
     coordinator.PersistSettings(CaptureCoordinator::IfNotSaved::LogOnly);
     coordinator.Shutdown();
     g_tray.Remove();
@@ -611,7 +643,7 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             return OnHostTrayIconMessage(hwnd, lparam);
 
         case WM_COMMAND:
-            return OnHostCommand(hwnd, wparam);
+            return OnTrayMenuCommand(hwnd, wparam);
 
         case easnap::app::kMsgSessionCleanup:
             coordinator.OnDeferredCleanup();
@@ -783,7 +815,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
     const easnap::platform::UniqueHandle instance_mutex{::CreateMutexW(nullptr, TRUE, kSingleInstanceMutex)};
     if (!instance_mutex || ::GetLastError() == ERROR_ALREADY_EXISTS) {
         // Anything this process says, it says in the running Easnap's language.
-        easnap::strings::SetPreference(ToPreference(easnap::app::AppSettings::Load().language));
+        easnap::strings::SetPreference(ToLanguagePreference(easnap::app::AppSettings::Load().language));
         if (!request.open_path.empty()) {
             HandOverVideo(request.open_path);
             return 0;
@@ -843,7 +875,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
     auto& coordinator = CaptureCoordinator::Instance();
     coordinator.Initialize(host);
     // Text shown before this line follows Windows; from here the choice in Settings applies.
-    easnap::strings::SetPreference(ToPreference(coordinator.settings().language));
+    easnap::strings::SetPreference(ToLanguagePreference(coordinator.settings().language));
 
     // Explorer broadcasts this when it restarts and every tray icon is lost.
     g_taskbar_created_message = ::RegisterWindowMessageW(L"TaskbarCreated");
