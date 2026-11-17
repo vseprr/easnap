@@ -65,12 +65,10 @@ D2D1_RECT_F Annotation::bounds() const {
         auto layout = TextLayout(*this);
         DWRITE_TEXT_METRICS metrics{};
         if (layout) { layout->GetMetrics(&metrics); }
-        const float padding = tool == ToolId::Tag ? FontPixels() * 0.45f : style.text_mode == TextMode::Fill  ? FontPixels() * 0.25f
-                                                                       : style.text_mode == TextMode::Outline ? FontPixels() * 0.075f
-                                                                                                              : 0;
+        const float padding = TextInset(*this);
         box.right = box.left + std::max(1.0f, metrics.widthIncludingTrailingWhitespace) + padding * 2;
         box.bottom = box.top + std::max(FontPixels(), metrics.height) + padding * 2;
-        if (tool == ToolId::Tag) { box.right += FontPixels() * 0.9f; }
+        box.right += TagMarkerWidth(*this);
         return box;
     }
     const float pad = tool == ToolId::Mosaic ? (style.method == EffectMethod::Brush ? style.brush_size / 2 : 0) : tool == ToolId::Spotlight ? 0

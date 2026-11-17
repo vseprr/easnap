@@ -223,4 +223,21 @@ inline constexpr std::array<ToolId, kToolCount> kToolbarOrder = [] {
     return annotation.tool == ToolId::Pen || (annotation.tool == ToolId::Mosaic && annotation.style.method == EffectMethod::Brush);
 }
 
+/// The space between a text or tag annotation's box and its text, in image
+/// pixels: a tag's padding, the margin of filled or outlined text, none for
+/// plain text.
+[[nodiscard]] inline float TextInset(const Annotation& annotation) noexcept {
+    const float em = annotation.FontPixels();
+    return annotation.tool == ToolId::Tag                    ? em * 0.45f
+           : annotation.style.text_mode == TextMode::Fill    ? em * 0.25f
+           : annotation.style.text_mode == TextMode::Outline ? em * 0.075f
+                                                             : 0;
+}
+
+/// The width of a tag's dot and notch before its label, in image pixels; 0
+/// for every other annotation.
+[[nodiscard]] inline float TagMarkerWidth(const Annotation& annotation) noexcept {
+    return annotation.tool == ToolId::Tag ? annotation.FontPixels() * 0.9f : 0;
+}
+
 }  // namespace easnap::editor

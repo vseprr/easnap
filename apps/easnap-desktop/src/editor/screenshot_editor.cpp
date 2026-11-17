@@ -2416,10 +2416,8 @@ void ScreenshotEditor::LayoutTextEditor() {
         if ((has_region && ::EqualRgn(current, clip)) || !::SetWindowRgn(text_host_, clip, FALSE)) { ::DeleteObject(clip); }
     }
     if (current) { ::DeleteObject(current); }
-    const float inset = pending_.tool == ToolId::Tag ? em * 0.45f : pending_.style.text_mode == TextMode::Fill  ? em * 0.25f
-                                                                : pending_.style.text_mode == TextMode::Outline ? em * 0.075f
-                                                                                                                : 0;
-    RECT format{pad + static_cast<LONG>((inset + (pending_.tool == ToolId::Tag ? em * 0.9f : 0)) * zoom_), pad + static_cast<LONG>(inset * zoom_), 32760, 32760};
+    const float inset = TextInset(pending_);
+    RECT format{pad + static_cast<LONG>((inset + TagMarkerWidth(pending_)) * zoom_), pad + static_cast<LONG>(inset * zoom_), 32760, 32760};
     ::SendMessageW(text_edit_, EM_SETRECTNP, 0, reinterpret_cast<LPARAM>(&format));
     ::InvalidateRect(text_edit_, nullptr, FALSE);
 }
@@ -2595,12 +2593,9 @@ void ScreenshotEditor::PaintTextEditor(HDC dc) {
     const auto& a = document_.annotations()[*selected_];
     auto layout = TextLayout(a);
     if (!layout) { return; }
-    const float em = a.FontPixels();
-    const float inset = a.tool == ToolId::Tag ? em * 0.45f : a.style.text_mode == TextMode::Fill  ? em * 0.25f
-                                                         : a.style.text_mode == TextMode::Outline ? em * 0.075f
-                                                                                                  : 0;
+    const float inset = TextInset(a);
     // Layout units are image pixels; the host's pixels are scaled by the view.
-    const float x = (view_origin_.x - bounds.left) / zoom_ + a.points.front().x + inset + (a.tool == ToolId::Tag ? em * 0.9f : 0), y = (view_origin_.y - bounds.top) / zoom_ + a.points.front().y + inset;
+    const float x = (view_origin_.x - bounds.left) / zoom_ + a.points.front().x + inset + TagMarkerWidth(a), y = (view_origin_.y - bounds.top) / zoom_ + a.points.front().y + inset;
     UINT32 count{};
     layout->HitTestTextRange(start, end - start, x, y, nullptr, 0, &count);
     std::vector<DWRITE_HIT_TEST_METRICS> ranges(count);
