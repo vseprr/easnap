@@ -169,6 +169,7 @@ set(EASNAP_SOURCES
     src/recording/audio_timeline.h
     src/recording/audio_timeline.cpp
     src/platform/app_messages.h
+    src/platform/window_class.h
     src/platform/diagnostics.h
     src/platform/diagnostics.cpp
     src/platform/image_export.h
@@ -207,6 +208,7 @@ add_executable(EasnapPreviewHost WIN32
     src/media/preview_host_protocol.h
     src/media/media_preview.cpp
     src/platform/app_messages.h
+    src/platform/window_class.h
     src/media/mf_video_aperture.h
     src/platform/paint_buffer.h
     src/media/preview_video_endpoint.cpp
