@@ -1,10 +1,10 @@
-#include "ui/message_dialog.h"
 // Easnap - application entry point.
 //
 // Easnap is a tray-resident tool: there is no main window. A hidden top-level
-// tool window (it must receive broadcasts such as TaskbarCreated) owns the
-// notification icon, the global shortcut and the single message loop that
-// every UI surface (overlay, editor) is pumped from.
+// tool window (it must receive broadcasts such as TaskbarCreated) receives the
+// notification icon's and the global shortcut's messages, and this file runs
+// the single message loop that every UI surface (overlay, editor) is pumped
+// from. The icon, its menu, Settings and About are in app/tray_shell and ui/.
 //
 // Design rules enforced here:
 //   * Exactly one instance may run, so the global shortcut has a single owner.
@@ -36,6 +36,7 @@
 #include "platform/window_class.h"
 #include "resource.h"
 #include "strings/strings.h"
+#include "ui/message_dialog.h"
 
 // Opt into the version 6 common controls so menus and dialogs use the modern
 // visual style. Doing it from the linker keeps the project free of a hand
