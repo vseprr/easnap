@@ -62,20 +62,6 @@ void AdjustForNonClient(RECT& rect, UINT dpi) {
     ::AdjustWindowRectEx(&rect, kEditorStyle, FALSE, kEditorExStyle);
 }
 
-/// The width in pixels of `text` on one line in `font`, as a static label draws it.
-float TextPixelWidth(HFONT font, const std::wstring& text) {
-    float width = 0;
-    if (HDC dc = ::CreateCompatibleDC(nullptr)) {
-        const HGDIOBJ previous = font != nullptr ? ::SelectObject(dc, font) : nullptr;
-        RECT box{};
-        ::DrawTextW(dc, text.c_str(), -1, &box, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
-        width = static_cast<float>(box.right - box.left);
-        if (previous != nullptr) { ::SelectObject(dc, previous); }
-        ::DeleteDC(dc);
-    }
-    return width;
-}
-
 }  // namespace
 
 ScreenshotEditor::ScreenshotEditor(Callbacks callbacks) : callbacks_(std::move(callbacks)) {}
@@ -86,21 +72,12 @@ bool ScreenshotEditor::CreateToolbarControls() {
     // The tools island's buttons first, then the property island's: the order
     // inside each parent window is its tab and z-order.
     if (!toolbar_.CreateButtons(hwnd_, *this)) { return false; }
-    for (const auto& item : context_items_) {
-        const HWND parent = item.kind == ToolbarItem::Kind::BrushSize ? brush_popup_ : context_;
-        if (!CreateToolbarButton(item, parent, toolbar_.tooltip(), *this)) { return false; }
-    }
+    if (!context_panel_.CreateButtons(toolbar_.tooltip(), *this)) { return false; }
     toolbar_.AddScrollshotDisabledTip(hwnd_);
     SyncToolbarControls();
     return true;
 }
 
-HWND ScreenshotEditor::Control(int id) const {
-    if (id == kWatermarkClearButton) { return context_ ? ::GetDlgItem(::GetDlgItem(context_, kWatermarkTextEdit), id) : nullptr; }
-    if (const auto child = ::GetDlgItem(hwnd_, id)) { return child; }
-    if (const auto child = context_ ? ::GetDlgItem(context_, id) : nullptr) { return child; }
-    return brush_popup_ ? ::GetDlgItem(brush_popup_, id) : nullptr;
-}
 std::optional<size_t> ScreenshotEditor::WatermarkIndex() const {
     const auto& items = document_.annotations();
     const auto found = std::find_if(items.begin(), items.end(), [](const auto& a) { return a.tool == ToolId::Watermark; });
@@ -151,313 +128,67 @@ void ScreenshotEditor::ChangeStyle(const AnnotationStyle& value) {
     } else {
         style_ = value;
     }
-    SyncContext(false);
+    context_panel_.Sync(false);
     Invalidate();
     NotifyMutation(revision);
-}
-void ScreenshotEditor::CreateContextControls() {
-    const auto make = [&](const wchar_t* cls, const wchar_t* name, DWORD style, int id) {
-        HWND child = ::CreateWindowExW(0, cls, name, WS_CHILD | WS_TABSTOP | style, 0, 0, 1, 1, context_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), ::GetModuleHandleW(nullptr), nullptr);
-        if (child) { ::SetWindowSubclass(child, PropertyProc, 1, reinterpret_cast<DWORD_PTR>(this)); }
-        if (child && ::lstrcmpW(cls, L"STATIC") == 0 && !ui::StyleLabel(child)) {
-            ::DestroyWindow(child);
-            return static_cast<HWND>(nullptr);
-        }
-        return child;
-    };
-    HWND font = make(L"COMBOBOX", strings::Get(IDS_EDITOR_FONT_SIZE_NAME), CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS, kFontSizeCombo);
-    if (font) {
-        for (const wchar_t* value : {L"12 pt", L"16 pt", L"24 pt", L"36 pt", L"48 pt", L"60 pt", L"72 pt", L"96 pt"}) { ::SendMessageW(font, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value)); }
-        ::SendMessageW(font, CB_LIMITTEXT, 10, 0);
-        static_cast<void>(ui::StyleInput(font));
-        ui::SetAccessibleName(font, strings::Get(IDS_EDITOR_FONT_SIZE_NAME));
-    }
-    for (int id : {kEffectStrengthSlider, kOpacitySlider, kFontSizeSlider}) {
-        HWND slider = make(TRACKBAR_CLASSW, strings::Get(id == kEffectStrengthSlider ? IDS_EDITOR_EFFECT_STRENGTH_NAME : id == kOpacitySlider ? IDS_EDITOR_OPACITY_NAME
-                                                                                                                                              : IDS_EDITOR_WATERMARK_SIZE_NAME),
-                           TBS_HORZ | TBS_NOTICKS, id);
-        ::SendMessageW(slider, TBM_SETRANGE, TRUE, MAKELPARAM(id == kFontSizeSlider ? 8 : 0, id == kFontSizeSlider ? 96 : 100));
-        ::SendMessageW(slider, TBM_SETPAGESIZE, 0, 10);
-        static_cast<void>(ui::StyleSlider(slider));
-    }
-    HWND text = make(L"EDIT", L"", ES_AUTOHSCROLL, kWatermarkTextEdit);
-    ::SendMessageW(text, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(strings::Get(IDS_EDITOR_WATERMARK_TEXT_CUE)));
-    ::SendMessageW(text, EM_SETLIMITTEXT, 16, 0);
-    static_cast<void>(ui::StyleInput(text));
-    ui::SetAccessibleName(text, strings::Get(IDS_EDITOR_WATERMARK_TEXT_NAME));
-    HWND clear = make(L"BUTTON", strings::Get(IDS_EDITOR_WATERMARK_CLEAR_BUTTON), BS_PUSHBUTTON, kWatermarkClearButton);
-    ui::ButtonStyle clear_style;
-    clear_style.icon = ui::Icon::Discard;
-    clear_style.icon_only = true;
-    clear_style.segmented = true;
-    clear_style.circular = true;
-    static_cast<void>(ui::StyleButton(clear, clear_style));
-    ::RemoveWindowSubclass(clear, PropertyProc, 1);
-    ::SetWindowSubclass(clear, PropertyProc, 1, reinterpret_cast<DWORD_PTR>(this));
-    ::SetParent(clear, text);
-    ::SetWindowLongPtrW(text, GWL_STYLE, ::GetWindowLongPtrW(text, GWL_STYLE) | WS_CLIPCHILDREN);
-    for (int id : {kEffectStrengthValue, kOpacityValue, kFontSizeValue}) { make(L"STATIC", L"", SS_CENTERIMAGE, id); }
-}
-void ScreenshotEditor::SyncWatermarkClear() {
-    const HWND text = Control(kWatermarkTextEdit), clear = Control(kWatermarkClearButton);
-    if (!text || !clear) { return; }
-    RECT field{};
-    ::GetWindowRect(text, &field);
-    POINT cursor{};
-    ::GetCursorPos(&cursor);
-    const bool over = ::PtInRect(&field, cursor) != FALSE;
-    const bool show = !modal_active_ && PropertiesOf(ContextTool()).watermark && ::IsWindowVisible(context_) &&
-                      ::GetWindowTextLengthW(text) > 0 && over;
-    const bool shown = (::GetWindowLongPtrW(clear, GWL_STYLE) & WS_VISIBLE) != 0;
-    if (shown != show) {
-        ::ShowWindow(clear, show ? SW_SHOWNOACTIVATE : SW_HIDE);
-        if (show) {
-            ::SetTimer(context_, kWatermarkClearHoverTimer, 40, nullptr);
-        } else {
-            ::KillTimer(context_, kWatermarkClearHoverTimer);
-        }
-    }
-}
-LRESULT CALLBACK ScreenshotEditor::PropertyProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR reference) {
-    auto* self = reinterpret_cast<ScreenshotEditor*>(reference);
-    if (message == WM_NCDESTROY) {
-        ::RemoveWindowSubclass(hwnd, PropertyProc, id);
-        return ::DefSubclassProc(hwnd, message, wparam, lparam);
-    }
-    const int control = ::GetDlgCtrlID(hwnd);
-    if (control == kWatermarkTextEdit && message == WM_COMMAND && LOWORD(wparam) == kWatermarkClearButton) { return self->HandleMessage(self->context_, message, wparam, lparam); }
-    const bool clear_hover = (control == kWatermarkTextEdit || control == kWatermarkClearButton) &&
-                             (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_SETFOCUS || message == WM_KILLFOCUS);
-    if (clear_hover && message == WM_MOUSEMOVE) {
-        TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, hwnd, 0};
-        ::TrackMouseEvent(&track);
-    }
-    const bool slider = kPropertySliders.Contains(control);
-    if (!self->syncing_context_ && ((slider && (message == WM_LBUTTONDOWN || message == WM_KEYDOWN)) || (!slider && message == WM_SETFOCUS))) {
-        // Only a transaction opened here is committed here: a text edit or a
-        // transform that is already open keeps its own undo boundary.
-        if (!self->document_.in_transaction()) {
-            self->context_owns_transaction_ = true;
-            self->document_.BeginTransaction();
-        }
-    }
-    if (message == WM_KEYDOWN && wparam == VK_ESCAPE) {
-        self->context_owns_transaction_ = false;
-        self->document_.CancelTransaction();
-        self->RequestDiscard();
-        return 0;
-    }
-    const LRESULT result = ::DefSubclassProc(hwnd, message, wparam, lparam);
-    if (clear_hover) { self->SyncWatermarkClear(); }
-    if ((slider && (message == WM_LBUTTONUP || message == WM_KEYUP)) || (!slider && message == WM_KILLFOCUS)) { self->CommitContextTransaction(); }
-    if (slider && message == WM_CAPTURECHANGED && ::GetKeyState(VK_LBUTTON) < 0 && self->context_owns_transaction_) {
-        self->context_owns_transaction_ = false;
-        self->document_.CancelTransaction();
-        self->SyncContext();
-        self->Invalidate();
-    }
-    return result;
 }
 void ScreenshotEditor::CommitContextTransaction() {
     if (!context_owns_transaction_) { return; }
     context_owns_transaction_ = false;
     document_.CommitTransaction();
 }
-void ScreenshotEditor::SyncContext(bool layout) {
-    if (!context_ || syncing_context_) { return; }
-    syncing_context_ = true;
-    const auto tool = ContextTool();
-    const auto style = ContextStyle();
-    const ToolProperties& shows = PropertiesOf(tool);
-    const auto position = [&](int id, bool shown, float x, float y, float width, float height) {
-        HWND child = Control(id);
-        if (!child) { return; }
-        if ((::IsWindowVisible(child) != FALSE) != shown) { ::ShowWindow(child, shown ? SW_SHOWNA : SW_HIDE); }
-        if (shown) {
-            RECT old{};
-            ::GetWindowRect(child, &old);
-            ::MapWindowPoints(nullptr, context_, reinterpret_cast<POINT*>(&old), 2);
-            const RECT next{static_cast<LONG>(x * scale_), static_cast<LONG>(y * scale_), static_cast<LONG>((x + width) * scale_), static_cast<LONG>((y + height) * scale_)};
-            if (old.left != next.left || old.top != next.top || old.right != next.right || (id != kFontSizeCombo && old.bottom != next.bottom)) {
-                ::SetWindowPos(child, nullptr, next.left, next.top, next.right - next.left, next.bottom - next.top, SWP_NOZORDER | SWP_NOACTIVATE);
-            }
-        }
-        if (reinterpret_cast<HFONT>(::SendMessageW(child, WM_GETFONT, 0, 0)) != toolbar_font_) { ::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(toolbar_font_), TRUE); }
-    };
-    if (layout)
-        for (int id : {kFontSizeCombo, kEffectStrengthSlider, kOpacitySlider, kFontSizeSlider, kWatermarkTextEdit, kEffectStrengthValue, kOpacityValue, kFontSizeValue}) {
-            const auto it = std::find_if(context_fields_.begin(), context_fields_.end(), [id](const auto& field) { return field.first == id; });
-            if (it == context_fields_.end()) {
-                position(id, false, 0, 0, 1, 1);
-                continue;
-            }
-            const auto r = it->second;
-            position(id, true, r.left / scale_, r.top / scale_, (r.right - r.left) / scale_, id == kFontSizeCombo ? 280.0f : (r.bottom - r.top) / scale_);
-        }
-    const auto label = [&](int id, const wchar_t* value) {
-        wchar_t old[256]{};
-        ::GetWindowTextW(Control(id), old, 256);
-        if (::lstrcmpW(old, value) != 0) { ::SetWindowTextW(Control(id), value); }
-    };
-    const auto slider = [&](int id, float value) {
-        if (::SendMessageW(Control(id), TBM_GETPOS, 0, 0) != static_cast<LPARAM>(value)) { ::SendMessageW(Control(id), TBM_SETPOS, TRUE, static_cast<LPARAM>(value)); }
-    };
-    if (shows.font_size && ::GetFocus() != Control(kFontSizeCombo) && !::IsChild(Control(kFontSizeCombo), ::GetFocus())) {
-        wchar_t value[32]{};
-        ::swprintf_s(value, L"%g pt", static_cast<double>(style.font_size));
-        label(kFontSizeCombo, value);
+void ScreenshotEditor::OpenContextTransaction() {
+    if (!document_.in_transaction()) {
+        context_owns_transaction_ = true;
+        document_.BeginTransaction();
     }
-    if (shows.watermark) {
-        const auto& annotations = document_.annotations();
-        const auto found = std::find_if(annotations.begin(), annotations.end(), [](const auto& a) { return a.tool == ToolId::Watermark; });
-        // Undo may clear selection while the input still owns focus. Always
-        // synchronize from the document; unchanged typing never resets EDIT.
-        label(kWatermarkTextEdit, found != annotations.end() ? found->text.c_str() : L"");
-    }
-    if (shows.watermark) {
-        RECT field{};
-        ::GetClientRect(Control(kWatermarkTextEdit), &field);
-        const LONG size = ui::theme::Scaled(32, scale_), inset = ui::theme::Scaled(2, scale_);
-        // Moved and the margin set only when they change: this runs on every
-        // key, and a window moved under the pointer makes Windows re-send it.
-        const RECT place{field.right - size - inset, field.top + (field.bottom - field.top - size) / 2,
-                         field.right - inset, field.top + (field.bottom - field.top - size) / 2 + size};
-        RECT current{};
-        ::GetWindowRect(Control(kWatermarkClearButton), &current);
-        ::MapWindowPoints(nullptr, Control(kWatermarkTextEdit), reinterpret_cast<POINT*>(&current), 2);
-        if (::EqualRect(&current, &place) == FALSE) {
-            ::SetWindowPos(Control(kWatermarkClearButton), HWND_TOP, place.left, place.top, size, size, SWP_NOACTIVATE);
-        }
-        const LONG margin = size + inset * 2;
-        if (static_cast<LONG>(HIWORD(::SendMessageW(Control(kWatermarkTextEdit), EM_GETMARGINS, 0, 0))) != margin) {
-            ::SendMessageW(Control(kWatermarkTextEdit), EM_SETMARGINS, EC_RIGHTMARGIN, MAKELPARAM(0, margin));
-        }
-    }
-    SyncWatermarkClear();
-    slider(kEffectStrengthSlider, style.strength);
-    slider(kOpacitySlider, style.opacity);
-    slider(kFontSizeSlider, style.font_size);
-    const std::wstring strength = strings::Format(style.effect == EffectMode::Blur ? IDS_EDITOR_BLUR_INTENSITY_VALUE : IDS_EDITOR_BLOCK_SIZE_VALUE, {std::to_wstring(static_cast<int>(style.effect == EffectMode::Blur ? style.strength : 2 + style.strength * 0.7f))});
-    label(kEffectStrengthValue, strength.c_str());
-    label(kOpacityValue, strings::Format(IDS_EDITOR_OPACITY_VALUE, {std::to_wstring(static_cast<int>(style.opacity))}).c_str());
-    label(kFontSizeValue, strings::Format(IDS_EDITOR_SIZE_VALUE, {std::to_wstring(static_cast<int>(style.font_size))}).c_str());
-    syncing_context_ = false;
 }
-SIZE ScreenshotEditor::island_group_size() const noexcept {
-    RECT main{};
-    if (!hwnd_ || !::GetWindowRect(hwnd_, &main)) { return {}; }
-    const LONG context = std::max(context_visible_ ? context_height_ : 0, reserved_context_height_);
-    return SIZE{main.right - main.left, main.bottom - main.top + (context > 0 ? ui::theme::Scaled(ui::theme::kIslandGap, scale_) + context : 0)};
+void ScreenshotEditor::CancelContextTransaction() {
+    context_owns_transaction_ = false;
+    document_.CancelTransaction();
 }
-void ScreenshotEditor::PlaceContext(bool follow_frame) {
-    if (!hwnd_ || !context_ || repositioning_ || modal_active_) { return; }
-    repositioning_ = true;
-    RECT main{};
-    ::GetWindowRect(hwnd_, &main);
-    const auto monitor = platform::MonitorForRect(follow_frame ? region_ : main);
-    const auto work = monitor.work_area;
-    const LONG gap = ui::theme::Scaled(ui::theme::kIslandGap, scale_);
-    const LONG width = main.right - main.left;
-    const LONG height = main.bottom - main.top;
-    const LONG popup_space = brush_popup_open_ ? gap + ui::theme::Scaled(kToolbarRowHeight + 6, scale_) : 0;
-    const LONG shown = height + (context_visible_ ? gap + context_height_ : 0) + popup_space;
-    // Outside the frame while anything outside has room, and never over the
-    // mode island (ui/island_layout.h). An island the user moved, or one that
-    // only changed its height, stays where it is unless that covers the mode
-    // island.
-    const RECT keep_clear = callbacks_.keep_clear ? callbacks_.keep_clear() : RECT{};
-    RECT group = platform::ClampRectToBounds({main.left, main.top, main.left + width, main.top + shown}, work);
-    RECT covered{};
-    if (follow_frame || ::IntersectRect(&covered, &group, &keep_clear)) {
-        // Placed around the frame with room for the tallest property island,
-        // shown or not: choosing a tool must not send the islands to the other
-        // side of the frame.
-        const LONG reserved = std::max(shown, island_group_size().cy + popup_space);
-        const auto frame_monitor = platform::MonitorForRect(region_);
-        group = ui::PlaceIslandForFrame(region_, frame_monitor.bounds, frame_monitor.work_area, SIZE{width, reserved}, gap, keep_clear).rect;
-    }
-    ::SetWindowPos(hwnd_, nullptr, group.left, group.top, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
-    RECT context{group.left + (width - context_width_) / 2, group.top + height + gap, 0, 0};
-    context.right = context.left + context_width_;
-    context.bottom = context.top + context_height_;
-    context = platform::ClampRectToBounds(context, platform::MonitorForRect(group).work_area);
-    ::SetWindowPos(context_, HWND_TOPMOST, context.left, context.top, context_width_, std::max(1, context_height_), SWP_NOACTIVATE);
-    ui::RoundWindow(context_);
-    ui::RoundWindow(hwnd_);
-    const bool show = visible_ && !frame_interacting_ && context_visible_;
-    if (show && !::IsWindowVisible(context_) && ui::theme::AnimationsEnabled()) {
-        context_fade_started_ = ::GetTickCount64();
-        ::SetLayeredWindowAttributes(context_, 0, 0, LWA_ALPHA);
-        ::SetTimer(context_, kContextFadeTimer, ui::theme::kAnimationTickMs, nullptr);
-    }
-    if (!show) {
-        ::KillTimer(context_, kContextFadeTimer);
-        context_fade_started_ = 0;
-        ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
-    }
-    ::ShowWindow(context_, show ? SW_SHOWNOACTIVATE : SW_HIDE);
-    if (brush_popup_open_) { ShowBrushPopup(true); }
-    repositioning_ = false;
+void ScreenshotEditor::ClearWatermarkField(HWND field) {
+    document_.BeginTransaction();
+    ::SetWindowTextW(field, L"");
+    document_.CommitTransaction();
+    context_owns_transaction_ = false;
 }
-void ScreenshotEditor::ShowBrushPopup(bool show) {
-    if (!brush_popup_) { return; }
-    if (show && visible_ && !modal_active_ && PropertiesOf(ContextTool()).effect) {
-        brush_popup_open_ = true;
-        // Reserve all three islands as one group before showing the final one.
-        // At the bottom edge, move the group upward instead of covering tools.
-        if (!repositioning_) {
-            PlaceContext();
-            return;
-        }
-        RECT anchor{}, context{};
-        ::GetWindowRect(Control(kBrushMethodButton), &anchor);
-        ::GetWindowRect(context_, &context);
-        const LONG width = ui::theme::Scaled(132, scale_), height = ui::theme::Scaled(kToolbarRowHeight + 6, scale_), gap = ui::theme::Scaled(ui::theme::kIslandGap, scale_);
-        const auto work = platform::MonitorForRect(anchor).work_area;
-        const LONG center = (anchor.left + anchor.right) / 2, callout = ui::theme::Scaled(6, scale_);
-        const LONG top = context.bottom + gap;
-        RECT r{center - width / 2, top, center + width - width / 2, top + height};
-        r = platform::ClampRectToBounds(r, work);
-        const LONG callout_x = std::clamp(center - r.left, callout * 2, width - callout * 2);
-        HRGN shape = ::CreateRoundRectRgn(0, callout, width + 1, height + 1, gap * 2, gap * 2);
-        POINT triangle[] = {{callout_x - callout, callout}, {callout_x, 0}, {callout_x + callout, callout}};
-        HRGN pointer = ::CreatePolygonRgn(triangle, 3, WINDING);
-        if (shape && pointer) { ::CombineRgn(shape, shape, pointer, RGN_OR); }
-        if (pointer) { ::DeleteObject(pointer); }
-        if (shape && !::SetWindowRgn(brush_popup_, shape, FALSE)) { ::DeleteObject(shape); }
-        for (int id = kBrushSizeButtons.first; kBrushSizeButtons.Contains(id); ++id) {
-            const auto item = std::find_if(context_items_.begin(), context_items_.end(), [id](const auto& value) { return value.identifier == id; });
-            if (item != context_items_.end()) { ::SetWindowPos(Control(id), nullptr, static_cast<int>(item->rect.left), static_cast<int>(item->rect.top), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE); }
-        }
-        ::SetWindowPos(brush_popup_, HWND_TOPMOST, r.left, r.top, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        ::InvalidateRect(brush_popup_, nullptr, FALSE);
-        brush_leave_started_ = 0;
-        ::SetTimer(context_, kBrushPopupHoverTimer, 30, nullptr);
+void ScreenshotEditor::SetWatermarkText(std::wstring text) {
+    if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+    // The image has one watermark: the field edits it whether or not it
+    // is selected, and creates it only when there is none.
+    const auto target = ContextAnnotation();
+    Annotation a;
+    if (target) {
+        a = document_.annotations()[*target];
     } else {
-        brush_popup_open_ = false;
-        ::ShowWindow(brush_popup_, SW_HIDE);
-        ::KillTimer(context_, kBrushPopupHoverTimer);
-        brush_hover_started_ = brush_leave_started_ = 0;
+        a.tool = ToolId::Watermark;
+        a.style = style_;
+        a.style.opacity = 30;
+        a.points = {{0, 0}, {static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)}};
     }
+    a.text = std::move(text);
+    if (target) {
+        document_.Replace(*target, std::move(a));
+        selected_ = target;
+    } else {
+        document_.Apply(std::move(a));
+        selected_ = document_.annotations().size() - 1;
+    }
+    context_panel_.Sync();
+    Invalidate();
 }
-void ScreenshotEditor::PaintContext(HDC dc, HWND window) const {
-    RECT client{};
-    ::GetClientRect(window, &client);
-    platform::PaintBuffer buffer(dc, client);
-    dc = buffer.dc();
-    ui::theme::DrawPanel(dc, client, scale_);
-    if (window == context_)
-        for (const auto& r : context_separators_) { ui::DrawSeparator(dc, r, scale_); }
-}
+RECT ScreenshotEditor::IslandKeepClear() const { return callbacks_.keep_clear ? callbacks_.keep_clear() : RECT{}; }
+SIZE ScreenshotEditor::island_group_size() const noexcept { return context_panel_.GroupSize(); }
 void ScreenshotEditor::SetFrameInteracting(bool interacting) {
     if (frame_interacting_ == interacting) { return; }
     frame_interacting_ = interacting;
     if (interacting) {
-        ShowBrushPopup(false);
+        context_panel_.ShowBrushPopup(false);
         ::ShowWindow(hwnd_, SW_HIDE);
-        if (context_) { ::ShowWindow(context_, SW_HIDE); }
+        if (context_panel_.island()) { ::ShowWindow(context_panel_.island(), SW_HIDE); }
     } else if (visible_) {
-        PlaceContext(true);
+        context_panel_.Place(true);
         ::ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     }
 }
@@ -466,35 +197,13 @@ LRESULT ScreenshotEditor::ForwardButtonKey(UINT message, WPARAM key, LPARAM flag
     return HandleMessage(hwnd_, message, key, flags);
 }
 
-void ScreenshotEditor::BrushMethodHovered() {
-    if (!brush_hover_started_) { brush_hover_started_ = ::GetTickCount64(); }
-    ::SetTimer(context_, kBrushPopupHoverTimer, 30, nullptr);
-}
+void ScreenshotEditor::BrushMethodHovered() { context_panel_.OnBrushMethodHover(); }
 
 void ScreenshotEditor::SyncToolbarControls() const {
     if (!hwnd_) { return; }
     const auto style = ContextStyle();
     toolbar_.SyncButtons(hwnd_, {ContextTool(), document_.CanUndo(), document_.CanRedo(), exporting_, has_image()}, toolbar_font_);
-    for (const auto& item : context_items_) {
-        HWND button = Control(item.identifier);
-        if (!button) { continue; }
-        PlaceToolbarButton(button, item, toolbar_font_);
-        bool selected = false;
-        switch (item.kind) {
-            case ToolbarItem::Kind::Color: selected = item.color.r == style.color.r && item.color.g == style.color.g && item.color.b == style.color.b; break;
-            case ToolbarItem::Kind::Thickness: selected = item.thickness == style.thickness; break;
-            case ToolbarItem::Kind::BrushSize: selected = item.brush_size == style.brush_size; break;
-            case ToolbarItem::Kind::Option:
-                selected = (kTextModeButtons.Contains(item.identifier) && static_cast<int>(style.text_mode) == kTextModeButtons.Index(item.identifier)) ||
-                           (kEffectButtons.Contains(item.identifier) && static_cast<int>(style.effect) == kEffectButtons.Index(item.identifier)) ||
-                           (kEffectMethodButtons.Contains(item.identifier) && static_cast<int>(style.method) == kEffectMethodButtons.Index(item.identifier)) ||
-                           (kSpotlightShapeButtons.Contains(item.identifier) && static_cast<int>(style.shape) == kSpotlightShapeButtons.Index(item.identifier));
-                break;
-            case ToolbarItem::Kind::Tool:
-            case ToolbarItem::Kind::Command: break;
-        }
-        MarkToolbarButton(button, item, selected, true);
-    }
+    context_panel_.SyncButtons(style, toolbar_font_);
 }
 
 void ScreenshotEditor::ReflowToolbar() {
@@ -509,18 +218,18 @@ void ScreenshotEditor::ReflowToolbar() {
     ::SetWindowPos(hwnd_, nullptr, current.left, current.top, current.right - current.left, current.bottom - current.top,
                    SWP_NOZORDER | SWP_NOACTIVATE);
     SyncToolbarControls();
-    SyncContext();
-    PlaceContext(!island_user_positioned_);
+    context_panel_.Sync();
+    context_panel_.Place(!island_user_positioned_);
 }
 
 bool ScreenshotEditor::ProcessDialogMessage(MSG& message) const {
     if (!visible_) { return false; }
-    for (HWND parent : {text_host_, brush_popup_, context_, hwnd_}) {
+    for (HWND parent : {text_host_, context_panel_.brush_popup(), context_panel_.island(), hwnd_}) {
         if (parent && (message.hwnd == parent || ::IsChild(parent, message.hwnd))) {
             if (parent == text_host_) { return false; } // EDIT owns multiline Return, arrows and clipboard keys.
             if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
-                if (::SendMessageW(Control(kFontSizeCombo), CB_GETDROPPEDSTATE, 0, 0)) {
-                    ::SendMessageW(Control(kFontSizeCombo), CB_SHOWDROPDOWN, FALSE, 0);
+                if (::SendMessageW(context_panel_.Control(kFontSizeCombo), CB_GETDROPPEDSTATE, 0, 0)) {
+                    ::SendMessageW(context_panel_.Control(kFontSizeCombo), CB_SHOWDROPDOWN, FALSE, 0);
                 } else {
                     ::SendMessageW(hwnd_, WM_KEYDOWN, VK_ESCAPE, message.lParam);
                 }
@@ -538,144 +247,7 @@ bool ScreenshotEditor::ProcessDialogMessage(MSG& message) const {
 
 void ScreenshotEditor::BuildToolbar(float available_width) {
     toolbar_.Build(available_width, scale_);
-    context_items_.clear();
-    ToolbarFlow flow(available_width, scale_);
-    const float s = flow.s, pad = flow.pad, row = flow.row;
-    float &x = flow.x, &y = flow.y;
-    const auto place = [&](float width) { return flow.Place(width); };
-    // The property island of `tool`, wrapped in the width of the tools island.
-    // Returns its height (0 for the pointer, which has none) and its widest row.
-    const auto layout_context = [&](ToolId tool, std::vector<ToolbarItem>& items, std::vector<std::pair<int, RECT>>& fields,
-                                    std::vector<RECT>& separators) {
-        x = pad;
-        y = 0;
-        const ToolProperties& shows = PropertiesOf(tool);
-        float widest = 0;
-        const auto field = [&](int id, float width) {
-            auto r = place(width * s);
-            widest = std::max(widest, r.right + pad);
-            fields.push_back({id, {static_cast<LONG>(r.left), static_cast<LONG>(r.top), static_cast<LONG>(r.right), static_cast<LONG>(r.bottom)}});
-        };
-        // A value label is as wide as the widest text it can show, and never
-        // narrower than its design width. A font's pixel height does not follow
-        // the scale exactly, so a fixed width that fits at 125 % cut
-        // "Boyut 96 pt" at 150 %.
-        const auto value_field = [&](int id, float minimum, std::initializer_list<std::wstring> texts) {
-            float text_width = 0;
-            for (const std::wstring& value : texts) { text_width = std::max(text_width, TextPixelWidth(toolbar_font_, value)); }
-            field(id, std::max(minimum, (text_width + 1.0f) / s));
-        };
-        const auto separator = [&] {
-            const auto r = place(8 * s);
-            separators.push_back({static_cast<LONG>((r.left + r.right) / 2), static_cast<LONG>(r.top + 8 * s), static_cast<LONG>((r.left + r.right) / 2 + 1), static_cast<LONG>(r.bottom - 8 * s)});
-        };
-        const auto option = [&](int id, bool shown, float width = kToolButton) {
-            ToolbarItem item;
-            item.kind = ToolbarItem::Kind::Option;
-            item.identifier = id;
-            item.label = item.tooltip = strings::Get(ButtonLook(id).tooltip);
-            item.shown = shown;
-            if (shown) {
-                item.rect = place(width * s);
-                widest = std::max(widest, item.rect.right + pad);
-            }
-            items.push_back(item);
-        };
-        option(kTextPlainButton, shows.text_style);
-        option(kTextFilledButton, shows.text_style);
-        option(kTextOutlinedButton, shows.text_style);
-        option(kPixelateButton, shows.effect);
-        option(kBlurButton, shows.effect);
-        if (shows.effect) { separator(); }
-        option(kBrushMethodButton, shows.effect, 48);
-        option(kRegionMethodButton, shows.effect);
-        if (shows.effect) {
-            separator();
-            value_field(kEffectStrengthValue, 125, {strings::Format(IDS_EDITOR_BLUR_INTENSITY_VALUE, {L"100"}), strings::Format(IDS_EDITOR_BLOCK_SIZE_VALUE, {L"72"})});
-            field(kEffectStrengthSlider, 155);
-        }
-        option(kSpotlightRectangleButton, shows.spotlight);
-        option(kSpotlightEllipseButton, shows.spotlight);
-        option(kSpotlightRoundedButton, shows.spotlight);
-        if (shows.spotlight) {
-            separator();
-            value_field(kOpacityValue, 110, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
-            field(kOpacitySlider, 155);
-        }
-        if (shows.font_size) {
-            field(kFontSizeCombo, 96);
-            separator();
-        }
-        if (shows.watermark) {
-            field(kWatermarkTextEdit, 140);
-            separator();
-        }
-        for (size_t i = 0; i < kThicknessOptions.size(); ++i) {
-            ToolbarItem item;
-            item.kind = ToolbarItem::Kind::Thickness;
-            item.thickness = kThicknessOptions[i];
-            item.identifier = kThicknessButtons.Id(static_cast<int>(i));
-            item.shown = shows.thickness;
-            if (item.shown) {
-                item.rect = place(kToolButton * s);
-                widest = std::max(widest, item.rect.right + pad);
-            }
-            items.push_back(item);
-        }
-        if (shows.thickness) { separator(); }
-        for (size_t i = 0; i < kAnnotationSwatchColors.size(); ++i) {
-            ToolbarItem item;
-            item.kind = ToolbarItem::Kind::Color;
-            item.color = kAnnotationSwatchColors[i];
-            item.identifier = kColorButtons.Id(static_cast<int>(i));
-            item.shown = shows.colors;
-            if (item.shown) {
-                item.rect = place(kSwatch * s);
-                widest = std::max(widest, item.rect.right + pad);
-            }
-            items.push_back(item);
-        }
-        if (shows.watermark) {
-            separator();
-            value_field(kOpacityValue, 85, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
-            field(kOpacitySlider, 100);
-            separator();
-            value_field(kFontSizeValue, 65, {strings::Format(IDS_EDITOR_SIZE_VALUE, {L"96"})});
-            field(kFontSizeSlider, 100);
-        }
-        for (size_t i = 0; i < kBrushSizeOptions.size(); ++i) {
-            ToolbarItem item;
-            item.kind = ToolbarItem::Kind::BrushSize;
-            item.brush_size = kBrushSizeOptions[i];
-            item.identifier = kBrushSizeButtons.Id(static_cast<int>(i));
-            item.shown = true;
-            const float left = pad + static_cast<float>(i) * (kToolButton + kItemGap) * s;
-            const float callout = 6 * s;
-            item.rect = {left, callout + (row - kToolButton * s) / 2, left + kToolButton * s, callout + (row + kToolButton * s) / 2};
-            items.push_back(item);
-        }
-        return std::pair<float, float>{shows.island ? y + row : 0.0f, widest};
-    };
-    context_fields_.clear();
-    context_separators_.clear();
-    const auto tool = ContextTool();
-    const auto [context_height, widest] = layout_context(tool, context_items_, context_fields_, context_separators_);
-    context_visible_ = PropertiesOf(tool).island;
-    context_width_ = static_cast<int>(std::ceil(std::min(available_width, std::max(widest, 200 * s))));
-    context_height_ = context_visible_ ? static_cast<int>(std::ceil(context_height)) : 0;
-    // The islands are placed around the frame with room for the tallest
-    // property island any tool shows, so choosing a tool never moves them.
-    float tallest = context_height;
-    std::vector<ToolbarItem> scratch_items;
-    std::vector<std::pair<int, RECT>> scratch_fields;
-    std::vector<RECT> scratch_separators;
-    for (const ToolId entry : kToolbarOrder) {
-        scratch_items.clear();
-        scratch_fields.clear();
-        scratch_separators.clear();
-        tallest = std::max(tallest, layout_context(entry, scratch_items, scratch_fields, scratch_separators).first);
-    }
-    reserved_context_height_ = static_cast<int>(std::ceil(tallest));
+    context_panel_.Build(available_width);
 }
 
 void ScreenshotEditor::LayoutClient(int client_width, int client_height) {
@@ -691,7 +263,7 @@ void ScreenshotEditor::LayoutClient(int client_width, int client_height) {
 // ---------------------------------------------------------------------------
 
 void ScreenshotEditor::ResetSession() {
-    brush_popup_open_ = false;
+    context_panel_.ResetSession();
     // Undo/redo is strictly per session: nothing from a previous capture may be
     // reachable once that capture is gone.
     document_.Reset();
@@ -803,24 +375,24 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     ::GetClientRect(hwnd_, &client);
     LayoutClient(static_cast<int>(platform::RectWidth(client)), static_cast<int>(platform::RectHeight(client)));
 
-    context_ = ::CreateWindowExW(kEditorExStyle | WS_EX_LAYERED, kEditorClassName, strings::Get(IDS_EDITOR_CONTEXT_TITLE), kEditorStyle, window.left, window.bottom + 8,
-                                 static_cast<int>(window.right - window.left), 48, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
+    context_panel_.AdoptIsland(::CreateWindowExW(kEditorExStyle | WS_EX_LAYERED, kEditorClassName, strings::Get(IDS_EDITOR_CONTEXT_TITLE), kEditorStyle, window.left, window.bottom + 8,
+                                                 static_cast<int>(window.right - window.left), 48, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this));
     // This title identifies the pop-up to tests (FindWindow); it is not localized.
-    brush_popup_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, L"Brush sizes", kEditorStyle, window.left, window.bottom,
-                                     static_cast<int>(132 * scale_), static_cast<int>((kToolbarRowHeight + 6) * scale_), hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
-    if (brush_popup_) { static_cast<void>(ui::ExcludeFromCapture(brush_popup_)); }
-    if (!context_ || !brush_popup_ || !CreateToolbarControls()) {
+    context_panel_.AdoptBrushPopup(::CreateWindowExW(kEditorExStyle, kEditorClassName, L"Brush sizes", kEditorStyle, window.left, window.bottom,
+                                                     static_cast<int>(132 * scale_), static_cast<int>((kToolbarRowHeight + 6) * scale_), hwnd_, nullptr, ::GetModuleHandleW(nullptr), this));
+    if (context_panel_.brush_popup()) { static_cast<void>(ui::ExcludeFromCapture(context_panel_.brush_popup())); }
+    if (!context_panel_.island() || !context_panel_.brush_popup() || !CreateToolbarControls()) {
         Destroy();
         return false;
     }
-    CreateContextControls();
-    if (!Control(kFontSizeCombo) || !Control(kEffectStrengthSlider) || !Control(kWatermarkTextEdit)) {
+    context_panel_.CreateControls();
+    if (!context_panel_.Control(kFontSizeCombo) || !context_panel_.Control(kEffectStrengthSlider) || !context_panel_.Control(kWatermarkTextEdit)) {
         Destroy();
         return false;
     }
     // The property island is layered already: it fades in.
-    ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
-    static_cast<void>(ui::ExcludeFromCapture(context_));
+    ::SetLayeredWindowAttributes(context_panel_.island(), 0, 255, LWA_ALPHA);
+    static_cast<void>(ui::ExcludeFromCapture(context_panel_.island()));
     static_cast<void>(ui::ExcludeFromCapture(hwnd_));
     CreateTextFormats();
     RebuildRedactedBase();
@@ -844,16 +416,16 @@ bool ScreenshotEditor::SetImage(platform::BgraImage image) {
 void ScreenshotEditor::Show() {
     visible_ = true;
     ::ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-    PlaceContext();
+    context_panel_.Place();
     Invalidate();
 }
 
 void ScreenshotEditor::Hide() {
     visible_ = false;
     typing_pointer_.Restore();
-    ShowBrushPopup(false);
+    context_panel_.ShowBrushPopup(false);
     ::ShowWindow(hwnd_, SW_HIDE);
-    if (context_) { ::ShowWindow(context_, SW_HIDE); }
+    if (context_panel_.island()) { ::ShowWindow(context_panel_.island(), SW_HIDE); }
     if (text_host_) { ::ShowWindow(text_host_, SW_HIDE); }
 }
 
@@ -862,7 +434,7 @@ void ScreenshotEditor::SetRegion(const RECT& region, bool interacting) {
     if (!::EqualRect(&region_, &region)) { island_user_positioned_ = false; }
     region_ = region;
     SetFrameInteracting(interacting);
-    if (!interacting) { PlaceContext(true); }
+    if (!interacting) { context_panel_.Place(true); }
 }
 
 bool ScreenshotEditor::EnsureImage() {
@@ -1012,18 +584,12 @@ void ScreenshotEditor::Close(bool exported) {
 void ScreenshotEditor::Destroy() {
     export_job_.Discard();
     if (exporting_) { EndExport(); }
-    if (brush_popup_) {
-        ::DestroyWindow(brush_popup_);
-        brush_popup_ = nullptr;
-    }
+    context_panel_.DestroyBrushPopup();
     if (text_host_) {
         ::DestroyWindow(text_host_);
         text_host_ = text_edit_ = nullptr;
     }
-    if (context_) {
-        ::DestroyWindow(context_);
-        context_ = nullptr;
-    }
+    context_panel_.DestroyIsland();
     if (text_font_) {
         ::DeleteObject(text_font_);
         text_font_ = nullptr;
@@ -1091,7 +657,7 @@ void ScreenshotEditor::ApplyView(const ImageView& view, bool notify) {
     if (editing_text_) { LayoutTextEditor(); }
     // The workspace moves its image plane before anything is repainted into it.
     if (notify && callbacks_.on_view_changed) { callbacks_.on_view_changed(view_); }
-    if (moved && hwnd_ && !island_user_positioned_) { PlaceContext(true); }
+    if (moved && hwnd_ && !island_user_positioned_) { context_panel_.Place(true); }
     Invalidate();
 }
 
@@ -1179,37 +745,10 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         ::SetCursor(::LoadCursorW(nullptr, IDC_APPSTARTING));
         return TRUE;
     }
-    if (message == WM_TIMER && wparam == kWatermarkClearHoverTimer) {
-        SyncWatermarkClear();
-        return 0;
-    }
+    // The property island's timers, slider scrolls and font size list.
+    if (const auto handled = context_panel_.HandleMessage(hwnd, message, wparam, lparam)) { return *handled; }
     if (message == WM_TIMER && wparam == ui::kTypingPointerTimer) {
         typing_pointer_.Poll();
-        return 0;
-    }
-    if (message == WM_TIMER && wparam == kBrushPopupHoverTimer) {
-        POINT point{};
-        ::GetCursorPos(&point);
-        const auto over = [&](HWND window) { RECT r{}; ::GetWindowRect(window,&r); return ::IsWindowVisible(window) && ::PtInRect(&r,point); };
-        const auto now = ::GetTickCount64();
-        const bool hand = over(Control(kBrushMethodButton));
-        if (hand || over(brush_popup_)) {
-            brush_leave_started_ = 0;
-            if (hand && brush_hover_started_ && now - brush_hover_started_ >= 350 && !::IsWindowVisible(brush_popup_)) { ShowBrushPopup(true); }
-        } else if (!brush_leave_started_) {
-            brush_leave_started_ = now;
-        } else if (now - brush_leave_started_ >= 250) {
-            ShowBrushPopup(false);
-        }
-        return 0;
-    }
-    if (message == WM_TIMER && wparam == kContextFadeTimer && hwnd == context_) {
-        const float progress = std::clamp(static_cast<float>(::GetTickCount64() - context_fade_started_) / ui::theme::kIslandFadeMs, 0.0f, 1.0f);
-        ::SetLayeredWindowAttributes(context_, 0, static_cast<BYTE>(255 * progress), LWA_ALPHA);
-        if (progress >= 1 || !ui::theme::AnimationsEnabled()) {
-            ::KillTimer(context_, kContextFadeTimer);
-            ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
-        }
         return 0;
     }
     const bool auxiliary = hwnd_ && hwnd != hwnd_;
@@ -1224,7 +763,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
                 ::GetWindowRect(hwnd, &bounds);
                 RenderImage(dc, bounds);
             } else {
-                PaintContext(dc, hwnd);
+                context_panel_.Paint(dc, hwnd);
             }
             if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
             return 0;
@@ -1243,35 +782,10 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         }
         return ui::ControlBackground(wparam, ui::theme::Current().text);
     }
-    if (message == WM_HSCROLL && !syncing_context_) {
-        const int id = ::GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
-        auto value = ContextStyle();
-        const float position = static_cast<float>(::SendMessageW(reinterpret_cast<HWND>(lparam), TBM_GETPOS, 0, 0));
-        if (id == kEffectStrengthSlider) { value.strength = position; }
-        if (id == kOpacitySlider) { value.opacity = position; }
-        if (id == kFontSizeSlider) { value.font_size = position; }
-        ChangeStyle(value);
-        if (LOWORD(wparam) == TB_ENDTRACK) { CommitContextTransaction(); }
-        return 0;
-    }
-
     switch (message) {
         case ui::theme::kChangedMessage:
             ::RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
             return 0; // No document/history/fade/placement work.
-        case WM_MEASUREITEM: {
-            auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
-            if (measure && measure->CtlType == ODT_COMBOBOX) {
-                measure->itemHeight = ui::theme::Scaled(32, scale_);
-                return TRUE;
-            }
-            break;
-        }
-        case WM_DRAWITEM: {
-            const auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lparam);
-            if (draw && ui::DrawComboItem(*draw)) { return TRUE; }
-            break;
-        }
         case WM_COMMAND:
             OnCommand(LOWORD(wparam), HIWORD(wparam));
             return 0;
@@ -1298,7 +812,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             if (!auxiliary) { island_user_positioned_ = true; }
             return 0;
         case WM_WINDOWPOSCHANGED:
-            if (!auxiliary) { PlaceContext(); }
+            if (!auxiliary) { context_panel_.Place(); }
             break;
         case WM_ERASEBKGND:
             return 1;
@@ -1351,7 +865,7 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
             }
             // CreateTextFormats replaced the shared font; the context island
             // still holds the deleted handle until its controls are resynced.
-            SyncContext();
+            context_panel_.Sync();
             Invalidate();
             return 0;
         }
@@ -1449,107 +963,18 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
         RequestDiscard();
         return;
     }
-    if (id == kFontSizeCombo && notification == CBN_DROPDOWN) {
-        COMBOBOXINFO info{sizeof(info)};
-        ::GetComboBoxInfo(Control(kFontSizeCombo), &info);
-        ::SetWindowLongPtrW(info.hwndList, GWL_STYLE, ::GetWindowLongPtrW(info.hwndList, GWL_STYLE) & ~WS_BORDER);
-        ::SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE, ::GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
-        ui::RoundWindow(info.hwndList);
-        // Shown again on every drop-down: excluded as an opaque layered
-        // window, it leaves no hole in a capture.
-        static_cast<void>(ui::ExcludeFromCapture(info.hwndList));
-        return;
-    }
     if (id == kInlineTextEdit && notification == EN_CHANGE) {
         UpdateTextFromControl();
         return;
     }
-    if (syncing_context_) { return; }
-    if (id == kFontSizeCombo && (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS)) {
-        wchar_t text[32]{};
-        if (notification == CBN_SELCHANGE) {
-            ::SendMessageW(Control(kFontSizeCombo), CB_GETLBTEXT, ::SendMessageW(Control(kFontSizeCombo), CB_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(text));
-        } else {
-            ::GetWindowTextW(Control(kFontSizeCombo), text, 32);
-        }
-        wchar_t* end = nullptr;
-        const double size = std::wcstod(text, &end);
-        while (end && std::iswspace(*end)) { ++end; }
-        if (end && ::lstrcmpiW(end, L"pt") == 0) { end += 2; }
-        if (end && *end == 0 && std::isfinite(size) && size >= 6 && size <= 288) {
-            auto value = ContextStyle();
-            value.font_size = static_cast<float>(size);
-            ChangeStyle(value);
-        } else {
-            ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_FONT_SIZE_RANGE));
-            SyncContext();
-            Invalidate();
-        }
-        if (notification == CBN_KILLFOCUS) { CommitContextTransaction(); }
-        return;
-    }
-    if (id == kWatermarkClearButton && notification == BN_CLICKED) {
-        // The clearing is kept, with what the field held before it.
-        document_.BeginTransaction();
-        ::SetWindowTextW(Control(kWatermarkTextEdit), L"");
-        document_.CommitTransaction();
-        context_owns_transaction_ = false;
-        ::SetFocus(Control(kWatermarkTextEdit));
-        // A field that kept the focus gets no WM_SETFOCUS to open the next
-        // edit: open it here, so that Esc reverts what is typed after this.
-        if (::GetFocus() == Control(kWatermarkTextEdit) && !document_.in_transaction()) {
-            context_owns_transaction_ = true;
-            document_.BeginTransaction();
-        }
-        SyncWatermarkClear();
-        return;
-    }
-    // The island writing the document's text into the field changes nothing.
-    if (id == kWatermarkTextEdit && notification == EN_CHANGE && !syncing_context_ && PropertiesOf(ContextTool()).watermark) {
-        if (!FeatureUsed()) { return; }
-        const int length = ::GetWindowTextLengthW(Control(kWatermarkTextEdit));
-        std::wstring text(static_cast<size_t>(length) + 1, L'\0');
-        ::GetWindowTextW(Control(kWatermarkTextEdit), text.data(), length + 1);
-        text.resize(std::min(length, 16));
-        if (!text.empty() && text.back() >= 0xd800 && text.back() <= 0xdbff) { text.pop_back(); }
-        if (text.size() != static_cast<size_t>(length)) {
-            syncing_context_ = true;
-            ::SetWindowTextW(Control(kWatermarkTextEdit), text.c_str());
-            ::SendMessageW(Control(kWatermarkTextEdit), EM_SETSEL, text.size(), text.size());
-            syncing_context_ = false;
-        }
-        if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
-        // The image has one watermark: the field edits it whether or not it
-        // is selected, and creates it only when there is none.
-        const auto target = ContextAnnotation();
-        Annotation a;
-        if (target) {
-            a = document_.annotations()[*target];
-        } else {
-            a.tool = ToolId::Watermark;
-            a.style = style_;
-            a.style.opacity = 30;
-            a.points = {{0, 0}, {static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)}};
-        }
-        a.text = std::move(text);
-        if (target) {
-            document_.Replace(*target, std::move(a));
-            selected_ = target;
-        } else {
-            document_.Apply(std::move(a));
-            selected_ = document_.annotations().size() - 1;
-        }
-        SyncContext();
-        Invalidate();
-        return;
-    }
+    // The property island's font size box, watermark field and clear button.
+    if (context_panel_.HandleCommand(id, notification) || context_panel_.syncing()) { return; }
     if (notification == BN_CLICKED) {
         if (const auto item = toolbar_.Find(id)) {
             OnToolbarActivated(*item);
             return;
         }
-        const auto found = std::find_if(context_items_.begin(), context_items_.end(), [id](const auto& item) { return item.identifier == id; });
-        if (found != context_items_.end()) { OnToolbarActivated(*found); }
+        if (const auto item = context_panel_.Find(id)) { OnToolbarActivated(*item); }
     }
 }
 
@@ -1571,12 +996,12 @@ void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
         // In the watermark field Esc reverts what was typed since the field
         // took the focus. The focus stays there, so the next Esc reverts what
         // is typed after this one, however often it is pressed.
-        if (context_owns_transaction_ && ::GetFocus() == Control(kWatermarkTextEdit) && PropertiesOf(ContextTool()).watermark) {
+        if (context_owns_transaction_ && ::GetFocus() == context_panel_.Control(kWatermarkTextEdit) && PropertiesOf(ContextTool()).watermark) {
             document_.BeginTransaction();
         } else {
             context_owns_transaction_ = false;
         }
-        SyncContext();
+        context_panel_.Sync();
         Invalidate();
         return;
     }
@@ -1735,7 +1160,7 @@ void ScreenshotEditor::OnToolbarActivated(ToolbarItem item) {
     }
     if (!FeatureUsed()) { return; }
     if (item.identifier == kBrushMethodButton && ContextStyle().method == EffectMethod::Brush) {
-        ShowBrushPopup(!::IsWindowVisible(brush_popup_));
+        context_panel_.ShowBrushPopup(!::IsWindowVisible(context_panel_.brush_popup()));
         return;
     }
     if (item.kind == ToolbarItem::Kind::Command && item.command == kCommandCopy) {
@@ -1748,7 +1173,7 @@ void ScreenshotEditor::OnToolbarActivated(ToolbarItem item) {
     }
     const auto revision = document_.revision();
     if (item.kind == ToolbarItem::Kind::Tool || item.kind == ToolbarItem::Kind::Command) {
-        ShowBrushPopup(false);
+        context_panel_.ShowBrushPopup(false);
         CommitPendingText();
         document_.CommitTransaction();
         CancelStroke();
@@ -1779,7 +1204,7 @@ void ScreenshotEditor::OnToolbarActivated(ToolbarItem item) {
         case ToolbarItem::Kind::BrushSize:
             style.brush_size = item.brush_size;
             ChangeStyle(style);
-            ShowBrushPopup(false);
+            context_panel_.ShowBrushPopup(false);
             break;
         case ToolbarItem::Kind::Option:
             if (kTextModeButtons.Contains(item.identifier)) { style.text_mode = static_cast<TextMode>(kTextModeButtons.Index(item.identifier)); }
@@ -1808,7 +1233,7 @@ void ScreenshotEditor::OnToolbarActivated(ToolbarItem item) {
     ReflowToolbar();
     Invalidate();
     NotifyMutation(revision);
-    if (item.identifier == kBrushMethodButton) { ShowBrushPopup(true); }
+    if (item.identifier == kBrushMethodButton) { context_panel_.ShowBrushPopup(true); }
 }
 
 bool ScreenshotEditor::WantsPointer(POINT point) const {
@@ -1833,7 +1258,7 @@ HCURSOR ScreenshotEditor::ImageCursor(POINT point) const {
     return ::LoadCursorW(nullptr, movable ? IDC_SIZEALL : CursorFor(tool_));
 }
 void ScreenshotEditor::BeginStroke(POINT point) {
-    ShowBrushPopup(false);
+    context_panel_.ShowBrushPopup(false);
     if (editing_text_) {
         // Repeated clicks on the active object keep its editing session alive.
         // Only an actual outside click commits; that click never creates text.
@@ -2618,18 +2043,15 @@ std::optional<ui::ImageSaveDestination> ScreenshotEditor::ChooseSaveDestination(
         // dialog. Freeze their timers/placement during its nested message loop.
         dialog = true;
         modal_active_ = true;
-        ShowBrushPopup(false);
-        ::KillTimer(context_, kContextFadeTimer);
-        context_fade_started_ = 0;
-        ::KillTimer(context_, kWatermarkClearHoverTimer);
-        ::SendMessageW(Control(kFontSizeCombo), CB_SHOWDROPDOWN, FALSE, 0);
+        context_panel_.ShowBrushPopup(false);
+        context_panel_.StopForDialog();
         toolbar_.SuspendTooltips();
-        ::ShowWindow(context_, SW_HIDE);
+        ::ShowWindow(context_panel_.island(), SW_HIDE);
     });
     if (dialog) {
         modal_active_ = false;
         toolbar_.ResumeTooltips();
-        if (visible_) { PlaceContext(); }
+        if (visible_) { context_panel_.Place(); }
     }
     return destination;
 }
@@ -2648,9 +2070,9 @@ bool ScreenshotEditor::StartExport(platform::ImageExportTarget target, std::shar
     const bool copy = target == platform::ImageExportTarget::Clipboard;
     export_notice_ = ui::ShowCaptureProgressNotice(
         region_, strings::Get(copy ? IDS_SCROLLSHOT_STATUS_COPYING : IDS_SCROLLSHOT_STATUS_SAVING));
-    ShowBrushPopup(false);
+    context_panel_.ShowBrushPopup(false);
     // The property island changes the image as well.
-    if (context_) { ::EnableWindow(context_, FALSE); }
+    if (context_panel_.island()) { ::EnableWindow(context_panel_.island(), FALSE); }
     SyncToolbarControls();
     ui::RefreshCursor();
     return true;
@@ -2662,7 +2084,7 @@ void ScreenshotEditor::EndExport() {
     export_notice_ = nullptr;
     export_image_.reset();
     export_destination_ = {};
-    if (context_) { ::EnableWindow(context_, TRUE); }
+    if (context_panel_.island()) { ::EnableWindow(context_panel_.island(), TRUE); }
     SyncToolbarControls();
 }
 

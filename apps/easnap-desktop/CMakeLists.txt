@@ -95,6 +95,10 @@ set(EASNAP_SOURCES
     src/editor/toolbar_item.cpp
     src/editor/editor_toolbar.h
     src/editor/editor_toolbar.cpp
+    src/editor/editor_context_panel.h
+    src/editor/editor_context_panel.cpp
+    src/editor/context_panel_layout.h
+    src/editor/context_panel_layout.cpp
     src/editor/image_viewport.h
     src/editor/image_viewport.cpp
     src/editor/redaction_renderer.h

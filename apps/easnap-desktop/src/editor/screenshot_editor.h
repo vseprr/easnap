@@ -27,6 +27,7 @@
 #include "app/appearance_theme.h"
 #include "editor/annotation_document.h"
 #include "editor/annotation_palette.h"
+#include "editor/editor_context_panel.h"
 #include "editor/editor_toolbar.h"
 #include "editor/image_viewport.h"
 #include "editor/redaction_renderer.h"
@@ -38,7 +39,7 @@
 namespace easnap::editor {
 
 /// Screenshot document/commands and movable native editing island.
-class ScreenshotEditor : private ToolbarButtonOwner {
+class ScreenshotEditor : private ToolbarButtonOwner, private ContextPanelOwner {
 public:
     struct Callbacks {
         /// `exported` is true when the user copied or saved successfully.
@@ -106,7 +107,7 @@ public:
     void ImagePointer(UINT message, POINT desktop_point);
     [[nodiscard]] bool WantsPointer(POINT desktop_point) const;
     [[nodiscard]] HCURSOR ImageCursor(POINT desktop_point) const;
-    [[nodiscard]] HWND context_hwnd() const noexcept { return context_; }
+    [[nodiscard]] HWND context_hwnd() const noexcept { return context_panel_.island(); }
     /// The room the tools island takes around the frame: itself and, below
     /// it, the tallest property island any tool shows (ui/island_layout.h).
     [[nodiscard]] SIZE island_group_size() const noexcept;
@@ -145,7 +146,7 @@ public:
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
-    LRESULT HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
+    LRESULT HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) override;
 
     /// Lays the toolbar out as a left-to-right flow that wraps into as many rows
     /// as the current window width requires.
@@ -169,7 +170,7 @@ private:
     bool CreateToolbarControls();
     void SyncToolbarControls() const;
     void ReflowToolbar();
-    void Invalidate() const;
+    void Invalidate() const override;
     void InvalidateImage(const RECT& source_bounds) const;
     /// The desktop pixels, inside the viewport, that show `source_bounds`.
     [[nodiscard]] RECT DesktopDamage(const RECT& source_bounds) const;
@@ -187,7 +188,7 @@ private:
     void ApplyView(const ImageView& view, bool notify = true);
     /// Esc, the Discard button and a close request. Asks through
     /// `on_confirm_discard` when annotations or a stitched image would be lost.
-    void RequestDiscard();
+    void RequestDiscard() override;
     void ScrollDocument(float delta_x, float delta_y);
     void ZoomDocument(float zoom, POINT anchor);
     /// Makes the base bitmap hold image rows [first, end) and returns the rows
@@ -213,24 +214,30 @@ private:
     [[nodiscard]] std::optional<size_t> ContextAnnotation() const;
     /// The image's watermark; there is at most one.
     [[nodiscard]] std::optional<size_t> WatermarkIndex() const;
-    [[nodiscard]] ToolId ContextTool() const;
-    [[nodiscard]] AnnotationStyle ContextStyle() const;
-    void ChangeStyle(const AnnotationStyle& style);
-    void CreateContextControls();
-    [[nodiscard]] HWND Control(int identifier) const;
-    void SyncContext(bool layout = true);
-    void CommitContextTransaction();
-    void PlaceContext(bool follow_frame = false);
+    [[nodiscard]] ToolId ContextTool() const override;
+    [[nodiscard]] AnnotationStyle ContextStyle() const override;
+    void ChangeStyle(const AnnotationStyle& style) override;
+    void SetWatermarkText(std::wstring text) override;
+    void ClearWatermarkField(HWND field) override;
+    void OpenContextTransaction() override;
+    void CommitContextTransaction() override;
+    void CancelContextTransaction() override;
+    [[nodiscard]] bool context_owns_transaction() const override { return context_owns_transaction_; }
+    [[nodiscard]] HWND tools_island() const override { return hwnd_; }
+    [[nodiscard]] float island_scale() const override { return scale_; }
+    [[nodiscard]] HFONT island_font() const override { return toolbar_font_; }
+    [[nodiscard]] RECT island_frame() const override { return region_; }
+    [[nodiscard]] RECT IslandKeepClear() const override;
+    [[nodiscard]] bool islands_shown() const override { return visible_; }
+    [[nodiscard]] bool modal_active() const override { return modal_active_; }
+    [[nodiscard]] bool frame_interacting() const override { return frame_interacting_; }
+    [[nodiscard]] const std::vector<Annotation>& island_annotations() const override { return document_.annotations(); }
     void StartTextEditing(std::optional<size_t> index, POINT point);
     void UpdateTextFromControl();
     void LayoutTextEditor();
     static LRESULT CALLBACK TextEditProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
-    static LRESULT CALLBACK PropertyProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
     void DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush) const;
     void PaintTextEditor(HDC dc);
-    void ShowBrushPopup(bool show);
-    void SyncWatermarkClear();
-    void PaintContext(HDC dc, HWND window) const;
 
     /// Brings the derived blur/pixelation and spotlight pixels up to date with
     /// the effect list. Only the final composite reaches the clipboard or file.
@@ -258,23 +265,15 @@ private:
     app::AppSettings* settings_{nullptr};
 
     HWND hwnd_{nullptr};
-    HWND context_{nullptr}, text_host_{nullptr}, text_edit_{nullptr}, brush_popup_{nullptr};
+    HWND text_host_{nullptr}, text_edit_{nullptr};
     HFONT text_font_{nullptr};
     float text_font_pixels_{0};
     unsigned text_dispatch_depth_{0};
     bool text_layout_pending_{false};
-    ULONGLONG brush_hover_started_{0}, brush_leave_started_{0};
-    bool syncing_context_{false}, frame_interacting_{false}, repositioning_{false};
-    bool modal_active_{false}, brush_popup_open_{false};
-    int context_height_{0}, context_width_{0};
-    /// Height of the tallest property island any tool shows; the islands keep
-    /// room for it around the frame.
-    int reserved_context_height_{0};
-    bool context_visible_{false}, island_user_positioned_{false};
-    ULONGLONG context_fade_started_{0};
+    bool frame_interacting_{false};
+    bool modal_active_{false};
+    bool island_user_positioned_{false};
     std::optional<size_t> selected_;
-    std::vector<RECT> context_separators_;
-    std::vector<std::pair<int, RECT>> context_fields_;
     Annotation original_;
     D2D1_POINT_2F drag_origin_{};
     int transform_handle_{-1};
@@ -293,9 +292,8 @@ private:
 
     AnnotationDocument document_;
     EditorToolbar toolbar_;  ///< The tools island: tools, Scrollshot, commands.
-    /// The property island's options, thicknesses and colours, and the brush
-    /// size pop-up's sizes.
-    std::vector<ToolbarItem> context_items_;
+    /// The property island and the brush size pop-up.
+    EditorContextPanel context_panel_{*this};
     Annotation pending_;      ///< Stroke currently being drawn.
     bool has_pending_{false};
     bool dragging_{false};
