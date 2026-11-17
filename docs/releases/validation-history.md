@@ -409,6 +409,17 @@ capture test ran on Desktop Duplication or Windows Graphics Capture
   corrections by eye, and every other correction as well.
 - **Static checks:** every C++ file passes `scripts/format.ps1 -Check`; the
   hygiene check green.
+- **Pull request #25:** its eight checks passed (Release, Debug, the
+  sanitizer, format, clang-tidy, hygiene, CodeQL); merged as `efb3d25`.
+- **The Release workflow** (run `44127094857`, tag `v1.3.1` on `efb3d25`)
+  passed at the first attempt: validation, the Build matrix, the sanitizer,
+  format, clang-tidy, hygiene and the draft. Before publication, on the
+  development PC: the setup, the ZIP and the symbols ZIP matched their
+  SHA-256 files; `gh attestation verify` passed for the setup and the ZIP;
+  `Easnap.exe`, `EasnapPreviewHost.exe` (from the ZIP) and the setup
+  reported product version 1.3.1 and file version 1.3.1.0. The packaged
+  installer was not installed before publication. Published on 2026-11-17
+  as the latest release.
 
 ## Validation of v1.3.0
 

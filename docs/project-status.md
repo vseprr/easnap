@@ -12,16 +12,17 @@ and the individual runs in the [validation records](releases/validation-history.
 ## Baseline
 
 - Latest stable release:
-  [v1.3.0](https://github.com/vseprr/easnap/releases/tag/v1.3.0), published on
-  2026-11-09 from `main`, tag on the merge of pull request #23
-  ([release notes](releases/v1.3.0.md)). The stable releases before it were
-  [v1.2.0](releases/v1.2.0.md) and [v1.1.0](releases/v1.1.0.md), both
-  published on 2026-11-08.
-- The Release workflow built, tested and attested the v1.3.0 packages on the
-  hosted runner at the first attempt (run `42651302863`). Before publication
+  [v1.3.1](https://github.com/vseprr/easnap/releases/tag/v1.3.1), a
+  maintenance release published on 2026-11-17 from `main`, tag on the merge
+  of pull request #25 ([release notes](releases/v1.3.1.md)). The stable
+  releases before it were [v1.3.0](releases/v1.3.0.md) (2026-11-09),
+  [v1.2.0](releases/v1.2.0.md) and [v1.1.0](releases/v1.1.0.md) (both
+  2026-11-08).
+- The Release workflow built, tested and attested the v1.3.1 packages on the
+  hosted runner at the first attempt (run `44127094857`). Before publication
   the draft's three packages matched their SHA-256 files, the installer's and
   the ZIP's attestations verified, and both executables and the installer
-  reported 1.3.0.
+  reported 1.3.1.
 - Stabilization toward v1.1.0 ran on the branch `stabilize/v1.1.0`, created
   on 2026-11-07 from `main` at `42b3efa` and merged by pull request #17. Its
   release candidate rc.1 was checked by the owner and not published
@@ -43,7 +44,8 @@ and the individual runs in the [validation records](releases/validation-history.
 ## v1.3.1
 
 A maintenance release with the corrections below, reported by the owner on
-v1.3.0 and prepared on the branch `fix/v1.3.1` on 2026-11-17. Its notes are
+v1.3.0, prepared on the branch `fix/v1.3.1` and merged by pull request #25;
+published on 2026-11-17 from `main` at `efb3d25`. Its notes are
 [v1.3.1](releases/v1.3.1.md).
 
 - **No flash around the frame when a screenshot is fixed.** Reported by the
