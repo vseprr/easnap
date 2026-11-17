@@ -550,47 +550,15 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
         case theme::kChangedMessage:
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
-        case WM_GETDLGCODE: {
-            const bool backwards = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            const bool internal_tab = backwards ? timeline_focus_ > 0 : timeline_focus_ < 2;
-            return DLGC_WANTARROWS | DLGC_WANTCHARS | (internal_tab ? DLGC_WANTTAB : 0);
-        }
+        case WM_GETDLGCODE:
+            return OnTimelineDialogCode();
         case WM_SETFOCUS:
         case WM_KILLFOCUS:
             if (timeline_accessibility_) { timeline_accessibility_->NotifyChanged(); }
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
-        case WM_LBUTTONDOWN: {
-            if (!range_.valid() || exporting_) {
-                return 0;
-            }
-            ::SetFocus(hwnd);
-            const int x = GET_X_LPARAM(lparam);
-            const int left = TimelineTrackLeft(hwnd);
-            const int width = TimelineTrackWidth(hwnd);
-            const int in_x = left + static_cast<int>(
-                                        range_.TimelineOffsetFromTime(range_.in(),
-                                                                      static_cast<uint32_t>(width)));
-            const int out_x = left + static_cast<int>(
-                                         range_.TimelineOffsetFromTime(range_.out(),
-                                                                       static_cast<uint32_t>(width)));
-            const int tolerance = ScaleDip(12, scale_);
-            if (std::abs(x - in_x) <= tolerance &&
-                std::abs(x - in_x) <= std::abs(x - out_x)) {
-                timeline_drag_ = TimelineDrag::In;
-            } else if (std::abs(x - out_x) <= tolerance) {
-                timeline_drag_ = TimelineDrag::Out;
-            } else {
-                timeline_drag_ = TimelineDrag::Seek;
-            }
-            timeline_focus_ = timeline_drag_ == TimelineDrag::In ? 0 : timeline_drag_ == TimelineDrag::Out ? 2
-                                                                                                           : 1;
-            if (timeline_accessibility_) { timeline_accessibility_->NotifyChanged(); }
-            timeline_seek_position_.reset();
-            ::SetCapture(hwnd);
-            UpdateTimelineFromPoint(x, timeline_drag_);
-            return 0;
-        }
+        case WM_LBUTTONDOWN:
+            return OnTimelinePointerDown(hwnd, lparam);
         case WM_MOUSEMOVE:
             if (::GetCapture() == hwnd && timeline_drag_ != TimelineDrag::None) {
                 UpdateTimelineFromPoint(GET_X_LPARAM(lparam), timeline_drag_);
@@ -608,45 +576,9 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
             timeline_drag_ = TimelineDrag::None;
             timeline_seek_position_.reset();
             return 0;
-        case WM_KEYDOWN: {
-            if (wparam == VK_TAB) {
-                FocusTimeline(std::clamp(timeline_focus_ + ((::GetKeyState(VK_SHIFT) & 0x8000) != 0 ? -1 : 1), 0, 2));
-                return 0;
-            }
-            if (!range_.valid() || exporting_) {
-                return 0;
-            }
-            const int editing = (::GetKeyState(VK_SHIFT) & 0x8000) != 0 ? 0 : (::GetKeyState(VK_CONTROL) & 0x8000) != 0 ? 2
-                                                                                                                        : timeline_focus_;
-            media::MediaTime candidate = editing == 0 ? range_.in() : editing == 2 ? range_.out()
-                                                                                   : range_.current();
-            if (wparam == VK_HOME) {
-                candidate = media::MediaTime::zero();
-            } else if (wparam == VK_END) {
-                candidate = range_.source_duration();
-            } else if (wparam == VK_LEFT || wparam == VK_RIGHT) {
-                const media::MediaTime step{10'000'000};
-                candidate += wparam == VK_LEFT ? -step : step;
-            } else {
-                break;
-            }
-            candidate = (std::clamp)(candidate, media::MediaTime::zero(),
-                                     range_.source_duration());
-            if (editing == 0) {
-                if (range_.SetIn(candidate)) {
-                    ReconcileRangeEdit();
-                }
-            } else if (editing == 2) {
-                if (range_.SetOut(candidate)) {
-                    ReconcileRangeEdit();
-                }
-            } else {
-                SeekTo(candidate);
-            }
-            UpdateLabels();
-            ::InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        }
+        case WM_KEYDOWN:
+            if (const std::optional<LRESULT> result = OnTimelineKeyDown(hwnd, wparam)) { return *result; }
+            break;
         case WM_PAINT:
             PaintTimeline(hwnd);
             return 0;
@@ -660,6 +592,84 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
             break;
     }
     return ::DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+LRESULT TrimWindow::OnTimelineDialogCode() const {
+    const bool backwards = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool internal_tab = backwards ? timeline_focus_ > 0 : timeline_focus_ < 2;
+    return DLGC_WANTARROWS | DLGC_WANTCHARS | (internal_tab ? DLGC_WANTTAB : 0);
+}
+
+LRESULT TrimWindow::OnTimelinePointerDown(HWND hwnd, LPARAM lparam) {
+    if (!range_.valid() || exporting_) {
+        return 0;
+    }
+    ::SetFocus(hwnd);
+    const int x = GET_X_LPARAM(lparam);
+    const int left = TimelineTrackLeft(hwnd);
+    const int width = TimelineTrackWidth(hwnd);
+    const int in_x = left + static_cast<int>(
+                                range_.TimelineOffsetFromTime(range_.in(),
+                                                              static_cast<uint32_t>(width)));
+    const int out_x = left + static_cast<int>(
+                                 range_.TimelineOffsetFromTime(range_.out(),
+                                                               static_cast<uint32_t>(width)));
+    const int tolerance = ScaleDip(12, scale_);
+    if (std::abs(x - in_x) <= tolerance &&
+        std::abs(x - in_x) <= std::abs(x - out_x)) {
+        timeline_drag_ = TimelineDrag::In;
+    } else if (std::abs(x - out_x) <= tolerance) {
+        timeline_drag_ = TimelineDrag::Out;
+    } else {
+        timeline_drag_ = TimelineDrag::Seek;
+    }
+    timeline_focus_ = timeline_drag_ == TimelineDrag::In ? 0 : timeline_drag_ == TimelineDrag::Out ? 2
+                                                                                                   : 1;
+    if (timeline_accessibility_) { timeline_accessibility_->NotifyChanged(); }
+    timeline_seek_position_.reset();
+    ::SetCapture(hwnd);
+    UpdateTimelineFromPoint(x, timeline_drag_);
+    return 0;
+}
+
+std::optional<LRESULT> TrimWindow::OnTimelineKeyDown(HWND hwnd, WPARAM wparam) {
+    if (wparam == VK_TAB) {
+        FocusTimeline(std::clamp(timeline_focus_ + ((::GetKeyState(VK_SHIFT) & 0x8000) != 0 ? -1 : 1), 0, 2));
+        return 0;
+    }
+    if (!range_.valid() || exporting_) {
+        return 0;
+    }
+    const int editing = (::GetKeyState(VK_SHIFT) & 0x8000) != 0 ? 0 : (::GetKeyState(VK_CONTROL) & 0x8000) != 0 ? 2
+                                                                                                                : timeline_focus_;
+    media::MediaTime candidate = editing == 0 ? range_.in() : editing == 2 ? range_.out()
+                                                                           : range_.current();
+    if (wparam == VK_HOME) {
+        candidate = media::MediaTime::zero();
+    } else if (wparam == VK_END) {
+        candidate = range_.source_duration();
+    } else if (wparam == VK_LEFT || wparam == VK_RIGHT) {
+        const media::MediaTime step{10'000'000};
+        candidate += wparam == VK_LEFT ? -step : step;
+    } else {
+        return std::nullopt;
+    }
+    candidate = (std::clamp)(candidate, media::MediaTime::zero(),
+                             range_.source_duration());
+    if (editing == 0) {
+        if (range_.SetIn(candidate)) {
+            ReconcileRangeEdit();
+        }
+    } else if (editing == 2) {
+        if (range_.SetOut(candidate)) {
+            ReconcileRangeEdit();
+        }
+    } else {
+        SeekTo(candidate);
+    }
+    UpdateLabels();
+    ::InvalidateRect(hwnd, nullptr, FALSE);
+    return 0;
 }
 
 LRESULT TrimWindow::HandleVideoMessage(HWND hwnd, UINT message, WPARAM wparam,

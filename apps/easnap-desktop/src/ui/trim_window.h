@@ -93,6 +93,12 @@ private:
     LRESULT HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
     LRESULT HandleTimelineMessage(HWND hwnd, UINT message, WPARAM wparam,
                                   LPARAM lparam);
+    /// WM_GETDLGCODE: Tab stays inside the timeline until its last part.
+    LRESULT OnTimelineDialogCode() const;
+    /// A press picks the handle or the playhead and starts one pointer gesture.
+    LRESULT OnTimelinePointerDown(HWND hwnd, LPARAM lparam);
+    /// Keys that move a handle or the playhead; nothing for other keys.
+    std::optional<LRESULT> OnTimelineKeyDown(HWND hwnd, WPARAM wparam);
     LRESULT HandleVideoMessage(HWND hwnd, UINT message, WPARAM wparam,
                                LPARAM lparam);
 
