@@ -28,6 +28,8 @@ set(EASNAP_SOURCES
     src/app/recording_completion.cpp
     src/app/recording_finalizer.h
     src/app/recording_finalizer.cpp
+    src/app/scrollshot_status.h
+    src/app/scrollshot_status.cpp
     src/app/trim_workflow.h
     src/app/trim_workflow.cpp
     src/app/trim_flow.h

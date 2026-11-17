@@ -15,6 +15,7 @@
 #include "app/external_video.h"
 #include "app/recording_completion.h"
 #include "app/recording_finalizer.h"
+#include "app/scrollshot_status.h"
 #include "app/trim_flow.h"
 #include "capture/capture_provider.h"
 #include "media/media_interfaces.h"
@@ -204,15 +205,6 @@ private:
                                   Save,
                                   Discard,
                                   Copy };
-    /// What the island's message line reports besides the capture's own condition.
-    enum class ScrollshotNotice { None,
-                                  WheelBlocked,
-                                  DisplayChanged,
-                                  Stopping,
-                                  Copying,
-                                  Saving,
-                                  CopyFailed,
-                                  SaveFailed };
     /// Shows `notice` on the island at once, before work that blocks this thread.
     void ShowScrollshotNotice(ScrollshotNotice notice);
     /// The visible surface a question about the current session belongs to.

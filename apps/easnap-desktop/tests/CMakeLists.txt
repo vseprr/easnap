@@ -63,6 +63,18 @@ set_tests_properties(session_state_transitions PROPERTIES
     LABELS "unit;state-machine"
     TIMEOUT 30)
 
+# Choices the capture coordinator takes from the session's facts: the
+# Scrollshot island's message line. Pure functions over tables.
+add_executable(test_coordinator_decisions
+    test_coordinator_decisions.cpp
+    ../src/app/scrollshot_status.cpp)
+target_include_directories(test_coordinator_decisions PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
+target_link_libraries(test_coordinator_decisions PRIVATE easnap_project_options user32)
+add_test(NAME coordinator_decisions COMMAND test_coordinator_decisions)
+set_tests_properties(coordinator_decisions PROPERTIES LABELS "unit;state-machine;scrollshot" TIMEOUT 30)
+
 add_executable(test_trim_workflow
     test_trim_workflow.cpp
     ../src/app/trim_workflow.cpp
