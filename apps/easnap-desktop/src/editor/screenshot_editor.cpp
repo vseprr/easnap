@@ -66,6 +66,79 @@ enum CommandId {
     kCommandPin,
 };
 
+/// How one tool, option or command button of the editor looks: the same for
+/// every session, so it is fixed here rather than where the button is placed.
+struct EditorButtonLook {
+    int identifier;                                 ///< The button's control identifier.
+    ui::Icon icon;                                  ///< The icon it shows.
+    UINT tooltip;                                   ///< String id of its tooltip and accessible name.
+    ui::ButtonRole role{ui::ButtonRole::Standard};  ///< Its semantic role.
+    bool dropdown{false};                           ///< True when it shows a trailing chevron.
+};
+
+/// The identifier of the tool button for `tool`.
+constexpr int ToolButton(ToolId tool) noexcept { return kToolButtons.Id(static_cast<int>(tool)); }
+
+/// Every tool, option and command button of the editor with its look.
+constexpr std::array<EditorButtonLook, 30> kEditorButtonLooks{{
+    {ToolButton(ToolId::Pointer), ui::Icon::Cursor, IDS_EDITOR_TOOL_POINTER},
+    {ToolButton(ToolId::Pen), ui::Icon::Pen, IDS_EDITOR_TOOL_PEN},
+    {ToolButton(ToolId::Arrow), ui::Icon::Arrow, IDS_EDITOR_TOOL_ARROW},
+    {ToolButton(ToolId::Rectangle), ui::Icon::Rectangle, IDS_EDITOR_TOOL_RECTANGLE},
+    {ToolButton(ToolId::Ellipse), ui::Icon::Ellipse, IDS_EDITOR_TOOL_ELLIPSE},
+    {ToolButton(ToolId::Text), ui::Icon::Text, IDS_EDITOR_TOOL_TEXT},
+    {ToolButton(ToolId::Mosaic), ui::Icon::Mosaic, IDS_EDITOR_TOOL_MOSAIC},
+    {ToolButton(ToolId::Line), ui::Icon::Line, IDS_EDITOR_TOOL_LINE},
+    {ToolButton(ToolId::Tag), ui::Icon::Tag, IDS_EDITOR_TOOL_TAG},
+    {ToolButton(ToolId::Spotlight), ui::Icon::Spotlight, IDS_EDITOR_TOOL_SPOTLIGHT},
+    {ToolButton(ToolId::Watermark), ui::Icon::Watermark, IDS_EDITOR_TOOL_WATERMARK},
+    {kTextPlainButton, ui::Icon::Text, IDS_EDITOR_OPTION_PLAIN_TEXT},
+    {kTextFilledButton, ui::Icon::TextFill, IDS_EDITOR_OPTION_FILLED_TEXT},
+    {kTextOutlinedButton, ui::Icon::TextOutline, IDS_EDITOR_OPTION_OUTLINED_TEXT},
+    {kBlurButton, ui::Icon::Droplet, IDS_EDITOR_OPTION_BLUR},
+    {kPixelateButton, ui::Icon::Mosaic, IDS_EDITOR_OPTION_PIXELATE},
+    {kBrushMethodButton, ui::Icon::Hand, IDS_EDITOR_OPTION_BRUSH, ui::ButtonRole::Standard, true},
+    {kRegionMethodButton, ui::Icon::Region, IDS_EDITOR_OPTION_REGION},
+    {kSpotlightRectangleButton, ui::Icon::Rectangle, IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE},
+    {kSpotlightEllipseButton, ui::Icon::Ellipse, IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE},
+    {kSpotlightRoundedButton, ui::Icon::RoundedRectangle, IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED},
+    {CommandButton(kCommandUndo), ui::Icon::Undo, IDS_EDITOR_UNDO_BUTTON},
+    {CommandButton(kCommandRedo), ui::Icon::Redo, IDS_EDITOR_REDO_BUTTON},
+    {CommandButton(kCommandClear), ui::Icon::Clear, IDS_EDITOR_CLEAR_BUTTON},
+    {CommandButton(kCommandCopy), ui::Icon::Check, IDS_EDITOR_COPY_BUTTON, ui::ButtonRole::Success},
+    {CommandButton(kCommandSave), ui::Icon::Save, IDS_EDITOR_SAVE_BUTTON},
+    {CommandButton(kCommandCancel), ui::Icon::Discard, IDS_EDITOR_DISCARD_BUTTON},
+    {CommandButton(kCommandTheme), ui::Icon::Appearance, IDS_EDITOR_THEME_BUTTON},
+    {CommandButton(kCommandScrollshot), ui::Icon::Scissors, IDS_SCROLLSHOT_TOOL},
+    {CommandButton(kCommandPin), ui::Icon::Pin, IDS_EDITOR_PIN_BUTTON},
+}};
+
+/// The look of the button `identifier`; null when it has none in the table.
+constexpr const EditorButtonLook* FindButtonLook(int identifier) noexcept {
+    for (const auto& look : kEditorButtonLooks) {
+        if (look.identifier == identifier) { return &look; }
+    }
+    return nullptr;
+}
+
+/// True when every button of `range` has a look.
+constexpr bool RangeHasLooks(ui::ControlRange range) noexcept {
+    for (int index = 0; index < range.count; ++index) {
+        if (FindButtonLook(range.Id(index)) == nullptr) { return false; }
+    }
+    return true;
+}
+
+static_assert(RangeHasLooks(kToolButtons) && RangeHasLooks(kTextModeButtons) && RangeHasLooks(kEffectButtons) &&
+                  RangeHasLooks(kEffectMethodButtons) && RangeHasLooks(kSpotlightShapeButtons) &&
+                  RangeHasLooks({CommandButton(kCommandUndo), kCommandPin - kCommandUndo + 1}),
+              "every tool, option and command button needs a look");
+static_assert(kToolButtons.count == static_cast<int>(ToolId::Watermark) + 1, "one tool button per ToolId");
+
+/// The look of a tool, option or command button; the static_assert above
+/// guarantees that each of them has one.
+const EditorButtonLook& ButtonLook(int identifier) noexcept { return *FindButtonLook(identifier); }
+
 constexpr std::array<D2D1_COLOR_F, 8> kPaletteColors = {{
     {0.898f, 0.243f, 0.259f, 1.0f},  // red
     {0.976f, 0.639f, 0.157f, 1.0f},  // amber
@@ -700,8 +773,6 @@ ScreenshotEditor::~ScreenshotEditor() { Destroy(); }
 
 bool ScreenshotEditor::CreateToolbarControls() {
     using namespace ui;
-    constexpr std::array<Icon, 11> tools{Icon::Cursor, Icon::Pen, Icon::Arrow, Icon::Rectangle,
-                                         Icon::Ellipse, Icon::Text, Icon::Mosaic, Icon::Line, Icon::Tag, Icon::Spotlight, Icon::Watermark};
     constexpr std::array<UINT, 8> colors{IDS_EDITOR_COLOR_RED, IDS_EDITOR_COLOR_AMBER, IDS_EDITOR_COLOR_GREEN, IDS_EDITOR_COLOR_BLUE,
                                          IDS_EDITOR_COLOR_VIOLET, IDS_EDITOR_COLOR_WHITE, IDS_EDITOR_COLOR_BLACK, IDS_EDITOR_COLOR_GRAY};
     tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
@@ -713,8 +784,15 @@ bool ScreenshotEditor::CreateToolbarControls() {
         style.icon_only = true;
         switch (item.kind) {
             case ToolbarItem::Kind::Tool:
-                style.icon = tools[static_cast<size_t>(item.tool)];
+            case ToolbarItem::Kind::Option:
+            case ToolbarItem::Kind::Command: {
+                const EditorButtonLook& look = ButtonLook(item.identifier);
+                style.icon = look.icon;
+                style.role = look.role;
+                style.dropdown = look.dropdown;
+                style.segmented = item.kind == ToolbarItem::Kind::Option;
                 break;
+            }
             case ToolbarItem::Kind::Color:
                 name = strings::Get(colors[static_cast<size_t>(kColorButtons.Index(item.identifier))]);
                 style.swatch = true;
@@ -730,61 +808,6 @@ bool ScreenshotEditor::CreateToolbarControls() {
                 name = strings::Format(IDS_EDITOR_BRUSH_SIZE_BUTTON, {std::to_wstring(static_cast<int>(item.brush_size))});
                 style.sample = 2;
                 style.sample_size = item.brush_size;
-                break;
-            case ToolbarItem::Kind::Option:
-                style.segmented = true;
-                if (item.identifier == kTextPlainButton) { style.icon = Icon::Text; }
-                if (item.identifier == kTextFilledButton) { style.icon = Icon::TextFill; }
-                if (item.identifier == kTextOutlinedButton) { style.icon = Icon::TextOutline; }
-                if (item.identifier == kBlurButton) { style.icon = Icon::Droplet; }
-                if (item.identifier == kPixelateButton) { style.icon = Icon::Mosaic; }
-                if (item.identifier == kBrushMethodButton) {
-                    style.icon = Icon::Hand;
-                    style.dropdown = true;
-                }
-                if (item.identifier == kRegionMethodButton) { style.icon = Icon::Region; }
-                if (item.identifier == kSpotlightRectangleButton) { style.icon = Icon::Rectangle; }
-                if (item.identifier == kSpotlightEllipseButton) { style.icon = Icon::Ellipse; }
-                if (item.identifier == kSpotlightRoundedButton) { style.icon = Icon::RoundedRectangle; }
-                break;
-            case ToolbarItem::Kind::Command:
-                style.icon_only = true;
-                if (item.command == kCommandUndo) {
-                    style.icon = Icon::Undo;
-                    name = strings::Get(IDS_EDITOR_UNDO_BUTTON);
-                }
-                if (item.command == kCommandRedo) {
-                    style.icon = Icon::Redo;
-                    name = strings::Get(IDS_EDITOR_REDO_BUTTON);
-                }
-                if (item.command == kCommandClear) {
-                    style.icon = Icon::Clear;
-                    name = strings::Get(IDS_EDITOR_CLEAR_BUTTON);
-                }
-                if (item.command == kCommandCopy) {
-                    style.icon = Icon::Check;
-                    style.role = ButtonRole::Success;
-                }
-                if (item.command == kCommandSave) {
-                    style.icon = Icon::Save;
-                    name = strings::Get(IDS_EDITOR_SAVE_BUTTON);
-                }
-                if (item.command == kCommandCancel) {
-                    style.icon = Icon::Discard;
-                    name = strings::Get(IDS_EDITOR_DISCARD_BUTTON);
-                }
-                if (item.command == kCommandTheme) {
-                    style.icon = Icon::Appearance;
-                    name = strings::Get(IDS_EDITOR_THEME_BUTTON);
-                }
-                if (item.command == kCommandScrollshot) {
-                    style.icon = Icon::Scissors;
-                    name = strings::Get(IDS_SCROLLSHOT_TOOL);
-                }
-                if (item.command == kCommandPin) {
-                    style.icon = Icon::Pin;
-                    name = strings::Get(IDS_EDITOR_PIN_BUTTON);
-                }
                 break;
         }
         const DWORD type = item.kind == ToolbarItem::Kind::Command ? BS_PUSHBUTTON : BS_RADIOBUTTON | BS_PUSHLIKE;
@@ -1321,20 +1344,17 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         x += width + gap;
         return r;
     };
-    struct Entry {
-        ToolId tool;
-        UINT name;
-    };
-    constexpr Entry tools[] = {{ToolId::Pointer, IDS_EDITOR_TOOL_POINTER}, {ToolId::Rectangle, IDS_EDITOR_TOOL_RECTANGLE}, {ToolId::Ellipse, IDS_EDITOR_TOOL_ELLIPSE}, {ToolId::Line, IDS_EDITOR_TOOL_LINE}, {ToolId::Arrow, IDS_EDITOR_TOOL_ARROW}, {ToolId::Pen, IDS_EDITOR_TOOL_PEN}, {ToolId::Text, IDS_EDITOR_TOOL_TEXT}, {ToolId::Tag, IDS_EDITOR_TOOL_TAG}, {ToolId::Mosaic, IDS_EDITOR_TOOL_MOSAIC}, {ToolId::Spotlight, IDS_EDITOR_TOOL_SPOTLIGHT}, {ToolId::Watermark, IDS_EDITOR_TOOL_WATERMARK}};
-    for (const auto& entry : tools) {
-        if (entry.tool == ToolId::Mosaic) {
+    constexpr ToolId tools[] = {ToolId::Pointer, ToolId::Rectangle, ToolId::Ellipse, ToolId::Line, ToolId::Arrow, ToolId::Pen,
+                                ToolId::Text, ToolId::Tag, ToolId::Mosaic, ToolId::Spotlight, ToolId::Watermark};
+    for (const ToolId tool : tools) {
+        if (tool == ToolId::Mosaic) {
             const auto split = place(8 * s);
             main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
         }
         ToolbarItem item;
-        item.tool = entry.tool;
-        item.identifier = kToolButtons.Id(static_cast<int>(entry.tool));
-        item.label = item.tooltip = strings::Get(entry.name);
+        item.tool = tool;
+        item.identifier = ToolButton(tool);
+        item.label = item.tooltip = strings::Get(ButtonLook(item.identifier).tooltip);
         item.rect = place(kToolButton * s);
         toolbar_.push_back(item);
     }
@@ -1349,24 +1369,19 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         item.kind = ToolbarItem::Kind::Command;
         item.command = kCommandScrollshot;
         item.identifier = CommandButton(kCommandScrollshot);
-        item.label = item.tooltip = strings::Get(IDS_SCROLLSHOT_TOOL);
+        item.label = item.tooltip = strings::Get(ButtonLook(item.identifier).tooltip);
         item.rect = place(kCommandButton * s);
         toolbar_.push_back(item);
         const auto split = place(8 * s);
         main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
     }
-    struct Command {
-        int id;
-        const wchar_t* name;
-    };
-    // Only Copy keeps its name from here; CreateToolbarControls names the others.
-    const Command commands[] = {{kCommandUndo, L"Undo"}, {kCommandRedo, L"Redo"}, {kCommandClear, L"Clear annotations"}, {kCommandTheme, L"Switch theme"}, {kCommandPin, L"Pin"}, {kCommandSave, L"Save"}, {kCommandCancel, L"Discard"}, {kCommandCopy, strings::Get(IDS_EDITOR_COPY_BUTTON)}};
-    for (const auto& entry : commands) {
+    constexpr int commands[] = {kCommandUndo, kCommandRedo, kCommandClear, kCommandTheme, kCommandPin, kCommandSave, kCommandCancel, kCommandCopy};
+    for (const int command : commands) {
         ToolbarItem item;
         item.kind = ToolbarItem::Kind::Command;
-        item.command = entry.id;
-        item.identifier = CommandButton(entry.id);
-        item.label = item.tooltip = entry.name;
+        item.command = command;
+        item.identifier = CommandButton(command);
+        item.label = item.tooltip = strings::Get(ButtonLook(item.identifier).tooltip);
         item.rect = place(kCommandButton * s);
         toolbar_.push_back(item);
     }
@@ -1397,11 +1412,11 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             const auto r = place(8 * s);
             separators.push_back({static_cast<LONG>((r.left + r.right) / 2), static_cast<LONG>(r.top + 8 * s), static_cast<LONG>((r.left + r.right) / 2 + 1), static_cast<LONG>(r.bottom - 8 * s)});
         };
-        const auto option = [&](int id, UINT name, bool shown, float width = kToolButton) {
+        const auto option = [&](int id, bool shown, float width = kToolButton) {
             ToolbarItem item;
             item.kind = ToolbarItem::Kind::Option;
             item.identifier = id;
-            item.label = item.tooltip = strings::Get(name);
+            item.label = item.tooltip = strings::Get(ButtonLook(id).tooltip);
             item.shown = shown;
             if (shown) {
                 item.rect = place(width * s);
@@ -1409,22 +1424,22 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             }
             items.push_back(item);
         };
-        option(kTextPlainButton, IDS_EDITOR_OPTION_PLAIN_TEXT, text);
-        option(kTextFilledButton, IDS_EDITOR_OPTION_FILLED_TEXT, text);
-        option(kTextOutlinedButton, IDS_EDITOR_OPTION_OUTLINED_TEXT, text);
-        option(kPixelateButton, IDS_EDITOR_OPTION_PIXELATE, effect);
-        option(kBlurButton, IDS_EDITOR_OPTION_BLUR, effect);
+        option(kTextPlainButton, text);
+        option(kTextFilledButton, text);
+        option(kTextOutlinedButton, text);
+        option(kPixelateButton, effect);
+        option(kBlurButton, effect);
         if (effect) { separator(); }
-        option(kBrushMethodButton, IDS_EDITOR_OPTION_BRUSH, effect, 48);
-        option(kRegionMethodButton, IDS_EDITOR_OPTION_REGION, effect);
+        option(kBrushMethodButton, effect, 48);
+        option(kRegionMethodButton, effect);
         if (effect) {
             separator();
             value_field(kEffectStrengthValue, 125, {strings::Format(IDS_EDITOR_BLUR_INTENSITY_VALUE, {L"100"}), strings::Format(IDS_EDITOR_BLOCK_SIZE_VALUE, {L"72"})});
             field(kEffectStrengthSlider, 155);
         }
-        option(kSpotlightRectangleButton, IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE, spot);
-        option(kSpotlightEllipseButton, IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE, spot);
-        option(kSpotlightRoundedButton, IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED, spot);
+        option(kSpotlightRectangleButton, spot);
+        option(kSpotlightEllipseButton, spot);
+        option(kSpotlightRoundedButton, spot);
         if (spot) {
             separator();
             value_field(kOpacityValue, 110, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
@@ -1444,7 +1459,6 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             item.kind = ToolbarItem::Kind::Thickness;
             item.thickness = kThicknessOptions[i];
             item.identifier = kThicknessButtons.Id(static_cast<int>(i));
-            item.tooltip = L"Stroke width";
             item.shown = stroke;
             if (item.shown) {
                 item.rect = place(kToolButton * s);
@@ -1458,7 +1472,6 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             item.kind = ToolbarItem::Kind::Color;
             item.color = kPaletteColors[i];
             item.identifier = kColorButtons.Id(static_cast<int>(i));
-            item.tooltip = L"Annotation color";
             item.shown = tool != ToolId::Pointer && !effect && !spot;
             if (item.shown) {
                 item.rect = place(kSwatch * s);
@@ -1479,7 +1492,6 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             item.kind = ToolbarItem::Kind::BrushSize;
             item.brush_size = kBrushSizeOptions[i];
             item.identifier = kBrushSizeButtons.Id(static_cast<int>(i));
-            item.tooltip = L"Brush size";
             item.shown = true;
             const float left = pad + static_cast<float>(i) * (kToolButton + kItemGap) * s;
             const float callout = 6 * s;
@@ -1501,11 +1513,11 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
     std::vector<ToolbarItem> scratch_items;
     std::vector<std::pair<int, RECT>> scratch_fields;
     std::vector<RECT> scratch_separators;
-    for (const auto& entry : tools) {
+    for (const ToolId entry : tools) {
         scratch_items.clear();
         scratch_fields.clear();
         scratch_separators.clear();
-        tallest = std::max(tallest, layout_context(entry.tool, scratch_items, scratch_fields, scratch_separators).first);
+        tallest = std::max(tallest, layout_context(entry, scratch_items, scratch_fields, scratch_separators).first);
     }
     reserved_context_height_ = static_cast<int>(std::ceil(tallest));
 }
