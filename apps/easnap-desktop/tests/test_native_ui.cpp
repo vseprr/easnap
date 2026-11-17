@@ -250,6 +250,10 @@ ui::ButtonPaintState Button(ui::ButtonStyle style, bool checked = false, bool pr
     state.type = type;
     return state;
 }
+// Not covered here: the high-contrast palette (the system colours cannot be
+// installed without a test-only hook), button captions (text depends on the
+// machine's fonts and ClearType), and the combo, menu and scroll-thumb faces,
+// which need a window.
 void ControlRasterEvidence() {
     using ui::ButtonRole;
     using ui::Icon;
