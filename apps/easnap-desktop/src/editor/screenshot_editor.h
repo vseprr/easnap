@@ -151,7 +151,6 @@ public:
     [[nodiscard]] HWND hwnd() const noexcept { return hwnd_; }
 
 private:
-    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
     LRESULT HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) override;
 
     /// Lays the toolbar out as a left-to-right flow that wraps into as many rows

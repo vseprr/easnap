@@ -9,6 +9,7 @@
 #include "platform/graphics_device.h"
 #include "platform/image_output.h"
 #include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "ui/island_layout.h"
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
@@ -335,15 +336,14 @@ void ScreenshotEditor::BeginSession(const RECT& frame, app::AppSettings* setting
 bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     static bool class_registered = [] {
         WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
         wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
-        wc.lpfnWndProc = &ScreenshotEditor::WindowProc;
+        wc.lpfnWndProc = platform::BoundWindowProc<ScreenshotEditor, &ScreenshotEditor::HandleMessage>;
         wc.hInstance = ::GetModuleHandleW(nullptr);
         wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
         wc.hIcon = platform::LoadAppIcon(::GetSystemMetrics(SM_CXICON));
         wc.hIconSm = platform::LoadAppIcon(::GetSystemMetrics(SM_CXSMICON));
         wc.lpszClassName = kEditorClassName;
-        return ::RegisterClassExW(&wc) != 0;
+        return platform::RegisterWindowClass(wc);
     }();
     if (!class_registered) {
         return false;
@@ -582,7 +582,7 @@ void ScreenshotEditor::Destroy() {
     image_bitmap_.Reset();
     image_brush_.Reset();
     if (hwnd_ != nullptr) {
-        ::SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
+        platform::UnbindWindowOwner(hwnd_);
         ::DestroyWindow(hwnd_);
         hwnd_ = nullptr;
     }
@@ -703,18 +703,6 @@ RECT ScreenshotEditor::PendingDamage() const {
 // ---------------------------------------------------------------------------
 // Message handling
 // ---------------------------------------------------------------------------
-
-LRESULT CALLBACK ScreenshotEditor::WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-    if (message == WM_NCCREATE) {
-        auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-    }
-    auto* self = reinterpret_cast<ScreenshotEditor*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    if (self != nullptr) {
-        return self->HandleMessage(hwnd, message, wparam, lparam);
-    }
-    return ::DefWindowProcW(hwnd, message, wparam, lparam);
-}
 
 LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     if (ui::ConsumePopupInput(message, wparam)) { return 0; }
