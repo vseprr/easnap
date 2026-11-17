@@ -1475,6 +1475,10 @@ set_property(TEST ${interactive_desktop_tests} APPEND PROPERTY LABELS interactiv
 set_tests_properties(mfplay_preview_startup PROPERTIES RUN_SERIAL TRUE)
 set_property(TEST mfplay_preview_startup APPEND PROPERTY LABELS desktop-visual)
 set_tests_properties(mfplay_preview_audio_transport wasapi_audio_capture PROPERTIES RESOURCE_LOCK easnap_audio)
+# These copy images inside CreateWindowStationW(nullptr), the logon session's one
+# unnamed window station; its clipboard is shared by all of them.
+set_tests_properties(capture_workspace_production capture_export_responsiveness pinned_images_native
+    PROPERTIES RESOURCE_LOCK easnap_private_clipboard)
 
 add_executable(test_storage_cleanup
     test_storage_cleanup.cpp

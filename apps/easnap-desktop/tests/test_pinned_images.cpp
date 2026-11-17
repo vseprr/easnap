@@ -15,6 +15,7 @@
 #include "app/app_settings.h"
 #include "strings/strings.h"
 
+#include <string>
 #include <windowsx.h>
 
 #include <array>
@@ -47,7 +48,12 @@ public:
         old_desktop_ = ::GetThreadDesktop(::GetCurrentThreadId());
         station_ = ::CreateWindowStationW(nullptr, 0, WINSTA_ALL_ACCESS, nullptr);
         if (!station_ || !::SetProcessWindowStation(station_)) { return false; }
-        desktop_ = ::CreateDesktopW(L"EasnapPinTests", nullptr, nullptr, 0, GENERIC_ALL, nullptr);
+        // CreateWindowStationW(nullptr) opens the logon session's one unnamed
+        // station, shared by every test process; a desktop name of this process
+        // alone keeps another test's windows out of FindWindowW and the input.
+        const std::wstring name = L"EasnapPinTests-" + std::to_wstring(::GetCurrentProcessId()) + L"-" +
+                                  std::to_wstring(::GetCurrentThreadId());
+        desktop_ = ::CreateDesktopW(name.c_str(), nullptr, nullptr, 0, GENERIC_ALL, nullptr);
         return desktop_ && ::SetThreadDesktop(desktop_);
     }
     ~PrivateDesktop() {
