@@ -2,6 +2,7 @@
 #include "editor/screenshot_editor.h"
 
 #include "editor/annotation_renderer.h"
+#include "editor/annotation_tools.h"
 #include "platform/graphics_device.h"
 #include "platform/image_output.h"
 #include "platform/screen_geometry.h"
@@ -79,22 +80,9 @@ struct EditorButtonLook {
     bool dropdown{false};                           ///< True when it shows a trailing chevron.
 };
 
-/// The identifier of the tool button for `tool`.
-constexpr int ToolButton(ToolId tool) noexcept { return kToolButtons.Id(static_cast<int>(tool)); }
-
-/// Every tool, option and command button of the editor with its look.
-constexpr std::array<EditorButtonLook, 30> kEditorButtonLooks{{
-    {ToolButton(ToolId::Pointer), ui::Icon::Cursor, IDS_EDITOR_TOOL_POINTER},
-    {ToolButton(ToolId::Pen), ui::Icon::Pen, IDS_EDITOR_TOOL_PEN},
-    {ToolButton(ToolId::Arrow), ui::Icon::Arrow, IDS_EDITOR_TOOL_ARROW},
-    {ToolButton(ToolId::Rectangle), ui::Icon::Rectangle, IDS_EDITOR_TOOL_RECTANGLE},
-    {ToolButton(ToolId::Ellipse), ui::Icon::Ellipse, IDS_EDITOR_TOOL_ELLIPSE},
-    {ToolButton(ToolId::Text), ui::Icon::Text, IDS_EDITOR_TOOL_TEXT},
-    {ToolButton(ToolId::Mosaic), ui::Icon::Mosaic, IDS_EDITOR_TOOL_MOSAIC},
-    {ToolButton(ToolId::Line), ui::Icon::Line, IDS_EDITOR_TOOL_LINE},
-    {ToolButton(ToolId::Tag), ui::Icon::Tag, IDS_EDITOR_TOOL_TAG},
-    {ToolButton(ToolId::Spotlight), ui::Icon::Spotlight, IDS_EDITOR_TOOL_SPOTLIGHT},
-    {ToolButton(ToolId::Watermark), ui::Icon::Watermark, IDS_EDITOR_TOOL_WATERMARK},
+/// Every option and command button of the editor with its look. The tool
+/// buttons take theirs from the tool records (editor/annotation_tools.h).
+constexpr std::array<EditorButtonLook, 19> kEditorButtonLooks{{
     {kTextPlainButton, ui::Icon::Text, IDS_EDITOR_OPTION_PLAIN_TEXT},
     {kTextFilledButton, ui::Icon::TextFill, IDS_EDITOR_OPTION_FILLED_TEXT},
     {kTextOutlinedButton, ui::Icon::TextOutline, IDS_EDITOR_OPTION_OUTLINED_TEXT},
@@ -132,15 +120,20 @@ constexpr bool RangeHasLooks(ui::ControlRange range) noexcept {
     return true;
 }
 
-static_assert(RangeHasLooks(kToolButtons) && RangeHasLooks(kTextModeButtons) && RangeHasLooks(kEffectButtons) &&
+static_assert(RangeHasLooks(kTextModeButtons) && RangeHasLooks(kEffectButtons) &&
                   RangeHasLooks(kEffectMethodButtons) && RangeHasLooks(kSpotlightShapeButtons) &&
                   RangeHasLooks({CommandButton(kCommandUndo), kCommandPin - kCommandUndo + 1}),
-              "every tool, option and command button needs a look");
-static_assert(kToolButtons.count == static_cast<int>(ToolId::Watermark) + 1, "one tool button per ToolId");
+              "every option and command button needs a look");
 
-/// The look of a tool, option or command button; the static_assert above
-/// guarantees that each of them has one.
-const EditorButtonLook& ButtonLook(int identifier) noexcept { return *FindButtonLook(identifier); }
+/// The look of a tool, option or command button: a tool's from its record,
+/// the others' from the table, which the static_assert above shows complete.
+EditorButtonLook ButtonLook(int identifier) noexcept {
+    if (kToolButtons.Contains(identifier)) {
+        const ToolDefinition& tool = Tool(static_cast<ToolId>(kToolButtons.Index(identifier)));
+        return {identifier, tool.icon, tool.name};
+    }
+    return *FindButtonLook(identifier);
+}
 
 constexpr std::array<float, 3> kThicknessOptions = {2.0f, 4.0f, 7.0f};
 
@@ -783,17 +776,16 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
         x += width + gap;
         return r;
     };
-    constexpr ToolId tools[] = {ToolId::Pointer, ToolId::Rectangle, ToolId::Ellipse, ToolId::Line, ToolId::Arrow, ToolId::Pen,
-                                ToolId::Text, ToolId::Tag, ToolId::Mosaic, ToolId::Spotlight, ToolId::Watermark};
-    for (const ToolId tool : tools) {
-        if (tool == ToolId::Mosaic) {
+    for (const ToolId tool : kToolbarOrder) {
+        const ToolDefinition& definition = Tool(tool);
+        if (definition.separator_before) {
             const auto split = place(8 * s);
             main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
         }
         ToolbarItem item;
         item.tool = tool;
-        item.identifier = ToolButton(tool);
-        item.label = item.tooltip = strings::Get(ButtonLook(item.identifier).tooltip);
+        item.identifier = definition.identifier;
+        item.label = item.tooltip = strings::Get(definition.name);
         item.rect = place(kToolButton * s);
         toolbar_.push_back(item);
     }
@@ -952,7 +944,7 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
     std::vector<ToolbarItem> scratch_items;
     std::vector<std::pair<int, RECT>> scratch_fields;
     std::vector<RECT> scratch_separators;
-    for (const ToolId entry : tools) {
+    for (const ToolId entry : kToolbarOrder) {
         scratch_items.clear();
         scratch_fields.clear();
         scratch_separators.clear();

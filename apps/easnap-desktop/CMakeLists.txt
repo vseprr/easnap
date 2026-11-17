@@ -87,6 +87,7 @@ set(EASNAP_SOURCES
     src/editor/annotation_document.cpp
     src/editor/annotation_renderer.h
     src/editor/annotation_renderer.cpp
+    src/editor/annotation_tools.h
     src/editor/annotation_palette.h
     src/editor/screenshot_editor.h
     src/editor/screenshot_editor.cpp
