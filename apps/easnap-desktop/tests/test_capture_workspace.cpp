@@ -9,6 +9,8 @@
 #include "ui/island_layout.h"
 #include "ui/overlay.h"
 #include "ui/recording_controls.h"
+#include "ui/control_ids.h"
+#include "ui/ui_theme.h"
 #include "editor/screenshot_editor.h"
 #include "temp_folder.h"
 #include <algorithm>
@@ -16,6 +18,7 @@
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <chrono>
 #include <future>
 #include <thread>
@@ -828,6 +831,260 @@ void MosaicAndDirtyRendering() {
         }
         CHECK(full.pixels == incremental.pixels);
         editor.ImagePointer(WM_LBUTTONUP, {700, 450});
+    }
+    editor.Destroy();
+}
+
+constexpr uint64_t kFnvSeed = 14695981039346656037ull;
+
+uint64_t HashPixels(uint64_t hash, const platform::BgraImage& image) {
+    hash ^= static_cast<uint64_t>(image.width) << 32 | static_cast<uint32_t>(image.height);
+    hash *= 1099511628211ull;
+    for (const uint32_t pixel : image.pixels) {
+        hash ^= pixel & 0xffffffu;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+/// What the editor shows on screen for `region`: the preview, with the
+/// selection chrome and any stroke in progress.
+uint64_t HashPreview(uint64_t hash, editor::ScreenshotEditor& editor, const RECT& region) {
+    platform::BgraImage preview;
+    preview.Reset(platform::RectWidth(region), platform::RectHeight(region));
+    {
+        platform::GdiImageSurface surface(preview);
+        editor.RenderImage(surface.dc(), region);
+    }
+    return HashPixels(hash, preview);
+}
+
+/// How this machine draws a line of the annotation font at `image_scale`, in
+/// both kinds of target the editor draws text into: a WIC bitmap for the
+/// export and a GDI device context for the preview. Font versions, ClearType
+/// tuning and the display scale all change text pixels, so recorded text
+/// pixels are compared only where this matches the machine they came from.
+uint64_t TextRenderingFingerprint(float image_scale) {
+    auto& graphics = platform::GraphicsEnvironment::Get();
+    if (!graphics.EnsureInitialized()) { return 0; }
+    const auto format = graphics.CreateTextFormat(16.0f * (96.0f / 72.0f) * image_scale, DWRITE_FONT_WEIGHT_NORMAL);
+    if (!format) { return 0; }
+    constexpr std::wstring_view kProbe = L"Easnap Ag 0123 Review";
+    constexpr int kWidth = 360, kHeight = 80;
+    uint32_t scale_bits{};
+    std::memcpy(&scale_bits, &image_scale, sizeof(scale_bits));
+    uint64_t hash = (kFnvSeed ^ scale_bits) * 1099511628211ull;
+    const auto draw = [&](ID2D1RenderTarget* target) {
+        platform::ComPtr<ID2D1SolidColorBrush> brush;
+        target->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.2f, 0.3f), &brush);
+        if (!brush) { return false; }
+        target->BeginDraw();
+        target->Clear(D2D1::ColorF(D2D1::ColorF::White));
+        target->DrawTextW(kProbe.data(), static_cast<UINT32>(kProbe.size()), format.Get(),
+                          D2D1::RectF(4.0f, 4.0f, static_cast<float>(kWidth), static_cast<float>(kHeight)), brush.Get());
+        return SUCCEEDED(target->EndDraw());
+    };
+    platform::ComPtr<IWICBitmap> bitmap;
+    platform::ComPtr<ID2D1RenderTarget> wic_target;
+    const auto wic_properties = D2D1::RenderTargetProperties(
+        D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+    if (FAILED(graphics.wic_factory()->CreateBitmap(kWidth, kHeight, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap)) ||
+        FAILED(graphics.d2d_factory()->CreateWicBitmapRenderTarget(bitmap.Get(), wic_properties, &wic_target)) ||
+        !draw(wic_target.Get())) {
+        return 0;
+    }
+    platform::BgraImage pixels;
+    pixels.Reset(kWidth, kHeight);
+    if (FAILED(bitmap->CopyPixels(nullptr, static_cast<UINT>(pixels.stride_bytes()),
+                                  static_cast<UINT>(pixels.pixels.size() * sizeof(uint32_t)),
+                                  reinterpret_cast<BYTE*>(pixels.pixels.data())))) {
+        return 0;
+    }
+    hash = HashPixels(hash, pixels);
+    platform::ComPtr<ID2D1DCRenderTarget> dc_target;
+    const auto dc_properties = D2D1::RenderTargetProperties(
+        D2D1_RENDER_TARGET_TYPE_SOFTWARE, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.0f, 96.0f);
+    if (FAILED(graphics.d2d_factory()->CreateDCRenderTarget(&dc_properties, &dc_target))) { return 0; }
+    {
+        platform::GdiImageSurface surface(pixels);
+        const RECT bounds{0, 0, kWidth, kHeight};
+        if (FAILED(dc_target->BindDC(surface.dc(), &bounds)) || !draw(dc_target.Get())) { return 0; }
+    }
+    return HashPixels(hash, pixels);
+}
+
+/// The pixels one machine recorded for the text annotations of
+/// AnnotationRenderingIsStable, with the text fingerprint of that machine.
+struct RecordedTextPixels {
+    uint64_t fingerprint;  ///< TextRenderingFingerprint where they were recorded.
+    uint64_t composite;    ///< The export of the whole document.
+    uint64_t preview;      ///< The previews, each with one annotation selected.
+};
+
+/// Every annotation the editor draws, created through its own tools island,
+/// property island and text field, must keep its exact pixels: in the export
+/// (Composite), in the preview, with the selection chrome around each of them,
+/// and while a stroke is still being drawn. Shapes and effects do not depend
+/// on the machine and are compared everywhere. Text, tags, the watermark and
+/// the rounded spotlight grow with the display scale of the capture and text
+/// depends on the installed font, so those are compared where the text
+/// fingerprint matches a recorded machine and otherwise only reported.
+void AnnotationRenderingIsStable() {
+    using editor::ToolId;
+    constexpr uint64_t kShapesComposite = 0xe60aaf3809563a85ull;
+    constexpr uint64_t kShapesPreview = 0x7b707412e27a8dc6ull;
+    // The development machine: Windows 10 22H2, Segoe UI as shipped, 125 %.
+    constexpr std::array<RecordedTextPixels, 1> kRecordedText{{
+        {0x89eb983036b5b48full, 0x9a8ba84ef153f89cull, 0x5b5bd547ad173794ull},
+    }};
+
+    ui::theme::ApplyPreference(app::AppearanceTheme::Light);
+    const RECT region{0, 0, 640, 400};
+    platform::BgraImage source;
+    source.Reset(640, 400);
+    uint32_t noise = 91;
+    for (int y = 0; y < source.height; ++y) {
+        for (int x = 0; x < source.width; ++x) {
+            noise = noise * 1664525u + 1013904223u;
+            const uint32_t grain = (noise >> 24) & 31u;
+            source.row(y)[x] = 0xff000000u | ((x * 255 / 640 + grain) & 255u) << 16 | ((y * 255 / 400 + grain) & 255u) << 8 |
+                               (((x + y) * 3 + grain) & 255u);
+        }
+    }
+    editor::ScreenshotEditor editor({});
+    CHECK(editor.Open(region, nullptr, nullptr));
+    CHECK(editor.SetImage(source));
+    // The selection chrome keeps its size on screen; at 96 DPI it is the same
+    // on every machine.
+    RECT placement{0, 420, 1100, 520};
+    ::SendMessageW(editor.hwnd(), WM_DPICHANGED, MAKEWPARAM(96, 96), reinterpret_cast<LPARAM>(&placement));
+    const auto option = [&](int id) {
+        HWND button = ::GetDlgItem(editor.context_hwnd(), id);
+        CHECK(button && (::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE));
+        ::SendMessageW(button, BM_CLICK, 0, 0);
+    };
+    uint64_t preview = kFnvSeed, text_preview = kFnvSeed;
+    uint64_t* stroke_preview = &preview;
+    // A stroke through `points`; the preview is also taken before it ends.
+    const auto stroke = [&](std::initializer_list<POINT> points) {
+        editor.ImagePointer(WM_LBUTTONDOWN, *points.begin());
+        for (auto point = points.begin() + 1; point != points.end(); ++point) { editor.ImagePointer(WM_MOUSEMOVE, *point); }
+        *stroke_preview = HashPreview(*stroke_preview, editor, region);
+        editor.ImagePointer(WM_LBUTTONUP, *(points.end() - 1));
+    };
+    const auto click = [&](POINT point) {
+        editor.ImagePointer(WM_LBUTTONDOWN, point);
+        editor.ImagePointer(WM_LBUTTONUP, point);
+    };
+    const auto count = [&] { return editor.document().annotations().size(); };
+
+    SelectTool(editor, ToolId::Pen);
+    option(editor::kColorButtons.Id(1));
+    option(editor::kThicknessButtons.Id(2));
+    stroke({{20, 30}, {50, 60}, {80, 40}, {110, 80}, {130, 50}});
+    SelectTool(editor, ToolId::Arrow);
+    option(editor::kColorButtons.Id(2));
+    option(editor::kThicknessButtons.Id(1));
+    stroke({{150, 90}, {200, 60}, {260, 30}});
+    SelectTool(editor, ToolId::Rectangle);
+    option(editor::kColorButtons.Id(3));
+    option(editor::kThicknessButtons.Id(0));
+    stroke({{280, 30}, {370, 100}});
+    SelectTool(editor, ToolId::Ellipse);
+    option(editor::kColorButtons.Id(4));
+    option(editor::kThicknessButtons.Id(2));
+    stroke({{390, 30}, {500, 110}});
+    SelectTool(editor, ToolId::Line);
+    option(editor::kColorButtons.Id(5));
+    option(editor::kThicknessButtons.Id(1));
+    stroke({{520, 110}, {620, 30}});
+    SelectTool(editor, ToolId::Mosaic);
+    option(editor::kBlurButton);
+    SelectBrush(editor, 1);
+    stroke({{30, 170}, {80, 170}, {130, 170}, {180, 170}});
+    option(editor::kRegionMethodButton);
+    option(editor::kPixelateButton);
+    stroke({{220, 140}, {340, 230}});
+    SelectTool(editor, ToolId::Spotlight);
+    option(editor::kSpotlightRectangleButton);
+    stroke({{370, 140}, {470, 230}});
+    option(editor::kSpotlightEllipseButton);
+    stroke({{500, 140}, {620, 230}});
+    CHECK(count() == 9);
+    const uint64_t shapes_composite = HashPixels(kFnvSeed, editor.Composite());
+    // One point on the outline of each annotation selects it.
+    SelectTool(editor, ToolId::Pointer);
+    for (POINT point : {POINT{20, 30}, POINT{150, 90}, POINT{325, 30}, POINT{390, 70}, POINT{520, 110},
+                        POINT{105, 154}, POINT{280, 140}, POINT{420, 140}, POINT{500, 185}}) {
+        click(point);
+        preview = HashPreview(preview, editor, region);
+    }
+    const POINT blank{630, 300};
+    click(blank);
+    preview = HashPreview(preview, editor, region);
+    std::printf("Annotation shapes: composite=%016llx preview=%016llx\n", static_cast<unsigned long long>(shapes_composite),
+                static_cast<unsigned long long>(preview));
+    CHECK(shapes_composite == kShapesComposite);
+    CHECK(preview == kShapesPreview);
+
+    // Text is typed into the editor's own text field and finished with Ctrl+Enter.
+    stroke_preview = &text_preview;
+    const auto text = [&](ToolId tool, int mode, int color, POINT at, const wchar_t* typed) {
+        SelectTool(editor, ToolId::Pointer);
+        click(blank);
+        SelectTool(editor, tool);
+        if (mode != 0) { option(mode); }
+        option(editor::kColorButtons.Id(color));
+        const size_t before = count();
+        click(at);
+        HWND host = ::FindWindowW(L"EasnapScreenshotEditor", L"Edit annotation text");
+        HWND edit = host ? ::GetDlgItem(host, editor::kInlineTextEdit) : nullptr;
+        CHECK(edit != nullptr);
+        if (edit == nullptr) { return; }
+        ::SendMessageW(edit, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(typed));
+        std::array<BYTE, 256> keys{};
+        keys[VK_CONTROL] = 0x80;
+        ::SetKeyboardState(keys.data());
+        editor.Keyboard(WM_KEYDOWN, VK_RETURN, 0);
+        keys.fill(0);
+        ::SetKeyboardState(keys.data());
+        CHECK(count() == before + 1 && editor.document().annotations().back().text == typed);
+    };
+    text(ToolId::Text, editor::kTextPlainButton, 6, {20, 260}, L"Plain text");
+    text(ToolId::Text, editor::kTextFilledButton, 3, {200, 260}, L"Filled");
+    text(ToolId::Text, editor::kTextOutlinedButton, 7, {380, 260}, L"Outlined");
+    text(ToolId::Tag, 0, 2, {20, 320}, L"Tag");
+    SelectTool(editor, ToolId::Pointer);
+    click(blank);
+    SelectTool(editor, ToolId::Spotlight);
+    option(editor::kSpotlightRoundedButton);
+    stroke({{300, 320}, {420, 390}});
+    SelectTool(editor, ToolId::Watermark);
+    ::SetWindowTextW(::GetDlgItem(editor.context_hwnd(), editor::kWatermarkTextEdit), L"Easnap");
+    CHECK(count() == 15 && editor.document().annotations().back().tool == ToolId::Watermark);
+    const auto composite = editor.Composite();
+    const uint64_t text_composite = HashPixels(kFnvSeed, composite);
+    CHECK(text_composite != shapes_composite);
+    SelectTool(editor, ToolId::Pointer);
+    for (POINT point : {POINT{24, 264}, POINT{204, 264}, POINT{384, 264}, POINT{24, 324}, POINT{300, 355}}) {
+        click(point);
+        text_preview = HashPreview(text_preview, editor, region);
+    }
+    click(blank);
+    text_preview = HashPreview(text_preview, editor, region);
+    const float image_scale = editor.document().annotations().back().style.image_scale;
+    const uint64_t fingerprint = TextRenderingFingerprint(image_scale);
+    std::printf("Annotation text: scale=%.2f fingerprint=%016llx composite=%016llx preview=%016llx\n", image_scale,
+                static_cast<unsigned long long>(fingerprint), static_cast<unsigned long long>(text_composite),
+                static_cast<unsigned long long>(text_preview));
+    const auto recorded = std::find_if(kRecordedText.begin(), kRecordedText.end(),
+                                       [&](const RecordedTextPixels& r) { return r.fingerprint == fingerprint; });
+    if (recorded == kRecordedText.end()) {
+        std::printf("Annotation text: not compared, this machine draws text differently from the recorded ones\n");
+    } else {
+        std::printf("Annotation text: compared with the recorded pixels\n");
+        CHECK(text_composite == recorded->composite);
+        CHECK(text_preview == recorded->preview);
     }
     editor.Destroy();
 }
@@ -1751,6 +2008,7 @@ int main(int argc, char** argv) {
         EditorAndCompletion();
         LockedToolCompletion();
         MosaicAndDirtyRendering();
+        AnnotationRenderingIsStable();
         platform::GraphicsEnvironment::Get().Shutdown();
         ::CoUninitialize();
         ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM) -> BOOL {
