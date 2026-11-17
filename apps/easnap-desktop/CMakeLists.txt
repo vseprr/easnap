@@ -83,6 +83,7 @@ set(EASNAP_SOURCES
     src/ui/trim_layout.cpp
     src/ui/region_selector.h
     src/ui/region_selector.cpp
+    src/editor/annotation_palette.h
     src/editor/screenshot_editor.h
     src/editor/screenshot_editor.cpp
     src/editor/image_viewport.h

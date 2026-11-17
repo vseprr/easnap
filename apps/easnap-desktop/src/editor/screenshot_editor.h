@@ -26,6 +26,7 @@
 
 #include "app/app_settings.h"
 #include "app/appearance_theme.h"
+#include "editor/annotation_palette.h"
 #include "editor/image_viewport.h"
 #include "editor/redaction_renderer.h"
 #include "platform/bgra_image.h"
@@ -63,7 +64,7 @@ enum class SpotlightShape { Rectangle,
                             Rounded };
 
 struct AnnotationStyle {
-    D2D1_COLOR_F color{1.0f, 0.259f, 0.286f, 1.0f};  // Easnap default: signal red
+    D2D1_COLOR_F color{kDefaultAnnotationColor};
     float thickness{3.0f};
     float font_size{16.0f}; // Points, applied to the whole object.
     float image_scale{1.0f}; // Capture DPI/96, frozen with content.

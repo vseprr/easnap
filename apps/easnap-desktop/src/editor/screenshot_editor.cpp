@@ -141,17 +141,6 @@ static_assert(kToolButtons.count == static_cast<int>(ToolId::Watermark) + 1, "on
 /// guarantees that each of them has one.
 const EditorButtonLook& ButtonLook(int identifier) noexcept { return *FindButtonLook(identifier); }
 
-constexpr std::array<D2D1_COLOR_F, 8> kPaletteColors = {{
-    {0.898f, 0.243f, 0.259f, 1.0f},  // red
-    {0.976f, 0.639f, 0.157f, 1.0f},  // amber
-    {0.188f, 0.686f, 0.427f, 1.0f},  // green
-    {0.161f, 0.635f, 1.0f, 1.0f},    // Easnap blue
-    {0.612f, 0.318f, 0.851f, 1.0f},  // violet
-    {1.0f, 1.0f, 1.0f, 1.0f},        // white
-    {0.0f, 0.0f, 0.0f, 1.0f},        // black
-    {0.5f, 0.5f, 0.5f, 1.0f},        // gray
-}};
-
 constexpr std::array<float, 3> kThicknessOptions = {2.0f, 4.0f, 7.0f};
 
 /// Mosaic brush diameters in captured pixels (independent of the preview zoom).
@@ -422,13 +411,13 @@ void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
             const auto box = annotation.bounds();
             auto origin = annotation.points.front();
             const float em = annotation.FontPixels();
-            const bool white = annotation.style.color.r > 0.98f && annotation.style.color.g > 0.98f && annotation.style.color.b > 0.98f;
-            const auto ink = D2D1::ColorF(white ? D2D1::ColorF::Black : D2D1::ColorF::White);
+            const bool white = annotation.style.color.r > kWhiteTextThreshold && annotation.style.color.g > kWhiteTextThreshold && annotation.style.color.b > kWhiteTextThreshold;
+            const auto ink = white ? kTextInkOnWhite : kTextInk;
             if (annotation.tool == ToolId::Tag) {
                 const float dot = em * 0.16f, body = origin.x + em * 0.9f;
                 brush->SetColor(annotation.style.color);
                 target->FillEllipse(D2D1::Ellipse({origin.x + dot, (box.top + box.bottom) / 2}, dot, dot), brush);
-                brush->SetColor(D2D1::ColorF(0x30343c));
+                brush->SetColor(kTagBody);
                 target->FillRoundedRectangle(D2D1::RoundedRect({body, box.top, box.right, box.bottom}, em * 0.2f, em * 0.2f), brush);
                 ComPtr<ID2D1PathGeometry> notch;
                 ComPtr<ID2D1GeometrySink> sink;
@@ -442,7 +431,7 @@ void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
                     target->FillGeometry(notch.Get(), brush);
                 }
                 origin = {body + em * 0.45f, origin.y + em * 0.45f};
-                brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+                brush->SetColor(kTagText);
                 target->DrawTextLayout(origin, layout.Get(), brush);
                 break;
             }
@@ -512,7 +501,7 @@ void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
             if (!preview) {
                 break;  // Already destructive on the pixels.
             }
-            brush->SetColor(D2D1::ColorF(0.85f, 0.89f, 0.98f, 0.45f));
+            brush->SetColor(kMosaicBrushTrail);
             DrawFreehand(target, annotation.points, brush, std::max(2.0f, annotation.style.brush_size));
             break;
         }
@@ -1469,10 +1458,10 @@ void ScreenshotEditor::BuildToolbar(float available_width) {
             items.push_back(item);
         }
         if (stroke) { separator(); }
-        for (size_t i = 0; i < kPaletteColors.size(); ++i) {
+        for (size_t i = 0; i < kAnnotationSwatchColors.size(); ++i) {
             ToolbarItem item;
             item.kind = ToolbarItem::Kind::Color;
-            item.color = kPaletteColors[i];
+            item.color = kAnnotationSwatchColors[i];
             item.identifier = kColorButtons.Id(static_cast<int>(i));
             item.shown = tool != ToolId::Pointer && !effect && !spot;
             if (item.shown) {
