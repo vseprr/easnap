@@ -196,13 +196,17 @@ private:
     /// Makes the base bitmap hold image rows [first, end) and returns the rows
     /// it actually covers from `first` on, or 0 on failure.
     [[nodiscard]] int EnsureBaseRows(int first, int end);
-    [[nodiscard]] const ToolbarItem* HitTestToolbar(POINT client_pt) const;
+    /// The tools island's item under `client_pt`, as a copy: activating it
+    /// rebuilds the items.
+    [[nodiscard]] std::optional<ToolbarItem> HitTestToolbar(POINT client_pt) const;
 
     /// The WM_COMMAND and WM_KEYDOWN arms of `HandleMessage`. Reached only
     /// through it, so `ui::ConsumePopupInput` sees every message first.
     void OnCommand(int id, int notification);
     void OnKeyDown(WPARAM key, LPARAM flags);
-    void OnToolbarActivated(const ToolbarItem& item);
+    /// Runs a tool, option or command. Takes the item by value: it rebuilds
+    /// the item lists it came from.
+    void OnToolbarActivated(ToolbarItem item);
     void BeginStroke(POINT client_pt);
     void UpdateStroke(POINT client_pt);
     void EndStroke(POINT client_pt);
@@ -295,7 +299,10 @@ private:
     RedactionRenderer redaction_;         ///< Capture with pixel effects applied.
 
     AnnotationDocument document_;
-    std::vector<ToolbarItem> toolbar_;
+    std::vector<ToolbarItem> main_items_;     ///< The tools island: tools, Scrollshot, commands.
+    /// The property island's options, thicknesses and colours, and the brush
+    /// size pop-up's sizes.
+    std::vector<ToolbarItem> context_items_;
     Annotation pending_;      ///< Stroke currently being drawn.
     bool has_pending_{false};
     bool dragging_{false};
