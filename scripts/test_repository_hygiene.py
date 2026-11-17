@@ -7,7 +7,8 @@ import sys
 import tempfile
 import unittest
 
-from check_repository_hygiene import (broken_links, heading_anchors, private_files,
+from check_repository_hygiene import (APP_VALUE_HEADERS, broken_links, heading_anchors,
+                                      include_direction_violations, private_files,
                                       read_allowlist, unexpected_media)
 
 
@@ -119,6 +120,74 @@ class RepositoryHygieneTests(unittest.TestCase):
             self.skipTest('not a Git checkout')
         paths = result.stdout.decode('utf-8').rstrip('\0').split('\0')
         self.assertEqual(broken_links(root, paths), [])
+
+    def test_includes_against_the_layer_order_are_reported(self):
+        root = Path(__file__).resolve().parent.parent
+        local = root / '.local'
+        local.mkdir(exist_ok=True)
+        sources = {
+            'platform/paint.h': '#pragma once\n#include "media/frame.h"\n',
+            'platform/paint.cpp': '#include "paint.h"\n#include "platform/paint.h"\n#include "resource.h"\n',
+            'media/frame.h': '#pragma once\n\n#include "platform/paint.h"\n#include "capture/grab.h"\n',
+            'media/text.cpp': '#include "strings/strings.h"\n',
+            'capture/grab.h': '#include "media/frame.h"\n#include "recording/session.h"\n',
+            'recording/session.h': '#include "capture/grab.h"\n#include "media/frame.h"\n',
+            'scrollshot/stitch.h': '#include "recording/session.h"\n',
+            'editor/editor.h': ('#include "ui/controls.h"\n#include "app/app_settings.h"\n'
+                                '#include "app/session_state.h"\n'),
+            'ui/controls.h': ('#include "editor/editor.h"\n#include "app/trim_workflow.h"\n'
+                              '#include "app/trim_flow.h"\n#include "strings/strings.h"\n'),
+            'app/app_settings.h': '#include "app/appearance_theme.h"\n#include "media/frame.h"\n',
+            'app/appearance_theme.h': '#pragma once\n',
+            'app/trim_workflow.h': '#include "app/session_state.h"\n#include "ui/controls.h"\n',
+            'app/session_state.h': '#include "ui/controls.h"\n#include "editor/editor.h"\n',
+            'app/recording_completion.cpp': '#include "strings/strings.h"\n',
+            'app/trim_flow.h': '#include "strings/strings.h"\n',
+            'strings/strings.h': '#include "string_ids.h"\n#include "platform/paint.h"\n',
+            'tools/helper.h': '#include "platform/paint.h"\n',
+            'main.cpp': '#include "app/session_state.h"\n#include "strings/strings.h"\n',
+        }
+        prefix = 'apps/easnap-desktop/src/'
+        with tempfile.TemporaryDirectory(prefix='hygiene-includes-', dir=local) as directory:
+            fixture = Path(directory)
+            for name, text in sources.items():
+                file = fixture / prefix / name
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text(text, encoding='utf-8')
+            tracked = [prefix + name for name in sources] + ['docs/readme.md']
+            self.assertEqual(include_direction_violations(fixture, tracked), [prefix + line for line in [
+                'app/recording_completion.cpp:1: strings/strings.h (takes its captions from the caller)',
+                'capture/grab.h:2: recording/session.h (capture must not include recording)',
+                'editor/editor.h:3: app/session_state.h (editor must not include app)',
+                'media/frame.h:4: capture/grab.h (media must not include capture)',
+                'media/text.cpp:1: strings/strings.h (media must not show interface text)',
+                'platform/paint.h:2: media/frame.h (platform must not include media)',
+                'scrollshot/stitch.h:1: recording/session.h (scrollshot must not include recording)',
+                'strings/strings.h:2: platform/paint.h (strings includes nothing of the other layers)',
+                'tools/helper.h:1: platform/paint.h (tools is not a known layer)',
+                'ui/controls.h:1: editor/editor.h (ui must not include editor)',
+                'ui/controls.h:3: app/trim_flow.h (ui must not include app)',
+                'app/trim_workflow.h:1: app/session_state.h '
+                '(an app value header includes only lower layers or another value header)',
+                'app/trim_workflow.h:2: ui/controls.h (an app value header must not include ui or editor)',
+            ]])
+            # A file that is not in the inventory is neither checked nor a target.
+            self.assertEqual(include_direction_violations(fixture, [prefix + 'media/frame.h']), [])
+
+    def test_app_value_headers_are_app_headers(self):
+        self.assertTrue(APP_VALUE_HEADERS)
+        self.assertTrue(all(header.startswith('app/') and header.endswith('.h')
+                            for header in APP_VALUE_HEADERS))
+
+    def test_sources_of_this_repository_follow_the_layer_order(self):
+        root = Path(__file__).resolve().parent.parent
+        result = subprocess.run(['git', 'ls-files', '-z'], cwd=root, check=False,
+                                stdout=subprocess.PIPE)
+        if result.returncode != 0:
+            self.skipTest('not a Git checkout')
+        paths = result.stdout.decode('utf-8').rstrip('\0').split('\0')
+        self.assertTrue(any(path.startswith('apps/easnap-desktop/src/ui/') for path in paths))
+        self.assertEqual(include_direction_violations(root, paths), [])
 
     def test_inventory_command_rejects_private_and_unreviewed_files(self):
         root = Path(__file__).resolve().parent.parent

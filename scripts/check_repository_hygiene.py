@@ -1,4 +1,5 @@
-"""Reject private development files, unreviewed media and broken document links."""
+"""Reject private development files, unreviewed media, broken document links and
+includes that point against the layer order of the desktop sources."""
 
 import argparse
 from pathlib import Path, PurePosixPath
@@ -108,6 +109,102 @@ def broken_links(root, paths):
     return broken
 
 
+SOURCE_ROOT = 'apps/easnap-desktop/src'
+# Layers of the desktop sources, lowest first. A file may include a header of
+# its own folder or of a lower tier; main.cpp is the top.
+LAYER_TIERS = {'platform': 0, 'media': 1, 'capture': 1, 'recording': 2, 'scrollshot': 2,
+               'editor': 3, 'ui': 3, 'app': 4, 'main.cpp': 5}
+# Includes between two folders of the same tier that keep the direction one way.
+SAME_TIER_INCLUDES = {('capture', 'media'), ('editor', 'ui')}
+# Interface text (ADR-032) is read by the layers that show it, never below them.
+STRINGS_USERS = {'ui', 'app', 'editor', 'main.cpp'}
+# These files take their captions from the caller (AGENTS.md, "Text the user reads").
+STRINGS_FREE_FILES = {'app/recording_completion.cpp', 'platform/platform_utils.cpp'}
+# Pure value and policy headers of app that ui and editor may include. Each
+# may include only lower layers or another header of this list.
+APP_VALUE_HEADERS = {
+    'app/app_settings.h',         # AppSettings, LanguageSetting: the saved preferences
+    'app/appearance_theme.h',     # AppearanceTheme: the chosen light, dark or system theme
+    'app/recording_workflow.h',   # recording configuration, capabilities and control policy
+    'app/session_transitions.h',  # SessionState and its legal transitions
+    'app/trim_workflow.h',        # trim range model and playback decisions
+}
+INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.MULTILINE)
+
+
+def include_direction_violations(root, paths):
+    """Includes in the desktop sources that point against the layer order.
+
+    An include resolves first in the folder of the including file, then in
+    src; one that resolves to neither (a resource header) is not checked.
+    """
+    prefix = SOURCE_ROOT + '/'
+    sources = {path.replace('\\', '/')[len(prefix):] for path in paths
+               if path.replace('\\', '/').startswith(prefix)
+               and path.lower().endswith(('.h', '.cpp'))}
+
+    def layer(source):
+        return source.split('/', 1)[0] if '/' in source else source
+
+    def resolve(source, header):
+        for candidate in (posixpath.join(posixpath.dirname(source), header), header):
+            candidate = posixpath.normpath(candidate)
+            if candidate in sources:
+                return candidate
+        return None
+
+    def includes(source):
+        file = root / SOURCE_ROOT / source
+        if not file.is_file():
+            return []
+        text = file.read_text(encoding='utf-8-sig', errors='replace')
+        found = []
+        for match in INCLUDE.finditer(text):
+            target = resolve(source, match.group(1))
+            if target:
+                found.append((text.count('\n', 0, match.start()) + 1, target))
+        return found
+
+    def reason(source, target):
+        source_layer, target_layer = layer(source), layer(target)
+        if source_layer == target_layer:
+            return None
+        if target_layer == 'strings':
+            if source_layer not in STRINGS_USERS:
+                return f'{source_layer} must not show interface text'
+            if source in STRINGS_FREE_FILES:
+                return 'takes its captions from the caller'
+            return None
+        if source_layer == 'strings':
+            return 'strings includes nothing of the other layers'
+        if source_layer not in LAYER_TIERS:
+            return f'{source_layer} is not a known layer'
+        if target_layer not in LAYER_TIERS:
+            return f'{target_layer} is not a known layer'
+        source_tier, target_tier = LAYER_TIERS[source_layer], LAYER_TIERS[target_layer]
+        if target_tier < source_tier or (source_layer, target_layer) in SAME_TIER_INCLUDES:
+            return None
+        if target in APP_VALUE_HEADERS and source_layer in {'ui', 'editor'}:
+            return None
+        return f'{source_layer} must not include {target_layer}'
+
+    violations = []
+    for source in sorted(sources):
+        for line, target in includes(source):
+            why = reason(source, target)
+            if why:
+                violations.append(f'{prefix}{source}:{line}: {target} ({why})')
+    for header in sorted(APP_VALUE_HEADERS & sources):
+        for line, target in includes(header):
+            if layer(target) == 'app' and target not in APP_VALUE_HEADERS:
+                violations.append(f'{prefix}{header}:{line}: {target} '
+                                  '(an app value header includes only lower layers or another value header)')
+            elif layer(target) in {'ui', 'editor'}:
+                violations.append(f'{prefix}{header}:{line}: {target} '
+                                  '(an app value header must not include ui or editor)')
+    return violations
+
+
 def read_allowlist(root):
     return {line for line in (root / 'scripts/repository-media-allowlist.txt')
             .read_text(encoding='utf-8').splitlines()
@@ -129,15 +226,19 @@ def main():
     offenders = unexpected_media(paths, read_allowlist(root))
     private = private_files(paths)
     links = broken_links(root, paths)
+    includes = include_direction_violations(root, paths)
     if private:
         print('Private files must remain local:', *private, sep='\n')
     if offenders:
         print('Unexpected media files:', *offenders, sep='\n')
     if links:
         print('Broken relative links:', *links, sep='\n')
-    if private or offenders or links:
+    if includes:
+        print('Includes against the layer order:', *includes, sep='\n')
+    if private or offenders or links or includes:
         return 1
-    print('No private files, stray media or broken links in the checked inventory.')
+    print('No private files, stray media, broken links or includes against the layer order '
+          'in the checked inventory.')
     return 0
 
 

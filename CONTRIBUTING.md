@@ -60,7 +60,10 @@ python scripts/test_repository_hygiene.py
 ```
 
 The first also reports relative links between documents that lead nowhere: to
-a file that is not tracked, or to a heading that does not exist.
+a file that is not tracked, or to a heading that does not exist. It also
+reports an `#include` in `apps/easnap-desktop/src` that points against the
+layer order (platform; media, capture; recording, scrollshot; editor, ui; app;
+`main.cpp`), named in `LAYER_TIERS` and `APP_VALUE_HEADERS` of the script.
 
 For sensitive reports, follow [SECURITY.md](SECURITY.md).
 
