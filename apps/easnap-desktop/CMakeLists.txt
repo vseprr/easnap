@@ -100,6 +100,8 @@ set(EASNAP_SOURCES
     src/editor/text_annotation_editor.h
     src/editor/text_annotation_editor.cpp
     src/editor/key_commands.h
+    src/editor/editor_export.h
+    src/editor/editor_export.cpp
     src/editor/context_panel_layout.h
     src/editor/context_panel_layout.cpp
     src/editor/image_viewport.h
