@@ -1200,6 +1200,10 @@ set_tests_properties(trim_timeline_seek_stress trim_timeline_seek_soak PROPERTIE
 set_property(TEST trim_timeline_seek_soak APPEND PROPERTY LABELS soak)
 add_test(NAME ui_material_raster_parity COMMAND test_native_ui --material-rasters)
 set_tests_properties(ui_material_raster_parity PROPERTIES LABELS "unit;ui;theme" TIMEOUT 30)
+# Every icon, the button painter in representative styles and the shared
+# strokes, hashed against the painters before the Phase 5 restructuring.
+add_test(NAME ui_control_raster_parity COMMAND test_native_ui --control-rasters)
+set_tests_properties(ui_control_raster_parity PROPERTIES LABELS "unit;ui;theme" TIMEOUT 30)
 set_tests_properties(ui_modernization_native PROPERTIES
     LABELS "integration;ui;accessibility;theme;preview" TIMEOUT 90)
 

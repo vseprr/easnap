@@ -92,86 +92,23 @@ LRESULT CALLBACK TooltipProc(HWND window, UINT message, WPARAM wparam, LPARAM lp
 
 void PaintButton(HWND hwnd, HDC dc, ButtonData& data) {
     Advance(data);
-    const auto& p = theme::Current();
-    const float scale = static_cast<float>(::GetDpiForWindow(hwnd)) / 96.0f;
-    RECT client{};
-    ::GetClientRect(hwnd, &client);
-    theme::FillSolid(dc, client, p.panel);
-    RECT face = client;
-    ::InflateRect(&face, -theme::Scaled(6, scale), -theme::Scaled(6, scale));
-    const bool enabled = ::IsWindowEnabled(hwnd) != FALSE || data.style.preserve_disabled_visual;
-    const LRESULT state = ::SendMessageW(hwnd, BM_GETSTATE, 0, 0);
-    const bool pressed = (state & BST_PUSHED) != 0;
-    const bool checked = ::SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
-    const bool focused = ::GetFocus() == hwnd;
-    COLORREF fill = checked || pressed ? p.pressed : (data.hot ? p.hover : p.raised);
-    COLORREF ink = enabled ? p.text : p.disabled;
-    if (checked && enabled) { ink = p.focus; }
-    if (enabled && data.style.role == ButtonRole::Primary) { ink = p.accent; }
-    if (enabled && data.style.role == ButtonRole::Destructive) { ink = p.error; }
-    if (enabled && data.style.role == ButtonRole::Success) { ink = p.success; }
-    if (p.high_contrast && pressed) {
-        fill = p.accent;
-        ink = p.on_accent;
-    }
-    const float face_radius = data.style.circular ? std::min(face.right - face.left, face.bottom - face.top) / (2 * scale) : theme::kControlRadius;
-    theme::DrawMaterial(dc, face, face_radius, scale, fill, data.depth, data.style.circular);
-    if (focused && !data.style.hide_focus_line && !(::SendMessageW(hwnd, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS)) {
-        // Keyboard focus is a neutral underline, independent of latched depth.
-        const LONG inset = theme::Scaled(10, scale);
-        theme::DrawSolidLine(dc, {face.left + inset, face.bottom + 2}, {face.right - inset, face.bottom + 2}, p.text, 1);
-    }
-    const LONG size = theme::Scaled(data.style.circular ? 12.0f : 18.0f, scale);
-    const LONG cy = (face.top + face.bottom) / 2;
-    RECT icon{face.left + theme::Scaled(10, scale), cy - size / 2, 0, cy - size / 2 + size};
-    if (data.style.icon_only || data.style.swatch) { icon.left = (face.left + face.right - size) / 2; }
-    if (data.style.icon_only && data.style.dropdown) { icon.left -= theme::Scaled(5, scale); }
-    icon.right = icon.left + size;
-    if (data.style.sample != 0) {
-        icon.left = (face.left + face.right - size) / 2;
-        icon.right = icon.left + size;
-        if (data.style.sample == 1) {
-            theme::DrawSolidLine(dc, {icon.left, cy}, {icon.right, cy}, ink, theme::Scaled(data.style.sample_size, scale));
-        } else {
-            const LONG radius = theme::Scaled(2 + data.style.sample_size / 10.0f, scale);
-            const LONG cx = (face.left + face.right) / 2;
-            theme::FillRounded(dc, {cx - radius, cy - radius, cx + radius, cy + radius}, radius, ink);
-        }
-    } else if (data.style.swatch) {
-        theme::FillRoundedBordered(dc, icon, theme::Scaled(3, scale), data.style.content_color, p.control_border, 1);
-        if (checked) { DrawIcon(dc, icon, Icon::Check, GetRValue(data.style.content_color) + GetGValue(data.style.content_color) + GetBValue(data.style.content_color) > 500 ? RGB(30, 30, 30) : RGB(255, 255, 255), scale); }
-    } else if (data.style.icon != Icon::None) {
-        DrawIcon(dc, icon, data.style.icon, ink, scale);
-    }
-    if (data.style.dropdown) {
-        const LONG chevron = theme::Scaled(8, scale);
-        const LONG right = face.right - theme::Scaled(3, scale);
-        DrawIcon(dc, {right - chevron, cy - chevron / 2, right, cy + chevron / 2}, Icon::ChevronDown, ink, scale);
-    }
-    if (!data.style.icon_only && !data.style.swatch) {
-        wchar_t text[256]{};
-        ::GetWindowTextW(hwnd, text, ARRAYSIZE(text));
-        RECT label = face;
-        ::InflateRect(&label, -theme::Scaled(6, scale), 0);
-        UINT format = DT_CENTER | DT_VCENTER | DT_SINGLELINE;
-        if (data.style.icon != Icon::None) {
-            label.left = icon.right + theme::Scaled(6, scale);
-            format = DT_LEFT | DT_VCENTER | DT_SINGLELINE;
-        }
-        const auto type = ::GetWindowLongPtrW(hwnd, GWL_STYLE) & BS_TYPEMASK;
-        if ((type == BS_AUTOCHECKBOX || type == BS_AUTORADIOBUTTON || type == BS_RADIOBUTTON) && data.style.icon == Icon::None && !data.style.segmented) {
-            RECT check{face.left + theme::Scaled(10, scale), cy - theme::Scaled(5, scale),
-                       face.left + theme::Scaled(20, scale), cy + theme::Scaled(5, scale)};
-            if (checked && type == BS_AUTOCHECKBOX) {
-                DrawIcon(dc, check, Icon::Check, ink, scale);
-            } else if (checked) {
-                theme::FillRounded(dc, check, theme::Scaled(5, scale), ink);
-            }
-            label.left = check.right + theme::Scaled(8, scale);
-            format = DT_LEFT | DT_VCENTER | DT_SINGLELINE;
-        }
-        theme::DrawLabel(dc, label, text, ink, reinterpret_cast<HFONT>(::SendMessageW(hwnd, WM_GETFONT, 0, 0)), format);
-    }
+    ButtonPaintState state;
+    state.style = data.style;
+    state.scale = static_cast<float>(::GetDpiForWindow(hwnd)) / 96.0f;
+    ::GetClientRect(hwnd, &state.client);
+    state.window_enabled = ::IsWindowEnabled(hwnd) != FALSE;
+    state.pressed = (::SendMessageW(hwnd, BM_GETSTATE, 0, 0) & BST_PUSHED) != 0;
+    state.checked = ::SendMessageW(hwnd, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    state.focused = ::GetFocus() == hwnd;
+    state.focus_cues_hidden = state.focused && (::SendMessageW(hwnd, WM_QUERYUISTATE, 0, 0) & UISF_HIDEFOCUS) != 0;
+    state.hot = data.hot;
+    state.depth = data.depth;
+    state.type = ::GetWindowLongPtrW(hwnd, GWL_STYLE) & BS_TYPEMASK;
+    wchar_t text[256]{};
+    ::GetWindowTextW(hwnd, text, ARRAYSIZE(text));
+    state.text = text;
+    state.font = reinterpret_cast<HFONT>(::SendMessageW(hwnd, WM_GETFONT, 0, 0));
+    PaintButtonFace(dc, state);
 }
 
 LRESULT CALLBACK ButtonProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR, DWORD_PTR reference) {
@@ -584,6 +521,85 @@ void DrawIcon(HDC dc, const RECT& r, Icon icon, COLORREF color, float scale) {
             line(12, 14, 12, 21);
             break;
         case Icon::None: break;
+    }
+}
+
+void PaintButtonFace(HDC dc, const ButtonPaintState& state) {
+    const ButtonStyle& style = state.style;
+    const auto& p = theme::Current();
+    const float scale = state.scale;
+    const RECT& client = state.client;
+    theme::FillSolid(dc, client, p.panel);
+    RECT face = client;
+    ::InflateRect(&face, -theme::Scaled(6, scale), -theme::Scaled(6, scale));
+    const bool enabled = state.window_enabled || style.preserve_disabled_visual;
+    const bool pressed = state.pressed;
+    const bool checked = state.checked;
+    COLORREF fill = checked || pressed ? p.pressed : (state.hot ? p.hover : p.raised);
+    COLORREF ink = enabled ? p.text : p.disabled;
+    if (checked && enabled) { ink = p.focus; }
+    if (enabled && style.role == ButtonRole::Primary) { ink = p.accent; }
+    if (enabled && style.role == ButtonRole::Destructive) { ink = p.error; }
+    if (enabled && style.role == ButtonRole::Success) { ink = p.success; }
+    if (p.high_contrast && pressed) {
+        fill = p.accent;
+        ink = p.on_accent;
+    }
+    const float face_radius = style.circular ? std::min(face.right - face.left, face.bottom - face.top) / (2 * scale) : theme::kControlRadius;
+    theme::DrawMaterial(dc, face, face_radius, scale, fill, state.depth, style.circular);
+    if (state.focused && !style.hide_focus_line && !state.focus_cues_hidden) {
+        // Keyboard focus is a neutral underline, independent of latched depth.
+        const LONG inset = theme::Scaled(10, scale);
+        theme::DrawSolidLine(dc, {face.left + inset, face.bottom + 2}, {face.right - inset, face.bottom + 2}, p.text, 1);
+    }
+    const LONG size = theme::Scaled(style.circular ? 12.0f : 18.0f, scale);
+    const LONG cy = (face.top + face.bottom) / 2;
+    RECT icon{face.left + theme::Scaled(10, scale), cy - size / 2, 0, cy - size / 2 + size};
+    if (style.icon_only || style.swatch) { icon.left = (face.left + face.right - size) / 2; }
+    if (style.icon_only && style.dropdown) { icon.left -= theme::Scaled(5, scale); }
+    icon.right = icon.left + size;
+    if (style.sample != 0) {
+        icon.left = (face.left + face.right - size) / 2;
+        icon.right = icon.left + size;
+        if (style.sample == 1) {
+            theme::DrawSolidLine(dc, {icon.left, cy}, {icon.right, cy}, ink, theme::Scaled(style.sample_size, scale));
+        } else {
+            const LONG radius = theme::Scaled(2 + style.sample_size / 10.0f, scale);
+            const LONG cx = (face.left + face.right) / 2;
+            theme::FillRounded(dc, {cx - radius, cy - radius, cx + radius, cy + radius}, radius, ink);
+        }
+    } else if (style.swatch) {
+        theme::FillRoundedBordered(dc, icon, theme::Scaled(3, scale), style.content_color, p.control_border, 1);
+        if (checked) { DrawIcon(dc, icon, Icon::Check, GetRValue(style.content_color) + GetGValue(style.content_color) + GetBValue(style.content_color) > 500 ? RGB(30, 30, 30) : RGB(255, 255, 255), scale); }
+    } else if (style.icon != Icon::None) {
+        DrawIcon(dc, icon, style.icon, ink, scale);
+    }
+    if (style.dropdown) {
+        const LONG chevron = theme::Scaled(8, scale);
+        const LONG right = face.right - theme::Scaled(3, scale);
+        DrawIcon(dc, {right - chevron, cy - chevron / 2, right, cy + chevron / 2}, Icon::ChevronDown, ink, scale);
+    }
+    if (!style.icon_only && !style.swatch) {
+        RECT label = face;
+        ::InflateRect(&label, -theme::Scaled(6, scale), 0);
+        UINT format = DT_CENTER | DT_VCENTER | DT_SINGLELINE;
+        if (style.icon != Icon::None) {
+            label.left = icon.right + theme::Scaled(6, scale);
+            format = DT_LEFT | DT_VCENTER | DT_SINGLELINE;
+        }
+        const auto type = state.type;
+        if ((type == BS_AUTOCHECKBOX || type == BS_AUTORADIOBUTTON || type == BS_RADIOBUTTON) && style.icon == Icon::None && !style.segmented) {
+            RECT check{face.left + theme::Scaled(10, scale), cy - theme::Scaled(5, scale),
+                       face.left + theme::Scaled(20, scale), cy + theme::Scaled(5, scale)};
+            if (checked && type == BS_AUTOCHECKBOX) {
+                DrawIcon(dc, check, Icon::Check, ink, scale);
+            } else if (checked) {
+                theme::FillRounded(dc, check, theme::Scaled(5, scale), ink);
+            }
+            label.left = check.right + theme::Scaled(8, scale);
+            format = DT_LEFT | DT_VCENTER | DT_SINGLELINE;
+        }
+        theme::DrawLabel(dc, label, state.text, ink, state.font, format);
     }
 }
 

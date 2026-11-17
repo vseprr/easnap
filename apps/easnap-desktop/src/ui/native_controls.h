@@ -75,6 +75,25 @@ struct ButtonStyle {
     bool dropdown{false}; // One icon button with an inset trailing chevron.
     bool circular{false}; // Round compact action with room for a soft drop shadow.
 };
+/// Everything a styled button's picture depends on at one moment: its style,
+/// the native BUTTON state and caption, and the animated depth.
+struct ButtonPaintState {
+    ButtonStyle style;
+    RECT client{};                 // Client rectangle of the button, in pixels.
+    float scale{1};                // Monitor DPI scale of the button.
+    bool window_enabled{true};     // IsWindowEnabled of the button.
+    bool pressed{false};           // BST_PUSHED.
+    bool checked{false};           // BST_CHECKED.
+    bool focused{false};           // The button has the keyboard focus.
+    bool focus_cues_hidden{false}; // UISF_HIDEFOCUS of the button's UI state.
+    bool hot{false};               // The pointer is over the button.
+    float depth{1};                // Current material depth of the animation.
+    LONG_PTR type{BS_PUSHBUTTON};  // BS_TYPEMASK part of the window style.
+    const wchar_t* text{L""};      // Caption; not drawn for icon-only buttons and swatches.
+    HFONT font{};                  // Caption font (WM_GETFONT).
+};
+/// Paints a styled button into `dc`: the one painter of every styled BUTTON.
+void PaintButtonFace(HDC dc, const ButtonPaintState& state);
 
 // Native controls can draw synchronously from input/state messages, outside
 // WM_PAINT. Suspend that drawing while retaining USER32 input and accessibility.
