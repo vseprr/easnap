@@ -201,8 +201,44 @@ private:
     /// it actually covers from `first` on, or 0 on failure.
     [[nodiscard]] int EnsureBaseRows(int first, int end);
 
-    /// The WM_COMMAND and WM_KEYDOWN arms of `HandleMessage`. Reached only
-    /// through it, so `ui::ConsumePopupInput` sees every message first.
+    /// The arms of `HandleMessage`, one per message. Reached only through it,
+    /// so `ui::ConsumePopupInput` sees every message first.
+    /// WM_SETCURSOR while an export runs: the busy pointer.
+    static LRESULT OnBusyCursor();
+    /// The text host, the property island and the brush pop-up: they take no
+    /// size, hit test or pointer input of their own, and paint the image or
+    /// their island. Nothing for the messages they leave to the rest.
+    std::optional<LRESULT> OnAuxiliaryMessage(HWND hwnd, UINT message, WPARAM wparam);
+    /// The theme changed: only a repaint.
+    static LRESULT OnThemeChanged(HWND hwnd);
+    /// Empty island space is the caption, so it drags the island.
+    static LRESULT OnNcHitTest(HWND hwnd, LPARAM lparam);
+    /// A double-click on the grip fixes the image and does nothing else.
+    LRESULT OnGripDoubleClick(WPARAM hit);
+    /// A press on the grip fixes the image first. True when it could not be
+    /// fixed and the press is dropped.
+    bool OnGripPress(WPARAM hit);
+    /// The user starts moving the tools island: it keeps its place from now on.
+    LRESULT OnEnterSizeMove(bool auxiliary);
+    /// The tools island moved: the property island follows.
+    void OnWindowPosChanged(bool auxiliary);
+    LRESULT OnPaint(HWND hwnd);
+    LRESULT OnSize(WPARAM kind, LPARAM lparam);
+    LRESULT OnGetMinMaxInfo(LPARAM lparam) const;
+    /// Rescales the island and moves it to the suggested place, kept on its monitor.
+    LRESULT OnDpiChanged(HWND hwnd, WPARAM wparam, LPARAM lparam);
+    /// Keeps a moved island on its monitor's work area.
+    static LRESULT OnMoving(LPARAM lparam);
+    /// A stroke or drag over the image continues while the island holds the capture.
+    LRESULT OnPointerMove(HWND hwnd, LPARAM lparam);
+    /// A press on the tools island: the item under it, or else only fixing the image.
+    LRESULT OnPointerDown(HWND hwnd, LPARAM lparam);
+    LRESULT OnPointerDoubleClick();
+    /// Ends a stroke or drag, then releases the capture.
+    LRESULT OnPointerUp(HWND hwnd, LPARAM lparam);
+    LRESULT OnCaptureChanged();
+    /// The wheel over an island scrolls or zooms the document.
+    LRESULT OnMouseWheel(UINT message, WPARAM wparam, LPARAM lparam);
     void OnCommand(int id, int notification);
     void OnKeyDown(WPARAM key, LPARAM flags);
     /// Runs a keyboard shortcut of kKeyBindings (editor/key_commands.h).

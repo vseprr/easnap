@@ -722,210 +722,228 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         OnExportCompleted(static_cast<platform::ImageExportJob::Generation>(wparam));
         return 0;
     }
-    if (message == WM_SETCURSOR && exporting()) {
-        ::SetCursor(::LoadCursorW(nullptr, IDC_APPSTARTING));
-        return TRUE;
-    }
+    if (message == WM_SETCURSOR && exporting()) { return OnBusyCursor(); }
     // The property island's timers, slider scrolls and font size list.
     if (const auto handled = context_panel_.HandleMessage(hwnd, message, wparam, lparam)) { return *handled; }
     // The typing pointer's timer and the text field's control colour.
     if (const auto handled = text_editor_.HandleMessage(message, wparam, lparam)) { return *handled; }
     const bool auxiliary = hwnd_ && hwnd != hwnd_;
     if (auxiliary) {
-        if (message == WM_SIZE || message == WM_DPICHANGED || message == WM_GETMINMAXINFO) { return 0; }
-        if (message == WM_NCHITTEST) { return HTCLIENT; }
-        if (message == WM_PAINT || message == WM_PRINTCLIENT) {
-            PAINTSTRUCT ps{};
-            HDC dc = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
-            if (hwnd == text_editor_.host()) {
-                RECT bounds{};
-                ::GetWindowRect(hwnd, &bounds);
-                RenderImage(dc, bounds);
-            } else {
-                context_panel_.Paint(dc, hwnd);
-            }
-            if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
-            return 0;
-        }
-        if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_MOUSEMOVE || message == WM_CAPTURECHANGED) { return 0; }
+        if (const auto handled = OnAuxiliaryMessage(hwnd, message, wparam)) { return *handled; }
     }
     if (message == WM_CTLCOLOREDIT || message == WM_CTLCOLORLISTBOX || message == WM_CTLCOLORSTATIC) {
         return ui::ControlBackground(wparam, ui::theme::Current().text);
     }
     switch (message) {
-        case ui::theme::kChangedMessage:
-            ::RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
-            return 0; // No document/history/fade/placement work.
-        case WM_COMMAND:
-            OnCommand(LOWORD(wparam), HIWORD(wparam));
-            return 0;
-        case WM_PRINTCLIENT:
-            toolbar_.Paint(reinterpret_cast<HDC>(wparam), scale_);
-            return 0;
-        case WM_NCHITTEST: {
-            POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            ::ScreenToClient(hwnd, &point);
-            if (::ChildWindowFromPointEx(hwnd, point, CWP_SKIPINVISIBLE) == hwnd) { return HTCAPTION; }
-            return HTCLIENT;
-        }
-        case WM_NCLBUTTONDBLCLK:
-            if (wparam == HTCAPTION) { FeatureUsed(); }
-            return 0; // Grip double-click never maximizes or completes.
-
+        case ui::theme::kChangedMessage: return OnThemeChanged(hwnd);
+        case WM_COMMAND: OnCommand(LOWORD(wparam), HIWORD(wparam)); return 0;
+        case WM_PRINTCLIENT: toolbar_.Paint(reinterpret_cast<HDC>(wparam), scale_); return 0;
+        case WM_NCHITTEST: return OnNcHitTest(hwnd, lparam);
+        case WM_NCLBUTTONDBLCLK: return OnGripDoubleClick(wparam);
         case WM_NCLBUTTONDOWN:
-            // The grip is part of the floating toolbar. Fix the image before
-            // Windows enters its native move loop; moving the island remains allowed.
-            if (wparam == HTCAPTION && !FeatureUsed()) { return 0; }
+            if (OnGripPress(wparam)) { return 0; }
             break;
-
-        case WM_ENTERSIZEMOVE:
-            if (!auxiliary) { island_user_positioned_ = true; }
-            return 0;
-        case WM_WINDOWPOSCHANGED:
-            if (!auxiliary) { context_panel_.Place(); }
-            break;
-        case WM_ERASEBKGND:
-            return 1;
-
-        case WM_PAINT: {
-            PAINTSTRUCT ps{};
-            HDC dc = ::BeginPaint(hwnd, &ps);
-            toolbar_.Paint(dc, scale_);
-            ::EndPaint(hwnd, &ps);
-            return 0;
-        }
-
-        case WM_SIZE: {
-            if (wparam == SIZE_MINIMIZED) {
-                return 0;
-            }
-            const int width = static_cast<int>(LOWORD(lparam));
-            const int height = static_cast<int>(HIWORD(lparam));
-            LayoutClient(width, height);
-            Invalidate();
-            return 0;
-        }
-
-        case WM_GETMINMAXINFO: {
-            RECT minimum{0, 0, static_cast<LONG>(kMinClientWidth * scale_),
-                         static_cast<LONG>(kMinClientHeight * scale_)};
-            AdjustForNonClient(minimum, static_cast<UINT>(std::lround(scale_ * 96.0f)));
-            auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
-            info->ptMinTrackSize.x = platform::RectWidth(minimum);
-            info->ptMinTrackSize.y = platform::RectHeight(minimum);
-            return 0;
-        }
-
-        case WM_DPICHANGED: {
-            scale_ = static_cast<float>(HIWORD(wparam)) / 96.0f;
-            CreateTextFormats();
-            const auto* suggested = reinterpret_cast<const RECT*>(lparam);
-            if (suggested != nullptr) {
-                const auto monitor = platform::MonitorForRect(*suggested);
-                RECT available = monitor.work_area;
-                available.top = std::max(available.top, monitor.bounds.top + ui::theme::Scaled(
-                                                                                 ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, scale_));
-                const LONG width = std::min(platform::RectWidth(available), static_cast<LONG>(kIslandWidth * scale_));
-                BuildToolbar(static_cast<float>(width));
-                const LONG height = toolbar_.height();
-                const RECT placement = platform::ClampRectToBounds(
-                    RECT{suggested->left, suggested->top, suggested->left + width, suggested->top + height}, available);
-                ::SetWindowPos(hwnd, nullptr, placement.left, placement.top, platform::RectWidth(placement),
-                               platform::RectHeight(placement), SWP_NOZORDER | SWP_NOACTIVATE);
-            }
-            // CreateTextFormats replaced the shared font; the context island
-            // still holds the deleted handle until its controls are resynced.
-            context_panel_.Sync();
-            Invalidate();
-            return 0;
-        }
-
-        case WM_MOVING: {
-            auto* proposed = reinterpret_cast<RECT*>(lparam);
-            if (proposed) {
-                const auto monitor = platform::MonitorForRect(*proposed);
-                RECT available = monitor.work_area;
-                available.top = std::max(available.top, monitor.bounds.top +
-                                                            ui::theme::Scaled(ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, monitor.scale()));
-                *proposed = platform::ClampRectToBounds(*proposed, available);
-            }
-            return TRUE;
-        }
-
-        case WM_MOUSEMOVE: {
-            const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            if ((dragging_ || transforming_) && ::GetCapture() == hwnd) {
-                POINT desktop = pt;
-                ::ClientToScreen(hwnd, &desktop);
-                UpdateStroke(desktop);
-            }
-            return 0;
-        }
-
-        case WM_LBUTTONDOWN: {
-            ::SetFocus(hwnd);
-            const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            if (const auto item = toolbar_.HitTest(pt)) {
-                OnToolbarActivated(*item);
-            } else {
-                FeatureUsed();
-            } // Padding and empty toolbar space also fix the image.
-            return 0;
-        }
-        case WM_LBUTTONDBLCLK:
-            FeatureUsed();
-            return 0;
-
-        case WM_LBUTTONUP: {
-            // Finish the stroke *before* releasing capture: ReleaseCapture sends
-            // WM_CAPTURECHANGED synchronously, which cancels an unfinished one.
-            if (dragging_ || transforming_) {
-                POINT desktop{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-                ::ClientToScreen(hwnd, &desktop);
-                EndStroke(desktop);
-            }
-            if (::GetCapture() == hwnd) {
-                ::ReleaseCapture();
-            }
-            return 0;
-        }
-
-        case WM_CAPTURECHANGED:
-            // Losing capture (alt-tab, resize, ...) must not leave a half stroke.
-            CancelStroke();
-            return 0;
-
+        case WM_ENTERSIZEMOVE: return OnEnterSizeMove(auxiliary);
+        case WM_WINDOWPOSCHANGED: OnWindowPosChanged(auxiliary); break;
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT: return OnPaint(hwnd);
+        case WM_SIZE: return OnSize(wparam, lparam);
+        case WM_GETMINMAXINFO: return OnGetMinMaxInfo(lparam);
+        case WM_DPICHANGED: return OnDpiChanged(hwnd, wparam, lparam);
+        case WM_MOVING: return OnMoving(lparam);
+        case WM_MOUSEMOVE: return OnPointerMove(hwnd, lparam);
+        case WM_LBUTTONDOWN: return OnPointerDown(hwnd, lparam);
+        case WM_LBUTTONDBLCLK: return OnPointerDoubleClick();
+        case WM_LBUTTONUP: return OnPointerUp(hwnd, lparam);
+        case WM_CAPTURECHANGED: return OnCaptureChanged();
         case WM_MOUSEWHEEL:
-        case WM_MOUSEHWHEEL: {
-            // An island that holds the focus receives the wheel where Windows
-            // routes it by focus. It belongs to the document all the same.
-            const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
-            const WORD keys = GET_KEYSTATE_WPARAM(wparam);
-            const bool horizontal = message == WM_MOUSEHWHEEL;
-            Wheel(horizontal ? -delta : delta, (keys & MK_CONTROL) != 0, horizontal || (keys & MK_SHIFT) != 0,
-                  POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)});
-            return 0;
-        }
-
-        case WM_CHAR:
-            text_editor_.OnCharacter(static_cast<wchar_t>(wparam));
-            return 0;
-
-        case WM_KEYDOWN:
-            OnKeyDown(wparam, lparam);
-            return 0;
-
-        case WM_CLOSE:
-            RequestDiscard();
-            return 0;
-
-        case WM_DESTROY:
-            return 0;
-
-        default:
-            break;
+        case WM_MOUSEHWHEEL: return OnMouseWheel(message, wparam, lparam);
+        case WM_CHAR: text_editor_.OnCharacter(static_cast<wchar_t>(wparam)); return 0;
+        case WM_KEYDOWN: OnKeyDown(wparam, lparam); return 0;
+        case WM_CLOSE: RequestDiscard(); return 0;
+        case WM_DESTROY: return 0;
+        default: break;
     }
     return ::DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+LRESULT ScreenshotEditor::OnBusyCursor() {
+    ::SetCursor(::LoadCursorW(nullptr, IDC_APPSTARTING));
+    return TRUE;
+}
+
+std::optional<LRESULT> ScreenshotEditor::OnAuxiliaryMessage(HWND hwnd, UINT message, WPARAM wparam) {
+    if (message == WM_SIZE || message == WM_DPICHANGED || message == WM_GETMINMAXINFO) { return 0; }
+    if (message == WM_NCHITTEST) { return HTCLIENT; }
+    if (message == WM_PAINT || message == WM_PRINTCLIENT) {
+        PAINTSTRUCT ps{};
+        HDC dc = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
+        if (hwnd == text_editor_.host()) {
+            RECT bounds{};
+            ::GetWindowRect(hwnd, &bounds);
+            RenderImage(dc, bounds);
+        } else {
+            context_panel_.Paint(dc, hwnd);
+        }
+        if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
+        return 0;
+    }
+    if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_MOUSEMOVE || message == WM_CAPTURECHANGED) { return 0; }
+    return std::nullopt;
+}
+
+LRESULT ScreenshotEditor::OnThemeChanged(HWND hwnd) {
+    ::RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+    return 0; // No document/history/fade/placement work.
+}
+
+LRESULT ScreenshotEditor::OnNcHitTest(HWND hwnd, LPARAM lparam) {
+    POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    ::ScreenToClient(hwnd, &point);
+    if (::ChildWindowFromPointEx(hwnd, point, CWP_SKIPINVISIBLE) == hwnd) { return HTCAPTION; }
+    return HTCLIENT;
+}
+
+LRESULT ScreenshotEditor::OnGripDoubleClick(WPARAM hit) {
+    if (hit == HTCAPTION) { FeatureUsed(); }
+    return 0; // Grip double-click never maximizes or completes.
+}
+
+bool ScreenshotEditor::OnGripPress(WPARAM hit) {
+    // The grip is part of the floating toolbar. Fix the image before
+    // Windows enters its native move loop; moving the island remains allowed.
+    return hit == HTCAPTION && !FeatureUsed();
+}
+
+LRESULT ScreenshotEditor::OnEnterSizeMove(bool auxiliary) {
+    if (!auxiliary) { island_user_positioned_ = true; }
+    return 0;
+}
+
+void ScreenshotEditor::OnWindowPosChanged(bool auxiliary) {
+    if (!auxiliary) { context_panel_.Place(); }
+}
+
+LRESULT ScreenshotEditor::OnPaint(HWND hwnd) {
+    PAINTSTRUCT ps{};
+    HDC dc = ::BeginPaint(hwnd, &ps);
+    toolbar_.Paint(dc, scale_);
+    ::EndPaint(hwnd, &ps);
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnSize(WPARAM kind, LPARAM lparam) {
+    if (kind == SIZE_MINIMIZED) {
+        return 0;
+    }
+    const int width = static_cast<int>(LOWORD(lparam));
+    const int height = static_cast<int>(HIWORD(lparam));
+    LayoutClient(width, height);
+    Invalidate();
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnGetMinMaxInfo(LPARAM lparam) const {
+    RECT minimum{0, 0, static_cast<LONG>(kMinClientWidth * scale_),
+                 static_cast<LONG>(kMinClientHeight * scale_)};
+    AdjustForNonClient(minimum, static_cast<UINT>(std::lround(scale_ * 96.0f)));
+    auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+    info->ptMinTrackSize.x = platform::RectWidth(minimum);
+    info->ptMinTrackSize.y = platform::RectHeight(minimum);
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnDpiChanged(HWND hwnd, WPARAM wparam, LPARAM lparam) {
+    scale_ = static_cast<float>(HIWORD(wparam)) / 96.0f;
+    CreateTextFormats();
+    const auto* suggested = reinterpret_cast<const RECT*>(lparam);
+    if (suggested != nullptr) {
+        const auto monitor = platform::MonitorForRect(*suggested);
+        RECT available = monitor.work_area;
+        available.top = std::max(available.top, monitor.bounds.top + ui::theme::Scaled(
+                                                                         ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, scale_));
+        const LONG width = std::min(platform::RectWidth(available), static_cast<LONG>(kIslandWidth * scale_));
+        BuildToolbar(static_cast<float>(width));
+        const LONG height = toolbar_.height();
+        const RECT placement = platform::ClampRectToBounds(
+            RECT{suggested->left, suggested->top, suggested->left + width, suggested->top + height}, available);
+        ::SetWindowPos(hwnd, nullptr, placement.left, placement.top, platform::RectWidth(placement),
+                       platform::RectHeight(placement), SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    // CreateTextFormats replaced the shared font; the context island
+    // still holds the deleted handle until its controls are resynced.
+    context_panel_.Sync();
+    Invalidate();
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnMoving(LPARAM lparam) {
+    auto* proposed = reinterpret_cast<RECT*>(lparam);
+    if (proposed) {
+        const auto monitor = platform::MonitorForRect(*proposed);
+        RECT available = monitor.work_area;
+        available.top = std::max(available.top, monitor.bounds.top +
+                                                    ui::theme::Scaled(ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, monitor.scale()));
+        *proposed = platform::ClampRectToBounds(*proposed, available);
+    }
+    return TRUE;
+}
+
+LRESULT ScreenshotEditor::OnPointerMove(HWND hwnd, LPARAM lparam) {
+    const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    if ((dragging_ || transforming_) && ::GetCapture() == hwnd) {
+        POINT desktop = pt;
+        ::ClientToScreen(hwnd, &desktop);
+        UpdateStroke(desktop);
+    }
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnPointerDown(HWND hwnd, LPARAM lparam) {
+    ::SetFocus(hwnd);
+    const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    if (const auto item = toolbar_.HitTest(pt)) {
+        OnToolbarActivated(*item);
+    } else {
+        FeatureUsed();
+    } // Padding and empty toolbar space also fix the image.
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnPointerDoubleClick() {
+    FeatureUsed();
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnPointerUp(HWND hwnd, LPARAM lparam) {
+    // Finish the stroke *before* releasing capture: ReleaseCapture sends
+    // WM_CAPTURECHANGED synchronously, which cancels an unfinished one.
+    if (dragging_ || transforming_) {
+        POINT desktop{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        ::ClientToScreen(hwnd, &desktop);
+        EndStroke(desktop);
+    }
+    if (::GetCapture() == hwnd) {
+        ::ReleaseCapture();
+    }
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnCaptureChanged() {
+    // Losing capture (alt-tab, resize, ...) must not leave a half stroke.
+    CancelStroke();
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnMouseWheel(UINT message, WPARAM wparam, LPARAM lparam) {
+    // An island that holds the focus receives the wheel where Windows
+    // routes it by focus. It belongs to the document all the same.
+    const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+    const WORD keys = GET_KEYSTATE_WPARAM(wparam);
+    const bool horizontal = message == WM_MOUSEHWHEEL;
+    Wheel(horizontal ? -delta : delta, (keys & MK_CONTROL) != 0, horizontal || (keys & MK_SHIFT) != 0,
+          POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)});
+    return 0;
 }
 
 void ScreenshotEditor::OnCommand(int id, int notification) {
