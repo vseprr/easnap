@@ -292,7 +292,7 @@ void PaintButtonFace(HDC dc, const ButtonPaintState& state) {
         }
     } else if (style.swatch) {
         theme::FillRoundedBordered(dc, icon, theme::Scaled(3, scale), style.content_color, p.control_border, 1);
-        if (checked) { DrawIcon(dc, icon, Icon::Check, GetRValue(style.content_color) + GetGValue(style.content_color) + GetBValue(style.content_color) > 500 ? RGB(30, 30, 30) : RGB(255, 255, 255)); }
+        if (checked) { DrawIcon(dc, icon, Icon::Check, GetRValue(style.content_color) + GetGValue(style.content_color) + GetBValue(style.content_color) > theme::kSwatchCheckThreshold ? theme::kSwatchCheckDark : theme::kSwatchCheckLight); }
     } else if (style.icon != Icon::None) {
         DrawIcon(dc, icon, style.icon, ink);
     }
@@ -644,7 +644,7 @@ void RoundWindow(HWND window, float radius) {
 }
 void DrawSeparator(HDC dc, const RECT& r, float scale) {
     const LONG x = (r.left + r.right) / 2;
-    theme::DrawSolidLine(dc, {x, r.top}, {x, r.bottom}, theme::Current().high_contrast ? theme::Current().text : theme::Mix(theme::Current().panel, theme::Current().text, 0.55f), theme::Scaled(1, scale));
+    theme::DrawSolidLine(dc, {x, r.top}, {x, r.bottom}, theme::Current().separator, theme::Scaled(1, scale));
 }
 bool DrawComboItem(const DRAWITEMSTRUCT& item) {
     if (item.CtlType != ODT_COMBOBOX) { return false; }

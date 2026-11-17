@@ -31,6 +31,10 @@ namespace {
 
 /// Timer on the preview's own message-only window: polls the transport.
 constexpr UINT_PTR kOwnerPollTimer = 1;
+/// Letterbox around the video and around a still frame, black in every theme
+/// (media does not depend on the UI theme). The still frame paints it with the
+/// stock BLACK_BRUSH.
+constexpr COLORREF kVideoLetterbox = RGB(0, 0, 0);
 
 using Microsoft::WRL::ComPtr;
 
@@ -294,7 +298,7 @@ public:
             ClosePlayerResources();
             return false;
         }
-        static_cast<void>(player_->SetBorderColor(RGB(0, 0, 0)));
+        static_cast<void>(player_->SetBorderColor(kVideoLetterbox));
         static_cast<void>(player_->SetAspectRatioMode(MFVideoARMode_PreservePicture));
         return true;
     }

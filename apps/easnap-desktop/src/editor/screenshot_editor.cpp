@@ -3238,7 +3238,7 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorB
         target->DrawRectangle(r, brush, width);
     }
     for (auto point : a.Handles()) {
-        brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
+        brush->SetColor(ui::theme::D2DColor(ui::theme::kSelectionHandleFill));
         target->FillEllipse(D2D1::Ellipse(point, kHandleRadius * unit, kHandleRadius * unit), brush);
         brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
         target->DrawEllipse(D2D1::Ellipse(point, kHandleRadius * unit, kHandleRadius * unit), brush, kHandleStroke * unit);

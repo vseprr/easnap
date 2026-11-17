@@ -22,6 +22,21 @@ inline constexpr COLORREF kChromeColorKey = RGB(255, 0, 255);
 inline constexpr BYTE kDimAlpha = 122;
 
 inline constexpr COLORREF kDim = RGB(0, 0, 0);
+
+// Theme-independent chrome colours. They are drawn over content or next to an
+// annotation colour, so neither the palette nor high contrast changes them.
+
+/// Check mark on a selected colour swatch whose colour is light.
+inline constexpr COLORREF kSwatchCheckDark = RGB(30, 30, 30);
+/// Check mark on a selected colour swatch whose colour is dark.
+inline constexpr COLORREF kSwatchCheckLight = RGB(255, 255, 255);
+/// A swatch colour whose R+G+B exceeds this is light and takes the dark check.
+inline constexpr int kSwatchCheckThreshold = 500;
+/// Outer ring of the magnifier's two-tone reticle; the inner ring is kDim.
+inline constexpr COLORREF kReticleLight = RGB(255, 255, 255);
+/// Fill of the editor's selection handles, white in every theme.
+inline constexpr COLORREF kSelectionHandleFill = RGB(255, 255, 255);
+
 struct Palette {
     COLORREF panel, recessed, raised, border, control_border;
     COLORREF text, muted_text, accent, on_accent;
@@ -30,6 +45,9 @@ struct Palette {
     COLORREF screenshot_border, record_border, handle, guide;
     COLORREF timeline_track, timeline_selection, playhead, tooltip, status;
     bool high_contrast{false};
+    // Derived when the palette is built, from the fields above.
+    COLORREF separator{};    // Group separators: panel mixed with text; text in high contrast.
+    COLORREF scroll_thumb{}; // Document scroll thumb: panel mixed with text, also in high contrast.
 };
 
 [[nodiscard]] const Palette& Current() noexcept;

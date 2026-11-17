@@ -1342,7 +1342,7 @@ private:
         RECT center{left + (count / 2) * cell, padding + (count / 2) * cell,
                     left + (count / 2 + 1) * cell, padding + (count / 2 + 1) * cell};
         ::InflateRect(&center, 2, 2);
-        theme::FrameSolid(dc, center, RGB(255, 255, 255), 1);
+        theme::FrameSolid(dc, center, theme::kReticleLight, 1);
         ::InflateRect(&center, -1, -1);
         theme::FrameSolid(dc, center, theme::kDim, 1);
 
@@ -1424,7 +1424,7 @@ private:
         const LONG top = track.top + static_cast<LONG>(std::min(controller_.document_top_fraction() / (1.0f - visible), 1.0f) *
                                                        static_cast<float>(length - thumb));
         theme::FillRounded(dc, RECT{track.left, top, track.right, top + thumb}, theme::Scaled(2.5f, scale),
-                           theme::Mix(theme::Current().panel, theme::Current().text, 0.55f));
+                           theme::Current().scroll_thumb);
     }
 
 public:
