@@ -27,6 +27,30 @@ constexpr DWORD kIslandExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTRO
 constexpr DWORD kPreviewExStyle =
     WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED;
 
+/// The island's buttons, indexes into kScrollshotButtons. Start and Help show
+/// before the capture, the other four during it.
+enum ScrollshotButton : size_t {
+    kStartButton,
+    kHelpButton,
+    kEditButton,
+    kSaveButton,
+    kDiscardButton,
+    kCopyButton,
+    kScrollshotButtonCount
+};
+/// One row per button of the Scrollshot island. Start and Copy share IDOK:
+/// the island tells them apart by its view. Every button but Start has a
+/// tooltip, the same text as its caption.
+constexpr std::array<StyledButtonRow, kScrollshotButtonCount> kScrollshotButtons{{
+    {IDOK, WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDS_SCROLLSHOT_START, {Icon::Scissors, ButtonRole::Primary}},
+    {kScrollshotHelp, WS_TABSTOP | BS_PUSHBUTTON, IDS_SCROLLSHOT_HELP, {Icon::Help, ButtonRole::Standard, true}, IDS_SCROLLSHOT_HELP},
+    {kScrollshotEdit, WS_TABSTOP | WS_GROUP | BS_PUSHBUTTON, IDS_SCROLLSHOT_EDIT, {Icon::Pen, ButtonRole::Standard, true}, IDS_SCROLLSHOT_EDIT},
+    {kScrollshotSave, WS_TABSTOP | BS_PUSHBUTTON, IDS_SCROLLSHOT_SAVE, {Icon::Save, ButtonRole::Standard, true}, IDS_SCROLLSHOT_SAVE},
+    {IDCANCEL, WS_TABSTOP | BS_PUSHBUTTON, IDS_SCROLLSHOT_DISCARD, {Icon::Discard, ButtonRole::Standard, true}, IDS_SCROLLSHOT_DISCARD},
+    // The default button, so Enter copies as it does in the editor.
+    {kScrollshotCopyAlias, WS_TABSTOP | BS_PUSHBUTTON, IDS_SCROLLSHOT_COPY, {Icon::Check, ButtonRole::Success, true}, IDS_SCROLLSHOT_COPY},
+}};
+
 // Metrics in device-independent pixels.
 constexpr float kPreviewWidth = 160.0f;
 constexpr float kPreviewPadding = 4.0f;
@@ -477,12 +501,17 @@ private:
         }
     }
 
-    [[nodiscard]] HWND CreateControl(const wchar_t* class_name, const wchar_t* text, DWORD style, int id) const {
-        HWND control = ::CreateWindowExW(0, class_name, text, WS_CHILD | style, 0, 0, 1, 1, island_,
+    /// A hidden styled button of the island, as its kScrollshotButtons row says.
+    [[nodiscard]] HWND CreateButton(ScrollshotButton button) const {
+        return CreateStyledButton(island_, kScrollshotButtons[button], 0);
+    }
+
+    /// A hidden, empty buffered STATIC of the island.
+    [[nodiscard]] HWND CreateLabel(DWORD style, int id) const {
+        HWND control = ::CreateWindowExW(0, L"STATIC", L"", WS_CHILD | style, 0, 0, 1, 1, island_,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                          ::GetModuleHandleW(nullptr), nullptr);
-        const bool button = ::lstrcmpW(class_name, L"BUTTON") == 0;
-        if (control != nullptr && !(button ? StyleButton(control) : StyleLabel(control))) {
+        if (control != nullptr && !StyleLabel(control)) {
             ::DestroyWindow(control);
             return nullptr;
         }
@@ -490,38 +519,25 @@ private:
     }
 
     [[nodiscard]] bool CreateControls() {
-        start_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_START), WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDOK);
-        help_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_HELP), WS_TABSTOP | BS_PUSHBUTTON, kScrollshotHelp);
-        size_ = CreateControl(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, kScrollshotSize);
-        message_ = CreateControl(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, kScrollshotMessage);
-        edit_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_EDIT), WS_TABSTOP | WS_GROUP | BS_PUSHBUTTON, kScrollshotEdit);
-        save_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_SAVE), WS_TABSTOP | BS_PUSHBUTTON, kScrollshotSave);
-        discard_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_DISCARD), WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
-        // The default button, so Enter copies as it does in the editor.
-        copy_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_COPY), WS_TABSTOP | BS_PUSHBUTTON, kScrollshotCopyAlias);
+        // Creation order is tab and z-order: the labels sit between the views.
+        start_ = CreateButton(kStartButton);
+        help_ = CreateButton(kHelpButton);
+        size_ = CreateLabel(SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, kScrollshotSize);
+        message_ = CreateLabel(SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, kScrollshotMessage);
+        edit_ = CreateButton(kEditButton);
+        save_ = CreateButton(kSaveButton);
+        discard_ = CreateButton(kDiscardButton);
+        copy_ = CreateButton(kCopyButton);
         for (HWND control : {start_, help_, size_, message_, edit_, save_, discard_, copy_}) {
             if (control == nullptr) { return false; }
         }
-        UpdateButtonStyle(start_, {Icon::Scissors, ButtonRole::Primary});
-        UpdateButtonStyle(help_, {Icon::Help, ButtonRole::Standard, true});
-        UpdateButtonStyle(edit_, {Icon::Pen, ButtonRole::Standard, true});
-        UpdateButtonStyle(save_, {Icon::Save, ButtonRole::Standard, true});
-        UpdateButtonStyle(discard_, {Icon::Discard, ButtonRole::Standard, true});
-        UpdateButtonStyle(copy_, {Icon::Check, ButtonRole::Success, true});
 
         tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
                                      WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, island_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
         if (tooltip_ != nullptr) {
-            const std::pair<HWND, UINT> tips[] = {
-                {help_, IDS_SCROLLSHOT_HELP}, {edit_, IDS_SCROLLSHOT_EDIT}, {save_, IDS_SCROLLSHOT_SAVE}, {discard_, IDS_SCROLLSHOT_DISCARD}, {copy_, IDS_SCROLLSHOT_COPY}};
-            for (const auto& [control, id] : tips) {
-                TOOLINFOW info{sizeof(info)};
-                info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-                info.hwnd = island_;
-                info.uId = reinterpret_cast<UINT_PTR>(control);
-                info.lpszText = const_cast<wchar_t*>(strings::Get(id));
-                ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
-            }
+            // In ScrollshotButton order.
+            const std::array<HWND, kScrollshotButtonCount> buttons{start_, help_, edit_, save_, discard_, copy_};
+            for (size_t i = 0; i < buttons.size(); ++i) { AddButtonTooltip(tooltip_, island_, buttons[i], kScrollshotButtons[i]); }
             StyleTooltip(tooltip_);
         }
         return true;

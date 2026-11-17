@@ -31,6 +31,30 @@ constexpr wchar_t kVideoClassName[] = L"EasnapTrimVideo";
 static_assert(kTrimChromeHeightDip == kWindowChromeHeight);
 constexpr UINT kStatusTimerIntervalMs = 100;
 
+/// The trim window's buttons, indexes into kTrimButtons, in creation order.
+enum TrimButton : size_t {
+    kPlayPauseButton,
+    kSetInButton,
+    kSetOutButton,
+    kSaveButton,
+    kCopyButton,
+    kCancelExportButton,
+    kDiscardButton,
+    kTrimButtonCount
+};
+/// One row per button of the trim window; none has a tooltip. Play/Pause
+/// shows Pause while playing. Discard reads "Close" for an opened video,
+/// which is only closed and never deleted (ADR-040).
+constexpr std::array<StyledButtonRow, kTrimButtonCount> kTrimButtons{{
+    {kTrimPlayPause, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_PLAY_BUTTON, {Icon::Play}, 0, Icon::Pause, IDS_TRIM_PAUSE_BUTTON},
+    {kTrimSetIn, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_SET_IN_BUTTON},
+    {kTrimSetOut, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_SET_OUT_BUTTON},
+    {IDOK, WS_TABSTOP | BS_DEFPUSHBUTTON, IDS_TRIM_SAVE_BUTTON, {Icon::Save, ButtonRole::Primary}},
+    {kTrimCopy, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_COPY_BUTTON, {Icon::Copy}},
+    {kTrimCancelExport, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_CANCEL_EXPORT_BUTTON},
+    {IDCANCEL, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_DISCARD_BUTTON, {Icon::Discard}, 0, Icon::None, IDS_EXTERNAL_TRIM_CLOSE_BUTTON},
+}};
+
 constexpr DWORD kWindowStyle = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
 // Per-control buffers alone leave holes while USER32 relocates a child tree.
 // Commit this window's descendant painting together during native resizing.
@@ -733,27 +757,16 @@ bool TrimWindow::CreateControls() {
         0, kTimelineClassName, strings::Get(IDS_TRIM_TIMELINE_NAME),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 1, 1, hwnd_, nullptr,
         ::GetModuleHandleW(nullptr), this);
-    play_pause_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_PLAY_BUTTON),
-                                WS_TABSTOP | BS_PUSHBUTTON, kTrimPlayPause);
-    set_in_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SET_IN_BUTTON),
-                            WS_TABSTOP | BS_PUSHBUTTON, kTrimSetIn);
-    set_out_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SET_OUT_BUTTON),
-                             WS_TABSTOP | BS_PUSHBUTTON, kTrimSetOut);
-    save_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SAVE_BUTTON),
-                          WS_TABSTOP | BS_DEFPUSHBUTTON, IDOK);
-    copy_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_COPY_BUTTON),
-                          WS_TABSTOP | BS_PUSHBUTTON, kTrimCopy);
-    cancel_export_ = CreateControl(L"BUTTON",
-                                   strings::Get(IDS_TRIM_CANCEL_EXPORT_BUTTON),
-                                   WS_TABSTOP | BS_PUSHBUTTON,
-                                   kTrimCancelExport);
+    play_pause_ = CreateStyledButton(hwnd_, kTrimButtons[kPlayPauseButton], WS_VISIBLE);
+    set_in_ = CreateStyledButton(hwnd_, kTrimButtons[kSetInButton], WS_VISIBLE);
+    set_out_ = CreateStyledButton(hwnd_, kTrimButtons[kSetOutButton], WS_VISIBLE);
+    save_ = CreateStyledButton(hwnd_, kTrimButtons[kSaveButton], WS_VISIBLE);
+    copy_ = CreateStyledButton(hwnd_, kTrimButtons[kCopyButton], WS_VISIBLE);
+    cancel_export_ = CreateStyledButton(hwnd_, kTrimButtons[kCancelExportButton], WS_VISIBLE);
     // The same cell either way: a recording is discarded, an opened video is
     // only closed and never deleted (ADR-040).
-    discard_ = CreateControl(L"BUTTON",
-                             strings::Get(source_.kind == app::TrimSourceKind::External
-                                              ? IDS_EXTERNAL_TRIM_CLOSE_BUTTON
-                                              : IDS_TRIM_DISCARD_BUTTON),
-                             WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
+    discard_ = CreateStyledButton(hwnd_, kTrimButtons[kDiscardButton], WS_VISIBLE, {},
+                                  source_.kind == app::TrimSourceKind::External);
     progress_ = CreateControl(PROGRESS_CLASSW, L"", PBS_SMOOTH, -1);
     if (progress_ && !StyleProgress(progress_)) { return false; }
     if (progress_ != nullptr) {
@@ -762,10 +775,6 @@ bool TrimWindow::CreateControls() {
     if (timeline_) {
         timeline_accessibility_ = std::make_unique<TimelineAccessibility>(timeline_, [this] { return AccessibleTimeline(); }, [this](int index, double value) { return SetAccessibleTimelineValue(index, value); }, [this](int index) { FocusTimeline(index); });
     }
-    UpdateButtonStyle(play_pause_, {Icon::Play});
-    UpdateButtonStyle(save_, {Icon::Save, ButtonRole::Primary});
-    UpdateButtonStyle(copy_, {Icon::Copy});
-    UpdateButtonStyle(discard_, {Icon::Discard});
     SetControlVisible(cancel_export_, false);
     SetControlVisible(progress_, false);
     return video_ != nullptr && time_label_ != nullptr &&
@@ -784,10 +793,6 @@ HWND TrimWindow::CreateControl(const wchar_t* class_name, const wchar_t* text,
             ? nullptr
             : reinterpret_cast<HMENU>(static_cast<INT_PTR>(identifier)),
         ::GetModuleHandleW(nullptr), nullptr);
-    if (control && ::lstrcmpW(class_name, L"BUTTON") == 0 && !StyleButton(control)) {
-        ::DestroyWindow(control);
-        return nullptr;
-    }
     if (control && ::lstrcmpW(class_name, L"STATIC") == 0 && !StyleLabel(control)) {
         ::DestroyWindow(control);
         return nullptr;
@@ -925,12 +930,11 @@ void TrimWindow::UpdatePreviewState() {
             preview_error_reported_ = true;
             ShowErrorMessage(hwnd_, failure.c_str());
         }
-    } else if (snapshot.play_requested) {
-        ::SetWindowTextW(play_pause_, strings::Get(IDS_TRIM_PAUSE_BUTTON));
-        UpdateButtonStyle(play_pause_, {Icon::Pause});
     } else {
-        ::SetWindowTextW(play_pause_, strings::Get(IDS_TRIM_PLAY_BUTTON));
-        UpdateButtonStyle(play_pause_, {Icon::Play});
+        // Pause while playing, Play otherwise.
+        const StyledButtonRow& play_pause = kTrimButtons[kPlayPauseButton];
+        ::SetWindowTextW(play_pause_, strings::Get(RowCaption(play_pause, snapshot.play_requested)));
+        UpdateButtonStyle(play_pause_, snapshot.play_requested ? AlternateStyle(play_pause) : play_pause.style);
     }
     UpdatePosition();
     UpdateEnabledState();

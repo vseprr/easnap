@@ -3,6 +3,7 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <array>
 #include <memory>
 
 #include "platform/paint_buffer.h"
@@ -14,6 +15,21 @@
 
 namespace easnap::ui {
 namespace {
+/// The caption buttons, indexes into kCaptionButtons, in creation order.
+enum CaptionButton : size_t {
+    kCloseButton,
+    kMinimizeButton,
+    kMaximizeButton,
+    kCaptionButtonCount
+};
+/// One row per caption button. They have no control identifier (the header
+/// tells them apart by handle) and no tooltip: the caption is the accessible
+/// name. Minimize and maximize exist on a resizable window only.
+constexpr std::array<StyledButtonRow, kCaptionButtonCount> kCaptionButtons{{
+    {0, WS_TABSTOP | BS_PUSHBUTTON, IDS_SHELL_CHROME_CLOSE, {Icon::Discard, ButtonRole::Standard, true}},
+    {0, WS_TABSTOP | BS_PUSHBUTTON, IDS_SHELL_CHROME_MINIMIZE, {Icon::Minimize, ButtonRole::Standard, true}},
+    {0, WS_TABSTOP | BS_PUSHBUTTON, IDS_SHELL_CHROME_MAXIMIZE, {Icon::Maximize, ButtonRole::Standard, true}},
+}};
 struct WindowChrome {
     HWND owner{}, header{}, close{}, minimize{}, maximize{};
     HFONT font{};
@@ -200,18 +216,10 @@ bool StyleWindowChrome(HWND window, bool resizable) {
     data->resizable = resizable;
     data->header = ::CreateWindowExW(WS_EX_CONTROLPARENT, L"EasnapWindowChrome", strings::Get(IDS_SHELL_CHROME_CONTROLS), WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, 0, 0, 1, 1, window, nullptr, ::GetModuleHandleW(nullptr), data.get());
     if (!data->header) { return false; }
-    const auto button = [&](const wchar_t* title, Icon icon) {
-        HWND control = ::CreateWindowExW(0, L"BUTTON", title, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 1, 1, data->header, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-        if (control && !StyleButton(control, {icon, ButtonRole::Standard, true})) {
-            ::DestroyWindow(control);
-            return static_cast<HWND>(nullptr);
-        }
-        return control;
-    };
-    data->close = button(strings::Get(IDS_SHELL_CHROME_CLOSE), Icon::Discard);
+    data->close = CreateStyledButton(data->header, kCaptionButtons[kCloseButton], WS_VISIBLE);
     if (resizable) {
-        data->minimize = button(strings::Get(IDS_SHELL_CHROME_MINIMIZE), Icon::Minimize);
-        data->maximize = button(strings::Get(IDS_SHELL_CHROME_MAXIMIZE), Icon::Maximize);
+        data->minimize = CreateStyledButton(data->header, kCaptionButtons[kMinimizeButton], WS_VISIBLE);
+        data->maximize = CreateStyledButton(data->header, kCaptionButtons[kMaximizeButton], WS_VISIBLE);
     }
     if (!data->close || (resizable && (!data->minimize || !data->maximize)) ||
         !::SetWindowSubclass(window, ChromeParentProc, kChromeSubclass, reinterpret_cast<DWORD_PTR>(data.get()))) {

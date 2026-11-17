@@ -369,6 +369,25 @@ int ButtonContentWidth(HWND button) {
     }
     return 2 * theme::Scaled(theme::kButtonFaceInset, scale) + lead + static_cast<int>(extent.cx) + theme::Scaled(theme::kButtonLabelInset, scale);
 }
+HWND CreateStyledButton(HWND parent, const StyledButtonRow& row, DWORD extra_style, ButtonPlacement placement, bool alternate) {
+    HWND button = ::CreateWindowExW(0, L"BUTTON", strings::Get(RowCaption(row, alternate)), WS_CHILD | extra_style | row.window_style,
+                                    placement.x, placement.y, placement.width, placement.height, parent,
+                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(row.id)), ::GetModuleHandleW(nullptr), nullptr);
+    if (button && !StyleButton(button, alternate ? AlternateStyle(row) : row.style)) {
+        ::DestroyWindow(button);
+        return nullptr;
+    }
+    return button;
+}
+void AddButtonTooltip(HWND tooltip, HWND owner, HWND button, const StyledButtonRow& row) {
+    if (tooltip == nullptr || button == nullptr || row.tooltip == 0) { return; }
+    TOOLINFOW info{sizeof(info)};
+    info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+    info.hwnd = owner;
+    info.uId = reinterpret_cast<UINT_PTR>(button);
+    info.lpszText = const_cast<wchar_t*>(strings::Get(row.tooltip));
+    ::SendMessageW(tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
+}
 namespace {
 /// BufferedTextProc's reference data for an EDIT; a label has 0.
 constexpr DWORD_PTR kBufferedEdit = 1;

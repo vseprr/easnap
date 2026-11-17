@@ -25,6 +25,40 @@ constexpr int kPanelWidthDip = 390;
 constexpr int kActivePanelWidthDip = 310;
 
 constexpr DWORD kPanelStyle = WS_POPUP | WS_CLIPCHILDREN;
+
+/// The recording panel's buttons, indexes into kRecordingButtons. The panel
+/// creates them in a fixed order among its labels (CreatePanelControls).
+enum RecordingButton : size_t {
+    kStartButton,
+    kAppearanceButton,
+    kFormatMp4Button,
+    kFormatGifButton,
+    kSystemAudioButton,
+    kMicrophoneButton,
+    kGifHighQualityButton,
+    kGifLowSizeButton,
+    kIncludeCursorButton,
+    kCancelButton,
+    kPauseResumeButton,
+    kStopButton,
+    kRecordingButtonCount
+};
+/// One row per button of the recording panel. Only Appearance has a tooltip;
+/// Pause/Resume shows Play and "Resume" while the recording is paused.
+constexpr std::array<StyledButtonRow, kRecordingButtonCount> kRecordingButtons{{
+    {IDOK, WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDS_SESSION_RECORD_START, {Icon::Record, ButtonRole::Primary}},
+    {kRecordingAppearance, WS_TABSTOP | BS_PUSHBUTTON, IDS_SESSION_RECORD_APPEARANCE, {Icon::Appearance, ButtonRole::Standard, true}, IDS_SESSION_RECORD_APPEARANCE_TOOLTIP},
+    {kRecordingFormatMp4, WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, IDS_SESSION_RECORD_FORMAT_MP4},
+    {kRecordingFormatGif, WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, IDS_SESSION_RECORD_FORMAT_GIF},
+    {kRecordingAudioSystem, WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, IDS_SESSION_RECORD_SYSTEM_AUDIO, {Icon::SystemAudio}},
+    {kRecordingAudioMicrophone, WS_TABSTOP | BS_AUTOCHECKBOX | BS_PUSHLIKE, IDS_SESSION_RECORD_MICROPHONE, {Icon::Microphone}},
+    {kRecordingGifHighQuality, WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, IDS_SESSION_RECORD_GIF_HIGH_QUALITY},
+    {kRecordingGifLowSize, WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, IDS_SESSION_RECORD_GIF_LOW_SIZE},
+    {kRecordingIncludeCursor, WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, IDS_SESSION_RECORD_INCLUDE_CURSOR, {Icon::Cursor}},
+    {IDCANCEL, WS_TABSTOP | BS_PUSHBUTTON, IDS_DIALOG_CANCEL},
+    {kRecordingPauseResume, WS_TABSTOP | BS_CHECKBOX | BS_PUSHLIKE, IDS_SESSION_RECORD_PAUSE, {Icon::Pause, ButtonRole::Standard, true}, 0, Icon::Play, IDS_SESSION_RECORD_RESUME},
+    {kRecordingStop, WS_TABSTOP | BS_PUSHBUTTON, IDS_SESSION_RECORD_STOP, {Icon::Stop, ButtonRole::Destructive}},
+}};
 constexpr DWORD kPanelExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTROLPARENT;
 
 [[nodiscard]] int ScaleDip(int value, float scale) noexcept {
@@ -191,8 +225,8 @@ public:
             title = L"Finalizing recording";
         }
         ::SetWindowTextW(title_, title);
-        ::SetWindowTextW(pause_resume_, strings::Get(policy.can_resume ? IDS_SESSION_RECORD_RESUME
-                                                                       : IDS_SESSION_RECORD_PAUSE));
+        const StyledButtonRow& pause_resume = kRecordingButtons[kPauseResumeButton];
+        ::SetWindowTextW(pause_resume_, strings::Get(RowCaption(pause_resume, policy.can_resume)));
         if (finalizing) {
             ::SetWindowTextW(status_, strings::Get(IDS_SESSION_RECORD_FINISHING));
         }
@@ -222,7 +256,7 @@ public:
         ::EnableWindow(cancel_, policy.can_cancel);
         ::EnableWindow(pause_resume_, policy.can_pause || policy.can_resume);
         ::EnableWindow(stop_, policy.can_stop);
-        UpdateButtonStyle(pause_resume_, {policy.can_resume ? Icon::Play : Icon::Pause, ButtonRole::Standard, true});
+        UpdateButtonStyle(pause_resume_, policy.can_resume ? AlternateStyle(pause_resume) : pause_resume.style);
         ::SendMessageW(pause_resume_, BM_SETCHECK, policy.can_resume ? BST_CHECKED : BST_UNCHECKED, 0);
         ::InvalidateRect(elapsed_, nullptr, FALSE);
 
@@ -581,62 +615,55 @@ private:
     }
 
     [[nodiscard]] bool CreatePanelControls() {
-        title_ = CreateControl(L"STATIC", L"Record screen", SS_LEFT, kRecordingTitle);
-        start_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_START), WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDOK);
-        appearance_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_APPEARANCE), WS_TABSTOP | BS_PUSHBUTTON, kRecordingAppearance);
-        format_label_ = CreateControl(L"STATIC", L"Format", SS_LEFT, kRecordingFormatLabel);
-        format_mp4_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_FORMAT_MP4), WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kRecordingFormatMp4);
-        format_gif_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_FORMAT_GIF), WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kRecordingFormatGif);
-        audio_label_ = CreateControl(L"STATIC", strings::Get(IDS_SESSION_RECORD_AUDIO_LABEL), SS_LEFT, kRecordingAudioLabel);
-        audio_system_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_SYSTEM_AUDIO), WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kRecordingAudioSystem);
-        audio_microphone_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_MICROPHONE), WS_TABSTOP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kRecordingAudioMicrophone);
-        gif_quality_label_ = CreateControl(L"STATIC", strings::Get(IDS_SESSION_RECORD_GIF_QUALITY_LABEL), SS_LEFT, kRecordingGifQualityLabel);
-        gif_high_quality_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_GIF_HIGH_QUALITY), WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kRecordingGifHighQuality);
-        gif_low_size_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_GIF_LOW_SIZE), WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kRecordingGifLowSize);
-        include_cursor_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_INCLUDE_CURSOR), WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kRecordingIncludeCursor);
-        cancel_ = CreateControl(L"BUTTON", strings::Get(IDS_DIALOG_CANCEL), WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
-        elapsed_ = CreateControl(L"STATIC", L"00:00:00", SS_CENTER | SS_CENTERIMAGE, kRecordingElapsed);
-        status_ = CreateControl(L"STATIC", L"", SS_LEFT, kRecordingStatus);
-        pause_resume_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_PAUSE), WS_TABSTOP | BS_CHECKBOX | BS_PUSHLIKE, kRecordingPauseResume);
-        stop_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_STOP), WS_TABSTOP | BS_PUSHBUTTON, kRecordingStop);
+        // Creation order is tab and z-order: buttons and labels interleave.
+        title_ = CreateLabel(L"Record screen", SS_LEFT, kRecordingTitle);
+        start_ = CreateButton(kStartButton);
+        appearance_ = CreateButton(kAppearanceButton);
+        format_label_ = CreateLabel(L"Format", SS_LEFT, kRecordingFormatLabel);
+        format_mp4_ = CreateButton(kFormatMp4Button);
+        format_gif_ = CreateButton(kFormatGifButton);
+        audio_label_ = CreateLabel(strings::Get(IDS_SESSION_RECORD_AUDIO_LABEL), SS_LEFT, kRecordingAudioLabel);
+        audio_system_ = CreateButton(kSystemAudioButton);
+        audio_microphone_ = CreateButton(kMicrophoneButton);
+        gif_quality_label_ = CreateLabel(strings::Get(IDS_SESSION_RECORD_GIF_QUALITY_LABEL), SS_LEFT, kRecordingGifQualityLabel);
+        gif_high_quality_ = CreateButton(kGifHighQualityButton);
+        gif_low_size_ = CreateButton(kGifLowSizeButton);
+        include_cursor_ = CreateButton(kIncludeCursorButton);
+        cancel_ = CreateButton(kCancelButton);
+        elapsed_ = CreateLabel(L"00:00:00", SS_CENTER | SS_CENTERIMAGE, kRecordingElapsed);
+        status_ = CreateLabel(L"", SS_LEFT, kRecordingStatus);
+        pause_resume_ = CreateButton(kPauseResumeButton);
+        stop_ = CreateButton(kStopButton);
         for (HWND control : {title_, start_, appearance_, format_label_, format_mp4_, format_gif_, audio_label_,
                              audio_system_, audio_microphone_, gif_quality_label_, gif_high_quality_, gif_low_size_, include_cursor_,
                              cancel_, elapsed_, status_, pause_resume_, stop_}) {
             if (!control) { return false; }
         }
-        UpdateButtonStyle(start_, {Icon::Record, ButtonRole::Primary});
-        UpdateButtonStyle(appearance_, {Icon::Appearance, ButtonRole::Standard, true});
-        UpdateButtonStyle(audio_system_, {Icon::SystemAudio});
-        UpdateButtonStyle(audio_microphone_, {Icon::Microphone});
-        UpdateButtonStyle(include_cursor_, {Icon::Cursor});
-        UpdateButtonStyle(pause_resume_, {Icon::Pause, ButtonRole::Standard, true});
-        UpdateButtonStyle(stop_, {Icon::Stop, ButtonRole::Destructive});
         tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
                                      WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, panel_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
         if (tooltip_) {
-            TOOLINFOW info{sizeof(info)};
-            info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-            info.hwnd = panel_;
-            info.uId = reinterpret_cast<UINT_PTR>(appearance_);
-            info.lpszText = const_cast<wchar_t*>(strings::Get(IDS_SESSION_RECORD_APPEARANCE_TOOLTIP));
-            ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
+            // In RecordingButton order.
+            const std::array<HWND, kRecordingButtonCount> buttons{start_, appearance_, format_mp4_, format_gif_,
+                                                                  audio_system_, audio_microphone_, gif_high_quality_, gif_low_size_,
+                                                                  include_cursor_, cancel_, pause_resume_, stop_};
+            for (size_t i = 0; i < buttons.size(); ++i) { AddButtonTooltip(tooltip_, panel_, buttons[i], kRecordingButtons[i]); }
             StyleTooltip(tooltip_);
         }
         return true;
     }
 
-    [[nodiscard]] HWND CreateControl(const wchar_t* class_name,
-                                     const wchar_t* text, DWORD style,
-                                     int id) const {
+    /// A hidden styled button of the panel, as its kRecordingButtons row says.
+    [[nodiscard]] HWND CreateButton(RecordingButton button) const {
+        return CreateStyledButton(panel_, kRecordingButtons[button], 0);
+    }
+
+    /// A hidden buffered STATIC of the panel.
+    [[nodiscard]] HWND CreateLabel(const wchar_t* text, DWORD style, int id) const {
         HWND control = ::CreateWindowExW(
-            0, class_name, text, WS_CHILD | style, 0, 0, 1, 1, panel_,
+            0, L"STATIC", text, WS_CHILD | style, 0, 0, 1, 1, panel_,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
             ::GetModuleHandleW(nullptr), nullptr);
-        if (control && ::lstrcmpW(class_name, L"BUTTON") == 0 && !StyleButton(control)) {
-            ::DestroyWindow(control);
-            return nullptr;
-        }
-        if (control && ::lstrcmpW(class_name, L"STATIC") == 0 && !StyleLabel(control)) {
+        if (control && !StyleLabel(control)) {
             ::DestroyWindow(control);
             return nullptr;
         }

@@ -25,6 +25,33 @@ constexpr int kFieldLeft = kMargin + kLabelWidth + 8;
 constexpr int kRowHeight = 40;
 constexpr int kRowGap = 8;
 
+/// The dialog's styled buttons with a caption, indexes into kSettingsButtons.
+/// The shortcut field is a button too, but shows the shortcut, not a caption.
+enum SettingsButton : size_t {
+    kStartWithWindowsButton,
+    kCaptureCursorButton,
+    kImageChangeButton,
+    kImageResetButton,
+    kQuickSaveButton,
+    kVideoChangeButton,
+    kVideoResetButton,
+    kCancelButton,
+    kAcceptButton,
+    kSettingsButtonCount
+};
+/// One row per button of the Settings dialog; none has an icon or a tooltip.
+constexpr std::array<StyledButtonRow, kSettingsButtonCount> kSettingsButtons{{
+    {kSettingsStartWithWindows, WS_TABSTOP | BS_AUTOCHECKBOX, IDS_SETTINGS_START_WITH_WINDOWS},
+    {kSettingsCaptureCursor, WS_TABSTOP | BS_AUTOCHECKBOX, IDS_SETTINGS_CAPTURE_CURSOR},
+    {kSettingsImageChange, WS_TABSTOP | BS_PUSHBUTTON, IDS_SETTINGS_FOLDER_CHANGE},
+    {kSettingsImageReset, WS_TABSTOP | BS_PUSHBUTTON, IDS_SETTINGS_FOLDER_RESET},
+    {kSettingsQuickSave, WS_TABSTOP | BS_AUTOCHECKBOX, IDS_SETTINGS_QUICK_SAVE},
+    {kSettingsVideoChange, WS_TABSTOP | BS_PUSHBUTTON, IDS_SETTINGS_FOLDER_CHANGE},
+    {kSettingsVideoReset, WS_TABSTOP | BS_PUSHBUTTON, IDS_SETTINGS_FOLDER_RESET},
+    {IDCANCEL, WS_TABSTOP | BS_PUSHBUTTON, IDS_DIALOG_CANCEL},
+    {IDOK, WS_TABSTOP | BS_DEFPUSHBUTTON, IDS_DIALOG_OK, {Icon::None, ButtonRole::Primary}},
+}};
+
 struct Dialog {
     SettingsDialogModel model;
     const SettingsDialogCallbacks* callbacks{nullptr};
@@ -163,9 +190,10 @@ struct Dialog {
                                 Dip(kMargin), y, Dip(kLabelWidth), Dip(kRowHeight));
             ok = ok && StyleLabel(control);
         };
-        const auto button = [&](UINT text, DWORD style, int id, int x, int y, int w, ButtonStyle look = {}) {
-            HWND control = make(L"BUTTON", strings::Get(text), WS_TABSTOP | style, id, x, y, w, Dip(kRowHeight));
-            ok = ok && StyleButton(control, look);
+        const auto button = [&](SettingsButton which, int x, int y, int w) {
+            const StyledButtonRow& row = kSettingsButtons[which];
+            HWND control = make(L"BUTTON", strings::Get(row.caption), row.window_style, row.id, x, y, w, Dip(kRowHeight));
+            ok = ok && StyleButton(control, row.style);
             return control;
         };
         const auto combo = [&](int id, int y, std::initializer_list<const wchar_t*> items, int selected, UINT name) {
@@ -209,36 +237,36 @@ struct Dialog {
         y += Dip(40 + kRowGap);
 
         const int full_width = width - 2 * Dip(kMargin);
-        HWND startup = button(IDS_SETTINGS_START_WITH_WINDOWS, BS_AUTOCHECKBOX, kSettingsStartWithWindows, Dip(kMargin), y, full_width);
+        HWND startup = button(kStartWithWindowsButton, Dip(kMargin), y, full_width);
         ::SendMessageW(startup, BM_SETCHECK, model.start_with_windows ? BST_CHECKED : BST_UNCHECKED, 0);
         y += step;
-        HWND cursor_box = button(IDS_SETTINGS_CAPTURE_CURSOR, BS_AUTOCHECKBOX, kSettingsCaptureCursor, Dip(kMargin), y, full_width);
+        HWND cursor_box = button(kCaptureCursorButton, Dip(kMargin), y, full_width);
         ::SendMessageW(cursor_box, BM_SETCHECK, model.capture_cursor ? BST_CHECKED : BST_UNCHECKED, 0);
         y += step;
 
-        const auto folder_row = [&](UINT name, int path_id, int change_id, int reset_id) {
+        const auto folder_row = [&](UINT name, int path_id, SettingsButton change_button, SettingsButton reset_button) {
             label(name, y);
             HWND path = make(L"STATIC", L"", SS_LEFT | SS_CENTERIMAGE | SS_NOPREFIX | SS_PATHELLIPSIS, path_id, Dip(kFieldLeft), y,
                              field_width, Dip(kRowHeight));
             ok = ok && StyleLabel(path);
             y += Dip(kRowHeight);
-            HWND change = button(IDS_SETTINGS_FOLDER_CHANGE, BS_PUSHBUTTON, change_id, Dip(kFieldLeft), y, Dip(120));
+            HWND change = button(change_button, Dip(kFieldLeft), y, Dip(120));
             const int change_width = std::max(Dip(120), ButtonContentWidth(change));
             ::SetWindowPos(change, nullptr, 0, 0, change_width, Dip(kRowHeight), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-            HWND reset = button(IDS_SETTINGS_FOLDER_RESET, BS_PUSHBUTTON, reset_id, Dip(kFieldLeft) + change_width + Dip(8), y, Dip(120));
+            HWND reset = button(reset_button, Dip(kFieldLeft) + change_width + Dip(8), y, Dip(120));
             ::SetWindowPos(reset, nullptr, 0, 0, std::max(Dip(120), ButtonContentWidth(reset)), Dip(kRowHeight),
                            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
             y += step;
         };
-        folder_row(IDS_SETTINGS_IMAGE_FOLDER, kSettingsImageFolder, kSettingsImageChange, kSettingsImageReset);
-        HWND quick = button(IDS_SETTINGS_QUICK_SAVE, BS_AUTOCHECKBOX, kSettingsQuickSave, Dip(kFieldLeft), y, field_width);
+        folder_row(IDS_SETTINGS_IMAGE_FOLDER, kSettingsImageFolder, kImageChangeButton, kImageResetButton);
+        HWND quick = button(kQuickSaveButton, Dip(kFieldLeft), y, field_width);
         ::SendMessageW(quick, BM_SETCHECK, model.quick_save_images ? BST_CHECKED : BST_UNCHECKED, 0);
         y += step;
-        folder_row(IDS_SETTINGS_VIDEO_FOLDER, kSettingsVideoFolder, kSettingsVideoChange, kSettingsVideoReset);
+        folder_row(IDS_SETTINGS_VIDEO_FOLDER, kSettingsVideoFolder, kVideoChangeButton, kVideoResetButton);
 
         y += Dip(8);
-        HWND cancel = button(IDS_DIALOG_CANCEL, BS_PUSHBUTTON, IDCANCEL, 0, y, Dip(120));
-        HWND accept = button(IDS_DIALOG_OK, BS_DEFPUSHBUTTON, IDOK, 0, y, Dip(120), {Icon::None, ButtonRole::Primary});
+        HWND cancel = button(kCancelButton, 0, y, Dip(120));
+        HWND accept = button(kAcceptButton, 0, y, Dip(120));
         const int cancel_width = std::max(Dip(120), ButtonContentWidth(cancel));
         const int accept_width = std::max(Dip(120), ButtonContentWidth(accept));
         ::SetWindowPos(cancel, nullptr, width - Dip(kMargin) - cancel_width, y, cancel_width, Dip(kRowHeight),

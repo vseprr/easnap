@@ -105,6 +105,40 @@ void UpdateButtonStyle(HWND button, ButtonStyle style);
 /// it, so a caption that is longer in another language widens its button
 /// instead of being cut.
 [[nodiscard]] int ButtonContentWidth(HWND button);
+
+/// One row of a surface's button table: everything that is fixed about a
+/// styled button, so that its icon, caption or tooltip is changed in one place.
+struct StyledButtonRow {
+    int id{0};                       // Control identifier; 0 for none.
+    DWORD window_style{0};           // BS_*, WS_TABSTOP and WS_GROUP bits.
+    UINT caption{0};                 // String id of the window text, which is also the accessible name.
+    ButtonStyle style{};             // Look in the first (or only) state.
+    UINT tooltip{0};                 // String id of the tooltip; 0 for a button without one.
+    Icon alternate_icon{Icon::None}; // Icon in the second state of a two-state button.
+    UINT alternate_caption{0};       // Caption in the second state; 0 when it does not change.
+};
+/// The look of `row` in its second state: its style with the alternate icon.
+[[nodiscard]] constexpr ButtonStyle AlternateStyle(const StyledButtonRow& row) noexcept {
+    ButtonStyle style = row.style;
+    if (row.alternate_icon != Icon::None) { style.icon = row.alternate_icon; }
+    return style;
+}
+/// The caption string id of `row` in the first or the second state.
+[[nodiscard]] constexpr UINT RowCaption(const StyledButtonRow& row, bool alternate) noexcept {
+    return alternate && row.alternate_caption != 0 ? row.alternate_caption : row.caption;
+}
+/// Where a new button goes in its parent's client area, in pixels.
+struct ButtonPlacement {
+    int x{0}, y{0}, width{1}, height{1};
+};
+/// Creates the BUTTON `row` describes as a child of `parent`, with
+/// `extra_style` (such as WS_VISIBLE) besides WS_CHILD and the row's bits, in
+/// the first or the `alternate` state, and styles it. nullptr on failure.
+[[nodiscard]] HWND CreateStyledButton(HWND parent, const StyledButtonRow& row, DWORD extra_style,
+                                      ButtonPlacement placement = {}, bool alternate = false);
+/// Registers the tooltip of `row`, if it has one, for `button` with `tooltip`;
+/// `owner` is the window that receives the tooltip's notifications.
+void AddButtonTooltip(HWND tooltip, HWND owner, HWND button, const StyledButtonRow& row);
 [[nodiscard]] bool StyleSlider(HWND slider);
 [[nodiscard]] bool StyleInput(HWND input);
 [[nodiscard]] bool StyleLabel(HWND label);

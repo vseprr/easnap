@@ -44,10 +44,23 @@ struct PaletteButton {
     RECT rect;  ///< Client coordinates of the overlay window.
 };
 
-/// Order of the mode buttons, left to right.
-constexpr std::array<CaptureMode, 3> kModes{
-    CaptureMode::Screenshot, CaptureMode::Scrollshot, CaptureMode::Record};
-static_assert(kModeIslandButtons.count == static_cast<int>(kModes.size()));
+/// One button of the mode island: the mode it chooses, its icon and caption
+/// (also its accessible name). The island shows no tooltips.
+struct ModeButtonRow {
+    CaptureMode mode;
+    Icon icon;
+    UINT caption;
+    /// Caption instead of `caption` where capture exclusion is unsupported and
+    /// the button is disabled for it; 0 when the button has no such state.
+    UINT caption_without_exclusion{0};
+};
+/// The mode buttons, left to right: creation, control identifier and tab order.
+constexpr std::array<ModeButtonRow, 3> kModeButtons{{
+    {CaptureMode::Screenshot, Icon::Rectangle, IDS_MODE_SCREENSHOT},
+    {CaptureMode::Scrollshot, Icon::Scissors, IDS_MODE_SCROLLSHOT, IDS_MODE_SCROLLSHOT_UNSUPPORTED},
+    {CaptureMode::Record, Icon::Record, IDS_MODE_RECORD},
+}};
+static_assert(kModeIslandButtons.count == static_cast<int>(kModeButtons.size()));
 
 /// Reusable GDI surface shared by one monitor's serial dim/chrome/magnifier paints.
 class BackBuffer {
@@ -330,7 +343,6 @@ public:
             frozen_.Create(frame->image);
         }
         if (mode_toolbar_) {
-            constexpr std::array<Icon, 3> icons{Icon::Rectangle, Icon::Scissors, Icon::Record};
             const auto buttons = PaletteLayout(true);
             for (size_t i = 0; i < buttons.size(); ++i) {
                 const auto& r = buttons[i].rect;
@@ -339,7 +351,7 @@ public:
                                                      r.left, r.top, r.right - r.left, r.bottom - r.top, mode_toolbar_,
                                                      reinterpret_cast<HMENU>(static_cast<INT_PTR>(kModeIslandButtons.Id(static_cast<int>(i)))), instance, nullptr);
                 ButtonStyle style;
-                style.icon = icons[i];
+                style.icon = kModeButtons[i].icon;
                 style.preserve_disabled_visual = true;
                 style.hide_focus_line = true;
                 style.segmented = true;
@@ -351,7 +363,11 @@ public:
             }
             if (!CaptureExclusionSupported()) {
                 // The reason for the disabled button is its accessible name too.
-                ::SetWindowTextW(mode_buttons_[1], strings::Get(IDS_MODE_SCROLLSHOT_UNSUPPORTED));
+                for (size_t i = 0; i < kModeButtons.size(); ++i) {
+                    if (kModeButtons[i].caption_without_exclusion != 0) {
+                        ::SetWindowTextW(mode_buttons_[i], strings::Get(kModeButtons[i].caption_without_exclusion));
+                    }
+                }
             }
             static_cast<void>(::SetWindowDisplayAffinity(mode_toolbar_, 0x11));
             SyncModeButtons();
@@ -575,9 +591,9 @@ public:
             if (!button) { continue; }
             // Scrollshot needs capture exclusion; without it the button stays off.
             const bool enabled = controller_.workspace().can_switch_mode() &&
-                                 (kModes[i] != CaptureMode::Scrollshot || CaptureExclusionSupported());
+                                 (kModeButtons[i].mode != CaptureMode::Scrollshot || CaptureExclusionSupported());
             if ((::IsWindowEnabled(button) != FALSE) != enabled) { ::EnableWindow(button, enabled); }
-            const WPARAM checked = kModes[i] == controller_.mode() ? BST_CHECKED : BST_UNCHECKED;
+            const WPARAM checked = kModeButtons[i].mode == controller_.mode() ? BST_CHECKED : BST_UNCHECKED;
             if (::SendMessageW(button, BM_GETCHECK, 0, 0) != static_cast<LRESULT>(checked)) { ::SendMessageW(button, BM_SETCHECK, checked, 0); }
         }
     }
@@ -1204,10 +1220,10 @@ private:
 
     void OnPaletteClicked(int index) {
         if (!controller_.workspace().can_switch_mode()) { return; }
-        if (index < 0 || index >= static_cast<int>(kModes.size())) {
+        if (index < 0 || index >= static_cast<int>(kModeButtons.size())) {
             return;
         }
-        const CaptureMode mode = kModes[static_cast<size_t>(index)];
+        const CaptureMode mode = kModeButtons[static_cast<size_t>(index)].mode;
         if (mode == CaptureMode::Scrollshot && !CaptureExclusionSupported()) { return; }
         if (!controller_.AllowMode(mode)) { return; }
         controller_.SetMode(mode);
@@ -1221,8 +1237,8 @@ private:
         LONG widest = 0;
         if (HDC dc = ::CreateCompatibleDC(nullptr)) {
             const HGDIOBJ previous = ::SelectObject(dc, button_font_);
-            for (UINT id : {IDS_MODE_SCREENSHOT, IDS_MODE_SCROLLSHOT, IDS_MODE_RECORD}) {
-                const wchar_t* text = strings::Get(id);
+            for (const ModeButtonRow& row : kModeButtons) {
+                const wchar_t* text = strings::Get(row.caption);
                 SIZE size{};
                 if (::GetTextExtentPoint32W(dc, text, ::lstrlenW(text), &size)) { widest = std::max(widest, size.cx); }
             }
@@ -1240,19 +1256,18 @@ private:
         const LONG button_height = theme::Scaled(theme::kPaletteButtonHeight, scale);
         const LONG padding = theme::Scaled(theme::kPalettePadding, scale);
         const LONG grip = theme::Scaled(theme::kIslandGripWidth, scale);
-        const LONG count = static_cast<LONG>(kModes.size());
+        const LONG count = static_cast<LONG>(kModeButtons.size());
         const LONG panel_width = button_width * count + padding * (count + 1) + grip;
         const LONG panel_left = local ? 0 : (client_width() - panel_width) / 2;
         // The home is at the top of the work area, below a taskbar docked at
         // the top; with the taskbar elsewhere that is the top of the monitor.
         const LONG panel_top = local ? 0 : monitor_.work_area.top - monitor_.bounds.top;
 
-        constexpr std::array<UINT, 3> labels{IDS_MODE_SCREENSHOT, IDS_MODE_SCROLLSHOT, IDS_MODE_RECORD};
         std::array<PaletteButton, 3> buttons{};
         LONG left = panel_left + padding + grip;
         for (size_t i = 0; i < buttons.size(); ++i) {
-            buttons[i].mode = kModes[i];
-            buttons[i].label = strings::Get(labels[i]);
+            buttons[i].mode = kModeButtons[i].mode;
+            buttons[i].label = strings::Get(kModeButtons[i].caption);
             buttons[i].rect = RECT{left, panel_top + padding, left + button_width, panel_top + padding + button_height};
             left += button_width + padding;
         }
