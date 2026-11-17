@@ -1,9 +1,11 @@
 // Easnap - what the screenshot editor knows about each annotation tool.
 //
-// One record per tool: its identity, its place on the tools island and how
-// its button looks. Adding a tool means adding its ToolId, its record here,
-// and handling it where a decision genuinely differs per tool (drawing, hit
-// testing, handles); those are found by searching for ToolId.
+// One record per tool: its identity, its place on the tools island, how its
+// button looks, the behaviour flags that depend only on the tool (text box,
+// base effect, selectable), its pointer and what its property island shows.
+// Adding a tool means adding its ToolId, its record here, and handling it
+// where a decision genuinely differs per tool (drawing, hit testing,
+// handles); those are found by searching for ToolId.
 #pragma once
 
 #include <windows.h>
@@ -199,7 +201,8 @@ inline constexpr std::array<ToolId, kToolCount> kToolbarOrder = [] {
 /// True for the tools that change the image pixels: Mosaic and Spotlight.
 [[nodiscard]] constexpr bool IsBaseEffect(ToolId tool) noexcept { return Tool(tool).base_effect; }
 
-/// False for the tools whose annotation is never selected: Watermark.
+/// False for the tools whose annotation is never selected: Watermark. It governs
+/// the selection chrome only; Annotation::HitTest decides hits on its own.
 [[nodiscard]] constexpr bool IsSelectable(ToolId tool) noexcept { return Tool(tool).selectable; }
 
 /// The controls the property island shows for `tool`.

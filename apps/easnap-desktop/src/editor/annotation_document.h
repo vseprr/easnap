@@ -31,10 +31,10 @@ enum class ToolId {
     Ellipse,    ///< Outlined ellipse.
     Text,       ///< Click, then type.
     Mosaic,     ///< Smooth blur or block pixelation, brush or rectangle.
-    Line,
-    Tag,
-    Spotlight,
-    Watermark,
+    Line,       ///< Straight line between two points.
+    Tag,        ///< Marker dot with a text label beside it.
+    Spotlight,  ///< Dims the image outside a rectangle, ellipse or rounded rectangle.
+    Watermark,  ///< Text repeated diagonally over the whole image.
 };
 
 /// How a text annotation is drawn: plain, on a filled box, or outlined.
@@ -54,16 +54,16 @@ enum class SpotlightShape { Rectangle,
 
 /// The properties an annotation is drawn with; the editor keeps one for new annotations.
 struct AnnotationStyle {
-    D2D1_COLOR_F color{kDefaultAnnotationColor};
-    float thickness{3.0f};
+    D2D1_COLOR_F color{kDefaultAnnotationColor};  ///< Stroke, text or marker colour.
+    float thickness{3.0f};  ///< Stroke width in captured pixels.
     float font_size{16.0f}; // Points, applied to the whole object.
     float image_scale{1.0f}; // Capture DPI/96, frozen with content.
-    TextMode text_mode{TextMode::Plain};
-    EffectMode effect{EffectMode::Blur};
-    EffectMethod method{EffectMethod::Brush};
-    SpotlightShape shape{SpotlightShape::Rectangle};
-    float strength{50.0f};
-    float opacity{50.0f};
+    TextMode text_mode{TextMode::Plain};  ///< How text is drawn.
+    EffectMode effect{EffectMode::Blur};  ///< Blur or pixelate, for a mosaic.
+    EffectMethod method{EffectMethod::Brush};  ///< Brush stroke or region, for a mosaic.
+    SpotlightShape shape{SpotlightShape::Rectangle};  ///< The undimmed area's outline, for a spotlight.
+    float strength{50.0f};  ///< Mosaic strength, 0-100: blur radius or block size.
+    float opacity{50.0f};  ///< Percent: the watermark's ink, or how much a spotlight dims.
     /// Diameter of the mosaic brush in captured pixels.
     float brush_size{32.0f};
 };

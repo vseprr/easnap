@@ -896,6 +896,15 @@ add_test(NAME capture_workspace_production
 set_tests_properties(capture_workspace_production PROPERTIES
     LABELS "integration;workspace;clipboard;editor;isolated-desktop" TIMEOUT 60)
 
+# The text half of the annotation rendering guard in capture_workspace_production:
+# text, tags, the watermark and the rounded spotlight against the pixels a
+# recorded machine drew. Skipped where this machine's text rendering
+# fingerprint matches no recorded machine.
+add_test(NAME annotation_text_rendering
+    COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_workspace> --annotation-text)
+set_tests_properties(annotation_text_rendering PROPERTIES
+    LABELS "integration;workspace;editor;isolated-desktop" TIMEOUT 60 SKIP_RETURN_CODE 77)
+
 add_test(NAME capture_frame_interaction
     COMMAND easnap_isolated_desktop $<TARGET_FILE:test_capture_workspace> --frame-performance)
 set_tests_properties(capture_frame_interaction PROPERTIES

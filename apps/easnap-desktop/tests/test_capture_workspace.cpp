@@ -928,8 +928,11 @@ struct RecordedTextPixels {
 /// on the machine and are compared everywhere. Text, tags, the watermark and
 /// the rounded spotlight grow with the display scale of the capture and text
 /// depends on the installed font, so those are compared where the text
-/// fingerprint matches a recorded machine and otherwise only reported.
-void AnnotationRenderingIsStable() {
+/// fingerprint matches a recorded machine. That comparison is a test entry of
+/// its own (`text_half`), skipped where the fingerprint matches no recorded
+/// machine. Returns false only when the text half was asked for and could not
+/// be compared.
+bool AnnotationRenderingIsStable(bool text_half) {
     using editor::ToolId;
     constexpr uint64_t kShapesComposite = 0xe60aaf3809563a85ull;
     constexpr uint64_t kShapesPreview = 0x7b707412e27a8dc6ull;
@@ -1024,8 +1027,10 @@ void AnnotationRenderingIsStable() {
     preview = HashPreview(preview, editor, region);
     std::printf("Annotation shapes: composite=%016llx preview=%016llx\n", static_cast<unsigned long long>(shapes_composite),
                 static_cast<unsigned long long>(preview));
-    CHECK(shapes_composite == kShapesComposite);
-    CHECK(preview == kShapesPreview);
+    if (!text_half) {
+        CHECK(shapes_composite == kShapesComposite);
+        CHECK(preview == kShapesPreview);
+    }
 
     // Text is typed into the editor's own text field and finished with Ctrl+Enter.
     stroke_preview = &text_preview;
@@ -1077,16 +1082,18 @@ void AnnotationRenderingIsStable() {
     std::printf("Annotation text: scale=%.2f fingerprint=%016llx composite=%016llx preview=%016llx\n", image_scale,
                 static_cast<unsigned long long>(fingerprint), static_cast<unsigned long long>(text_composite),
                 static_cast<unsigned long long>(text_preview));
+    editor.Destroy();
+    if (!text_half) { return true; }
     const auto recorded = std::find_if(kRecordedText.begin(), kRecordedText.end(),
                                        [&](const RecordedTextPixels& r) { return r.fingerprint == fingerprint; });
     if (recorded == kRecordedText.end()) {
         std::printf("Annotation text: not compared, this machine draws text differently from the recorded ones\n");
-    } else {
-        std::printf("Annotation text: compared with the recorded pixels\n");
-        CHECK(text_composite == recorded->composite);
-        CHECK(text_preview == recorded->preview);
+        return false;
     }
-    editor.Destroy();
+    std::printf("Annotation text: compared with the recorded pixels\n");
+    CHECK(text_composite == recorded->composite);
+    CHECK(text_preview == recorded->preview);
+    return true;
 }
 
 void RecordingRoundTrip() {
@@ -1985,6 +1992,25 @@ int main(int argc, char** argv) {
         std::printf("Export responsiveness: %d passed, %d failed\n", passed, failed);
         return failed ? 1 : 0;
     }
+    if (argc > 1 && std::string_view(argv[1]) == "--annotation-text") {
+        bool compared = true;
+        std::thread text_rendering([&compared] {
+            PrivateDesktop desktop;
+            if (!desktop.Open()) {
+                std::fprintf(stderr, "Private clipboard desktop creation failed: %lu\n", ::GetLastError());
+                ++failed;
+                return;
+            }
+            ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+            compared = AnnotationRenderingIsStable(true);
+            platform::GraphicsEnvironment::Get().Shutdown();
+            ::CoUninitialize();
+        });
+        text_rendering.join();
+        std::printf("Annotation text rendering: %d passed, %d failed\n", passed, failed);
+        if (failed) { return 1; }
+        return compared ? 0 : 77;
+    }
     if (argc > 1 && std::string_view(argv[1]) == "--frame-performance") {
         ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
         FramePerformance();
@@ -2008,7 +2034,7 @@ int main(int argc, char** argv) {
         EditorAndCompletion();
         LockedToolCompletion();
         MosaicAndDirtyRendering();
-        AnnotationRenderingIsStable();
+        AnnotationRenderingIsStable(false);
         platform::GraphicsEnvironment::Get().Shutdown();
         ::CoUninitialize();
         ::EnumThreadWindows(::GetCurrentThreadId(), [](HWND window, LPARAM) -> BOOL {
