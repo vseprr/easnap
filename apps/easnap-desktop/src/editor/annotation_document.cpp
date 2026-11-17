@@ -1,6 +1,7 @@
 // Easnap - the annotation document of the screenshot editor.
 #include "editor/annotation_document.h"
 
+#include "editor/annotation_tools.h"
 #include "platform/graphics_device.h"
 
 #include <algorithm>
@@ -60,7 +61,7 @@ D2D1_RECT_F Annotation::bounds() const {
         box.right = std::max(box.right, point.x);
         box.bottom = std::max(box.bottom, point.y);
     }
-    if (tool == ToolId::Text || tool == ToolId::Tag) {
+    if (IsTextTool(tool)) {
         auto layout = TextLayout(*this);
         DWRITE_TEXT_METRICS metrics{};
         if (layout) { layout->GetMetrics(&metrics); }

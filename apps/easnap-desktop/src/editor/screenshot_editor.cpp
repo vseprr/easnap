@@ -1187,7 +1187,7 @@ void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
         case WM_LBUTTONDBLCLK: {
             if (!FeatureUsed()) { break; }
             const auto hit = document_.HitTest(ToImagePoint(point), 5.0f / zoom_);
-            if (hit && (document_.annotations()[*hit].tool == ToolId::Text || document_.annotations()[*hit].tool == ToolId::Tag)) {
+            if (hit && IsTextTool(document_.annotations()[*hit].tool)) {
                 CancelStroke();
                 StartTextEditing(hit, point);
                 if (text_edit_) {
@@ -1200,7 +1200,7 @@ void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
                 // not another creation request. It can only finish an edit.
                 CommitPendingText();
                 Select({});
-            } else if (tool_ != ToolId::Text && tool_ != ToolId::Tag) {
+            } else if (!IsTextTool(tool_)) {
                 BeginStroke(point);
             }
             break;
@@ -1431,7 +1431,7 @@ RECT ScreenshotEditor::AnnotationDamage(const Annotation& annotation, bool selec
     // Stroke ends, arrow heads and the mosaic brush reach past the points.
     float pad = std::max(annotation.style.brush_size, annotation.style.thickness * 6.0f) + 3.0f;
     // Glyphs overhang their layout box, and outlined text is stroked around it.
-    if (annotation.tool == ToolId::Text || annotation.tool == ToolId::Tag) { pad += annotation.FontPixels(); }
+    if (IsTextTool(annotation.tool)) { pad += annotation.FontPixels(); }
     // The selection frame and its handles keep their size on screen.
     if (selected) { pad += kSelectionReach * scale_ / zoom_; }
     // Antialiasing reaches one screen pixel further.
@@ -2157,7 +2157,7 @@ void ScreenshotEditor::BeginStroke(POINT point) {
         Select({});
         // Commit can remove an empty annotation and shift later indices.
         const auto hit = document_.HitTest(ToImagePoint(point), 5.0f / zoom_);
-        if (hit && (document_.annotations()[*hit].tool == ToolId::Text || document_.annotations()[*hit].tool == ToolId::Tag)) {
+        if (hit && IsTextTool(document_.annotations()[*hit].tool)) {
             StartTextEditing(hit, point);
         }
         return;
@@ -2191,15 +2191,14 @@ void ScreenshotEditor::BeginStroke(POINT point) {
         return;
     }
     if (tool_ == ToolId::Watermark) { return; }
-    const bool leave_text_selection = (tool_ == ToolId::Text || tool_ == ToolId::Tag) && selected_ &&
-                                      (document_.annotations()[*selected_].tool == ToolId::Text || document_.annotations()[*selected_].tool == ToolId::Tag);
+    const bool leave_text_selection = IsTextTool(tool_) && selected_ && IsTextTool(document_.annotations()[*selected_].tool);
     Select({});
     // A selected text object is still the current interaction target after a
     // select/drag. Its first outside press only leaves that state; a later
     // blank press with no active selection may create the next text object.
     if (leave_text_selection) { return; }
     if (tool_ == ToolId::Pointer) { return; }
-    if (tool_ == ToolId::Text || tool_ == ToolId::Tag) {
+    if (IsTextTool(tool_)) {
         StartTextEditing({}, point);
         return;
     }

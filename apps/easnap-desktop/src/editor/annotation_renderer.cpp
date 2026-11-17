@@ -2,6 +2,7 @@
 #include "editor/annotation_renderer.h"
 
 #include "editor/annotation_palette.h"
+#include "editor/annotation_tools.h"
 #include "platform/graphics_device.h"
 #include "ui/ui_theme.h"
 
@@ -338,7 +339,7 @@ void DrawSelectionChrome(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush,
     brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
     const float width = kSelectionStroke * unit;
     const auto box = NormalizedD2DRect(a.points.front(), a.points.back());
-    if (a.tool == ToolId::Text || a.tool == ToolId::Tag) {
+    if (IsTextTool(a.tool)) {
         auto r = a.bounds();
         const float pad = kSelectionTextGap * unit;
         r.left -= pad;
