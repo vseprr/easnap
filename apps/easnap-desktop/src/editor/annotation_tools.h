@@ -83,4 +83,10 @@ inline constexpr std::array<ToolId, kToolCount> kToolbarOrder = [] {
 /// True for the tools whose annotation is typed text in a box: Text and Tag.
 [[nodiscard]] constexpr bool IsTextTool(ToolId tool) noexcept { return Tool(tool).text_box; }
 
+/// True when `annotation` is a stroke that follows the pointer point by point:
+/// the pen, and the mosaic with the brush method.
+[[nodiscard]] inline bool IsFreehand(const Annotation& annotation) noexcept {
+    return annotation.tool == ToolId::Pen || (annotation.tool == ToolId::Mosaic && annotation.style.method == EffectMethod::Brush);
+}
+
 }  // namespace easnap::editor

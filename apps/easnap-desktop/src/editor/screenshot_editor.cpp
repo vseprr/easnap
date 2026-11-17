@@ -2255,7 +2255,7 @@ void ScreenshotEditor::UpdateStroke(POINT point) {
     if (!has_pending_ || !dragging_) { return; }
     const auto last = pending_.points.back();
     if (p.x == last.x && p.y == last.y) { return; }
-    const bool freehand = pending_.tool == ToolId::Pen || (pending_.tool == ToolId::Mosaic && pending_.style.method == EffectMethod::Brush);
+    const bool freehand = IsFreehand(pending_);
     RECT damage{};
     if (freehand) {
         const float pad = std::max(pending_.style.brush_size / 2, pending_.style.thickness) + 3;
@@ -2287,7 +2287,7 @@ void ScreenshotEditor::EndStroke(POINT point) {
     const auto revision = document_.revision();
     UpdateStroke(point);
     dragging_ = false;
-    const bool freehand = pending_.tool == ToolId::Pen || (pending_.tool == ToolId::Mosaic && pending_.style.method == EffectMethod::Brush);
+    const bool freehand = IsFreehand(pending_);
     const auto box = NormalizedD2DRect(pending_.points.front(), pending_.points.back());
     if (freehand || box.right - box.left >= 2 || box.bottom - box.top >= 2) {
         document_.Apply(std::move(pending_));
