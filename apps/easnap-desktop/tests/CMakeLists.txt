@@ -502,6 +502,7 @@ set_tests_properties(region_selector_logic PROPERTIES
 add_executable(test_redaction_renderer
     test_redaction_renderer.cpp
     ../src/editor/redaction_renderer.cpp
+    ../src/editor/mosaic.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_redaction_renderer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src"
@@ -720,6 +721,7 @@ add_executable(test_capture_workspace
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
+    ../src/editor/mosaic.cpp
     ../src/app/recording_workflow.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_capture_workspace PRIVATE
@@ -770,6 +772,7 @@ add_executable(test_scrollshot_workspace
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
+    ../src/editor/mosaic.cpp
     ../src/platform/platform_utils.cpp)
 target_include_directories(test_scrollshot_workspace PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_SOURCE_DIR}/../resources")
@@ -811,6 +814,7 @@ add_executable(test_text_fit
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
+    ../src/editor/mosaic.cpp
     ../src/app/recording_workflow.cpp
     ../src/ui/settings_dialog.cpp
     ../src/ui/trim_window.cpp
@@ -850,6 +854,7 @@ add_executable(test_data_safety
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
+    ../src/editor/mosaic.cpp
     ../src/ui/settings_dialog.cpp
     ../src/app/app_settings.cpp
     ../src/app/recording_workflow.cpp
@@ -933,6 +938,7 @@ add_executable(test_island_capture
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
+    ../src/editor/mosaic.cpp
     ../src/ui/capture_workspace.cpp
     ../src/ui/island_layout.cpp
     ../src/ui/recording_controls.cpp
@@ -976,6 +982,7 @@ add_executable(test_native_ui
     ../src/platform/image_export.cpp
     ../src/editor/image_viewport.cpp
     ../src/editor/redaction_renderer.cpp
+    ../src/editor/mosaic.cpp
     ../src/media/preview_process.cpp
     ../src/media/preview_transport.cpp
     ../src/media/media_foundation_writer.cpp

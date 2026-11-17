@@ -83,6 +83,8 @@ set(EASNAP_SOURCES
     src/editor/image_viewport.cpp
     src/editor/redaction_renderer.h
     src/editor/redaction_renderer.cpp
+    src/editor/mosaic.h
+    src/editor/mosaic.cpp
     src/capture/capture_provider.h
     src/capture/capture_provider.cpp
     src/capture/recording_capture_worker.h

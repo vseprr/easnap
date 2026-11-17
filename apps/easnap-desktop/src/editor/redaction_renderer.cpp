@@ -4,6 +4,8 @@
 #include <cmath>
 #include <cstring>
 
+#include "editor/mosaic.h"
+
 namespace easnap::editor {
 
 namespace {
@@ -282,7 +284,7 @@ RECT RedactionRenderer::Update(const platform::BgraImage& source, std::vector<Re
             StampBrush(effect, area, mask_);
         }
         if (effect.kind == RedactionKind::Pixelate) {
-            platform::ApplyMosaicMasked(image_, area, mask_, BlockSize(effect));
+            ApplyMosaicMasked(image_, area, mask_, BlockSize(effect));
             continue;
         }
         const RECT read = ReadRect(effect, w, h);

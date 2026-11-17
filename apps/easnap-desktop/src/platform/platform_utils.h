@@ -182,17 +182,6 @@ private:
     void* bits_{nullptr};
 };
 
-/// Averages `block` x `block` pixel blocks inside `area` (mosaic / privacy blur).
-void ApplyMosaic(BgraImage& image, const RECT& area, int block_size);
-
-/// Mosaic restricted to the pixels of `area` whose `mask` entry is non-zero.
-///
-/// `mask` has one entry per pixel of `area`, row by row. `area` must lie inside
-/// the image. Blocks are anchored at the top-left corner of `area` and average
-/// only the masked pixels they contain.
-void ApplyMosaicMasked(BgraImage& image, const RECT& area, const std::vector<uint8_t>& mask,
-                       int block_size);
-
 /// Copies `source_region` (image coordinates) out of `source` into `out`.
 bool CropImage(const BgraImage& source, const RECT& source_region, BgraImage& out);
 
