@@ -15,12 +15,11 @@ and copy the result. Or record a short clip, trim it, and save it as MP4 or GIF.
 Capture, editing and export run locally, with no account, telemetry or network
 connection.
 
-> **v1.3.0** opens your own video files in the trim view: from the tray menu,
-> from Explorer's "Open with" or from the command line, to cut a part and
-> save or copy it as MP4 or GIF, without touching the original. Copying and
-> saving a tall Scrollshot no longer freezes the window, editing a tall image
-> is faster, and a recording started on a still desktop uses the fast capture
-> path. See the [release notes](docs/releases/v1.3.0.md).
+> **v1.3.1** is a maintenance release: no flash around the frame when a
+> screenshot is fixed, a steady pointer while you type text, and a watermark
+> field whose caret, Esc, clear button and sliders do what they show. v1.3.0
+> opened your own video files in the trim view. See the
+> [release notes](docs/releases/v1.3.1.md).
 
 ![Easnap screenshot editor with its floating annotation toolbar](docs/images/editor.png)
 
@@ -97,7 +96,7 @@ the same menu.
 
 The binaries are unsigned, so Windows may display a publisher or reputation
 warning. Each package has a `.sha256` file in the same release. In the command
-below, replace `<version>` with the release you downloaded, for example `1.3.0`:
+below, replace `<version>` with the release you downloaded, for example `1.3.1`:
 
 ```powershell
 Get-FileHash .\Easnap-v<version>-windows-x64-setup.exe -Algorithm SHA256

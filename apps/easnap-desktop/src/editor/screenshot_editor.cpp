@@ -827,11 +827,24 @@ HWND ScreenshotEditor::Control(int id) const {
     if (const auto child = context_ ? ::GetDlgItem(context_, id) : nullptr) { return child; }
     return brush_popup_ ? ::GetDlgItem(brush_popup_, id) : nullptr;
 }
+std::optional<size_t> ScreenshotEditor::WatermarkIndex() const {
+    const auto& items = document_.annotations();
+    const auto found = std::find_if(items.begin(), items.end(), [](const auto& a) { return a.tool == ToolId::Watermark; });
+    return found != items.end() ? std::optional<size_t>(static_cast<size_t>(found - items.begin())) : std::nullopt;
+}
+std::optional<size_t> ScreenshotEditor::ContextAnnotation() const {
+    if (selected_ && *selected_ < document_.annotations().size()) { return selected_; }
+    // Esc leaves the selection, not the watermark: its field still shows the
+    // watermark's text, so its text, clear button and sliders keep acting on it.
+    return tool_ == ToolId::Watermark ? WatermarkIndex() : std::nullopt;
+}
 ToolId ScreenshotEditor::ContextTool() const {
-    return selected_ && *selected_ < document_.annotations().size() ? document_.annotations()[*selected_].tool : tool_;
+    const auto index = ContextAnnotation();
+    return index ? document_.annotations()[*index].tool : tool_;
 }
 AnnotationStyle ScreenshotEditor::ContextStyle() const {
-    return selected_ && *selected_ < document_.annotations().size() ? document_.annotations()[*selected_].style : style_;
+    const auto index = ContextAnnotation();
+    return index ? document_.annotations()[*index].style : style_;
 }
 void ScreenshotEditor::Select(std::optional<size_t> index) {
     selected_ = index;
@@ -841,8 +854,8 @@ void ScreenshotEditor::Select(std::optional<size_t> index) {
 }
 void ScreenshotEditor::ChangeStyle(const AnnotationStyle& value) {
     const auto revision = document_.revision();
-    if (selected_ && *selected_ < document_.annotations().size()) {
-        const bool shared_opacity = document_.annotations()[*selected_].tool == ToolId::Spotlight && document_.annotations()[*selected_].style.opacity != value.opacity;
+    if (const auto target = ContextAnnotation()) {
+        const bool shared_opacity = document_.annotations()[*target].tool == ToolId::Spotlight && document_.annotations()[*target].style.opacity != value.opacity;
         const bool own_transaction = shared_opacity && !document_.in_transaction();
         if (own_transaction) { document_.BeginTransaction(); }
         if (shared_opacity) {
@@ -853,12 +866,12 @@ void ScreenshotEditor::ChangeStyle(const AnnotationStyle& value) {
                     document_.Replace(i, std::move(region));
                 }
         }
-        auto annotation = document_.annotations()[*selected_];
+        auto annotation = document_.annotations()[*target];
         annotation.style = value;
-        document_.Replace(*selected_, std::move(annotation));
+        document_.Replace(*target, std::move(annotation));
         if (own_transaction) { document_.CommitTransaction(); }
         if (editing_text_) {
-            pending_ = document_.annotations()[*selected_];
+            pending_ = document_.annotations()[*target];
             LayoutTextEditor();
         }
     } else {
@@ -1031,8 +1044,20 @@ void ScreenshotEditor::SyncContext(bool layout) {
         RECT field{};
         ::GetClientRect(Control(2604), &field);
         const LONG size = ui::theme::Scaled(32, scale_), inset = ui::theme::Scaled(2, scale_);
-        ::SetWindowPos(Control(2605), HWND_TOP, field.right - size - inset, field.top + (field.bottom - field.top - size) / 2, size, size, SWP_NOACTIVATE);
-        ::SendMessageW(Control(2604), EM_SETMARGINS, EC_RIGHTMARGIN, MAKELPARAM(0, size + inset * 2));
+        // Moved and the margin set only when they change: this runs on every
+        // key, and a window moved under the pointer makes Windows re-send it.
+        const RECT place{field.right - size - inset, field.top + (field.bottom - field.top - size) / 2,
+                         field.right - inset, field.top + (field.bottom - field.top - size) / 2 + size};
+        RECT current{};
+        ::GetWindowRect(Control(2605), &current);
+        ::MapWindowPoints(nullptr, Control(2604), reinterpret_cast<POINT*>(&current), 2);
+        if (::EqualRect(&current, &place) == FALSE) {
+            ::SetWindowPos(Control(2605), HWND_TOP, place.left, place.top, size, size, SWP_NOACTIVATE);
+        }
+        const LONG margin = size + inset * 2;
+        if (static_cast<LONG>(HIWORD(::SendMessageW(Control(2604), EM_GETMARGINS, 0, 0))) != margin) {
+            ::SendMessageW(Control(2604), EM_SETMARGINS, EC_RIGHTMARGIN, MAKELPARAM(0, margin));
+        }
     }
     SyncWatermarkClear();
     slider(2601, style.strength);
@@ -1674,6 +1699,7 @@ void ScreenshotEditor::Show() {
 
 void ScreenshotEditor::Hide() {
     visible_ = false;
+    typing_pointer_.Restore();
     ShowBrushPopup(false);
     ::ShowWindow(hwnd_, SW_HIDE);
     if (context_) { ::ShowWindow(context_, SW_HIDE); }
@@ -2009,6 +2035,10 @@ LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, 
         SyncWatermarkClear();
         return 0;
     }
+    if (message == WM_TIMER && wparam == ui::TypingPointer::kTimerId) {
+        typing_pointer_.Poll();
+        return 0;
+    }
     if (message == WM_TIMER && wparam == 0xEA62) {
         POINT point{};
         ::GetCursorPos(&point);
@@ -2311,14 +2341,23 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
         return;
     }
     if (id == 2605 && notification == BN_CLICKED) {
+        // The clearing is kept, with what the field held before it.
         document_.BeginTransaction();
         ::SetWindowTextW(Control(2604), L"");
         document_.CommitTransaction();
+        context_owns_transaction_ = false;
         ::SetFocus(Control(2604));
+        // A field that kept the focus gets no WM_SETFOCUS to open the next
+        // edit: open it here, so that Esc reverts what is typed after this.
+        if (::GetFocus() == Control(2604) && !document_.in_transaction()) {
+            context_owns_transaction_ = true;
+            document_.BeginTransaction();
+        }
         SyncWatermarkClear();
         return;
     }
-    if (id == 2604 && notification == EN_CHANGE && ContextTool() == ToolId::Watermark) {
+    // The island writing the document's text into the field changes nothing.
+    if (id == 2604 && notification == EN_CHANGE && !syncing_context_ && ContextTool() == ToolId::Watermark) {
         if (!FeatureUsed()) { return; }
         const int length = ::GetWindowTextLengthW(Control(2604));
         std::wstring text(static_cast<size_t>(length) + 1, L'\0');
@@ -2332,9 +2371,12 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
             syncing_context_ = false;
         }
         if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+        // The image has one watermark: the field edits it whether or not it
+        // is selected, and creates it only when there is none.
+        const auto target = ContextAnnotation();
         Annotation a;
-        if (selected_) {
-            a = document_.annotations()[*selected_];
+        if (target) {
+            a = document_.annotations()[*target];
         } else {
             a.tool = ToolId::Watermark;
             a.style = style_;
@@ -2342,8 +2384,9 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
             a.points = {{0, 0}, {static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)}};
         }
         a.text = std::move(text);
-        if (selected_) {
-            document_.Replace(*selected_, std::move(a));
+        if (target) {
+            document_.Replace(*target, std::move(a));
+            selected_ = target;
         } else {
             document_.Apply(std::move(a));
             selected_ = document_.annotations().size() - 1;
@@ -2376,6 +2419,14 @@ void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
         CancelStroke();
         document_.CancelTransaction();
         if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+        // In the watermark field Esc reverts what was typed since the field
+        // took the focus. The focus stays there, so the next Esc reverts what
+        // is typed after this one, however often it is pressed.
+        if (context_owns_transaction_ && ::GetFocus() == Control(2604) && ContextTool() == ToolId::Watermark) {
+            document_.BeginTransaction();
+        } else {
+            context_owns_transaction_ = false;
+        }
         SyncContext();
         Invalidate();
         return;
@@ -2903,14 +2954,32 @@ void ScreenshotEditor::LayoutTextEditor() {
     const LONG y = static_cast<LONG>(view_origin_.y) + static_cast<LONG>(std::floor(box.top * zoom_)) - pad;
     const LONG w = std::max(2 * pad + 8L, static_cast<LONG>(std::ceil((box.right - box.left) * zoom_)) + 2 * pad);
     const LONG h = std::max(2 * pad + 8L, static_cast<LONG>(std::ceil((box.bottom - box.top) * zoom_)) + 2 * pad);
-    ::SetWindowPos(text_host_, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
-    ::MoveWindow(text_edit_, 0, 0, w, h, FALSE);
+    // Only what changed is changed: Windows takes every move, resize, z-order
+    // or region change of a window for pointer movement, and shows the
+    // pointer it hides while the user types. This runs on every key.
+    RECT placed{};
+    ::GetWindowRect(text_host_, &placed);
+    const bool shown = ::IsWindowVisible(text_host_) != FALSE;
+    if (!shown || placed.left != x || placed.top != y || platform::RectWidth(placed) != w || platform::RectHeight(placed) != h) {
+        // Topmost when it appears; afterwards it keeps its place.
+        ::SetWindowPos(text_host_, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | (shown ? SWP_NOZORDER : 0));
+    }
+    RECT input{};
+    ::GetClientRect(text_edit_, &input);
+    if (input.right != w || input.bottom != h) { ::MoveWindow(text_edit_, 0, 0, w, h, FALSE); }
     // The input keeps its full layout/caret coordinates, but nothing (including
     // its selection frame) may paint beyond the capture canvas.
     RECT visible = platform::IntersectRects({x, y, x + w, y + h}, document_mode_ ? region_ : source_bounds_);
     ::OffsetRect(&visible, -x, -y);
-    HRGN clip = ::CreateRectRgn(visible.left, visible.top, visible.right, visible.bottom);
-    if (clip && !::SetWindowRgn(text_host_, clip, FALSE)) { ::DeleteObject(clip); }
+    HRGN current = ::CreateRectRgn(0, 0, 0, 0);
+    const bool has_region = current && ::GetWindowRgn(text_host_, current) != ERROR;
+    if (visible.left == 0 && visible.top == 0 && visible.right == w && visible.bottom == h) {
+        // Wholly on the canvas: no region at all.
+        if (has_region) { ::SetWindowRgn(text_host_, nullptr, FALSE); }
+    } else if (HRGN clip = ::CreateRectRgn(visible.left, visible.top, visible.right, visible.bottom)) {
+        if ((has_region && ::EqualRgn(current, clip)) || !::SetWindowRgn(text_host_, clip, FALSE)) { ::DeleteObject(clip); }
+    }
+    if (current) { ::DeleteObject(current); }
     const float inset = pending_.tool == ToolId::Tag ? em * 0.45f : pending_.style.text_mode == TextMode::Fill  ? em * 0.25f
                                                                 : pending_.style.text_mode == TextMode::Outline ? em * 0.075f
                                                                                                                 : 0;
@@ -2942,6 +3011,10 @@ LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd, UINT message, WPARAM 
         return ::DefSubclassProc(hwnd, message, wparam, lparam);
     }
     if (message == WM_SHOWWINDOW) { ui::NativeRedrawGuard::VisibilityChanged(hwnd, wparam != 0); }
+    // The box grows with its text, and Windows shows the pointer it hides
+    // for typing at each such change: the editor keeps it hidden instead.
+    if (message == WM_CHAR) { self->typing_pointer_.Typed(self->hwnd_); }
+    if (message == WM_KILLFOCUS) { self->typing_pointer_.Restore(); }
     if (message == WM_SETCURSOR || message == WM_LBUTTONDOWN) {
         POINT point{};
         ::GetCursorPos(&point);
@@ -3035,10 +3108,16 @@ LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd, UINT message, WPARAM 
     const bool caret_hidden = changes_pixels && ::HideCaret(hwnd) != FALSE;
     const auto result = [&] {
         ++self->text_dispatch_depth_;
-        ui::NativeRedrawGuard redraw(hwnd, changes_pixels);
+        // Typing is not suspended. Suspending redraw takes WS_VISIBLE away and
+        // gives it back, which Windows takes for pointer movement: the pointer
+        // it hides while the user types came back at every key. The control
+        // colour handler already keeps EDIT's own drawing off the screen.
+        const bool typing = message >= WM_KEYFIRST && message <= WM_KEYLAST;
+        ui::NativeRedrawGuard redraw(hwnd, changes_pixels && !typing);
         // EDIT needs visibility for native caret/selection updates, even while
         // its internal redraw flag suppresses synchronous GDI text painting.
-        if (changes_pixels) { ::SetWindowLongPtrW(hwnd, GWL_STYLE, ::GetWindowLongPtrW(hwnd, GWL_STYLE) | WS_VISIBLE); }
+        const LONG_PTR style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
+        if (changes_pixels && (style & WS_VISIBLE) == 0) { ::SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_VISIBLE); }
         const auto result = ::DefSubclassProc(hwnd, message, wparam, lparam);
         --self->text_dispatch_depth_;
         return result;
@@ -3097,6 +3176,7 @@ void ScreenshotEditor::PaintTextEditor(HDC dc) {
     }
 }
 void ScreenshotEditor::CommitPendingText() {
+    typing_pointer_.Restore();
     if (!editing_text_) { return; }
     UpdateTextFromControl();
     editing_text_ = false;

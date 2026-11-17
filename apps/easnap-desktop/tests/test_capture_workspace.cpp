@@ -9,6 +9,7 @@
 #include "editor/screenshot_editor.h"
 #include "temp_folder.h"
 #include <algorithm>
+#include <commctrl.h>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -485,6 +486,17 @@ void EditorAndCompletion() {
     editor.Destroy();
 
     // Enter, explicit Copy and cancellation use their actual text commit rules.
+    // With "Hide pointer while typing" on, a typed letter hides the pointer
+    // over Easnap's windows; every way out of the text shows it again.
+    const auto display_count = [] {
+        const int count = ::ShowCursor(TRUE) - 1;
+        ::ShowCursor(FALSE);
+        return count;
+    };
+    BOOL vanish = FALSE;
+    POINT pointer{};
+    const bool hides = ::SystemParametersInfoW(SPI_GETMOUSEVANISH, 0, &vanish, 0) && vanish && ::GetCursorPos(&pointer);
+    const int shown_count = display_count();
     for (int completion : {0, 1, 2}) {
         open();
         workspace.SetMode(CaptureMode::Record);
@@ -493,6 +505,9 @@ void EditorAndCompletion() {
         editor.ImagePointer(WM_LBUTTONDOWN, {-80, 0});
         editor.Keyboard(WM_CHAR, 'B', 0);
         CHECK(!editor.document().annotations().empty() && attempts == 0);
+        CHECK(display_count() == shown_count - (hides ? 1 : 0));
+        editor.Keyboard(WM_CHAR, 'C', 0);  // Hidden once, however many letters follow.
+        CHECK(display_count() == shown_count - (hides ? 1 : 0));
         if (completion == 0) {
             editor.Keyboard(WM_CHAR, '\r', 0);
             CHECK(editor.visible() && attempts == 0); // Return inserts a paragraph.
@@ -505,8 +520,10 @@ void EditorAndCompletion() {
         CHECK(PumpUntil([&] { return closed != 0; }));
         CHECK(closed == 1 && !editor.visible() && copied == (completion != 2));
         CHECK(attempts == (completion != 2 ? 1 : 0));
+        CHECK(display_count() == shown_count);
         editor.Destroy();
     }
+    std::printf("Pointer hidden while typing: %s\n", hides ? "checked" : "not applicable here (setting off or no pointer)");
 
     // Quick save writes into the screenshots folder on a worker. While it
     // runs, Copy, Save and Pin are off and nothing closes the editor; then
@@ -1146,6 +1163,121 @@ void FramePerformance() {
 }
 // --- Islands around the frame ----------------------------------------------------------
 //
+/// The watermark field, in an editor whose watermark tool is chosen. Typed
+/// past its width the field scrolls and keeps the caret after the last
+/// letter. Esc in the field reverts what was typed since it took the focus,
+/// every time. After Esc in the editor the sliders, the clear button and the
+/// field still act on the image's one watermark instead of adding another.
+void WatermarkEditing(editor::ScreenshotEditor& editor) {
+    HWND context = editor.context_hwnd();
+    HWND field = ::GetDlgItem(context, 2604);
+    HWND clear = field ? ::GetDlgItem(field, 2605) : nullptr;
+    CHECK(editor.has_image() && field && clear && ::IsWindowVisible(field));
+    if (!field || !clear) { return; }
+    const auto watermarks = [&] {
+        std::vector<const editor::Annotation*> found;
+        for (const auto& annotation : editor.document().annotations()) {
+            if (annotation.tool == editor::ToolId::Watermark) { found.push_back(&annotation); }
+        }
+        return found;
+    };
+    const auto field_text = [&] {
+        std::wstring text(static_cast<size_t>(::GetWindowTextLengthW(field)) + 1, L'\0');
+        text.resize(static_cast<size_t>(::GetWindowTextW(field, text.data(), static_cast<int>(text.size()))));
+        return text;
+    };
+    const auto type = [&](std::wstring_view text) {
+        for (wchar_t letter : text) { ::SendMessageW(field, WM_CHAR, letter, 1); }
+    };
+
+    // Wider than the field: the text scrolls, the caret stays after its last
+    // letter. The clear button shows while the pointer is over the field, as
+    // it is while the user types there.
+    ::SetFocus(field);
+    ::ShowWindow(clear, SW_SHOWNOACTIVATE);
+    bool scrolled = false, caret_after_text = true;
+    for (int i = 0; i < 16; ++i) {
+        type(L"W");
+        const int length = ::GetWindowTextLengthW(field);
+        RECT format{};
+        ::SendMessageW(field, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&format));
+        POINT caret{};
+        const bool read = ::GetCaretPos(&caret) != FALSE;
+        const LONG first = static_cast<short>(LOWORD(::SendMessageW(field, EM_POSFROMCHAR, 0, 0)));
+        const LONG last = static_cast<short>(LOWORD(::SendMessageW(field, EM_POSFROMCHAR, static_cast<WPARAM>(length - 1), 0)));
+        scrolled = scrolled || first < format.left;
+        if (!read || last >= caret.x || caret.x > format.right || last >= format.right) {
+            if (caret_after_text) {
+                std::printf("Watermark caret at %d letters: caret=%ld last letter=%ld field=%ld..%ld read=%d\n", length,
+                            caret.x, last, format.left, format.right, read ? 1 : 0);
+            }
+            caret_after_text = false;
+        }
+    }
+    CHECK(scrolled && caret_after_text);
+    CHECK(watermarks().size() == 1 && watermarks().front()->text == std::wstring(16, L'W'));
+
+    // Esc in the field (the editor receives it) reverts the typing, and does
+    // so again for what is typed after it.
+    editor.Keyboard(WM_KEYDOWN, VK_ESCAPE, 0);
+    CHECK(watermarks().empty() && field_text().empty() && ::GetFocus() == field);
+    type(L"Mark");
+    CHECK(watermarks().size() == 1 && watermarks().front()->text == L"Mark");
+    editor.Keyboard(WM_KEYDOWN, VK_ESCAPE, 0);
+    CHECK(watermarks().empty() && field_text().empty());
+    type(L"Mark");
+    ::SetFocus(editor.hwnd());  // Leaving the field keeps what it holds.
+    CHECK(watermarks().size() == 1 && watermarks().front()->text == L"Mark");
+    ::SetFocus(field);
+    type(L"s");
+    editor.Keyboard(WM_KEYDOWN, VK_ESCAPE, 0);  // Only what was typed since it took the focus again.
+    CHECK(watermarks().size() == 1 && watermarks().front()->text == L"Mark" && field_text() == L"Mark");
+
+    // Esc in the editor leaves the selection; the sliders, the clear button
+    // and the field still act on the watermark.
+    ::SetFocus(editor.hwnd());
+    editor.Keyboard(WM_KEYDOWN, VK_ESCAPE, 0);
+    CHECK(watermarks().size() == 1 && field_text() == L"Mark");
+    for (const auto& [id, value] : {std::pair{2602, 55}, std::pair{2603, 40}}) {
+        HWND slider = ::GetDlgItem(context, id);
+        CHECK(slider != nullptr);
+        ::SendMessageW(slider, TBM_SETPOS, TRUE, value);
+        ::SendMessageW(context, WM_HSCROLL, MAKEWPARAM(TB_ENDTRACK, 0), reinterpret_cast<LPARAM>(slider));
+    }
+    CHECK(watermarks().size() == 1 && watermarks().front()->style.opacity == 55.0f && watermarks().front()->style.font_size == 40.0f);
+    ::SendMessageW(field, WM_COMMAND, MAKEWPARAM(2605, BN_CLICKED), reinterpret_cast<LPARAM>(clear));
+    CHECK(watermarks().size() == 1 && watermarks().front()->text.empty() && field_text().empty());
+    type(L"Draft");
+    ::SetFocus(editor.hwnd());
+    CHECK(watermarks().size() == 1 && watermarks().front()->text == L"Draft" && watermarks().front()->style.opacity == 55.0f);
+
+    // Another tool and back, then the clear button, with the focus in the
+    // field and with the button taking it first: either way Esc still
+    // reverts what is typed after the clearing, and keeps the clearing.
+    for (const bool button_takes_focus : {false, true}) {
+        SelectTool(editor, editor::ToolId::Rectangle);
+        SelectTool(editor, editor::ToolId::Watermark);
+        CHECK(::IsWindowVisible(field) && field_text() == L"Draft");
+        ::SetFocus(field);
+        ::ShowWindow(clear, SW_SHOWNOACTIVATE);
+        if (button_takes_focus) {
+            ::SetFocus(clear);
+            ::SendMessageW(clear, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(2, 2));
+            ::SendMessageW(clear, WM_LBUTTONUP, 0, MAKELPARAM(2, 2));
+        } else {
+            ::SendMessageW(field, WM_COMMAND, MAKEWPARAM(2605, BN_CLICKED), reinterpret_cast<LPARAM>(clear));
+        }
+        CHECK(watermarks().size() == 1 && watermarks().front()->text.empty() && field_text().empty() && ::GetFocus() == field);
+        type(L"Final");
+        CHECK(watermarks().size() == 1 && watermarks().front()->text == L"Final");
+        editor.Keyboard(WM_KEYDOWN, VK_ESCAPE, 0);
+        CHECK(watermarks().size() == 1 && watermarks().front()->text.empty() && field_text().empty());
+        type(L"Draft");
+        ::SetFocus(editor.hwnd());
+        CHECK(watermarks().size() == 1 && watermarks().front()->text == L"Draft");
+    }
+}
+
 // The mode island, the tools island and the recording panel as production
 // windows, wired the way the coordinator wires them: none ever covers
 // another, an island is over the frame only when nothing outside has room,
@@ -1399,6 +1531,7 @@ void IslandPlacement() {
     send(WM_LBUTTONUP, {at.x + 40, at.y + 30});
     CHECK(same(rect_of(editor.hwnd()), before) && within(tools(), work) && !overlaps(tools(), low));
     SelectTool(editor, editor::ToolId::Watermark);
+    WatermarkEditing(editor);
     SelectTool(editor, editor::ToolId::Pointer);
     CHECK(same(rect_of(editor.hwnd()), before) && !::IsWindowVisible(editor.context_hwnd()));
 

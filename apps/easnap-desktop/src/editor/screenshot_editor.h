@@ -318,6 +318,11 @@ private:
     void CommitPendingText();
     void OnCharacter(wchar_t character);
     void Select(std::optional<size_t> index);
+    /// The annotation the property island edits: the selection, or else,
+    /// while the watermark tool is chosen, the image's watermark.
+    [[nodiscard]] std::optional<size_t> ContextAnnotation() const;
+    /// The image's watermark; there is at most one.
+    [[nodiscard]] std::optional<size_t> WatermarkIndex() const;
     [[nodiscard]] ToolId ContextTool() const;
     [[nodiscard]] AnnotationStyle ContextStyle() const;
     void ChangeStyle(const AnnotationStyle& style);
@@ -404,6 +409,8 @@ private:
     bool dragging_{false};
     bool context_owns_transaction_{false};  ///< A property control opened the open transaction.
     bool editing_text_{false};
+    /// Hidden while text is typed into the annotation, until it moves.
+    ui::TypingPointer typing_pointer_;
     ToolId tool_{ToolId::Pen};
     AnnotationStyle style_{};
 

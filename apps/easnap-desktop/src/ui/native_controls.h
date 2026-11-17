@@ -88,6 +88,33 @@ private:
     bool visible_{true};
 };
 
+/// Hides the pointer while the user types, when "Hide pointer while typing"
+/// is on, until the pointer really moves. Windows shows the pointer it hid
+/// again at the next move, resize or region change of any window, and a
+/// text box that grows with its text makes one at every key.
+class TypingPointer final {
+public:
+    TypingPointer() = default;
+    ~TypingPointer() { Restore(); }
+    TypingPointer(const TypingPointer&) = delete;
+    TypingPointer& operator=(const TypingPointer&) = delete;
+    /// After a typed character: hides the pointer if the setting asks for it.
+    /// `timer_owner` receives kTimerId to watch for movement.
+    void Typed(HWND timer_owner);
+    /// From the owner's WM_TIMER with kTimerId: shows the pointer once it moved.
+    void Poll();
+    /// Shows the pointer again: typing ended, the input lost the focus or its
+    /// window closes.
+    void Restore();
+    [[nodiscard]] bool hidden() const noexcept { return hidden_; }
+    static constexpr UINT_PTR kTimerId = 0xEA70;
+
+private:
+    HWND timer_owner_{};
+    POINT origin_{};
+    bool hidden_{false};
+};
+
 inline constexpr int kWindowChromeHeight = 40;
 [[nodiscard]] bool StyleWindowChrome(HWND window, bool resizable);
 

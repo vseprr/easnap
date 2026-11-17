@@ -379,6 +379,37 @@ changes), in the lab VM, by then at Windows 10 build 19045.6466:
   passed on the GDI fallback and the verdict marked it `VM-ok-but-fallback`,
   the provider's documented behaviour on a still desktop.
 
+## Validation of v1.3.1
+
+Prepared on the branch `fix/v1.3.1` from `main` at `f81ec0d` on 2026-11-17:
+three problems the owner reported on v1.3.0. The
+[release notes](v1.3.1.md) summarize it. Lab runs in the 125 % image; every
+capture test ran on Desktop Duplication or Windows Graphics Capture
+(`VM-ok`, no fallback).
+
+| Step | Run | Result |
+|---|---|---|
+| Shading kept while a screenshot is read, first form | `20261117-150033-standard`; probe `20261117-150802` | Standard 56 of 56; `scrollshot_real_desktop` and `scrollshot_realistic_desktop` passed in both variants |
+| Watermark field and typing pointer | probe `20261117-182336` | `annotation_editing_native` and `ui_modernization_native` passed in both variants, the pointer hidden while typing with real keyboard input |
+| All corrections | `20261117-183046-full` | Full 66 of 66, 0 retried |
+| Final sources, configured as 1.3.1 | `20261117-190514-full` | Full 66 of 66, 0 retried, 0 on a fallback path |
+
+- **Diagnostic builds on the owner's PC,** never committed, each switching
+  one suspect off: for the flash, a log of the capture path (always the
+  visible workspace, 20 of 20 reads, 37 to 65 ms) and the shading left
+  whole (no flash); the first correction without the `DwmFlush` wait still
+  flashed. For the pointer, the redraw suspension off (the watermark field
+  steady, Text and Tag not), the text box's layout off as well (all three
+  steady), and the cursor re-set only on change (no difference).
+- **Fail before, pass after:** the new swap checks of
+  `scrollshot_workspace_production` and the watermark checks of
+  `capture_island_placement` were run against the v1.3.0 code (lab probes
+  and local isolated-desktop runs) and failed there. The stuck caret and
+  the flash are not reproduced by any test; the owner confirmed both
+  corrections by eye, and every other correction as well.
+- **Static checks:** every C++ file passes `scripts/format.ps1 -Check`; the
+  hygiene check green.
+
 ## Validation of v1.3.0
 
 Prepared on `main` at `35268de` on 2026-11-09, after the merges of pull
