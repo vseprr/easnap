@@ -7,7 +7,7 @@ phase boundaries; what is implemented and validated belongs in project status,
 and what each release contained in its release notes, listed in the
 [documentation index](docs/README.md).
 
-## Current: v1.3.0 published
+## Current: v1.3.1 published
 
 The first beta of v1.1 was published on 2026-10-13 as a prerelease of
 [`vseprr/easnap`](https://github.com/vseprr/easnap): Scrollshot in the
@@ -25,8 +25,10 @@ the coordinator split, merged by pull request #21), and on
 `feature/v1.3-findings` (the audit findings, the external video feature and
 the preview clock check, merged by pull request #22 on 2026-11-09). v1.3.0
 was published on 2026-11-09 from `main` without a release candidate, at the
-owner's request after their check of the branch's build; it is the latest
-stable version.
+owner's request after their check of the branch's build. v1.3.1, a
+maintenance release of three corrections the owner reported on v1.3.0
+(branch `fix/v1.3.1`, pull request #25), was published on 2026-11-17; it is
+the latest stable version.
 
 | Phase | State |
 |---|---|
@@ -41,7 +43,7 @@ stable version.
 | v1.1.0 stable | Stabilization on `stabilize/v1.1.0` (2026-11-07): audit, documentation, formatting, static analysis, code fixes; rc.1 checked by the owner, not published; v1.1.0 published 2026-11-08 |
 | v1.2 | On `feature/v1.2` (from 2026-11-08): Pin to screen ([ADR-038](docs/decisions/ADR-038-pinned-images.md)), audio exception boundary, undo limit, clipboard formats first, the session state machine and a required clang-tidy job; release candidate rc.1 checked by the owner, not published; v1.2.0 published 2026-11-08 |
 | v1.3 | On `feature/v1.3` (from 2026-11-08): S2 of the coordinator split, the trim flow with its own test ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)), implemented and checked by the owner; recording stays in the coordinator. Then, on `feature/v1.3-findings` (2026-11-09): the 2026-11-07 audit findings closed in one pass (copy and save on a worker, recording on Desktop Duplication, crash report line, settings notice and small clean-ups, editor repaint of what a move changed, trim window minimum and text fit, test rename, function splits, documentation tidy-up), the Scrollshot realistic test application ([ADR-041](docs/decisions/ADR-041-scrollshot-realistic-test-application.md)) and the frame-cost measurement and the recording's picture pool ([ADR-042](docs/decisions/ADR-042-recording-frame-buffer-cost.md)); the external video feature ([ADR-040](docs/decisions/ADR-040-external-video-in-the-trim-view.md)) is implemented (media layer, flow and tray entry, command line, hand-over to the running Easnap, installer "Open with") and checked by the owner in the running application; the trim preview's clock check ([ADR-010](docs/decisions/ADR-010-trim-view-ownership-and-orchestration.md), amended) closes the preview transport race seen in the lab |
-| v1.3.1 | Maintenance on `fix/v1.3.1` (2026-11-17): no flash when a screenshot is fixed, the watermark field, no pointer flicker while typing ([project status](docs/project-status.md#v131)) |
+| v1.3.1 | Maintenance on `fix/v1.3.1` (2026-11-17): no flash when a screenshot is fixed, the watermark field, no pointer flicker while typing ([project status](docs/project-status.md#v131)); published 2026-11-17 |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
