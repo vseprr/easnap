@@ -12,15 +12,13 @@ This file keeps no per-release sections.
 
 ## Baseline
 
-- Latest stable release: [v1.3.1](releases/v1.3.1.md), published on
-  2026-11-17 from `main` at `efb3d25`, the merge of pull request #25. Earlier
-  releases are listed in the [documentation index](README.md).
+- Latest stable release: [v1.3.2](releases/v1.3.2.md), published on
+  2026-11-18 from `main` at `1d2f27c`, the merge of pull request #28: the
+  structure refactor below as a maintenance release with no visible change.
+  Earlier releases are listed in the [documentation index](README.md).
 - The Release workflow passed at the first attempt and the packages were
   verified before publication
-  ([records](releases/validation-history.md#validation-of-v131)).
-- Since then `main` received the structure refactor below (pull request #27).
-  v1.3.2, a maintenance release of it with no visible change, is prepared on
-  `release/v1.3.2` ([notes](releases/v1.3.2.md)).
+  ([records](releases/validation-history.md#validation-of-v132)).
 
 ## Structure refactor (branch `refactor/structure`)
 
@@ -105,7 +103,7 @@ given change is in the [change map](ui/change-map.md).
 - **The published packages:** from beta.2 on, each release's draft packages
   were checked against their SHA-256 files and attestations before
   publication (for beta.1 nobody downloaded them); the packaged installer was
-  not installed before v1.3.0 or v1.3.1 were published.
+  not installed before v1.3.0, v1.3.1 or v1.3.2 were published.
 - **Package managers:** the generated winget manifests pass `winget validate`
   locally (2026-11-07); Scoop was not tried; nothing was submitted.
 - A real crash (the handler is exercised by a test process that links the same

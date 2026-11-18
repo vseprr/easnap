@@ -408,6 +408,17 @@ The [release notes](v1.3.2.md) summarize it. Lab runs in the 125 % image.
   sanitizer, format, clang-tidy, hygiene, CodeQL); merged as `dcc2d8d`.
 - **Static checks:** every C++ file passes `scripts/format.ps1 -Check`;
   clang-tidy with the CI checks 0 warnings; the hygiene check green.
+- **Pull request #28** (the version and these notes): its eight checks
+  passed; merged as `1d2f27c`.
+- **The Release workflow** (run `44308104215`, tag `v1.3.2` on `1d2f27c`)
+  passed at the first attempt: validation, the Build matrix, the sanitizer,
+  format, clang-tidy, hygiene and the draft. Before publication, on the
+  development PC: the setup, the ZIP and the symbols ZIP matched their
+  SHA-256 files; `gh attestation verify` passed for the setup and the ZIP;
+  `Easnap.exe`, `EasnapPreviewHost.exe` (from the ZIP) and the setup
+  reported product version 1.3.2 and file version 1.3.2.0. The packaged
+  installer was not installed before publication. Published on 2026-11-18
+  as the latest release.
 
 ## Validation of v1.3.1
 

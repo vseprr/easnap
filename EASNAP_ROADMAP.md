@@ -7,13 +7,12 @@ phase boundaries; what is implemented and validated belongs in project status,
 and what each release contained in its release notes, listed in the
 [documentation index](docs/README.md).
 
-## Current: v1.3.1 published
+## Current: v1.3.2 published
 
-v1.3.1 (2026-11-17) is the latest stable release; every release and its notes
-are listed in the [documentation index](docs/README.md). The structure
-refactor ([ADR-043](docs/decisions/ADR-043-structure-for-cheap-changes.md))
-is merged by pull request #27; v1.3.2, a maintenance release of it with no
-visible change, is being prepared on `release/v1.3.2`.
+v1.3.2 (2026-11-18) is the latest stable release: the structure refactor
+([ADR-043](docs/decisions/ADR-043-structure-for-cheap-changes.md), pull
+request #27) as a maintenance release with no visible change. Every release
+and its notes are listed in the [documentation index](docs/README.md).
 
 | Phase | State |
 |---|---|
@@ -29,7 +28,7 @@ visible change, is being prepared on `release/v1.3.2`.
 | v1.2 | Published 2026-11-08: Pin to screen ([ADR-038](docs/decisions/ADR-038-pinned-images.md)) and the first slice of the coordinator split ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)); [notes](docs/releases/v1.2.0.md) |
 | v1.3 | Published 2026-11-09: the trim flow ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)), external videos in the trim view ([ADR-040](docs/decisions/ADR-040-external-video-in-the-trim-view.md)), the Scrollshot realistic test application ([ADR-041](docs/decisions/ADR-041-scrollshot-realistic-test-application.md)), the recording's picture pool ([ADR-042](docs/decisions/ADR-042-recording-frame-buffer-cost.md)), the preview clock check ([ADR-010](docs/decisions/ADR-010-trim-view-ownership-and-orchestration.md), amended); [notes](docs/releases/v1.3.0.md) |
 | v1.3.1 | Published 2026-11-17: no flash when a screenshot is fixed, the watermark field, no pointer flicker while typing; [notes](docs/releases/v1.3.1.md) |
-| v1.3.2 | Prepared on `release/v1.3.2` (2026-11-18): the structure refactor as a maintenance release; [notes](docs/releases/v1.3.2.md) |
+| v1.3.2 | Published 2026-11-18: the structure refactor as a maintenance release, no visible change; [notes](docs/releases/v1.3.2.md) |
 | Structure refactor | Merged (PR #27): layer order checked, one message table and one identifier header, platform and editor split into units, one table row per button, theme-owned shared values, window class helper, shorter audio and media thread functions ([ADR-043](docs/decisions/ADR-043-structure-for-cheap-changes.md), [project status](docs/project-status.md#structure-refactor-branch-refactorstructure)) |
 | OCR | Planned after v1; not implemented and no date committed |
 
