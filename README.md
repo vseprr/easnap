@@ -15,11 +15,11 @@ and copy the result. Or record a short clip, trim it, and save it as MP4 or GIF.
 Capture, editing and export run locally, with no account, telemetry or network
 connection.
 
-> **v1.3.1** is a maintenance release: no flash around the frame when a
-> screenshot is fixed, a steady pointer while you type text, and a watermark
-> field whose caret, Esc, clear button and sliders do what they show. v1.3.0
-> opened your own video files in the trim view. See the
-> [release notes](docs/releases/v1.3.1.md).
+> **v1.3.2** is a maintenance release with nothing new to see: the code was
+> reorganized so that later changes are smaller and safer. v1.3.1 fixed a
+> flash around the frame, the pointer while typing and the watermark field;
+> v1.3.0 opened your own video files in the trim view. See the
+> [release notes](docs/releases/v1.3.2.md).
 
 ![Easnap screenshot editor with its floating annotation toolbar](docs/images/editor.png)
 
@@ -96,7 +96,7 @@ the same menu.
 
 The binaries are unsigned, so Windows may display a publisher or reputation
 warning. Each package has a `.sha256` file in the same release. In the command
-below, replace `<version>` with the release you downloaded, for example `1.3.1`:
+below, replace `<version>` with the release you downloaded, for example `1.3.2`:
 
 ```powershell
 Get-FileHash .\Easnap-v<version>-windows-x64-setup.exe -Algorithm SHA256

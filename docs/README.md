@@ -22,7 +22,7 @@ order of the source folders in
 | [Window implementation guide](ui/window-implementation-guide.md) | Required shared-code, layout, painting and regression-validation path for new or changed windows |
 | [Change map](ui/change-map.md) | The file and symbol to edit for each common change: colours, metrics, icons, buttons, tools, shortcuts, messages, identifiers |
 | [Security](../SECURITY.md) | Reporting, private storage and publication model |
-| Release notes | [v1.3.1](releases/v1.3.1.md), [v1.3.0](releases/v1.3.0.md), [v1.2.0](releases/v1.2.0.md), [v1.1.0](releases/v1.1.0.md), [v1.1.0-rc.1](releases/v1.1.0-rc.1.md) (not published), [v1.1.0-beta.2](releases/v1.1.0-beta.2.md), [v1.1.0-beta.1](releases/v1.1.0-beta.1.md), [v1.0.2](releases/v1.0.2.md), [v1.0.1](releases/v1.0.1.md), [v1.0.0](releases/v1.0.0.md): what each version changed and how it was checked |
+| Release notes | [v1.3.2](releases/v1.3.2.md), [v1.3.1](releases/v1.3.1.md), [v1.3.0](releases/v1.3.0.md), [v1.2.0](releases/v1.2.0.md), [v1.1.0](releases/v1.1.0.md), [v1.1.0-rc.1](releases/v1.1.0-rc.1.md) (not published), [v1.1.0-beta.2](releases/v1.1.0-beta.2.md), [v1.1.0-beta.1](releases/v1.1.0-beta.1.md), [v1.0.2](releases/v1.0.2.md), [v1.0.1](releases/v1.0.1.md), [v1.0.0](releases/v1.0.0.md): what each version changed and how it was checked |
 | [Validation records](releases/validation-history.md) | Every lab, CI and package check of each release since v1.0.1, including failures; per-release run records go here, not into project status |
 
 ## Decisions

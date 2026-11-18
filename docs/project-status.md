@@ -19,6 +19,8 @@ This file keeps no per-release sections.
   verified before publication
   ([records](releases/validation-history.md#validation-of-v131)).
 - Since then `main` received the structure refactor below (pull request #27).
+  v1.3.2, a maintenance release of it with no visible change, is prepared on
+  `release/v1.3.2` ([notes](releases/v1.3.2.md)).
 
 ## Structure refactor (branch `refactor/structure`)
 

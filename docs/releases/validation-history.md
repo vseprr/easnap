@@ -390,6 +390,25 @@ changes), in the lab VM, by then at Windows 10 build 19045.6466:
   passed on the GDI fallback and the verdict marked it `VM-ok-but-fallback`,
   the provider's documented behaviour on a still desktop.
 
+## Validation of v1.3.2
+
+Prepared on the branch `release/v1.3.2` from `main` at `dcc2d8d` on
+2026-11-18: the structure refactor of pull request #27
+([ADR-043](../decisions/ADR-043-structure-for-cheap-changes.md), whose
+Validation section lists the runs of each phase) as a maintenance release.
+The [release notes](v1.3.2.md) summarize it. Lab runs in the 125 % image.
+
+| Step | Run | Result |
+|---|---|---|
+| Final sources, configured as 1.3.2 (`eb18b74`) | `20261118-151014-full` | Full 69 of 69, 1 retried (`island_capture_exclusion`, foreign pixels where Windows shows notifications, as at `1d188c9`), 0 on a fallback path |
+
+- **By the owner:** the running program after the refactor, on the
+  development PC, with no problem reported (2026-11-18).
+- **Pull request #27:** its eight checks passed (Release, Debug, the
+  sanitizer, format, clang-tidy, hygiene, CodeQL); merged as `dcc2d8d`.
+- **Static checks:** every C++ file passes `scripts/format.ps1 -Check`;
+  clang-tidy with the CI checks 0 warnings; the hygiene check green.
+
 ## Validation of v1.3.1
 
 Prepared on the branch `fix/v1.3.1` from `main` at `f81ec0d` on 2026-11-17:
