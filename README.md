@@ -167,7 +167,7 @@ See the [release notes](https://github.com/vseprr/easnap/releases/latest) and
 
 | Feature | Direction |
 |---|---|
-| **Scrollshot** | Released in v1.1. Automatic scrolling and horizontal capture are not planned for v1.1. |
+| **Scrollshot** | Released in v1.1. Automatic scrolling and horizontal capture are not planned. |
 | **OCR** | Extract text from screenshots; planned after v1, with no release date set. |
 | Compatibility and accessibility | Extend testing across Windows versions, displays, audio devices and keyboard workflows. |
 
@@ -191,7 +191,8 @@ project runs the Standard and Full tiers in a Hyper-V test lab with a desktop
 of its own, described in the [testing guide](docs/testing.md#lab). See
 the [testing guide](docs/testing.md), the
 [development guide](docs/development.md) for building and packaging,
-[architecture](docs/architecture.md) for the code structure, and
+[architecture](docs/architecture.md) for the code structure, the
+[change map](docs/ui/change-map.md) for where to make a common change, and
 [project status](docs/project-status.md) before starting changes.
 
 ## Privacy and license

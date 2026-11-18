@@ -1,8 +1,9 @@
 # ADR-039 — CaptureCoordinator gives trimming to a flow of its own
 
 **Status:** Accepted; S1 implemented on `feature/v1.2`, S2 on `feature/v1.3`,
-S3 on `refactor/structure`; recording stays in the coordinator (decided after
-S2); Scrollshot stays too (amendment 2026-11-18)
+S3 on `refactor/structure` (merged by pull request #27); recording stays in
+the coordinator (decided after S2); Scrollshot stays too (amendment
+2026-11-18, accepted)
 **Date:** 2026-11-08
 
 ## Context

@@ -50,6 +50,9 @@ Before changing a window's layout, painting or lifetime, read
 [the native-frame decision](docs/decisions/ADR-024-native-trim-frame.md). Preserve
 the shared window paths and the application/preview-helper boundary.
 
+The [change map](docs/ui/change-map.md) names the file and symbol for common
+changes; when a change moves one of them, update its row.
+
 Do not commit captures, recordings, build output or local settings. Approved
 documentation images use exact paths in both `.gitignore` and
 `scripts/repository-media-allowlist.txt`. Run the repository checks before a PR:

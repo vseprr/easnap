@@ -14,7 +14,9 @@ Rules from `AGENTS.md`: keep `docs/project-status.md` factual and concise
 (what is implemented, what was validated, limitations, next slice); record
 decisions as ADRs in `docs/decisions/` with the measured figures inside the
 ADR; never document planned functionality as implemented; say what was not
-validated. Follow the existing ADR layout by reading a recent ADR first, for
+validated. Per-release run records go into
+`docs/releases/validation-history.md`; `docs/project-status.md` has no
+per-release sections. Follow the existing ADR layout by reading a recent ADR first, for
 example `docs/decisions/ADR-026-test-tiers-and-desktop-isolation.md`.
 
 Only write what the lead agent's brief gives you as facts; do not invent

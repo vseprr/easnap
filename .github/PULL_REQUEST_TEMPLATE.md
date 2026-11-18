@@ -20,3 +20,4 @@ Windows version, displays and scale used:
       (`docs/user-flows.md`, `docs/architecture.md`, an ADR for a durable decision).
 - [ ] A window's layout, painting or lifetime changed: I followed
       `docs/ui/window-implementation-guide.md`.
+- [ ] A file or symbol named in `docs/ui/change-map.md` moved: its row is updated.

@@ -1,7 +1,7 @@
 # ADR-043 — A structure in which a change touches one place
 
-**Status:** Accepted (implemented on the branch `refactor/structure`, draft
-pull request, not merged)  
+**Status:** Accepted (implemented on `refactor/structure`, merged by pull
+request #27)  
 **Date:** 2026-11-18
 
 ## Context
@@ -154,7 +154,7 @@ The notification icon (`ui/tray_icon`), its menu (`ui/tray_menu`,
 (`ui/about_dialog`) take plain data and do not read the coordinator.
 `app/tray_shell` holds the capture shortcut, the tray commands and the
 application of Settings. `main.cpp` keeps start-up, the host window and its
-message loop (469 lines). The window procedures of the overlay, the trim
+message loop (470 lines). The window procedures of the overlay, the trim
 timeline and the host window were split into named handlers.
 
 ### Window class helper
@@ -253,10 +253,10 @@ clean builds are shown to give identical executable hashes.
 
 ## Not validated
 
-- No test compiles `main.cpp` or the tray shell. To check by eye in the
-  running application: a tray click starts a capture and a right click opens
-  the menu; the menu's text, order, check marks and greying in both
-  languages; Settings: the shortcut after Cancel and after OK, language and
+- No test compiles `main.cpp` or the tray shell. The owner used the running
+  application on 2026-11-18 and reported no problem; the checklist given for
+  it: a tray click starts a capture and a right click opens the menu; the
+  menu's text, order, check marks and greying in both languages; Settings: the shortcut after Cancel and after OK, language and
   theme, a taken shortcut refused, folders and quick save; About: version,
   shortcut, Copy details in English, links; Exit asks and is refused while a
   dialog is open; the icon returns after Explorer restarts; a second instance

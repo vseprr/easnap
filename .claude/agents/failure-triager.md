@@ -14,8 +14,8 @@ Inputs you get: the run folder (`build\Testing\lab\runs\<stamp>\`) with
 
 Method:
 1. Quote the first failing assertion or error line and the test name.
-2. Locate the production code and the test code behind it (Serena symbol
-   tools first, then targeted reads). Do not read whole files when a symbol
+2. Locate the production code and the test code behind it
+   (`docs/ui/change-map.md`, then Serena symbol tools, then targeted reads). Do not read whole files when a symbol
    suffices.
 3. Separate three causes explicitly: product defect, test assumption that
    the environment breaks (no GPU, no audio endpoint, single display, 125 %
