@@ -7,10 +7,12 @@
 // or moving one effect does not copy and reprocess the whole capture.
 #pragma once
 
+#include <d2d1.h>
+
 #include <cstdint>
 #include <vector>
 
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
 
 namespace easnap::editor {
 

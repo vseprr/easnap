@@ -503,7 +503,9 @@ the misplacements, the height difference and the differing rows, and
 asserts only what holds whatever the input (What it asserts, above). A
 picture with no match that is not shown to be torn is not explained by the
 weakness and keeps the whole contract, so torn input is reported, not
-hidden. The torn and unknown counts are in the `MEASURE` line. The contract
-has not run in the lab yet.
+hidden. The torn and unknown counts are in the `MEASURE` line. (It ran
+afterwards: Full `20261109-151309-full` passed; Soak `20261109-171521-soak`
+failed its first attempt on five torn pictures and one with six differing
+rows, and the retry passed.)
 
 Not run: the 150 % image and a host run.

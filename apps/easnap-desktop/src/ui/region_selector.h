@@ -10,9 +10,9 @@
 // device-context drawing rather than a Direct2D swap chain.
 #pragma once
 
-#include <array>
+#include <windows.h>
 
-#include "platform/platform_utils.h"
+#include <array>
 
 namespace easnap::ui {
 

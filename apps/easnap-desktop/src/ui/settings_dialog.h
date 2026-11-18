@@ -11,6 +11,7 @@
 #include <string>
 
 #include "app/app_settings.h"
+#include "ui/control_ids.h"
 
 namespace easnap::ui {
 
@@ -46,20 +47,5 @@ struct SettingsDialogCallbacks {
 
 /// The system folder picker. Empty when cancelled.
 [[nodiscard]] std::wstring ChooseFolder(HWND owner, const std::wstring& current, const wchar_t* title);
-
-// Control identifiers, for tests that drive the dialog with messages.
-inline constexpr int kSettingsLanguage = 3101;
-inline constexpr int kSettingsAppearance = 3102;
-inline constexpr int kSettingsShortcut = 3103;
-inline constexpr int kSettingsShortcutHint = 3104;
-inline constexpr int kSettingsStartWithWindows = 3105;
-inline constexpr int kSettingsCaptureCursor = 3106;
-inline constexpr int kSettingsImageFolder = 3107;
-inline constexpr int kSettingsImageChange = 3108;
-inline constexpr int kSettingsImageReset = 3109;
-inline constexpr int kSettingsQuickSave = 3110;
-inline constexpr int kSettingsVideoFolder = 3111;
-inline constexpr int kSettingsVideoChange = 3112;
-inline constexpr int kSettingsVideoReset = 3113;
 
 }  // namespace easnap::ui

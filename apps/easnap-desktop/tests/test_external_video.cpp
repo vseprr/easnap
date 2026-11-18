@@ -17,6 +17,8 @@
 #include "temp_folder.h"
 
 #include "media/temp_session.h"
+#include "platform/files.h"
+#include "platform/system_info.h"
 #include "strings/strings.h"
 
 #include <algorithm>

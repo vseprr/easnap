@@ -7,6 +7,10 @@
 #include <cstring>
 #include <utility>
 
+#include "platform/graphics_device.h"
+#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
+
 namespace easnap::capture {
 namespace {
 

@@ -1,6 +1,10 @@
 // Real production HWNDs, annotation compositor and MFPlay preview. Generated
 // media/pixels are test inputs only; no capture, export or UI logic is duplicated.
+#include "platform/bgra_image.h"
+#include "platform/graphics_device.h"
+#include "platform/image_output.h"
 #include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include <UIAutomation.h>
 #include <commctrl.h>
 #include <windowsx.h>
@@ -18,6 +22,7 @@
 #include "app/app_settings.h"
 #include "editor/screenshot_editor.h"
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
 #include "strings/strings.h"
 #include "ui/overlay.h"
 #include "ui/recording_controls.h"
@@ -158,6 +163,234 @@ void MaterialRasterEvidence() {
                 static_cast<unsigned long long>(hash), static_cast<unsigned long long>(::GetTickCount64() - start));
     // Recorded from the unsliced production renderer before optimization.
     CHECK(cases == 768 && hash == 0x527290a4517b5712ull);
+}
+// Pixel guard for the shared control painters: every icon, the button painter
+// in representative styles and states, and the shared panel strokes, drawn into
+// memory bitmaps without a window. The expected hashes were recorded from the
+// painters before the Phase 5 restructuring; any changed pixel fails the case
+// that drew it. Captions are left empty: text rendering depends on the fonts
+// and ClearType settings of the machine, the button geometry does not.
+uint64_t HashPixels(uint64_t hash, const platform::BgraImage& image) {
+    for (auto pixel : image.pixels) {
+        hash ^= pixel & 0xffffff;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+template <typename Paint>
+uint64_t HashDrawing(uint64_t hash, int width, int height, Paint&& paint) {
+    platform::BgraImage image;
+    image.width = width;
+    image.height = height;
+    image.pixels.assign(static_cast<size_t>(width) * height, 0xff123456);
+    {
+        platform::GdiImageSurface surface(image);
+        CHECK(surface.valid());
+        paint(surface.dc());
+        ::GdiFlush();
+    }
+    return HashPixels(hash, image);
+}
+constexpr uint64_t kHashSeed = 14695981039346656037ull;
+uint64_t HashColor(uint64_t hash, COLORREF color) {
+    hash ^= color;
+    return hash * 1099511628211ull;
+}
+struct IconRasterCase {
+    ui::Icon icon;
+    const char* name;
+    uint64_t expected;
+};
+// Each icon at four sizes, in Light and Dark ink on their panels and in a
+// high-contrast system ink (yellow on black) over the Dark palette, which is
+// what TextFill's knock-out reads.
+uint64_t IconRasterHash(ui::Icon icon) {
+    uint64_t hash = kHashSeed;
+    for (int ink = 0; ink != 3; ++ink) {
+        Appearance(ink == 0 ? app::AppearanceTheme::Light : app::AppearanceTheme::Dark);
+        const auto& p = ui::theme::Current();
+        const COLORREF background = ink == 2 ? RGB(0, 0, 0) : p.panel;
+        const COLORREF color = ink == 2 ? RGB(255, 255, 0) : p.text;
+        for (int size : {12, 18, 24, 34}) {
+            hash = HashDrawing(hash, size + 6, size + 6, [&](HDC dc) {
+                ui::theme::FillSolid(dc, {0, 0, size + 6, size + 6}, background);
+                ui::DrawIcon(dc, {3, 3, 3 + size, 3 + size}, icon, color);
+            });
+        }
+    }
+    return hash;
+}
+struct ButtonRasterCase {
+    const char* name;
+    ui::ButtonPaintState state;
+    int width, height;  // DIP
+    uint64_t expected;
+};
+uint64_t ButtonRasterHash(const ButtonRasterCase& test) {
+    uint64_t hash = kHashSeed;
+    for (auto theme : {app::AppearanceTheme::Light, app::AppearanceTheme::Dark}) {
+        Appearance(theme);
+        for (float scale : {1.0f, 1.5f}) {
+            ui::ButtonPaintState state = test.state;
+            state.scale = scale;
+            state.client = {0, 0, ui::theme::Scaled(static_cast<float>(test.width), scale), ui::theme::Scaled(static_cast<float>(test.height), scale)};
+            hash = HashDrawing(hash, state.client.right, state.client.bottom, [&](HDC dc) { ui::PaintButtonFace(dc, state); });
+        }
+    }
+    return hash;
+}
+ui::ButtonPaintState Button(ui::ButtonStyle style, bool checked = false, bool pressed = false, bool hot = false,
+                            float depth = 1.0f, LONG_PTR type = BS_PUSHBUTTON) {
+    ui::ButtonPaintState state;
+    state.style = style;
+    state.checked = checked;
+    state.pressed = pressed;
+    state.hot = hot;
+    state.depth = depth;
+    state.type = type;
+    return state;
+}
+// Not covered here: the high-contrast palette (the system colours cannot be
+// installed without a test-only hook), button captions (text depends on the
+// machine's fonts and ClearType), and the combo, menu and scroll-thumb faces,
+// which need a window.
+void ControlRasterEvidence() {
+    using ui::ButtonRole;
+    using ui::Icon;
+    const auto start = ::GetTickCount64();
+    unsigned failed = 0;
+    const IconRasterCase icons[] = {
+        {Icon::None, "None", 0xe13b43b20554f1adull},
+        {Icon::Record, "Record", 0x74cb960968b3cf86ull},
+        {Icon::Pause, "Pause", 0x663a10cb573f5d1eull},
+        {Icon::Play, "Play", 0x3e4767c82aec1281ull},
+        {Icon::Stop, "Stop", 0xdaf46d166c9ec06cull},
+        {Icon::SystemAudio, "SystemAudio", 0xd12bd9a631b95f70ull},
+        {Icon::Microphone, "Microphone", 0xda02c5ba5cdc9d2full},
+        {Icon::Cursor, "Cursor", 0x0db3317165e39437ull},
+        {Icon::Copy, "Copy", 0xf5bfb34cd9d34352ull},
+        {Icon::Save, "Save", 0xc4fde2576123b77bull},
+        {Icon::Discard, "Discard", 0x67c78e622fba8b72ull},
+        {Icon::Appearance, "Appearance", 0x4bb5b65ced32b4ebull},
+        {Icon::Pen, "Pen", 0xf7cf807db8d7e8f2ull},
+        {Icon::Arrow, "Arrow", 0xe2fc46d5cd9c82d7ull},
+        {Icon::Rectangle, "Rectangle", 0x55b14d790b2c8d7full},
+        {Icon::Ellipse, "Ellipse", 0x46d6d203f6cfb01bull},
+        {Icon::Text, "Text", 0x66c8efe08dd15f7dull},
+        {Icon::Mosaic, "Mosaic", 0xad3814ae1eec8c9bull},
+        {Icon::Undo, "Undo", 0xf87fa50b511e85baull},
+        {Icon::Redo, "Redo", 0xf3107b4d1f161909ull},
+        {Icon::Clear, "Clear", 0x7e25894e96715c05ull},
+        {Icon::Check, "Check", 0x5a575ec6af265ee1ull},
+        {Icon::Line, "Line", 0xa4ad4523e1502d8full},
+        {Icon::Droplet, "Droplet", 0xede2e35933dd6ac7ull},
+        {Icon::Tag, "Tag", 0x933540fffaffd696ull},
+        {Icon::Spotlight, "Spotlight", 0x031a2aaf74bf1575ull},
+        {Icon::Watermark, "Watermark", 0xa0d35ce8ed7c5a3dull},
+        {Icon::TextFill, "TextFill", 0x064a8b64e74748bdull},
+        {Icon::TextOutline, "TextOutline", 0x36fa286ddbf26e98ull},
+        {Icon::Hand, "Hand", 0x5f0890edb24ec6efull},
+        {Icon::Region, "Region", 0x3e5e0b4550c93673ull},
+        {Icon::RoundedRectangle, "RoundedRectangle", 0x546cfe4087dad55aull},
+        {Icon::ChevronDown, "ChevronDown", 0x134368fb8b30e271ull},
+        {Icon::Minimize, "Minimize", 0x6c123f8a4b96f75dull},
+        {Icon::Maximize, "Maximize", 0xdaf46d166c9ec06cull},
+        {Icon::Scissors, "Scissors", 0x6309ff3c17571ecaull},
+        {Icon::Help, "Help", 0xea6bc50e987e9520ull},
+        {Icon::Pin, "Pin", 0x5a1110f310a9a797ull},
+    };
+    static_assert(std::size(icons) == ui::kIconCount, "every icon has a row");
+    for (const auto& test : icons) {
+        const uint64_t hash = IconRasterHash(test.icon);
+        std::printf("Icon raster %-17s %016llx\n", test.name, static_cast<unsigned long long>(hash));
+        if (hash != test.expected) {
+            std::printf("FAIL icon raster %s changed\n", test.name);
+            ++failed;
+        }
+    }
+    const COLORREF light_content = RGB(250, 250, 250), dark_content = RGB(229, 62, 66);
+    ui::ButtonPaintState focused = Button({Icon::Save, ButtonRole::Standard, true});
+    focused.focused = true;
+    ui::ButtonPaintState focus_cues_hidden = focused;
+    focus_cues_hidden.focus_cues_hidden = true;
+    ui::ButtonPaintState disabled = Button({Icon::Undo, ButtonRole::Standard, true}, false, false, false, 0.0f);
+    disabled.window_enabled = false;
+    ui::ButtonPaintState disabled_stable = Button({.icon = Icon::Record, .segmented = true, .preserve_disabled_visual = true, .hide_focus_line = true}, true, false, false, -1.0f, BS_RADIOBUTTON);
+    disabled_stable.window_enabled = false;
+    ui::ButtonPaintState disabled_primary = Button({Icon::Record, ButtonRole::Primary}, false, false, false, 0.0f);
+    disabled_primary.window_enabled = false;
+    const ButtonRasterCase buttons[] = {
+        {"icon-only rest", Button({Icon::Pen, ButtonRole::Standard, true}), 34, 34, 0xad5898c9458147aaull},
+        {"icon-only hot", Button({Icon::Pen, ButtonRole::Standard, true}, false, false, true, 1.25f), 34, 34, 0x025db752e8d77b4dull},
+        {"icon-only pressed", Button({Icon::Pen, ButtonRole::Standard, true}, false, true, true, -1.0f), 34, 34, 0x60c6b6e62b9d7594ull},
+        {"icon-only animating", Button({Icon::Pen, ButtonRole::Standard, true}, false, false, true, 0.37f), 34, 34, 0xdb27b31e099b9816ull},
+        {"icon-only disabled", disabled, 34, 34, 0x96c37194a3887e2cull},
+        {"primary with icon", Button({Icon::Record, ButtonRole::Primary}), 120, 48, 0x72d552ad6eb84fe2ull},
+        {"primary disabled", disabled_primary, 120, 48, 0x99cd55bdb25a1ad4ull},
+        {"destructive with icon", Button({Icon::Stop, ButtonRole::Destructive}), 96, 40, 0x5963ca2a98766b58ull},
+        {"success icon-only", Button({Icon::Check, ButtonRole::Success, true}), 34, 34, 0xc6ee5a540fdcfb3dull},
+        {"segmented unchecked", Button({.icon = Icon::Rectangle, .segmented = true, .preserve_disabled_visual = true, .hide_focus_line = true}, false, false, false, 1.0f, BS_RADIOBUTTON), 112, 36, 0x5e57bad34a3e53c4ull},
+        {"segmented checked", Button({.icon = Icon::Scissors, .segmented = true, .preserve_disabled_visual = true, .hide_focus_line = true}, true, false, false, -1.0f, BS_RADIOBUTTON), 112, 36, 0x6961f0e38a4131f2ull},
+        {"segmented disabled stable", disabled_stable, 112, 36, 0x51be8a5d901dd5d3ull},
+        {"option checked", Button({.icon = Icon::TextFill, .icon_only = true, .segmented = true}, true, false, false, -1.0f, BS_RADIOBUTTON), 34, 34, 0xe4bcd431336847a2ull},
+        {"swatch light", Button({.icon_only = true, .swatch = true, .content_color = light_content, .segmented = true}, false, false, false, 1.0f, BS_RADIOBUTTON), 32, 32, 0xfab903c831acbb54ull},
+        {"swatch light selected", Button({.icon_only = true, .swatch = true, .content_color = light_content, .segmented = true}, true, false, false, -1.0f, BS_RADIOBUTTON), 32, 32, 0x1fe8118b8320be81ull},
+        {"swatch dark selected", Button({.icon_only = true, .swatch = true, .content_color = dark_content, .segmented = true}, true, false, false, -1.0f, BS_RADIOBUTTON), 32, 32, 0x372da41ca880d2eeull},
+        {"stroke sample", Button({.icon_only = true, .sample = 1, .sample_size = 4, .segmented = true}), 34, 34, 0x5e8b313d22cbc862ull},
+        {"thickness sample 16", Button({.icon_only = true, .sample = 2, .sample_size = 16, .segmented = true}), 34, 34, 0x6f8cc5d0d2fd11caull},
+        {"thickness sample 32 checked", Button({.icon_only = true, .sample = 2, .sample_size = 32, .segmented = true}, true, false, false, -1.0f, BS_RADIOBUTTON), 34, 34, 0xe2162240b08ef3a1ull},
+        {"brush sample 64", Button({.icon_only = true, .sample = 2, .sample_size = 64, .segmented = true}), 34, 34, 0x0dd5385cb8aec960ull},
+        {"dropdown", Button({.icon = Icon::Hand, .icon_only = true, .segmented = true, .dropdown = true}), 48, 34, 0xac05df9bfaa1ec8full},
+        {"dropdown checked", Button({.icon = Icon::Hand, .icon_only = true, .segmented = true, .dropdown = true}, true, false, false, -1.0f, BS_RADIOBUTTON), 48, 34, 0x6878649a631e2d10ull},
+        {"circular", Button({.icon = Icon::Discard, .icon_only = true, .segmented = true, .circular = true}), 32, 32, 0x068a14df3e0a4e2cull},
+        {"circular pressed", Button({.icon = Icon::Discard, .icon_only = true, .segmented = true, .circular = true}, false, true, true, -1.0f), 32, 32, 0xb452883bcac8c8c7ull},
+        {"focus line", focused, 34, 34, 0x4aa7ff6e4e6d9425ull},
+        {"focus cues hidden", focus_cues_hidden, 34, 34, 0x2f33bbedd061519eull},
+        {"check box checked", Button({}, true, false, false, -1.0f, BS_AUTOCHECKBOX), 160, 40, 0x244a46e3751f5bceull},
+        {"check box unchecked", Button({}, false, false, false, 1.0f, BS_AUTOCHECKBOX), 160, 40, 0x9ffabd24b4b64bcfull},
+        {"radio checked", Button({}, true, false, false, -1.0f, BS_AUTORADIOBUTTON), 160, 40, 0xd197128fe8463095ull},
+        {"push plain", Button({}), 120, 40, 0xcd86105a9a588bcfull},
+    };
+    for (const auto& test : buttons) {
+        const uint64_t hash = ButtonRasterHash(test);
+        std::printf("Button raster %-28s %016llx\n", test.name, static_cast<unsigned long long>(hash));
+        if (hash != test.expected) {
+            std::printf("FAIL button raster %s changed\n", test.name);
+            ++failed;
+        }
+    }
+    uint64_t strokes = kHashSeed, palette = kHashSeed;
+    for (auto theme : {app::AppearanceTheme::Light, app::AppearanceTheme::Dark}) {
+        Appearance(theme);
+        for (float scale : {1.0f, 1.25f, 1.5f}) {
+            strokes = HashDrawing(strokes, 12, 48, [&](HDC dc) { ui::DrawSeparator(dc, {2, 4, 10, 44}, scale); });
+            strokes = HashDrawing(strokes, 40, 60, [&](HDC dc) { ui::theme::DrawGrip(dc, {0, 0, ui::theme::Scaled(24, scale), 60}, scale); });
+            strokes = HashDrawing(strokes, 40, 60, [&](HDC dc) { ui::theme::DrawGrip(dc, {0, 0, ui::theme::Scaled(28, scale), 60}, scale); });
+            strokes = HashDrawing(strokes, 90, 50, [&](HDC dc) { ui::theme::DrawPanel(dc, {0, 0, 90, 50}, scale); });
+        }
+        // Every palette field by name, so a reordered initialiser shows.
+        const auto p = ui::theme::NormalPalette(theme);
+        for (COLORREF color : {p.panel, p.recessed, p.raised, p.border, p.control_border, p.text, p.muted_text, p.accent,
+                               p.on_accent, p.highlight, p.shadow, p.hover, p.pressed, p.selected, p.focus, p.disabled,
+                               p.success, p.error, p.on_error, p.recording, p.paused, p.screenshot_border, p.record_border,
+                               p.handle, p.guide, p.timeline_track, p.timeline_selection, p.playhead, p.tooltip, p.status}) {
+            palette = HashColor(palette, color);
+        }
+    }
+    std::printf("Stroke rasters %016llx\nPalette fields %016llx\n", static_cast<unsigned long long>(strokes),
+                static_cast<unsigned long long>(palette));
+    if (strokes != 0x6fc0d22eb7a88500ull) {
+        std::printf("FAIL separator, grip or panel rasters changed\n");
+        ++failed;
+    }
+    if (palette != 0xf389fead7a17f324ull) {
+        std::printf("FAIL palette fields changed\n");
+        ++failed;
+    }
+    const unsigned cases = static_cast<unsigned>(std::size(icons) * 12 + std::size(buttons) * 4 + 2 * 3 * 4 + 2);
+    std::printf("Control rasters: groups=%zu cases=%u failed=%u elapsed_ms=%llu\n", std::size(icons) + std::size(buttons) + 2,
+                cases, failed, static_cast<unsigned long long>(::GetTickCount64() - start));
+    failures += static_cast<int>(failed);
 }
 void Shot(HWND window, const wchar_t* name, bool print_client = false) {
     if (evidence.empty()) { return; }
@@ -1745,11 +1978,11 @@ void Workspace() {
         CHECK(Same(overlay.selector().selection(), frame));
     }
     Click(modes, 3001);
-    CHECK(overlay.mode() == app::CaptureMode::Scrollshot);
+    CHECK(overlay.mode() == ui::CaptureMode::Scrollshot);
     Click(modes, 3002);
-    CHECK(overlay.mode() == app::CaptureMode::Record);
+    CHECK(overlay.mode() == ui::CaptureMode::Record);
     Click(modes, 3000);
-    CHECK(overlay.mode() == app::CaptureMode::Screenshot);
+    CHECK(overlay.mode() == ui::CaptureMode::Screenshot);
     overlay.EnterEditing();
     CHECK(overlay.workspace().editing());
     {
@@ -2767,6 +3000,8 @@ int wmain(int argc, wchar_t** argv) {
         }
     } else if (argc >= 2 && ::lstrcmpW(argv[1], L"--material-rasters") == 0) {
         MaterialRasterEvidence();
+    } else if (argc >= 2 && ::lstrcmpW(argv[1], L"--control-rasters") == 0) {
+        ControlRasterEvidence();
     } else if (argc >= 2 && ::lstrcmpW(argv[1], L"--window-lifetime") == 0) {
         RecordingOwnerLifetime();
     } else if (argc >= 2 && ::lstrcmpW(argv[1], L"--text-checks") == 0) {

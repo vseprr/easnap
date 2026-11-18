@@ -1,13 +1,16 @@
 #include "ui/capture_workspace.h"
+#include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
+#include "ui/control_ids.h"
 #include "ui/native_controls.h"
 #include <algorithm>
 #include <cmath>
 
 namespace easnap::ui {
-void CaptureWorkspace::SetMode(app::CaptureMode mode) noexcept {
+void CaptureWorkspace::SetMode(CaptureMode mode) noexcept {
     if (!can_switch_mode()) { return; }
-    if (editing() && mode_ == app::CaptureMode::Screenshot && mode != mode_ &&
+    if (editing() && mode_ == CaptureMode::Screenshot && mode != mode_ &&
         !editor_feature_used_ && !automatic_attempt_consumed_) {
         quick_return_armed_ = true;
     }
@@ -15,7 +18,7 @@ void CaptureWorkspace::SetMode(app::CaptureMode mode) noexcept {
 }
 void CaptureWorkspace::BeginScrollshotCapture() noexcept {
     if (!editing() || screenshot_fixed_ || scrollshot_locked()) { return; }
-    mode_ = app::CaptureMode::Scrollshot;
+    mode_ = CaptureMode::Scrollshot;
     scrollshot_ = ScrollshotPhase::Capturing;
     // This is not an untouched return to Screenshot: nothing completes by itself later.
     quick_return_armed_ = false;
@@ -23,7 +26,7 @@ void CaptureWorkspace::BeginScrollshotCapture() noexcept {
 void CaptureWorkspace::EditScrollshot() noexcept {
     if (scrollshot_ != ScrollshotPhase::Stopped) { return; }
     scrollshot_ = ScrollshotPhase::Idle;
-    mode_ = app::CaptureMode::Screenshot;
+    mode_ = CaptureMode::Screenshot;
     editor_feature_used_ = true;
     screenshot_fixed_ = true;
     quick_return_armed_ = false;
@@ -56,9 +59,6 @@ bool InsideThreshold(POINT point, POINT origin, LONG width, LONG height) noexcep
     return ::PtInRect(&box, point) != FALSE;
 }
 constexpr UINT kNoticeTextFormat = DT_WORDBREAK | DT_CENTER | DT_NOPREFIX;
-/// A notice's timers: the end of its life, and the moment a progress notice appears.
-constexpr UINT_PTR kNoticeExpireTimer = 1;
-constexpr UINT_PTR kNoticeAppearTimer = 2;
 /// Work that ends sooner shows no progress notice at all.
 constexpr UINT kProgressNoticeDelayMs = 300;
 std::wstring NoticeText(HWND hwnd) {
@@ -66,7 +66,7 @@ std::wstring NoticeText(HWND hwnd) {
     text.resize(static_cast<size_t>(std::max(0, ::GetWindowTextW(hwnd, text.data(), static_cast<int>(text.size())))));
     return text;
 }
-HFONT CreateNoticeFont(float scale) { return theme::CreateUiFont(15.0f, scale, true); }
+HFONT CreateNoticeFont(float scale) { return theme::CreateUiFont(theme::kHeadingFontSize, scale, true); }
 SIZE NoticePadding(float scale) noexcept { return SIZE{theme::Scaled(14.0f, scale), theme::Scaled(8.0f, scale)}; }
 /// Size of `text` in the notice font: in one line when `wrap_width` is 0,
 /// otherwise wrapped at that width.
@@ -92,7 +92,7 @@ LRESULT CALLBACK NoticeProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         HDC dc = ::BeginPaint(hwnd, &paint);
         RECT client{};
         ::GetClientRect(hwnd, &client);
-        PaintBuffer buffer(dc, client);
+        platform::PaintBuffer buffer(dc, client);
         dc = buffer.dc();
         theme::FillSolid(dc, client, theme::Current().panel);
         RECT placement{};
@@ -113,8 +113,8 @@ LRESULT CALLBACK NoticeProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         ::EndPaint(hwnd, &paint);
         return 0;
     }
-    if (message == WM_TIMER && wparam == kNoticeAppearTimer) {
-        ::KillTimer(hwnd, kNoticeAppearTimer);
+    if (message == WM_TIMER && wparam == kWorkspaceNoticeAppearTimer) {
+        ::KillTimer(hwnd, kWorkspaceNoticeAppearTimer);
         ::ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         return 0;
     }
@@ -169,11 +169,10 @@ enum class NoticeKind { Done,
 HWND ShowCaptureNotice(const RECT& region, const std::wstring& text, NoticeKind kind) {
     static const bool registered = [] {
         WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
         wc.lpfnWndProc = NoticeProc;
         wc.hInstance = ::GetModuleHandleW(nullptr);
         wc.lpszClassName = L"EasnapCaptureCopiedNotice";
-        return ::RegisterClassExW(&wc) != 0;
+        return platform::RegisterWindowClass(wc);
     }();
     if (!registered) { return nullptr; }
     const bool status = kind == NoticeKind::Status;
@@ -199,13 +198,13 @@ HWND ShowCaptureNotice(const RECT& region, const std::wstring& text, NoticeKind 
     ::SetWindowLongPtrW(notice, GWLP_USERDATA, kind != NoticeKind::Done);
     if (kind == NoticeKind::Progress) {
         // Shown a moment later, and removed by its owner instead of a timer.
-        if (::SetTimer(notice, kNoticeAppearTimer, kProgressNoticeDelayMs, nullptr) == 0) {
+        if (::SetTimer(notice, kWorkspaceNoticeAppearTimer, kProgressNoticeDelayMs, nullptr) == 0) {
             ::DestroyWindow(notice);
             return nullptr;
         }
         return notice;
     }
-    if (::SetTimer(notice, kNoticeExpireTimer, status ? 4000 : 1400, nullptr) == 0) {
+    if (::SetTimer(notice, kWorkspaceNoticeExpireTimer, status ? 4000 : 1400, nullptr) == 0) {
         ::DestroyWindow(notice);
         return nullptr;
     }

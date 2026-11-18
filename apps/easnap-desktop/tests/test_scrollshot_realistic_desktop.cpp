@@ -54,6 +54,10 @@
 #include "scrollshot_realistic_app.h"
 
 #include "capture/capture_provider.h"
+#include "platform/bgra_image.h"
+#include "platform/graphics_device.h"
+#include "platform/screen_geometry.h"
+#include "platform/system_info.h"
 #include "scrollshot/scrollshot_session.h"
 #include "scrollshot/stitch_engine.h"
 #include "strings/strings.h"
@@ -932,7 +936,7 @@ int RunTest(const std::wstring& evidence) {
     const bool duplication_available = probed.status == capture::RegionCaptureStatus::FrameAcquired &&
                                        probed.primary_failure.stage == capture::RegionCaptureFailureStage::None;
 
-    overlay.SetMode(app::CaptureMode::Scrollshot);
+    overlay.SetMode(ui::CaptureMode::Scrollshot);
     ui::ScrollshotControls::Callbacks control_callbacks;
     control_callbacks.on_wheel_blocked = [&] { ++wheel_blocked; };
     ui::ScrollshotControls controls(std::move(control_callbacks));

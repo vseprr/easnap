@@ -41,21 +41,30 @@ private:
 
 }  // namespace
 
+namespace {
+/// Fills the tokens derived from the base colours of `palette`.
+Palette WithDerivedTokens(Palette palette) noexcept {
+    palette.separator = palette.high_contrast ? palette.text : Mix(palette.panel, palette.text, 0.55f);
+    palette.scroll_thumb = Mix(palette.panel, palette.text, 0.55f);
+    return palette;
+}
+}  // namespace
+
 Palette NormalPalette(app::AppearanceTheme preference) noexcept {
     if (preference == app::AppearanceTheme::Dark) {
-        return {RGB(43, 46, 50), RGB(40, 43, 47), RGB(45, 48, 52), RGB(56, 59, 64), RGB(125, 130, 138),
-                RGB(240, 241, 243), RGB(181, 185, 192), RGB(238, 94, 90), RGB(30, 20, 20),
-                RGB(79, 83, 90), RGB(12, 14, 17), RGB(49, 52, 57), RGB(39, 42, 46), RGB(43, 46, 50),
-                RGB(255, 154, 150), RGB(181, 185, 192), RGB(114, 220, 155), RGB(255, 130, 137), RGB(42, 15, 19),
-                RGB(255, 130, 137), RGB(239, 194, 107), RGB(177, 183, 128), RGB(238, 94, 90), RGB(245, 245, 245),
-                RGB(185, 189, 195), RGB(34, 37, 41), RGB(238, 94, 90), RGB(245, 245, 245), RGB(43, 46, 50), RGB(181, 185, 192)};
+        return WithDerivedTokens({RGB(43, 46, 50), RGB(40, 43, 47), RGB(45, 48, 52), RGB(56, 59, 64), RGB(125, 130, 138),
+                                  RGB(240, 241, 243), RGB(181, 185, 192), RGB(238, 94, 90), RGB(30, 20, 20),
+                                  RGB(79, 83, 90), RGB(12, 14, 17), RGB(49, 52, 57), RGB(39, 42, 46), RGB(43, 46, 50),
+                                  RGB(255, 154, 150), RGB(181, 185, 192), RGB(114, 220, 155), RGB(255, 130, 137), RGB(42, 15, 19),
+                                  RGB(255, 130, 137), RGB(239, 194, 107), RGB(177, 183, 128), RGB(238, 94, 90), RGB(245, 245, 245),
+                                  RGB(185, 189, 195), RGB(34, 37, 41), RGB(238, 94, 90), RGB(245, 245, 245), RGB(43, 46, 50), RGB(181, 185, 192)});
     }
-    return {RGB(232, 232, 231), RGB(228, 228, 227), RGB(233, 233, 232), RGB(215, 216, 215), RGB(127, 130, 132),
-            RGB(44, 47, 51), RGB(88, 92, 96), RGB(238, 94, 90), RGB(38, 19, 18),
-            RGB(255, 255, 255), RGB(158, 162, 164), RGB(236, 236, 235), RGB(226, 227, 226), RGB(232, 232, 231),
-            RGB(167, 47, 44), RGB(88, 92, 96), RGB(28, 104, 63), RGB(178, 35, 52), RGB(255, 255, 255),
-            RGB(178, 35, 52), RGB(130, 89, 12), RGB(177, 183, 128), RGB(238, 94, 90), RGB(255, 255, 255),
-            RGB(104, 108, 112), RGB(216, 217, 216), RGB(192, 67, 63), RGB(44, 47, 51), RGB(232, 232, 231), RGB(88, 92, 96)};
+    return WithDerivedTokens({RGB(232, 232, 231), RGB(228, 228, 227), RGB(233, 233, 232), RGB(215, 216, 215), RGB(127, 130, 132),
+                              RGB(44, 47, 51), RGB(88, 92, 96), RGB(238, 94, 90), RGB(38, 19, 18),
+                              RGB(255, 255, 255), RGB(158, 162, 164), RGB(236, 236, 235), RGB(226, 227, 226), RGB(232, 232, 231),
+                              RGB(167, 47, 44), RGB(88, 92, 96), RGB(28, 104, 63), RGB(178, 35, 52), RGB(255, 255, 255),
+                              RGB(178, 35, 52), RGB(130, 89, 12), RGB(177, 183, 128), RGB(238, 94, 90), RGB(255, 255, 255),
+                              RGB(104, 108, 112), RGB(216, 217, 216), RGB(192, 67, 63), RGB(44, 47, 51), RGB(232, 232, 231), RGB(88, 92, 96)});
 }
 
 namespace {
@@ -75,10 +84,10 @@ void RefreshSystemColors() noexcept {
         const COLORREF text = ::GetSysColor(COLOR_WINDOWTEXT);
         const COLORREF selected = ::GetSysColor(COLOR_HIGHLIGHT);
         const COLORREF on_selected = ::GetSysColor(COLOR_HIGHLIGHTTEXT);
-        palette_ = {surface, surface, surface, text, text, text, text, selected, on_selected,
-                    surface, surface, surface, selected, surface, selected, ::GetSysColor(COLOR_GRAYTEXT),
-                    text, selected, on_selected, text, text, text, text, text, text,
-                    text, selected, text, surface, text, true};
+        palette_ = WithDerivedTokens({surface, surface, surface, text, text, text, text, selected, on_selected,
+                                      surface, surface, surface, selected, surface, selected, ::GetSysColor(COLOR_GRAYTEXT),
+                                      text, selected, on_selected, text, text, text, text, text, text,
+                                      text, selected, text, surface, text, true});
     }
 }
 

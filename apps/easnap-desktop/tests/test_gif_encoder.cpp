@@ -18,6 +18,7 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 
+#include "platform/bgra_image.h"
 #include "sink_writer_fixture.h"
 
 using Microsoft::WRL::ComPtr;

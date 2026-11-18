@@ -5,6 +5,8 @@
 #include <new>
 #include <utility>
 
+#include "platform/platform_utils.h"
+
 namespace easnap::platform {
 namespace {
 

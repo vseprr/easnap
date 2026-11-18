@@ -10,6 +10,8 @@
 #include <vector>
 
 #include "media/preview_host_protocol.h"
+#include "platform/app_messages.h"
+#include "platform/window_class.h"
 
 namespace easnap::media {
 namespace {
@@ -197,7 +199,7 @@ public:
             // Never poll recursively in layout or continuously repost while
             // waiting for the helper; the existing timer remains the fallback.
             if (!resize_poll_posted_ && owner_window_ != nullptr) {
-                resize_poll_posted_ = ::PostMessageW(owner_window_, kResizePollMessage, 0, 0) != FALSE;
+                resize_poll_posted_ = ::PostMessageW(owner_window_, kMsgPreviewProcessResizePoll, 0, 0) != FALSE;
             }
         }
     }
@@ -266,7 +268,6 @@ public:
 
 private:
     static constexpr UINT_PTR kPollTimer = 1;
-    static constexpr UINT kResizePollMessage = WM_APP + 1;
     static constexpr ULONGLONG kHeartbeatTimeoutMs = 3'000;
     static constexpr ULONGLONG kIntentTimeoutMs = 3'000;
     static constexpr ULONGLONG kOpenTimeoutMs = 5'000;
@@ -285,18 +286,12 @@ private:
 
     static LRESULT CALLBACK OwnerProcedure(HWND window, UINT message,
                                            WPARAM wparam, LPARAM lparam) noexcept {
-        auto* owner = reinterpret_cast<ProcessMediaPreview*>(
-            ::GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (message == WM_NCCREATE) {
-            owner = static_cast<ProcessMediaPreview*>(
-                reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
-            ::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(owner));
-        }
+        auto* owner = platform::BindWindowOwner<ProcessMediaPreview>(window, message, lparam);
         if (message == WM_TIMER && wparam == kPollTimer && owner != nullptr) {
             owner->Poll();
             return 0;
         }
-        if (message == kResizePollMessage && owner != nullptr) {
+        if (message == kMsgPreviewProcessResizePoll && owner != nullptr) {
             owner->resize_poll_posted_ = false;
             owner->Poll();
             return 0;
@@ -305,11 +300,11 @@ private:
     }
 
     bool CreateOwnerWindow() noexcept {
-        WNDCLASSW definition{};
+        WNDCLASSEXW definition{};
         definition.lpfnWndProc = OwnerProcedure;
         definition.hInstance = ::GetModuleHandleW(nullptr);
         definition.lpszClassName = L"EasnapPreviewProcessOwner";
-        if (!::RegisterClassW(&definition) && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        if (!platform::RegisterWindowClass(definition)) {
             return false;
         }
         owner_window_ = ::CreateWindowExW(0, definition.lpszClassName, L"", 0,

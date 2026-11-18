@@ -27,6 +27,8 @@
 #include "media/media_foundation_writer.h"
 #include "media/mf_d3d_device.h"
 #include "media/video_support.h"
+#include "platform/bgra_image.h"
+#include "platform/platform_utils.h"
 
 namespace easnap::media {
 namespace {

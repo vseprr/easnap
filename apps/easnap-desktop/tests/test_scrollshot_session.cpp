@@ -7,6 +7,7 @@
 
 #include "scrollshot/scrollshot_session.h"
 
+#include "platform/bgra_image.h"
 #include "scrollshot_synthetic.h"
 
 #include <atomic>

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "capture/recording_capture_worker.h"
+#include "platform/bgra_image.h"
 
 namespace {
 
@@ -348,7 +349,7 @@ void TestMonotonicFrameTimestamps() {
 
 void TestDropNewestOverloadPolicy() {
     easnap::media::FrameQueue<easnap::media::VideoFrame> queue(1);
-    easnap::capture::SaturatingCounter drops(2);
+    easnap::platform::SaturatingCounter drops(2);
 
     easnap::media::VideoFrame first;
     first.timestamp = easnap::media::MediaTime{1};

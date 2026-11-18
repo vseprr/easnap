@@ -12,14 +12,21 @@
 
 #include "app/session_transitions.h"
 #include "app/app_settings.h"
+#include "app/display_change.h"
 #include "app/external_video.h"
 #include "app/recording_completion.h"
 #include "app/recording_finalizer.h"
+#include "app/scrollshot_status.h"
 #include "app/trim_flow.h"
 #include "capture/capture_provider.h"
 #include "media/media_interfaces.h"
+#include "platform/app_messages.h"
 #include "platform/image_export.h"
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
+#include "platform/screen_geometry.h"
+#include "ui/capture_mode.h"
+#include "ui/control_ids.h"
+#include "ui/native_controls.h"
 
 namespace easnap::ui {
 class OverlayController;
@@ -46,27 +53,6 @@ enum class RecordingStartFailure;
 
 namespace easnap::app {
 
-/// Posted to the host window so windows are destroyed outside their own
-/// window procedure (destroying a window from inside its callback is unsafe).
-inline constexpr UINT kMsgSessionCleanup = WM_APP + 11;
-/// Posted after the background finalizer has stopped every recording worker and
-/// closed (or safely aborted) the temporary MP4. WPARAM carries its generation.
-inline constexpr UINT kMsgRecordingFinalized = WM_APP + 12;
-// WM_APP + 13 is kMsgTrimExportCompleted, in app/trim_flow.h.
-/// Posted by a Scrollshot capture worker when its progress changed. WPARAM
-/// carries the capture's generation; pixels never travel in the message.
-inline constexpr UINT kMsgScrollshotProgress = WM_APP + 14;
-// WM_APP + 15 is platform::kMsgImageExportCompleted, in platform/image_export.h.
-/// Posted when a save of the settings failed and the user may be told now.
-inline constexpr UINT kMsgSettingsNotSaved = WM_APP + 16;
-// WM_APP + 18 is kMsgVideoProbeCompleted, in app/external_video.h.
-// WM_APP + 19 is kMsgOpenVideoRequest, in app/video_handover.h.
-/// Timer on the host window: retired windows are destroyed once no dialog of
-/// theirs is running its own message loop any more.
-inline constexpr UINT_PTR kTimerDeferredCleanup = 0xEA50;
-/// Timer on the host window: a checked video waits until no dialog of
-/// Easnap's runs its own message loop any more.
-inline constexpr UINT_PTR kTimerVideoProbeRetry = 0xEA51;
 
 /// The session lifecycle; session_transitions.cpp lists the legal transitions.
 ///
@@ -80,11 +66,6 @@ inline constexpr UINT_PTR kTimerVideoProbeRetry = 0xEA51;
 ///        -> Idle, or -> ScreenshotEditing to annotate the stitched image
 ///
 /// `SessionStateMachine` (session_transitions.h) holds the current state.
-
-enum class CaptureMode { Screenshot,
-                         Record,
-                         Scrollshot };
-
 
 /// Owns session creation, enforces legal state transitions and wires the UI
 /// components together. Singleton because exactly one capture session may exist.
@@ -192,7 +173,7 @@ private:
     [[nodiscard]] std::unique_ptr<editor::ScreenshotEditor> CreateEditor();
     /// Shows the workspace how an edited document's viewport stands.
     void PublishDocumentView(const editor::ImageView& view);
-    void OnWorkspaceEditingChanged(CaptureMode mode, const RECT& region);
+    void OnWorkspaceEditingChanged(ui::CaptureMode mode, const RECT& region);
     void OnWorkspaceRegionChanged(const RECT& region);
     void CompleteWorkspaceScreenshot();
     bool PrepareWorkspaceScreenshot();
@@ -226,15 +207,6 @@ private:
                                   Save,
                                   Discard,
                                   Copy };
-    /// What the island's message line reports besides the capture's own condition.
-    enum class ScrollshotNotice { None,
-                                  WheelBlocked,
-                                  DisplayChanged,
-                                  Stopping,
-                                  Copying,
-                                  Saving,
-                                  CopyFailed,
-                                  SaveFailed };
     /// Shows `notice` on the island at once, before work that blocks this thread.
     void ShowScrollshotNotice(ScrollshotNotice notice);
     /// The visible surface a question about the current session belongs to.
@@ -259,7 +231,7 @@ private:
     bool StartScrollshotSave(bool allow_quick);
     /// Copies or saves the stitched image on a worker; the island stays busy
     /// until OnImageExportCompleted.
-    bool StartScrollshotExport(platform::ImageExportTarget target, std::wstring path, bool quick);
+    bool StartScrollshotExport(platform::ImageExportTarget target, ui::ImageSaveDestination destination);
     /// The session's image is being copied or saved: the session must not
     /// change under it.
     [[nodiscard]] bool SessionExportRunning() const;
@@ -271,6 +243,13 @@ private:
     void ShowScrollshotHelp();
     void UpdateScrollshotStatus();
     void StopScrollshotForShutdown();
+
+    /// What OnDisplayChanged decides from: the session's state and surfaces now.
+    [[nodiscard]] DisplayChangeFacts CurrentDisplayChangeFacts() const;
+    /// The display layout changed during a Scrollshot capture or review.
+    void KeepScrollshotAfterDisplayChange();
+    /// The display layout changed while the editor showed a stitched image.
+    void ReturnScrollshotDocumentToReview();
 
     void EndSession();
     void ScheduleCleanup();
@@ -307,8 +286,7 @@ private:
     std::shared_ptr<platform::BgraImage> scrollshot_image_;
     platform::ImageExportJob scrollshot_export_;
     /// Where the running save writes, and whether quick save chose it.
-    std::wstring scrollshot_save_path_;
-    bool scrollshot_save_quick_{false};
+    ui::ImageSaveDestination scrollshot_save_;
     /// A display change or cancel arrived while the session's image was
     /// being exported; it is looked at when the export has ended.
     bool recheck_display_after_export_{false};

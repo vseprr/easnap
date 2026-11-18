@@ -2,10 +2,14 @@
 #include "ui/pinned_images.h"
 
 #include "platform/image_export.h"
+#include "platform/image_output.h"
+#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
 #include "ui/native_controls.h"
-#include "ui/paint_buffer.h"
+#include "platform/paint_buffer.h"
 #include "ui/pin_layout.h"
 #include "ui/ui_theme.h"
 
@@ -99,7 +103,6 @@ private:
 bool PinnedImages::Window::Create(const RECT& source) {
     static const bool registered = [] {
         WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
         // No CS_DROPSHADOW: Windows draws that shadow as a window of its own
         // in this process, unmarked and not excluded, which would make every
         // capture hide the workspace and refuse Scrollshot (ADR-038).
@@ -107,7 +110,7 @@ bool PinnedImages::Window::Create(const RECT& source) {
         wc.hInstance = ::GetModuleHandleW(nullptr);
         wc.hCursor = ::LoadCursorW(nullptr, IDC_SIZEALL);
         wc.lpszClassName = kPinClassName;
-        return ::RegisterClassExW(&wc) != 0;
+        return platform::RegisterWindowClass(wc);
     }();
     if (!registered || !image_ || image_->empty()) { return false; }
     const platform::MonitorInfo monitor = platform::MonitorForRect(source);
@@ -147,15 +150,11 @@ bool PinnedImages::Window::EndBusy() {
 }
 
 LRESULT CALLBACK PinnedImages::Window::Procedure(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-    if (message == WM_NCCREATE) {
-        auto* created = static_cast<Window*>(reinterpret_cast<const CREATESTRUCTW*>(lparam)->lpCreateParams);
-        created->hwnd_ = hwnd;
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(created));
-    }
-    auto* self = reinterpret_cast<Window*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    auto* self = platform::BindWindowOwner<Window>(hwnd, message, lparam);
+    if (message == WM_NCCREATE) { self->hwnd_ = hwnd; }
     if (self == nullptr) { return ::DefWindowProcW(hwnd, message, wparam, lparam); }
     if (message == WM_NCDESTROY) {
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+        platform::UnbindWindowOwner(hwnd);
         RemoveScreenContentMark(hwnd);
         self->hwnd_ = nullptr;
         self->image_.reset(); // The image goes with its window.
@@ -284,7 +283,7 @@ void PinnedImages::Window::PaintTo(HDC dc) {
     RECT client{};
     ::GetClientRect(hwnd_, &client);
     {
-        PaintBuffer buffer(dc, client);
+        platform::PaintBuffer buffer(dc, client);
         HDC target = buffer.dc();
         const theme::Palette& palette = theme::Current();
         theme::FillSolid(target, client, active_ ? palette.focus : palette.border);

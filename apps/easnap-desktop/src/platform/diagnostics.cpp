@@ -11,6 +11,7 @@
 #include <exception>
 #include <vector>
 
+#include "platform/files.h"
 #include "platform/platform_utils.h"
 
 namespace easnap::platform::diagnostics {

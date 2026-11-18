@@ -429,113 +429,77 @@ additions:
 
 ## Validation
 
-This is the plan the implementation slices follow. What has run so far, on
-the host only (Windows 10 22H2, 2026-11-09, media-layer slice): the table and
-classifier tests (`video_support_table`), the probe tests (`video_probe_files`,
-`video_probe_asf`) without the long Soak file, and exporter cases for WMV,
-VC-1, `.mov`, `.m4v`, audio that ends early and a long video-only stretch
-(`mp4_trim_export_backend`, `gif_backend`). The probe tests wrote and probed
-about forty files in under five seconds.
+Runs on the host only (Windows 10 22H2, 2026-11-09, private desktops) unless
+the lab is named.
 
-The flow slice, on the host only (Windows 10 22H2, 2026-11-09, private
-desktops): the Fast tier 27 of 27, with `external_video_text` (the string of
-every answer, in both languages, and the trimmed name), the reuse rule and the
-external source in `trim_workflow_orchestration`, and the pending-work table
-for both source kinds in `session_state_transitions`; on the Standard tier
-`trim_flow_production` (402 checks: the seven opened-video cases below, Save's
-identity check through a hard link, another spelling and a copy, a file that
-changed after the check refused before Copy asks for a format, and a failed
-preview that closes without a question), `text_fits_in_every_language` (the
-trim window of both kinds; the GIF-only notice in the status line of the
-smallest and the opening window without a scroll bar; and, in each language,
-the refusal whose text wraps tallest at the dialog's text width among all
-eighteen refusal strings of this feature, measured with the dialog's font;
-only that one is shown, because a message dialog costs about two seconds on
-a private desktop: it was the Media Foundation sentence in both languages),
-`video_probe_job` (also a result whose message was lost, and a file in a real
-temporary session refused as inside Easnap's folder under three spellings),
-`strings_catalog`, `data_safety_questions`,
-`video_probe_files` and `mp4_trim_export_backend`. A Copy of 11 of the 12
-seconds as MP4 took about 0.55 s, three seconds as GIF about 0.9 s. Nothing
-has run in the lab. Not run anywhere: the tray entry, the Open and Save
-dialogs and the reason dialog in the running application; Exit, sign-out and
-a probe result held back by an open dialog, because no test compiles the
-coordinator; and the owner checklist.
-
-The entry-point slice, on the host only (Windows 10 22H2, 2026-11-09): the
-Release build without warnings; the Fast tier 30 of 30, with
-`command_line_parsing` (37 checks: the sign-in command exactly as Settings
-writes it, `--startup` in any case, a folder named `--startup` and a file
-whose name ends in it opening the file, quoted paths with spaces, `--open`
-with a missing file, a UNC path and a URL kept for the location check, a
-bare missing file, a folder, unknown options, `--open` without a path, second
-paths ignored, relative paths made absolute), `handover_validation` (34
-checks: wrong magic, no terminator, a NUL inside, odd and oversized payloads,
-the largest accepted one, relative, drive-relative, UNC, `\\?\UNC`, URL and
-device spellings; the location check on an existing file, a `\\?\` spelling,
-a missing file, a folder, a UNC path, a URL and a drive that does not exist)
-and `installer_open_with_list` (both lists equal the table; HKCU only; no
-`UserChoice`; no extension default value; the command is
-`"{app}\Easnap.exe" --open "%1"`; uninstall flags, and never `uninsdeletekey`
-under an extension, whose key other programs share; section names and
-indented comments read as Inno Setup reads them; copies of the script with
-one extension missing and a default value added, and with `uninsdeletekey` on
-`.mp4` under an indented lower-case section name, failed as they should);
-`executable_imports` and `strings_catalog` unchanged. On the Standard tier
-`copydata_handover` (44 checks, private desktop: a valid request kept and
-opened only from the posted message, a second request refused while one
-waits, a busy receiver, eight malformed payloads and spellings that are not a
-local path dropped, a missing file and a folder kept without touching the
-disk and left to the probe, this process's own request; then the test
-started again as a second process with the production sender: taken,
-refused while busy, refused for a relative path, and no recipient for an
-unknown class), `text_fits_in_every_language` with
-the busy message among the measured refusals (the Media Foundation sentence
-stays the tallest), `trim_flow_production`, `video_probe_job`,
-`video_probe_files` and `strings_catalog`. clang-tidy found nothing in the
-changed sources. Not run: the installer (neither compiled with ISCC nor
-installed or uninstalled), Explorer's "Open with", a real second `Easnap.exe`
-against a running Easnap (the hand-over test uses its own window and class),
-`OpenVideo(path)` in the coordinator (no test compiles it), and the lab.
-
-- **Fast tier.** Table contents; the classifier from facts and HRESULTs,
-  including protected and a missing codec extension; the installer list equals
-  the table; argument parsing (path containing `--startup`, quoted paths,
-  `--open`, bare path); the hand-over validator (relative, UNC, non-existing,
-  overlong and malformed payloads rejected).
-- **Probe tests (Standard)**, with files written by the production writer:
-  640×360 at 30 fps, 1920×1080 at 60 fps, 360×640, 24 fps, different
-  durations, with and without audio, a one-frame file, a long file (Soak), and
-  a `.wmv` written with the sink writer. Bad input: random bytes with a `.mp4`
-  extension, an unsupported extension, an audio-only file written with an
-  AAC-only sink writer. Access: a file locked exclusively and a read-only file
-  (read-only must open).
-- **`trim_flow_production`** cases for external sources: Copy of the whole
-  range and of a part, GIF Copy, Cancel, Close and Destroy while exporting,
-  and the Exit answer. After every case: the source folder holds no new file,
-  and the source's bytes, timestamps and ACL are unchanged; the work session is
-  removed.
-- **Hand-over test.** The test executable relaunches itself with `--send
-  <path>` using the production sender; the receiver acts only when idle.
-- **Text fit.** The reason dialog and the trim window, both source kinds, in
-  `text_fits_in_every_language`.
+- **Media-layer slice.** `video_support_table`, `video_probe_files` and
+  `video_probe_asf` (without the long Soak file), and exporter cases for WMV,
+  VC-1, `.mov`, `.m4v`, audio that ends early and a long video-only stretch
+  (`mp4_trim_export_backend`, `gif_backend`). The probe tests wrote and probed
+  about forty files in under five seconds.
+- **Flow slice.** Fast tier 27 of 27, with `external_video_text` (every
+  answer in both languages, the trimmed name), the reuse rule and the external
+  source in `trim_workflow_orchestration`, and the pending-work table for both
+  source kinds in `session_state_transitions`. Standard tier:
+  `trim_flow_production` (402 checks: the seven opened-video cases below,
+  Save's identity check through a hard link, another spelling and a copy, a
+  file that changed after the check refused before Copy asks for a format, a
+  failed preview that closes without a question);
+  `text_fits_in_every_language` (the trim window of both kinds; the GIF-only
+  notice in the smallest window and the opening window without a scroll bar;
+  in each language the tallest of the eighteen refusal strings, the Media
+  Foundation sentence, shown alone because a message dialog costs about two
+  seconds on a private desktop); `video_probe_job` (also a lost result
+  message, and a file in a real temporary session refused as inside Easnap's
+  folder under three spellings); `strings_catalog`, `data_safety_questions`,
+  `video_probe_files`, `mp4_trim_export_backend`. A Copy of 11 of the 12
+  seconds as MP4 took about 0.55 s, three seconds as GIF about 0.9 s. Nothing
+  had run in the lab yet. Not run anywhere: the tray entry, the Open and Save
+  dialogs and the reason dialog in the running application; Exit, sign-out and
+  a probe result held back by an open dialog, because no test compiles the
+  coordinator.
+- **Entry-point slice.** Release build without warnings; Fast tier 30 of 30,
+  with `command_line_parsing` (37 checks), `handover_validation` (34 checks)
+  and `installer_open_with_list` (both lists equal the table; HKCU only; no
+  `UserChoice`; no extension default value; the command is
+  `"{app}\Easnap.exe" --open "%1"`; never `uninsdeletekey` under an extension,
+  whose key other programs share; copies of the script with one extension
+  missing, a default value added, and `uninsdeletekey` on `.mp4` failed as
+  they should); `executable_imports` and `strings_catalog` unchanged. Standard
+  tier: `copydata_handover` (44 checks, private desktop, then the test started
+  again as a second process with the production sender: taken, refused while
+  busy, refused for a relative path, no recipient for an unknown class),
+  `text_fits_in_every_language` with the busy message among the measured
+  refusals (the Media Foundation sentence stays the tallest),
+  `trim_flow_production`, `video_probe_job`, `video_probe_files` and
+  `strings_catalog`. clang-tidy found nothing in the changed sources. Not run:
+  the installer (neither compiled with ISCC nor installed or uninstalled),
+  Explorer's "Open with", a real second `Easnap.exe` against a running Easnap
+  (the hand-over test uses its own window and class), `OpenVideo(path)` in the
+  coordinator, and the lab.
+- **Test design.** Probe tests use files written by the production writer
+  (640×360 at 30 fps, 1920×1080 at 60 fps, 360×640, 24 fps, with and without
+  audio, a one-frame file, a long file in Soak, a `.wmv`); bad input (random
+  bytes named `.mp4`, an unsupported extension, an audio-only file) and
+  access (a file locked exclusively fails, a read-only file opens).
+  `trim_flow_production` covers external sources: Copy of the whole range and
+  of a part, GIF Copy, Cancel, Close and Destroy while exporting, the Exit
+  answer; after every case the source folder holds no new file, the source's
+  bytes, timestamps and ACL are unchanged and the work session is removed. The
+  hand-over test relaunches itself with `--send <path>`.
 - **Owner checklist** (test-created files only, evidence kept out of the
-  repository): open from the tray; open with "Open with" while Easnap runs,
-  while it does not and while it is busy (the second start's message); Close
-  and Exit during an export; Save with the source's
-  own name refused; Save as MP4 and as GIF; the source file untouched
-  afterwards. Run by the owner on the development PC on 2026-11-09 (Windows
-  10 22H2, installed build with the "Open with" entries): no problem found.
-  In the lab the branch's Full run `20261109-151309-full` (66 of 66) and
-  Soak run `20261109-171521-soak` (74 of 74) passed with the feature's tests
+  repository): open from the tray; "Open with" while Easnap runs, while it
+  does not and while it is busy; Close and Exit during an export; Save with
+  the source's own name refused; Save as MP4 and as GIF; the source untouched
+  afterwards. Run by the owner on the development PC on 2026-11-09 (installed
+  build with the "Open with" entries): no problem found. In the lab the
+  branch's Full run `20261109-151309-full` (66 of 66) and Soak run
+  `20261109-171521-soak` (74 of 74) passed with the feature's tests
   (`trim_flow_production`, `copydata_handover`, `video_probe_files`,
   `video_probe_asf`, `video_probe_job`, `external_video_text`,
   `text_fits_in_every_language`).
-- **What the lab can and cannot verify.** The lab can run everything above
-  that needs no extra decoder. It has no HEVC extension unless one is
-  installed there, so "needs a Windows codec extension" is verified by the
-  classifier only and not on a real file. It has no network drive, so the
-  network and offline refusals are verified by the classifier and by path
-  rules only. The installer entries and Explorer's "Open with" are not run in
-  the lab. The measured figures (probe time, export time for a long file) are
-  recorded here when the slices are validated.
+- **What the lab can and cannot verify.** It has no HEVC extension unless one
+  is installed, so "needs a Windows codec extension" is verified by the
+  classifier only; it has no network drive, so the network and offline
+  refusals are verified by the classifier and path rules only. The installer
+  entries and Explorer's "Open with" are not run in the lab.

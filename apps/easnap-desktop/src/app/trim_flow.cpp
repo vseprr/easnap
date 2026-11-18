@@ -6,9 +6,11 @@
 
 #include "app/external_video.h"
 #include "app/recording_workflow.h"
+#include "platform/files.h"
 #include "platform/platform_utils.h"
 #include "strings/strings.h"
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
 #include "ui/trim_window.h"
 
 namespace easnap::app {

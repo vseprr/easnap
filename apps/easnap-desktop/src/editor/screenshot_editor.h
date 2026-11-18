@@ -17,135 +17,35 @@
 // where a screenshot is shown one to one at the place it was captured.
 #pragma once
 
-#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include "app/session_state.h"
+#include "app/app_settings.h"
+#include "app/appearance_theme.h"
+#include "editor/annotation_document.h"
+#include "editor/annotation_palette.h"
+#include "editor/editor_context_panel.h"
+#include "editor/editor_export.h"
+#include "editor/editor_toolbar.h"
 #include "editor/image_viewport.h"
+#include "editor/key_commands.h"
 #include "editor/redaction_renderer.h"
+#include "editor/text_annotation_editor.h"
+#include "platform/bgra_image.h"
 #include "platform/image_export.h"
 #include "platform/platform_utils.h"
 #include "ui/native_controls.h"
 
 namespace easnap::editor {
 
-using platform::ComPtr;
-
-enum class ToolId {
-    Pointer,    ///< Inspect only; does not draw.
-    Pen,        ///< Freehand polyline.
-    Arrow,      ///< Line with a filled head.
-    Rectangle,  ///< Outlined rectangle.
-    Ellipse,    ///< Outlined ellipse.
-    Text,       ///< Click, then type.
-    Mosaic,     ///< Smooth blur or block pixelation, brush or rectangle.
-    Line,
-    Tag,
-    Spotlight,
-    Watermark,
-};
-
-enum class TextMode { Plain,
-                      Fill,
-                      Outline };
-enum class EffectMode { Blur,
-                        Pixelate };
-enum class EffectMethod { Brush,
-                          Region };
-enum class SpotlightShape { Rectangle,
-                            Ellipse,
-                            Rounded };
-
-struct AnnotationStyle {
-    D2D1_COLOR_F color{1.0f, 0.259f, 0.286f, 1.0f};  // Easnap default: signal red
-    float thickness{3.0f};
-    float font_size{16.0f}; // Points, applied to the whole object.
-    float image_scale{1.0f}; // Capture DPI/96, frozen with content.
-    TextMode text_mode{TextMode::Plain};
-    EffectMode effect{EffectMode::Blur};
-    EffectMethod method{EffectMethod::Brush};
-    SpotlightShape shape{SpotlightShape::Rectangle};
-    float strength{50.0f};
-    float opacity{50.0f};
-    /// Diameter of the mosaic brush in captured pixels.
-    float brush_size{32.0f};
-};
-
-/// One editing operation in image-space coordinates (origin = top-left of the
-/// captured region, 1 unit = 1 captured pixel).
-struct Annotation {
-    ToolId tool{ToolId::Pen};
-    AnnotationStyle style{};
-    std::vector<D2D1_POINT_2F> points;
-    std::wstring text;
-
-    [[nodiscard]] D2D1_RECT_F bounds() const;
-    [[nodiscard]] bool HitTest(D2D1_POINT_2F point, float tolerance = 5.0f) const;
-    [[nodiscard]] std::vector<D2D1_POINT_2F> Handles() const;
-    [[nodiscard]] bool Same(const Annotation& other) const;
-    [[nodiscard]] float FontPixels() const { return style.font_size * (96.0f / 72.0f) * style.image_scale; }
-};
-
-/// Vector command list with undo/redo. Compositing happens only on export.
-class IAnnotationDocument {
-public:
-    virtual ~IAnnotationDocument() = default;
-
-    virtual void Apply(Annotation annotation) = 0;
-    [[nodiscard]] virtual bool CanUndo() const = 0;
-    [[nodiscard]] virtual bool CanRedo() const = 0;
-    virtual bool Undo() = 0;
-    virtual bool Redo() = 0;
-    /// Undoable "remove everything" as one document operation.
-    virtual void Clear() = 0;
-    /// Non-undoable session reset: drops both stacks and the revision counter.
-    virtual void Reset() = 0;
-    [[nodiscard]] virtual const std::vector<Annotation>& annotations() const = 0;
-    /// Increments on every mutation; used as a cheap cache key.
-    [[nodiscard]] virtual uint64_t revision() const = 0;
-};
-
-class AnnotationDocument final : public IAnnotationDocument {
-public:
-    /// Undo keeps this many steps; older ones are dropped. Each step holds a
-    /// copy of the whole annotation list, so an unbounded history grew with
-    /// every nudge of an arrow key.
-    static constexpr size_t kUndoLimit = 200;
-
-    void Apply(Annotation annotation) override;
-    [[nodiscard]] bool CanUndo() const override { return !undo_stack_.empty(); }
-    [[nodiscard]] bool CanRedo() const override { return !redo_stack_.empty(); }
-    bool Undo() override;
-    bool Redo() override;
-    void Clear() override;
-    void Reset() override;
-    [[nodiscard]] const std::vector<Annotation>& annotations() const override { return annotations_; }
-    [[nodiscard]] uint64_t revision() const override { return revision_; }
-    [[nodiscard]] bool HasRedactions() const;
-    void Replace(size_t index, Annotation annotation);
-    void Remove(size_t index);
-    void BeginTransaction();
-    void CommitTransaction();
-    void CancelTransaction();
-    [[nodiscard]] bool in_transaction() const { return transaction_.has_value(); }
-    [[nodiscard]] std::optional<size_t> HitTest(D2D1_POINT_2F point, float tolerance = 5.0f) const;
-
-private:
-    std::vector<Annotation> annotations_;
-    void Checkpoint();
-    void PushUndo(std::vector<Annotation> snapshot);
-    std::deque<std::vector<Annotation>> undo_stack_;
-    std::vector<std::vector<Annotation>> redo_stack_;
-    std::optional<std::vector<Annotation>> transaction_;
-    uint64_t revision_{0};
-};
-
 /// Screenshot document/commands and movable native editing island.
-class ScreenshotEditor {
+class ScreenshotEditor : private ToolbarButtonOwner,
+                         private ContextPanelOwner,
+                         private TextEditorOwner,
+                         private EditorExportOwner {
 public:
     struct Callbacks {
         /// `exported` is true when the user copied or saved successfully.
@@ -213,7 +113,7 @@ public:
     void ImagePointer(UINT message, POINT desktop_point);
     [[nodiscard]] bool WantsPointer(POINT desktop_point) const;
     [[nodiscard]] HCURSOR ImageCursor(POINT desktop_point) const;
-    [[nodiscard]] HWND context_hwnd() const noexcept { return context_; }
+    [[nodiscard]] HWND context_hwnd() const noexcept { return context_panel_.island(); }
     /// The room the tools island takes around the frame: itself and, below
     /// it, the tallest property island any tool shows (ui/island_layout.h).
     [[nodiscard]] SIZE island_group_size() const noexcept;
@@ -232,10 +132,10 @@ public:
     bool CompleteCopy();
     /// A copy or save is running. The image cannot change and the editor
     /// cannot close until it ends; only the end of the session drops it.
-    [[nodiscard]] bool exporting() const noexcept { return exporting_; }
+    [[nodiscard]] bool exporting() const noexcept { return export_.running(); }
     /// Windows is ending the session: a save running is waited for, a copy
     /// is cancelled. Its result still arrives as a message.
-    void SettleExportForSessionEnd() noexcept { export_job_.SettleForSessionEnd(); }
+    void SettleExportForSessionEnd() noexcept { export_.SettleForSessionEnd(); }
     /// Pin to screen: hands the finished image to `Callbacks::on_pin` and
     /// closes as an export. False, with a notice, when it could not be pinned.
     bool CompletePin();
@@ -251,18 +151,13 @@ public:
     [[nodiscard]] HWND hwnd() const noexcept { return hwnd_; }
 
 private:
-    struct ToolbarItem;
-
-    static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
-    LRESULT HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
+    LRESULT HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) override;
 
     /// Lays the toolbar out as a left-to-right flow that wraps into as many rows
     /// as the current window width requires.
     void BuildToolbar(float available_width);
     /// Lays out the island; image coordinates remain physical desktop pixels.
     void LayoutClient(int client_width, int client_height);
-    /// Places the island beside/below the region, contained by its monitor.
-    [[nodiscard]] RECT InitialWindowRect(const RECT& screen_region) const;
     /// Forgets every trace of the previous editing session.
     void ResetSession();
     /// Resets tools and styles for a new session on `frame`.
@@ -270,17 +165,17 @@ private:
     /// Creates the island, its context island and their controls beside `screen_region`.
     bool CreateWindows(const RECT& screen_region, HWND owner);
     void CreateTextFormats();
-    bool FeatureUsed();
+    bool FeatureUsed() override;
+    /// A key pressed on an island button, handled as the tools island's own.
+    LRESULT ForwardButtonKey(UINT message, WPARAM key, LPARAM flags) override;
+    void BrushMethodHovered() override;
     bool EnsureImage();
     void NotifyMutation(uint64_t previous_revision);
 
     bool CreateToolbarControls();
     void SyncToolbarControls() const;
-    void ReflowToolbar();
-    void PaintToolbar(HDC dc) const;
-    static LRESULT CALLBACK ToolbarButtonProc(HWND hwnd, UINT message, WPARAM wparam,
-                                              LPARAM lparam, UINT_PTR identifier, DWORD_PTR reference);
-    void Invalidate() const;
+    void ReflowToolbar() override;
+    void Invalidate() const override;
     void InvalidateImage(const RECT& source_bounds) const;
     /// The desktop pixels, inside the viewport, that show `source_bounds`.
     [[nodiscard]] RECT DesktopDamage(const RECT& source_bounds) const;
@@ -291,56 +186,108 @@ private:
     [[nodiscard]] RECT PendingDamage() const;
 
     /// Desktop point to image pixels through the current view.
-    [[nodiscard]] D2D1_POINT_2F ToImagePoint(POINT desktop_pt) const;
+    [[nodiscard]] D2D1_POINT_2F ToImagePoint(POINT desktop_pt) const override;
     /// A screenshot is shown one to one where it was captured.
     void ResetFixedView();
     /// Adopts a document view: viewport, scale and scroll position.
     void ApplyView(const ImageView& view, bool notify = true);
     /// Esc, the Discard button and a close request. Asks through
     /// `on_confirm_discard` when annotations or a stitched image would be lost.
-    void RequestDiscard();
+    void RequestDiscard() override;
     void ScrollDocument(float delta_x, float delta_y);
     void ZoomDocument(float zoom, POINT anchor);
     /// Makes the base bitmap hold image rows [first, end) and returns the rows
     /// it actually covers from `first` on, or 0 on failure.
     [[nodiscard]] int EnsureBaseRows(int first, int end);
-    [[nodiscard]] const ToolbarItem* HitTestToolbar(POINT client_pt) const;
 
-    /// The WM_COMMAND and WM_KEYDOWN arms of `HandleMessage`. Reached only
-    /// through it, so `ui::ConsumePopupInput` sees every message first.
+    /// The arms of `HandleMessage`, one per message. Reached only through it,
+    /// so `ui::ConsumePopupInput` sees every message first.
+    /// WM_SETCURSOR while an export runs: the busy pointer.
+    static LRESULT OnBusyCursor();
+    /// The text host, the property island and the brush pop-up: they take no
+    /// size, hit test or pointer input of their own, and paint the image or
+    /// their island. Nothing for the messages they leave to the rest.
+    std::optional<LRESULT> OnAuxiliaryMessage(HWND hwnd, UINT message, WPARAM wparam);
+    /// The theme changed: only a repaint.
+    static LRESULT OnThemeChanged(HWND hwnd);
+    /// Empty island space is the caption, so it drags the island.
+    static LRESULT OnNcHitTest(HWND hwnd, LPARAM lparam);
+    /// A double-click on the grip fixes the image and does nothing else.
+    LRESULT OnGripDoubleClick(WPARAM hit);
+    /// A press on the grip fixes the image first. True when it could not be
+    /// fixed and the press is dropped.
+    bool OnGripPress(WPARAM hit);
+    /// The user starts moving the tools island: it keeps its place from now on.
+    LRESULT OnEnterSizeMove(bool auxiliary);
+    /// The tools island moved: the property island follows.
+    void OnWindowPosChanged(bool auxiliary);
+    LRESULT OnPaint(HWND hwnd);
+    LRESULT OnSize(WPARAM kind, LPARAM lparam);
+    LRESULT OnGetMinMaxInfo(LPARAM lparam) const;
+    /// Rescales the island and moves it to the suggested place, kept on its monitor.
+    LRESULT OnDpiChanged(HWND hwnd, WPARAM wparam, LPARAM lparam);
+    /// Keeps a moved island on its monitor's work area.
+    static LRESULT OnMoving(LPARAM lparam);
+    /// A stroke or drag over the image continues while the island holds the capture.
+    LRESULT OnPointerMove(HWND hwnd, LPARAM lparam);
+    /// A press on the tools island: the item under it, or else only fixing the image.
+    LRESULT OnPointerDown(HWND hwnd, LPARAM lparam);
+    LRESULT OnPointerDoubleClick();
+    /// Ends a stroke or drag, then releases the capture.
+    LRESULT OnPointerUp(HWND hwnd, LPARAM lparam);
+    LRESULT OnCaptureChanged();
+    /// The wheel over an island scrolls or zooms the document.
+    LRESULT OnMouseWheel(UINT message, WPARAM wparam, LPARAM lparam);
     void OnCommand(int id, int notification);
     void OnKeyDown(WPARAM key, LPARAM flags);
-    void OnToolbarActivated(const ToolbarItem& item);
+    /// Runs a keyboard shortcut of kKeyBindings (editor/key_commands.h).
+    void RunKeyCommand(KeyCommand command);
+    /// Runs a tool, option or command. Takes the item by value: it rebuilds
+    /// the item lists it came from.
+    void OnToolbarActivated(ToolbarItem item);
     void BeginStroke(POINT client_pt);
     void UpdateStroke(POINT client_pt);
     void EndStroke(POINT client_pt);
     void CancelStroke();
-    void CommitPendingText();
-    void OnCharacter(wchar_t character);
     void Select(std::optional<size_t> index);
     /// The annotation the property island edits: the selection, or else,
     /// while the watermark tool is chosen, the image's watermark.
     [[nodiscard]] std::optional<size_t> ContextAnnotation() const;
     /// The image's watermark; there is at most one.
     [[nodiscard]] std::optional<size_t> WatermarkIndex() const;
-    [[nodiscard]] ToolId ContextTool() const;
-    [[nodiscard]] AnnotationStyle ContextStyle() const;
-    void ChangeStyle(const AnnotationStyle& style);
-    void CreateContextControls();
-    [[nodiscard]] HWND Control(int identifier) const;
-    void SyncContext(bool layout = true);
-    void CommitContextTransaction();
-    void PlaceContext(bool follow_frame = false);
-    void StartTextEditing(std::optional<size_t> index, POINT point);
-    void UpdateTextFromControl();
-    void LayoutTextEditor();
-    static LRESULT CALLBACK TextEditProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
-    static LRESULT CALLBACK PropertyProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+    [[nodiscard]] ToolId ContextTool() const override;
+    [[nodiscard]] AnnotationStyle ContextStyle() const override;
+    void ChangeStyle(const AnnotationStyle& style) override;
+    void SetWatermarkText(std::wstring text) override;
+    void ClearWatermarkField(HWND field) override;
+    void OpenContextTransaction() override;
+    void CommitContextTransaction() override;
+    void CancelContextTransaction() override;
+    [[nodiscard]] bool context_owns_transaction() const override { return context_owns_transaction_; }
+    [[nodiscard]] HWND tools_island() const override { return hwnd_; }
+    [[nodiscard]] float island_scale() const override { return scale_; }
+    [[nodiscard]] HFONT island_font() const override { return toolbar_font_; }
+    [[nodiscard]] RECT island_frame() const override { return region_; }
+    [[nodiscard]] RECT IslandKeepClear() const override;
+    [[nodiscard]] bool islands_shown() const override { return visible_; }
+    [[nodiscard]] bool modal_active() const override { return modal_active_; }
+    [[nodiscard]] bool frame_interacting() const override { return frame_interacting_; }
+    [[nodiscard]] const std::vector<Annotation>& island_annotations() const override { return document_.annotations(); }
+    [[nodiscard]] AnnotationDocument& text_document() override { return document_; }
+    [[nodiscard]] std::optional<size_t> text_selection() const override { return selected_; }
+    void SetTextSelection(std::optional<size_t> index) override { selected_ = index; }
+    [[nodiscard]] ToolId current_tool() const override { return tool_; }
+    [[nodiscard]] AnnotationStyle new_annotation_style() const override { return style_; }
+    [[nodiscard]] TextEditorView text_view() const override;
+    [[nodiscard]] bool export_running() const override { return export_.running(); }
+    [[nodiscard]] HWND editor_window() const override { return hwnd_; }
+    HWND CreateTextHost(POINT desktop_point) override;
+    void BeginTextTransaction() override;
+    void ForgetPendingStroke() override { has_pending_ = false; }
+    void BeginMoveFromText(POINT desktop_point) override;
+    void TextCommitted() override;
+    void RenderTextBackground(HDC dc, const RECT& desktop_bounds) override { RenderImage(dc, desktop_bounds); }
     void DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush) const;
-    void PaintTextEditor(HDC dc);
-    void ShowBrushPopup(bool show);
-    void SyncWatermarkClear();
-    void PaintContext(HDC dc, HWND window) const;
 
     /// Brings the derived blur/pixelation and spotlight pixels up to date with
     /// the effect list. Only the final composite reaches the clipboard or file.
@@ -359,8 +306,8 @@ private:
     /// Handles kMsgImageExportCompleted: publishes a copy, reports a save and
     /// closes, or keeps the image after a failure.
     void OnExportCompleted(platform::ImageExportJob::Generation generation);
-    /// Leaves the busy state of a running export.
-    void EndExport();
+    void ExportStarted() override;
+    void ExportEnded() override;
     /// A command that would change or end the image while it is exported.
     static void RefuseWhileExporting();
 
@@ -368,31 +315,17 @@ private:
     app::AppSettings* settings_{nullptr};
 
     HWND hwnd_{nullptr};
-    HWND context_{nullptr}, text_host_{nullptr}, text_edit_{nullptr}, brush_popup_{nullptr};
-    HFONT text_font_{nullptr};
-    float text_font_pixels_{0};
-    unsigned text_dispatch_depth_{0};
-    bool text_layout_pending_{false};
-    ULONGLONG brush_hover_started_{0}, brush_leave_started_{0};
-    bool syncing_context_{false}, frame_interacting_{false}, repositioning_{false};
-    bool modal_active_{false}, brush_popup_open_{false};
-    int context_height_{0}, context_width_{0};
-    /// Height of the tallest property island any tool shows; the islands keep
-    /// room for it around the frame.
-    int reserved_context_height_{0};
-    bool context_visible_{false}, island_user_positioned_{false};
-    ULONGLONG context_fade_started_{0};
+    /// The native text field of a Text or Tag annotation while it is typed.
+    TextAnnotationEditor text_editor_{*this};
+    bool frame_interacting_{false};
+    bool modal_active_{false};
+    bool island_user_positioned_{false};
     std::optional<size_t> selected_;
-    std::vector<RECT> main_separators_, context_separators_;
-    std::vector<std::pair<int, RECT>> context_fields_;
     Annotation original_;
     D2D1_POINT_2F drag_origin_{};
     int transform_handle_{-1};
     bool transforming_{false};
-    DWORD last_text_double_{0};
-    POINT last_text_point_{};
     HFONT toolbar_font_{nullptr};
-    HWND tooltip_{nullptr};
     platform::BgraImage source_image_;    ///< Untouched capture.
     RECT source_bounds_{};               ///< Immutable snapshot placement.
     RECT region_{};                      ///< Provisional frame, fixed when pixels arrive.
@@ -403,20 +336,16 @@ private:
     RedactionRenderer redaction_;         ///< Capture with pixel effects applied.
 
     AnnotationDocument document_;
-    std::vector<ToolbarItem> toolbar_;
+    EditorToolbar toolbar_;  ///< The tools island: tools, Scrollshot, commands.
+    /// The property island and the brush size pop-up.
+    EditorContextPanel context_panel_{*this};
     Annotation pending_;      ///< Stroke currently being drawn.
     bool has_pending_{false};
     bool dragging_{false};
     bool context_owns_transaction_{false};  ///< A property control opened the open transaction.
-    bool editing_text_{false};
-    /// Hidden while text is typed into the annotation, until it moves.
-    ui::TypingPointer typing_pointer_;
     ToolId tool_{ToolId::Pen};
     AnnotationStyle style_{};
 
-    int client_width_{0};      ///< Client area width in physical pixels.
-    int client_height_{0};     ///< Client area height in physical pixels.
-    RECT toolbar_rect_{};      ///< Toolbar strip, client pixels (docked to top).
     /// Desktop-to-image mapping. A screenshot keeps scale 1 at its captured
     /// place; a document scrolls and zooms inside `view_area_`.
     ImageView view_{};
@@ -433,13 +362,8 @@ private:
     uint64_t redaction_revision_{UINT64_MAX};
     bool visible_{false};
     bool closed_reported_{false};
-    /// A copy or save running on `export_job_`, of `export_image_`.
-    bool exporting_{false};
-    platform::ImageExportJob export_job_;
-    std::shared_ptr<const platform::BgraImage> export_image_;
-    ui::ImageSaveDestination export_destination_;
-    /// "Copying..." or "Saving..." while the export lasts.
-    HWND export_notice_{nullptr};
+    /// The copy or save running, with its worker, image and notice.
+    EditorExport export_{*this};
 };
 
 }  // namespace easnap::editor

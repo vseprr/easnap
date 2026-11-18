@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdio>
 
+#include "platform/screen_geometry.h"
 #include "ui/ui_theme.h"
 
 namespace easnap::ui {

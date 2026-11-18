@@ -6,7 +6,10 @@
 #include <utility>
 
 #include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
+#include "ui/control_ids.h"
 #include "ui/island_layout.h"
 #include "ui/ui_theme.h"
 #include "ui/native_controls.h"
@@ -18,29 +21,45 @@ namespace {
 
 constexpr wchar_t kPanelClassName[] = L"EasnapRecordingControls";
 constexpr wchar_t kBoundaryClassName[] = L"EasnapRecordingBoundary";
-constexpr UINT_PTR kStatusTimerId = 1;
 constexpr UINT kStatusTimerIntervalMs = 250;
 constexpr int kPanelWidthDip = 390;
 constexpr int kActivePanelWidthDip = 310;
 
-constexpr int kIdTitle = 100;
-constexpr int kIdElapsed = 101;
-constexpr int kIdStatus = 103;
-constexpr int kIdFormatLabel = 104;
-constexpr int kIdFormatMp4 = 105;
-constexpr int kIdFormatGif = 106;
-constexpr int kIdGifQualityLabel = 107;
-constexpr int kIdGifHighQuality = 108;
-constexpr int kIdGifLowSize = 109;
-constexpr int kIdAudioLabel = 102;
-constexpr int kIdAppearance = 115;
-constexpr int kIdAudioSystem = 111;
-constexpr int kIdAudioMicrophone = 112;
-constexpr int kIdIncludeCursor = 113;
-constexpr int kIdPauseResume = 120;
-constexpr int kIdStop = 121;
-
 constexpr DWORD kPanelStyle = WS_POPUP | WS_CLIPCHILDREN;
+
+/// The recording panel's buttons, indexes into kRecordingButtons. The panel
+/// creates them in a fixed order among its labels (CreatePanelControls).
+enum RecordingButton : size_t {
+    kStartButton,
+    kAppearanceButton,
+    kFormatMp4Button,
+    kFormatGifButton,
+    kSystemAudioButton,
+    kMicrophoneButton,
+    kGifHighQualityButton,
+    kGifLowSizeButton,
+    kIncludeCursorButton,
+    kCancelButton,
+    kPauseResumeButton,
+    kStopButton,
+    kRecordingButtonCount
+};
+/// One row per button of the recording panel. Only Appearance has a tooltip;
+/// Pause/Resume shows Play and "Resume" while the recording is paused.
+constexpr std::array<StyledButtonRow, kRecordingButtonCount> kRecordingButtons{{
+    {IDOK, WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDS_SESSION_RECORD_START, {Icon::Record, ButtonRole::Primary}},
+    {kRecordingAppearance, WS_TABSTOP | BS_PUSHBUTTON, IDS_SESSION_RECORD_APPEARANCE, {Icon::Appearance, ButtonRole::Standard, true}, IDS_SESSION_RECORD_APPEARANCE_TOOLTIP},
+    {kRecordingFormatMp4, WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, IDS_SESSION_RECORD_FORMAT_MP4},
+    {kRecordingFormatGif, WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, IDS_SESSION_RECORD_FORMAT_GIF},
+    {kRecordingAudioSystem, WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, IDS_SESSION_RECORD_SYSTEM_AUDIO, {Icon::SystemAudio}},
+    {kRecordingAudioMicrophone, WS_TABSTOP | BS_AUTOCHECKBOX | BS_PUSHLIKE, IDS_SESSION_RECORD_MICROPHONE, {Icon::Microphone}},
+    {kRecordingGifHighQuality, WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, IDS_SESSION_RECORD_GIF_HIGH_QUALITY},
+    {kRecordingGifLowSize, WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, IDS_SESSION_RECORD_GIF_LOW_SIZE},
+    {kRecordingIncludeCursor, WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, IDS_SESSION_RECORD_INCLUDE_CURSOR, {Icon::Cursor}},
+    {IDCANCEL, WS_TABSTOP | BS_PUSHBUTTON, IDS_DIALOG_CANCEL},
+    {kRecordingPauseResume, WS_TABSTOP | BS_CHECKBOX | BS_PUSHLIKE, IDS_SESSION_RECORD_PAUSE, {Icon::Pause, ButtonRole::Standard, true}, 0, Icon::Play, IDS_SESSION_RECORD_RESUME},
+    {kRecordingStop, WS_TABSTOP | BS_PUSHBUTTON, IDS_SESSION_RECORD_STOP, {Icon::Stop, ButtonRole::Destructive}},
+}};
 constexpr DWORD kPanelExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTROLPARENT;
 
 [[nodiscard]] int ScaleDip(int value, float scale) noexcept {
@@ -163,7 +182,7 @@ public:
             tooltip_ = nullptr;
         }
         if (panel_ != nullptr) {
-            ::KillTimer(panel_, kStatusTimerId);
+            ::KillTimer(panel_, kRecordingStatusTimer);
             ::DestroyWindow(panel_);
             panel_ = nullptr;
         }
@@ -207,8 +226,8 @@ public:
             title = L"Finalizing recording";
         }
         ::SetWindowTextW(title_, title);
-        ::SetWindowTextW(pause_resume_, strings::Get(policy.can_resume ? IDS_SESSION_RECORD_RESUME
-                                                                       : IDS_SESSION_RECORD_PAUSE));
+        const StyledButtonRow& pause_resume = kRecordingButtons[kPauseResumeButton];
+        ::SetWindowTextW(pause_resume_, strings::Get(RowCaption(pause_resume, policy.can_resume)));
         if (finalizing) {
             ::SetWindowTextW(status_, strings::Get(IDS_SESSION_RECORD_FINISHING));
         }
@@ -238,14 +257,14 @@ public:
         ::EnableWindow(cancel_, policy.can_cancel);
         ::EnableWindow(pause_resume_, policy.can_pause || policy.can_resume);
         ::EnableWindow(stop_, policy.can_stop);
-        UpdateButtonStyle(pause_resume_, {policy.can_resume ? Icon::Play : Icon::Pause, ButtonRole::Standard, true});
+        UpdateButtonStyle(pause_resume_, policy.can_resume ? AlternateStyle(pause_resume) : pause_resume.style);
         ::SendMessageW(pause_resume_, BM_SETCHECK, policy.can_resume ? BST_CHECKED : BST_UNCHECKED, 0);
         ::InvalidateRect(elapsed_, nullptr, FALSE);
 
-        ::KillTimer(panel_, kStatusTimerId);
+        ::KillTimer(panel_, kRecordingStatusTimer);
         if (owner_.state_ == app::SessionState::RecordingActive ||
             owner_.state_ == app::SessionState::RecordingPaused || finalizing) {
-            ::SetTimer(panel_, kStatusTimerId, kStatusTimerIntervalMs, nullptr);
+            ::SetTimer(panel_, kRecordingStatusTimer, kStatusTimerIntervalMs, nullptr);
         }
 
         Layout(initial_placement, false, initial_placement);
@@ -307,7 +326,7 @@ public:
         AdjustPanelRect(outer, monitor.dpi);
         const int outer_width = static_cast<int>(outer.right - outer.left);
         const int outer_height = static_cast<int>(outer.bottom - outer.top);
-        const LONG margin = ScaleDip(12, scale);
+        const LONG margin = ScaleDip(theme::kIslandMargin, scale);
 
         LONG x = have_current_rect ? current_rect.left : owner_.region_.left;
         LONG y = have_current_rect ? current_rect.top : owner_.region_.top;
@@ -363,7 +382,7 @@ public:
                                                       theme::Scaled(theme::kPaletteButtonHeight + 2 * theme::kPalettePadding, monitor.scale()));
         const RECT placed = PlaceIslandForFrame(
                                 owner_.region_, monitor.bounds, available,
-                                SIZE{platform::RectWidth(current), platform::RectHeight(current)}, ScaleDip(12, monitor.scale()), RECT{})
+                                SIZE{platform::RectWidth(current), platform::RectHeight(current)}, ScaleDip(theme::kIslandMargin, monitor.scale()), RECT{})
                                 .rect;
         if (placed.left != current.left || placed.top != current.top) {
             ::SetWindowPos(panel_, nullptr, placed.left, placed.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
@@ -388,7 +407,7 @@ public:
 
     void Hide() const noexcept {
         if (panel_ != nullptr) {
-            ::KillTimer(panel_, kStatusTimerId);
+            ::KillTimer(panel_, kRecordingStatusTimer);
             ::ShowWindow(panel_, SW_HIDE);
         }
         for (HWND boundary : boundaries_) {
@@ -411,61 +430,26 @@ private:
     [[nodiscard]] static bool EnsureWindowClasses() {
         static const bool registered = [] {
             WNDCLASSEXW panel_class{};
-            panel_class.cbSize = sizeof(panel_class);
             panel_class.style = CS_HREDRAW | CS_VREDRAW;
-            panel_class.lpfnWndProc = PanelWindowProc;
+            panel_class.lpfnWndProc = platform::BoundWindowProc<Window, &Window::HandlePanelMessage>;
             panel_class.hInstance = ::GetModuleHandleW(nullptr);
             panel_class.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
             panel_class.hbrBackground = nullptr;
             panel_class.lpszClassName = kPanelClassName;
-            if (::RegisterClassExW(&panel_class) == 0 &&
-                ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
-                return false;
-            }
+            if (!platform::RegisterWindowClass(panel_class)) { return false; }
 
             WNDCLASSEXW boundary_class{};
-            boundary_class.cbSize = sizeof(boundary_class);
             boundary_class.style = CS_HREDRAW | CS_VREDRAW;
-            boundary_class.lpfnWndProc = BoundaryWindowProc;
+            boundary_class.lpfnWndProc = platform::BoundWindowProc<Window, &Window::HandleBoundaryMessage>;
             boundary_class.hInstance = ::GetModuleHandleW(nullptr);
             // These windows are visual-only. Leaving their class cursor unset
             // prevents a transparent boundary from briefly replacing the
             // underlying application's cursor during composition updates.
             boundary_class.hCursor = nullptr;
             boundary_class.lpszClassName = kBoundaryClassName;
-            return ::RegisterClassExW(&boundary_class) != 0 ||
-                   ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+            return platform::RegisterWindowClass(boundary_class);
         }();
         return registered;
-    }
-
-    [[nodiscard]] static Window* FromHandle(HWND hwnd, UINT message,
-                                            LPARAM lparam) noexcept {
-        if (message == WM_NCCREATE) {
-            const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-            auto* self = static_cast<Window*>(create->lpCreateParams);
-            ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                                reinterpret_cast<LONG_PTR>(self));
-            return self;
-        }
-        return reinterpret_cast<Window*>(
-            ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    }
-
-    static LRESULT CALLBACK PanelWindowProc(HWND hwnd, UINT message,
-                                            WPARAM wparam, LPARAM lparam) {
-        if (Window* self = FromHandle(hwnd, message, lparam); self != nullptr) {
-            return self->HandlePanelMessage(hwnd, message, wparam, lparam);
-        }
-        return ::DefWindowProcW(hwnd, message, wparam, lparam);
-    }
-
-    static LRESULT CALLBACK BoundaryWindowProc(HWND hwnd, UINT message,
-                                               WPARAM wparam, LPARAM lparam) {
-        if (Window* self = FromHandle(hwnd, message, lparam); self != nullptr) {
-            return self->HandleBoundaryMessage(hwnd, message, wparam, lparam);
-        }
-        return ::DefWindowProcW(hwnd, message, wparam, lparam);
     }
 
     LRESULT HandlePanelMessage(HWND hwnd, UINT message, WPARAM wparam,
@@ -486,7 +470,7 @@ private:
                 }
                 for (HWND boundary : boundaries_)
                     if (boundary) { ::ShowWindow(boundary, SW_HIDE); }
-                ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                platform::UnbindWindowOwner(hwnd);
                 break;
             case theme::kChangedMessage:
                 ::RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
@@ -500,11 +484,11 @@ private:
                 RECT client{};
                 ::GetClientRect(hwnd, &client);
                 const float scale = ::GetDpiForWindow(hwnd) / 96.0f;
-                PaintBuffer buffer(dc, client);
+                platform::PaintBuffer buffer(dc, client);
                 dc = buffer.dc();
                 theme::DrawPanel(dc, client, scale);
                 if (owner_.state_ != app::SessionState::RecordingConfiguring) {
-                    theme::DrawGrip(dc, {0, 0, theme::Scaled(28, scale), client.bottom}, scale);
+                    theme::DrawGrip(dc, {0, 0, theme::Scaled(theme::kPanelGripWidth, scale), client.bottom}, scale);
                 }
                 buffer.Present();
                 if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
@@ -528,7 +512,7 @@ private:
                 HandleCancelOrStop();
                 return 0;
             case WM_TIMER:
-                if (wparam == kStatusTimerId && owner_.callbacks_.on_status_tick) {
+                if (wparam == kRecordingStatusTimer && owner_.callbacks_.on_status_tick) {
                     owner_.callbacks_.on_status_tick();
                 }
                 return 0;
@@ -597,62 +581,55 @@ private:
     }
 
     [[nodiscard]] bool CreatePanelControls() {
-        title_ = CreateControl(L"STATIC", L"Record screen", SS_LEFT, kIdTitle);
-        start_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_START), WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDOK);
-        appearance_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_APPEARANCE), WS_TABSTOP | BS_PUSHBUTTON, kIdAppearance);
-        format_label_ = CreateControl(L"STATIC", L"Format", SS_LEFT, kIdFormatLabel);
-        format_mp4_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_FORMAT_MP4), WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdFormatMp4);
-        format_gif_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_FORMAT_GIF), WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdFormatGif);
-        audio_label_ = CreateControl(L"STATIC", strings::Get(IDS_SESSION_RECORD_AUDIO_LABEL), SS_LEFT, kIdAudioLabel);
-        audio_system_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_SYSTEM_AUDIO), WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdAudioSystem);
-        audio_microphone_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_MICROPHONE), WS_TABSTOP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdAudioMicrophone);
-        gif_quality_label_ = CreateControl(L"STATIC", strings::Get(IDS_SESSION_RECORD_GIF_QUALITY_LABEL), SS_LEFT, kIdGifQualityLabel);
-        gif_high_quality_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_GIF_HIGH_QUALITY), WS_TABSTOP | WS_GROUP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdGifHighQuality);
-        gif_low_size_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_GIF_LOW_SIZE), WS_TABSTOP | BS_AUTORADIOBUTTON | BS_PUSHLIKE, kIdGifLowSize);
-        include_cursor_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_INCLUDE_CURSOR), WS_TABSTOP | WS_GROUP | BS_AUTOCHECKBOX | BS_PUSHLIKE, kIdIncludeCursor);
-        cancel_ = CreateControl(L"BUTTON", strings::Get(IDS_DIALOG_CANCEL), WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
-        elapsed_ = CreateControl(L"STATIC", L"00:00:00", SS_CENTER | SS_CENTERIMAGE, kIdElapsed);
-        status_ = CreateControl(L"STATIC", L"", SS_LEFT, kIdStatus);
-        pause_resume_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_PAUSE), WS_TABSTOP | BS_CHECKBOX | BS_PUSHLIKE, kIdPauseResume);
-        stop_ = CreateControl(L"BUTTON", strings::Get(IDS_SESSION_RECORD_STOP), WS_TABSTOP | BS_PUSHBUTTON, kIdStop);
+        // Creation order is tab and z-order: buttons and labels interleave.
+        title_ = CreateLabel(L"Record screen", SS_LEFT, kRecordingTitle);
+        start_ = CreateButton(kStartButton);
+        appearance_ = CreateButton(kAppearanceButton);
+        format_label_ = CreateLabel(L"Format", SS_LEFT, kRecordingFormatLabel);
+        format_mp4_ = CreateButton(kFormatMp4Button);
+        format_gif_ = CreateButton(kFormatGifButton);
+        audio_label_ = CreateLabel(strings::Get(IDS_SESSION_RECORD_AUDIO_LABEL), SS_LEFT, kRecordingAudioLabel);
+        audio_system_ = CreateButton(kSystemAudioButton);
+        audio_microphone_ = CreateButton(kMicrophoneButton);
+        gif_quality_label_ = CreateLabel(strings::Get(IDS_SESSION_RECORD_GIF_QUALITY_LABEL), SS_LEFT, kRecordingGifQualityLabel);
+        gif_high_quality_ = CreateButton(kGifHighQualityButton);
+        gif_low_size_ = CreateButton(kGifLowSizeButton);
+        include_cursor_ = CreateButton(kIncludeCursorButton);
+        cancel_ = CreateButton(kCancelButton);
+        elapsed_ = CreateLabel(L"00:00:00", SS_CENTER | SS_CENTERIMAGE, kRecordingElapsed);
+        status_ = CreateLabel(L"", SS_LEFT, kRecordingStatus);
+        pause_resume_ = CreateButton(kPauseResumeButton);
+        stop_ = CreateButton(kStopButton);
         for (HWND control : {title_, start_, appearance_, format_label_, format_mp4_, format_gif_, audio_label_,
                              audio_system_, audio_microphone_, gif_quality_label_, gif_high_quality_, gif_low_size_, include_cursor_,
                              cancel_, elapsed_, status_, pause_resume_, stop_}) {
             if (!control) { return false; }
         }
-        UpdateButtonStyle(start_, {Icon::Record, ButtonRole::Primary});
-        UpdateButtonStyle(appearance_, {Icon::Appearance, ButtonRole::Standard, true});
-        UpdateButtonStyle(audio_system_, {Icon::SystemAudio});
-        UpdateButtonStyle(audio_microphone_, {Icon::Microphone});
-        UpdateButtonStyle(include_cursor_, {Icon::Cursor});
-        UpdateButtonStyle(pause_resume_, {Icon::Pause, ButtonRole::Standard, true});
-        UpdateButtonStyle(stop_, {Icon::Stop, ButtonRole::Destructive});
         tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
                                      WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, panel_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
         if (tooltip_) {
-            TOOLINFOW info{sizeof(info)};
-            info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-            info.hwnd = panel_;
-            info.uId = reinterpret_cast<UINT_PTR>(appearance_);
-            info.lpszText = const_cast<wchar_t*>(strings::Get(IDS_SESSION_RECORD_APPEARANCE_TOOLTIP));
-            ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
+            // In RecordingButton order.
+            const std::array<HWND, kRecordingButtonCount> buttons{start_, appearance_, format_mp4_, format_gif_,
+                                                                  audio_system_, audio_microphone_, gif_high_quality_, gif_low_size_,
+                                                                  include_cursor_, cancel_, pause_resume_, stop_};
+            for (size_t i = 0; i < buttons.size(); ++i) { AddButtonTooltip(tooltip_, panel_, buttons[i], kRecordingButtons[i]); }
             StyleTooltip(tooltip_);
         }
         return true;
     }
 
-    [[nodiscard]] HWND CreateControl(const wchar_t* class_name,
-                                     const wchar_t* text, DWORD style,
-                                     int id) const {
+    /// A hidden styled button of the panel, as its kRecordingButtons row says.
+    [[nodiscard]] HWND CreateButton(RecordingButton button) const {
+        return CreateStyledButton(panel_, kRecordingButtons[button], 0);
+    }
+
+    /// A hidden buffered STATIC of the panel.
+    [[nodiscard]] HWND CreateLabel(const wchar_t* text, DWORD style, int id) const {
         HWND control = ::CreateWindowExW(
-            0, class_name, text, WS_CHILD | style, 0, 0, 1, 1, panel_,
+            0, L"STATIC", text, WS_CHILD | style, 0, 0, 1, 1, panel_,
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
             ::GetModuleHandleW(nullptr), nullptr);
-        if (control && ::lstrcmpW(class_name, L"BUTTON") == 0 && !StyleButton(control)) {
-            ::DestroyWindow(control);
-            return nullptr;
-        }
-        if (control && ::lstrcmpW(class_name, L"STATIC") == 0 && !StyleLabel(control)) {
+        if (control && !StyleLabel(control)) {
             ::DestroyWindow(control);
             return nullptr;
         }
@@ -663,7 +640,7 @@ private:
         const app::RecordingControlPolicy policy =
             app::RecordingControlsForState(owner_.state_);
         switch (id) {
-            case kIdAppearance:
+            case kRecordingAppearance:
                 if (policy.can_start) { ShowAppearanceMenu(appearance_); }
                 break;
             case kAppearanceLight:
@@ -674,11 +651,11 @@ private:
                                                         : app::AppearanceTheme::Light);
                 }
                 break;
-            case kIdAudioSystem:
-            case kIdAudioMicrophone:
+            case kRecordingAudioSystem:
+            case kRecordingAudioMicrophone:
                 if (policy.can_start) { owner_.configuration_.mp4_audio = SelectedAudioSource(); }
                 break;
-            case kIdIncludeCursor:
+            case kRecordingIncludeCursor:
                 if (policy.can_start) { owner_.configuration_.include_cursor = ::SendMessageW(include_cursor_, BM_GETCHECK, 0, 0) == BST_CHECKED; }
                 break;
             case IDOK:
@@ -690,21 +667,21 @@ private:
                     owner_.callbacks_.on_start(owner_.configuration_);
                 }
                 break;
-            case kIdFormatMp4:
-            case kIdFormatGif:
+            case kRecordingFormatMp4:
+            case kRecordingFormatGif:
                 if (!policy.can_start) { break; }
                 owner_.configuration_.mp4_audio = SelectedAudioSource();
                 owner_.configuration_.format =
-                    id == kIdFormatGif ? media::RecordingFormat::Gif
-                                       : media::RecordingFormat::Mp4;
+                    id == kRecordingFormatGif ? media::RecordingFormat::Gif
+                                              : media::RecordingFormat::Mp4;
                 UpdateForState();
                 break;
-            case kIdGifHighQuality:
+            case kRecordingGifHighQuality:
                 if (!policy.can_start) { break; }
                 owner_.configuration_.gif.preset =
                     app::GifExportPreset::HighQuality;
                 break;
-            case kIdGifLowSize:
+            case kRecordingGifLowSize:
                 if (!policy.can_start) { break; }
                 owner_.configuration_.gif.preset =
                     app::GifExportPreset::LowSize;
@@ -712,14 +689,14 @@ private:
             case IDCANCEL:
                 HandleCancelOrStop();
                 break;
-            case kIdPauseResume:
+            case kRecordingPauseResume:
                 if (policy.can_pause && owner_.callbacks_.on_pause) {
                     owner_.callbacks_.on_pause();
                 } else if (policy.can_resume && owner_.callbacks_.on_resume) {
                     owner_.callbacks_.on_resume();
                 }
                 break;
-            case kIdStop:
+            case kRecordingStop:
                 if (policy.can_stop && owner_.callbacks_.on_stop) {
                     owner_.callbacks_.on_stop();
                 }
@@ -824,9 +801,9 @@ private:
     }
 
     void RebuildFonts(float scale) {
-        HFONT new_ui = theme::CreateUiFont(13.0f, scale, false);
-        HFONT new_title = theme::CreateUiFont(15.0f, scale, true);
-        HFONT new_elapsed = theme::CreateUiFont(15.0f, scale, true);
+        HFONT new_ui = theme::CreateUiFont(theme::kBodyFontSize, scale, false);
+        HFONT new_title = theme::CreateUiFont(theme::kHeadingFontSize, scale, true);
+        HFONT new_elapsed = theme::CreateUiFont(theme::kHeadingFontSize, scale, true);
         if (new_ui == nullptr || new_title == nullptr || new_elapsed == nullptr) {
             if (new_ui != nullptr) {
                 ::DeleteObject(new_ui);

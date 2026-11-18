@@ -1,10 +1,10 @@
-#include "ui/native_controls.h"
 // Easnap - application entry point.
 //
 // Easnap is a tray-resident tool: there is no main window. A hidden top-level
-// tool window (it must receive broadcasts such as TaskbarCreated) owns the
-// notification icon, the global shortcut and the single message loop that
-// every UI surface (overlay, editor) is pumped from.
+// tool window (it must receive broadcasts such as TaskbarCreated) receives the
+// notification icon's and the global shortcut's messages, and this file runs
+// the single message loop that every UI surface (overlay, editor) is pumped
+// from. The icon, its menu, Settings and About are in app/tray_shell and ui/.
 //
 // Design rules enforced here:
 //   * Exactly one instance may run, so the global shortcut has a single owner.
@@ -17,7 +17,6 @@
 #include <shlobj.h>
 
 #include <chrono>
-#include <cmath>
 #include <memory>
 #include <optional>
 #include <string>
@@ -26,14 +25,18 @@
 #include "app/command_line.h"
 #include "app/external_video.h"
 #include "app/session_state.h"
+#include "app/tray_shell.h"
 #include "app/video_handover.h"
 #include "media/video_probe.h"
+#include "platform/app_messages.h"
 #include "platform/diagnostics.h"
+#include "platform/graphics_device.h"
 #include "platform/platform_utils.h"
-#include "platform/startup_entry.h"
+#include "platform/system_info.h"
+#include "platform/window_class.h"
 #include "resource.h"
 #include "strings/strings.h"
-#include "ui/settings_dialog.h"
+#include "ui/message_dialog.h"
 
 // Opt into the version 6 common controls so menus and dialogs use the modern
 // visual style. Doing it from the linker keeps the project free of a hand
@@ -49,7 +52,15 @@
 namespace {
 
 using easnap::app::CaptureCoordinator;
-using easnap::app::SessionState;
+using easnap::app::kProductName;
+using easnap::app::OnTrayIconMessage;
+using easnap::app::OnTrayMenuCommand;
+using easnap::app::RegisterCaptureHotkey;
+using easnap::app::ShellTrayIcon;
+using easnap::app::TellSettingsNotSaved;
+using easnap::app::ToLanguagePreference;
+using easnap::app::TrayTooltip;
+using easnap::app::UnregisterCaptureHotkey;
 
 /// A second Easnap.exe finds the running one's host window by this class: to
 /// ask for a capture, or to hand it a video to open (ADR-040).
@@ -57,330 +68,16 @@ constexpr wchar_t kHostClassName[] = L"EasnapHostWindow";
 constexpr wchar_t kSingleInstanceMutex[] = L"Local\\Easnap.SingleInstance";
 /// How long a second Easnap.exe waits for the running one to take a video.
 constexpr std::chrono::milliseconds kHandOverTimeout{5000};
-constexpr wchar_t kProductName[] = L"Easnap";
-constexpr UINT kMsgTrayIcon = WM_APP + 1;
-constexpr UINT kTrayIconId = 1;
 
-/// Owns the notification-area icon for the lifetime of the process.
-class TrayIcon {
-public:
-    TrayIcon() = default;
-    ~TrayIcon() { Remove(); }
-
-    TrayIcon(const TrayIcon&) = delete;
-    TrayIcon& operator=(const TrayIcon&) = delete;
-
-    bool Add(HWND owner, const std::wstring& tooltip) {
-        owner_ = owner;
-        tooltip_ = tooltip;
-        // Added again after an Explorer restart: the icon is loaded once.
-        if (icon_ == nullptr) { icon_ = easnap::platform::LoadAppIcon(::GetSystemMetrics(SM_CXSMICON)); }
-
-        NOTIFYICONDATAW data = MakeData();
-        data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
-        data.uCallbackMessage = kMsgTrayIcon;
-        data.hIcon = icon_;
-        ::wcsncpy_s(data.szTip, tooltip_.c_str(), _TRUNCATE);
-
-        if (::Shell_NotifyIconW(NIM_ADD, &data) == FALSE) {
-            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_ADD) failed (error %lu)", ::GetLastError());
-            return false;
-        }
-        data.uVersion = NOTIFYICON_VERSION_4;
-        if (::Shell_NotifyIconW(NIM_SETVERSION, &data) == FALSE) {
-            // The icon keeps the old callbacks: clicks work, WM_CONTEXTMENU does not come.
-            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_SETVERSION) failed (error %lu)", ::GetLastError());
-        }
-        added_ = true;
-        return true;
-    }
-
-    void Remove() {
-        if (added_) {
-            NOTIFYICONDATAW data = MakeData();
-            ::Shell_NotifyIconW(NIM_DELETE, &data);
-            added_ = false;
-        }
-        if (icon_ != nullptr) {
-            ::DestroyIcon(icon_);
-            icon_ = nullptr;
-        }
-    }
-
-    /// Re-adds the icon after an Explorer restart (WM_TASKBARCREATED).
-    void Restore() {
-        added_ = false;
-        if (owner_ != nullptr) {
-            Add(owner_, tooltip_);
-        }
-    }
-
-    void SetTooltip(const std::wstring& tooltip) {
-        tooltip_ = tooltip;
-        if (!added_) {
-            return;
-        }
-        NOTIFYICONDATAW data = MakeData();
-        data.uFlags = NIF_TIP | NIF_SHOWTIP;
-        ::wcsncpy_s(data.szTip, tooltip_.c_str(), _TRUNCATE);
-        if (::Shell_NotifyIconW(NIM_MODIFY, &data) == FALSE) {
-            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_MODIFY) for the tooltip failed (error %lu)",
-                                         ::GetLastError());
-        }
-    }
-
-    /// True when the shell took the notification; false without an icon.
-    bool ShowBalloon(const wchar_t* title, const wchar_t* text) const {
-        if (!added_) {
-            return false;
-        }
-        NOTIFYICONDATAW data = MakeData();
-        data.uFlags = NIF_INFO;
-        data.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;
-        ::wcsncpy_s(data.szInfoTitle, title, _TRUNCATE);
-        ::wcsncpy_s(data.szInfo, text, _TRUNCATE);
-        if (::Shell_NotifyIconW(NIM_MODIFY, &data) == FALSE) {
-            easnap::platform::LogMessage(L"Shell_NotifyIcon(NIM_MODIFY) for a notification failed (error %lu)",
-                                         ::GetLastError());
-            return false;
-        }
-        return true;
-    }
-
-    [[nodiscard]] bool added() const noexcept { return added_; }
-
-private:
-    [[nodiscard]] NOTIFYICONDATAW MakeData() const {
-        NOTIFYICONDATAW data{};
-        data.cbSize = sizeof(data);
-        data.hWnd = owner_;
-        data.uID = kTrayIconId;
-        return data;
-    }
-
-    HWND owner_{nullptr};
-    HICON icon_{nullptr};
-    std::wstring tooltip_;
-    bool added_{false};
-};
-
-constexpr wchar_t kWebsite[] = L"https://github.com/vseprr/easnap";
-// "Check for updates": a stable build opens the latest stable release; a
-// prerelease opens the list, where newer prereleases appear too.
-#if EASNAP_VERSION_IS_PRERELEASE
-constexpr wchar_t kUpdatesPage[] = L"https://github.com/vseprr/easnap/releases";
-#else
-constexpr wchar_t kUpdatesPage[] = L"https://github.com/vseprr/easnap/releases/latest";
-#endif
 /// A second launch without a file posts this to the running instance: start a
 /// capture.
 constexpr wchar_t kActivateMessageName[] = L"Easnap.StartCapture";
-constexpr int kProbeHotkeyId = 2;
 
-TrayIcon g_tray;
 UINT g_taskbar_created_message = 0;
 UINT g_activate_message = 0;
-bool g_hotkey_registered = false;
 /// A video to open, from this process's command line or handed over by a
 /// second Easnap.exe; acted on from the host window's own message.
 easnap::app::OpenVideoRequests g_video_requests;
-
-/// The tooltip says how to capture: with the shortcut, or by clicking when
-/// another application holds the shortcut.
-std::wstring TrayTooltip() {
-    return easnap::strings::Format(g_hotkey_registered ? IDS_SHELL_TRAY_TOOLTIP : IDS_TRAY_TOOLTIP_NO_SHORTCUT,
-                                   {CaptureCoordinator::Instance().settings().HotkeyDisplayText()});
-}
-
-bool RegisterCaptureHotkey(HWND hwnd) {
-    const auto& settings = CaptureCoordinator::Instance().settings();
-    g_hotkey_registered = ::RegisterHotKey(hwnd, IDH_EASNAP_CAPTURE, settings.hotkey_modifiers | MOD_NOREPEAT,
-                                           settings.hotkey_virtual_key) != FALSE;
-    if (!g_hotkey_registered) {
-        easnap::platform::LogMessage(L"RegisterHotKey failed (error %lu)", ::GetLastError());
-    }
-    return g_hotkey_registered;
-}
-
-void UnregisterCaptureHotkey(HWND hwnd) {
-    if (g_hotkey_registered) {
-        ::UnregisterHotKey(hwnd, IDH_EASNAP_CAPTURE);
-        g_hotkey_registered = false;
-    }
-}
-
-easnap::strings::LanguagePreference ToPreference(easnap::app::LanguageSetting language) {
-    switch (language) {
-        case easnap::app::LanguageSetting::English: return easnap::strings::LanguagePreference::English;
-        case easnap::app::LanguageSetting::Turkish: return easnap::strings::LanguagePreference::Turkish;
-        case easnap::app::LanguageSetting::System: break;
-    }
-    return easnap::strings::LanguagePreference::System;
-}
-
-bool CopyTextToClipboard(HWND owner, const std::wstring& text) {
-    if (::OpenClipboard(owner) == FALSE) {
-        return false;
-    }
-    bool copied = false;
-    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
-    if (HGLOBAL memory = ::GlobalAlloc(GMEM_MOVEABLE, bytes)) {
-        if (void* target = ::GlobalLock(memory)) {
-            ::memcpy(target, text.c_str(), bytes);
-            ::GlobalUnlock(memory);
-            copied = ::EmptyClipboard() != FALSE && ::SetClipboardData(CF_UNICODETEXT, memory) != nullptr;
-        }
-        if (!copied) { ::GlobalFree(memory); }
-    }
-    ::CloseClipboard();
-    return copied;
-}
-
-/// What a bug report needs, as plain text: versions and the display layout.
-/// No path, no file name, nothing the user created.
-std::wstring DiagnosticDetails() {
-    const auto& settings = CaptureCoordinator::Instance().settings();
-    const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
-    std::wstring text = std::wstring(L"Easnap ") + EASNAP_VERSION_TEXT_W + L"\r\n";
-    text += L"Windows " + std::to_wstring(windows.major) + L"." + std::to_wstring(windows.minor) + L" build " +
-            std::to_wstring(windows.build) + L"\r\n";
-    text += std::wstring(L"Interface language: ") +
-            (easnap::strings::Current() == easnap::strings::Language::Turkish ? L"Turkish" : L"English") + L"\r\n";
-    text += std::wstring(L"Capture shortcut: ") + settings.HotkeyDisplayText() +
-            (g_hotkey_registered ? L"" : L" (not available)") + L"\r\n";
-    text += std::wstring(L"Scrollshot available: ") + (easnap::ui::CaptureExclusionSupported() ? L"yes" : L"no") + L"\r\n";
-    const auto monitors = easnap::platform::EnumerateMonitors();
-    text += L"Displays: " + std::to_wstring(monitors.size()) + L"\r\n";
-    for (const auto& monitor : monitors) {
-        text += L"  " + std::to_wstring(easnap::platform::RectWidth(monitor.bounds)) + L" x " +
-                std::to_wstring(easnap::platform::RectHeight(monitor.bounds)) + L" at " +
-                std::to_wstring(monitor.bounds.left) + L"," + std::to_wstring(monitor.bounds.top) + L", " +
-                std::to_wstring(std::lround(monitor.scale() * 100.0f)) + L"%" +
-                (monitor.primary ? L", primary" : L"") + L"\r\n";
-    }
-    return text;
-}
-
-void ShowAboutDialog(HWND owner) {
-    namespace strings = easnap::strings;
-    const easnap::platform::WindowsVersion windows = easnap::platform::CurrentWindowsVersion();
-    const std::wstring text = strings::Format(
-        IDS_ABOUT_TEXT, {EASNAP_VERSION_TEXT_W, CaptureCoordinator::Instance().settings().HotkeyDisplayText(),
-                         std::to_wstring(windows.build)});
-    enum : int { kCopy = 100,
-                 kWeb = 101,
-                 kClose = 102 };
-    const int choice = easnap::ui::ShowChoice(
-        nullptr, text.c_str(), strings::Get(IDS_SHELL_ABOUT_TITLE),
-        {{kCopy, strings::Get(IDS_ABOUT_COPY_DETAILS)}, {kWeb, strings::Get(IDS_ABOUT_WEBSITE)}, {kClose, strings::Get(IDS_SHELL_CHROME_CLOSE)}},
-        kClose, kClose);
-    if (choice == kCopy) {
-        CopyTextToClipboard(owner, DiagnosticDetails());
-    } else if (choice == kWeb) {
-        ::ShellExecuteW(nullptr, L"open", kWebsite, nullptr, nullptr, SW_SHOWNORMAL);
-    }
-}
-
-/// The Settings dialog, and what accepting it changes outside the settings
-/// file: the registered shortcut, the startup entry, language and appearance.
-void ShowSettings(HWND hwnd) {
-    namespace strings = easnap::strings;
-    auto& coordinator = CaptureCoordinator::Instance();
-    if (coordinator.state() != SessionState::Idle) {
-        return;
-    }
-    auto& settings = coordinator.settings();
-    const std::wstring executable = easnap::platform::CurrentExecutablePath();
-    easnap::ui::SettingsDialogModel model;
-    model.language = settings.language;
-    model.appearance_follows_system = settings.appearance_follows_system;
-    model.appearance_theme = settings.appearance_theme;
-    model.hotkey_modifiers = settings.hotkey_modifiers;
-    model.hotkey_virtual_key = settings.hotkey_virtual_key;
-    model.start_with_windows = easnap::platform::StartupEntryEnabled(executable);
-    model.capture_cursor = settings.capture_cursor;
-    model.image_folder = settings.image_folder;
-    model.video_folder = settings.video_folder;
-    model.quick_save_images = settings.quick_save_images;
-    const bool started_with_windows = model.start_with_windows;
-
-    easnap::ui::SettingsDialogCallbacks callbacks;
-    // Registering under a second identifier tells whether the combination is
-    // free without giving up the shortcut that works now.
-    callbacks.shortcut_available = [hwnd](UINT modifiers, UINT key) {
-        if (::RegisterHotKey(hwnd, kProbeHotkeyId, modifiers | MOD_NOREPEAT, key) == FALSE) {
-            return false;
-        }
-        ::UnregisterHotKey(hwnd, kProbeHotkeyId);
-        return true;
-    };
-    callbacks.choose_folder = [](HWND owner, const std::wstring& current) {
-        return easnap::ui::ChooseFolder(owner, current, easnap::strings::Get(IDS_SETTINGS_FOLDER_PICK_TITLE));
-    };
-    // The shortcut is given up while the dialog is open. Windows hands a
-    // registered combination to its owner and never to the window that wants
-    // to read it, and Easnap's own is the one most likely to be pressed here.
-    UnregisterCaptureHotkey(hwnd);
-    if (!easnap::ui::ShowSettingsDialog(nullptr, model, callbacks) || coordinator.state() != SessionState::Idle) {
-        RegisterCaptureHotkey(hwnd);
-        g_tray.SetTooltip(TrayTooltip());
-        return;
-    }
-
-    settings.language = model.language;
-    strings::SetPreference(ToPreference(settings.language));
-    settings.appearance_follows_system = model.appearance_follows_system;
-    settings.appearance_theme = model.appearance_theme;
-    coordinator.RefreshAppearance();
-    settings.capture_cursor = model.capture_cursor;
-    settings.image_folder = model.image_folder;
-    settings.video_folder = model.video_folder;
-    settings.quick_save_images = model.quick_save_images;
-    const UINT previous_modifiers = settings.hotkey_modifiers;
-    const UINT previous_key = settings.hotkey_virtual_key;
-    settings.hotkey_modifiers = model.hotkey_modifiers;
-    settings.hotkey_virtual_key = model.hotkey_virtual_key;
-    if (!RegisterCaptureHotkey(hwnd) &&
-        (previous_modifiers != settings.hotkey_modifiers || previous_key != settings.hotkey_virtual_key)) {
-        // Taken between the check and now: keep what worked before.
-        settings.hotkey_modifiers = previous_modifiers;
-        settings.hotkey_virtual_key = previous_key;
-        RegisterCaptureHotkey(hwnd);
-    }
-    const bool startup_refused = model.start_with_windows != started_with_windows &&
-                                 !easnap::platform::SetStartupEntry(model.start_with_windows, executable);
-    const bool saved = coordinator.PersistSettings();
-    g_tray.SetTooltip(TrayTooltip());
-    easnap::platform::LogMessage(L"Settings changed");
-    if (startup_refused) {
-        // The next visit to Settings shows the entry as it really is.
-        easnap::platform::LogMessage(L"The startup entry could not be changed");
-    }
-    if (!saved) {
-        // Said here instead of in a notification. Marked first: the dialog's
-        // own message loop would otherwise show the notification as well.
-        coordinator.MarkSettingsFailureTold();
-        easnap::ui::ShowErrorMessage(
-            nullptr, strings::Get(startup_refused ? IDS_SETTINGS_STARTUP_AND_SAVE_FAILED : IDS_SETTINGS_SAVE_FAILED));
-    } else if (startup_refused) {
-        easnap::ui::ShowErrorMessage(nullptr, strings::Get(IDS_SETTINGS_STARTUP_FAILED));
-    }
-}
-
-/// Says once per run that the settings cannot be saved: in a notification, or
-/// in a dialog when there is no icon to carry one. A notification the shell
-/// refused is tried again after the next failed save.
-void TellSettingsNotSaved() {
-    namespace strings = easnap::strings;
-    auto& coordinator = CaptureCoordinator::Instance();
-    if (g_tray.ShowBalloon(kProductName, strings::Get(IDS_SETTINGS_NOT_SAVED_NOTICE))) {
-        coordinator.MarkSettingsFailureTold();
-    } else if (!g_tray.added()) {
-        // Marked first: the dialog's own message loop may handle another notice.
-        coordinator.MarkSettingsFailureTold();
-        easnap::ui::ShowErrorMessage(nullptr, strings::Get(IDS_SETTINGS_SAVE_FAILED));
-    }
-}
 
 /// Said once after a run that ended with a crash report.
 void ShowCrashNotice(const std::wstring& directory) {
@@ -401,106 +98,57 @@ void ShowCrashNotice(const std::wstring& directory) {
     }
 }
 
-void OpenDataFolder() {
-    const std::wstring directory = easnap::platform::AppDataDirectory();
-    if (directory.empty()) {
-        return;
+/// The host's own timers; nothing for a timer it does not know.
+std::optional<LRESULT> OnHostTimer(WPARAM wparam) {
+    auto& coordinator = CaptureCoordinator::Instance();
+    if (wparam == easnap::app::kTimerDeferredCleanup) {
+        coordinator.OnDeferredCleanup();
+        return 0;
     }
-    if (!easnap::platform::EnsureDirectory(directory)) {
-        // A file may hold the folder's name: there is nothing to open.
-        easnap::platform::LogMessage(L"The data folder could not be created (error %lu)", ::GetLastError());
-        return;
+    if (wparam == easnap::app::kTimerVideoProbeRetry) {
+        coordinator.OnVideoProbeTimer();
+        return 0;
     }
-    ::ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    return std::nullopt;
 }
 
-void ShowTrayMenu(HWND hwnd) {
-    HMENU menu = ::CreatePopupMenu();
-    if (menu == nullptr) {
-        return;
-    }
-
-    namespace strings = easnap::strings;
+LRESULT OnHostQueryEndSession(HWND hwnd) {
     auto& coordinator = CaptureCoordinator::Instance();
-    // The tab in the pattern separates the label from the right-aligned shortcut.
-    const std::wstring capture_item = g_hotkey_registered
-                                          ? strings::Format(IDS_SHELL_TRAY_CAPTURE, {coordinator.settings().HotkeyDisplayText()})
-                                          : std::wstring(strings::Get(IDS_TRAY_CAPTURE_NO_SHORTCUT));
-    const UINT capture_flags = coordinator.state() == SessionState::Idle ? MF_STRING : (MF_STRING | MF_GRAYED);
-
-    ::AppendMenuW(menu, capture_flags, IDM_TRAY_CAPTURE, capture_item.c_str());
-    // A video is opened only while idle, and one at a time (ADR-040).
-    ::AppendMenuW(menu, coordinator.CanOpenVideo() ? MF_STRING : (MF_STRING | MF_GRAYED), IDM_TRAY_OPEN_VIDEO,
-                  strings::Get(IDS_TRAY_OPEN_VIDEO));
-    ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    ::AppendMenuW(menu, MF_STRING | (coordinator.settings().capture_cursor ? MF_CHECKED : MF_UNCHECKED),
-                  IDM_TRAY_CAPTURE_CURSOR, strings::Get(IDS_SHELL_TRAY_INCLUDE_CURSOR));
-    if (HMENU appearance = easnap::ui::CreateAppearanceMenu(coordinator.settings().appearance_follows_system)) {
-        ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(appearance), strings::Get(IDS_SHELL_TRAY_APPEARANCE));
+    // Sign-out or shutdown while work would be lost: Windows shows the
+    // reason and lets the user decide. A process without a visible
+    // window is only listed there when it gives a reason.
+    if (const wchar_t* reason = coordinator.ShutdownBlockReason()) {
+        ::ShutdownBlockReasonCreate(hwnd, reason);
+        return FALSE;
     }
-    // Settings change what a running session was built with: offered while idle.
-    ::AppendMenuW(menu, capture_flags, IDM_TRAY_SETTINGS, strings::Get(IDS_TRAY_SETTINGS));
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_OPEN_DATA_FOLDER, strings::Get(IDS_SHELL_TRAY_OPEN_DATA_FOLDER));
-    ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_CHECK_UPDATES, strings::Get(IDS_TRAY_CHECK_UPDATES));
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_ABOUT, strings::Get(IDS_SHELL_TRAY_ABOUT));
-    ::AppendMenuW(menu, MF_STRING, IDM_TRAY_EXIT, strings::Get(IDS_SHELL_TRAY_EXIT));
-
-    POINT cursor{};
-    ::GetCursorPos(&cursor);
-    const HWND invoking_focus = ::GetFocus();
-    // Required so the menu closes when the user clicks elsewhere.
-    ::SetForegroundWindow(hwnd);
-    {
-        easnap::ui::PopupScope scope(invoking_focus);
-        easnap::ui::MenuThemeScope menu_theme(hwnd, menu);
-        const UINT command = ::TrackPopupMenuEx(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN,
-                                                cursor.x, cursor.y, hwnd, nullptr);
-        if (command) { ::PostMessageW(hwnd, WM_COMMAND, command, 0); }
-    }
-    ::PostMessageW(hwnd, WM_NULL, 0, 0);
-    ::DestroyMenu(menu);
+    return TRUE;
 }
 
-void OnTrayCommand(HWND hwnd, UINT command) {
+LRESULT OnHostEndSession(HWND hwnd, WPARAM wparam) {
     auto& coordinator = CaptureCoordinator::Instance();
-    switch (command) {
-        case IDM_TRAY_CAPTURE:
-            coordinator.OnGlobalHotkey();
-            break;
-        case IDM_TRAY_OPEN_VIDEO:
-            coordinator.OpenVideo();
-            break;
-        case IDM_TRAY_CAPTURE_CURSOR:
-            coordinator.settings().capture_cursor = !coordinator.settings().capture_cursor;
-            coordinator.PersistSettings();
-            break;
-        case IDM_TRAY_OPEN_DATA_FOLDER:
-            OpenDataFolder();
-            break;
-        case IDM_TRAY_SETTINGS:
-            ShowSettings(hwnd);
-            break;
-        case IDM_TRAY_CHECK_UPDATES:
-            // The browser opens the releases page. Easnap itself asks nobody.
-            ::ShellExecuteW(nullptr, L"open", kUpdatesPage, nullptr, nullptr, SW_SHOWNORMAL);
-            break;
-        case IDM_TRAY_ABOUT:
-            ShowAboutDialog(hwnd);
-            break;
-        case IDM_TRAY_EXIT:
-            if (coordinator.ConfirmExit()) { ::DestroyWindow(hwnd); }
-            break;
-        default:
-            break;
+    ::ShutdownBlockReasonDestroy(hwnd);
+    if (wparam != FALSE) {
+        coordinator.PrepareForSessionEnd();
+        easnap::platform::diagnostics::StopLog();
     }
+    return 0;
+}
+
+LRESULT OnHostDestroy(HWND hwnd) {
+    auto& coordinator = CaptureCoordinator::Instance();
+    UnregisterCaptureHotkey(hwnd);
+    coordinator.PersistSettings(CaptureCoordinator::IfNotSaved::LogOnly);
+    coordinator.Shutdown();
+    ShellTrayIcon().Remove();
+    ::PostQuitMessage(0);
+    return 0;
 }
 
 LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     auto& coordinator = CaptureCoordinator::Instance();
 
     if (message == g_taskbar_created_message && g_taskbar_created_message != 0) {
-        g_tray.Restore();
+        ShellTrayIcon().Restore();
         return 0;
     }
     if (message == g_activate_message && g_activate_message != 0) {
@@ -516,35 +164,11 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             }
             return 0;
 
-        case kMsgTrayIcon:
-            switch (LOWORD(lparam)) {
-                case WM_LBUTTONUP:
-                    coordinator.OnGlobalHotkey();
-                    break;
-                case WM_CONTEXTMENU:
-                case WM_RBUTTONUP:
-                    // Version 4 icons report one right-click as both messages;
-                    // the second arrives inside the first menu's modal loop.
-                    if (!easnap::ui::PopupActive()) { ShowTrayMenu(hwnd); }
-                    break;
-                default:
-                    break;
-            }
-            return 0;
+        case easnap::app::kMsgTrayIcon:
+            return OnTrayIconMessage(hwnd, lparam);
 
         case WM_COMMAND:
-            if (LOWORD(wparam) == easnap::ui::kAppearanceLight || LOWORD(wparam) == easnap::ui::kAppearanceDark) {
-                coordinator.SetAppearanceTheme(LOWORD(wparam) == easnap::ui::kAppearanceDark
-                                                   ? easnap::app::AppearanceTheme::Dark
-                                                   : easnap::app::AppearanceTheme::Light);
-                return 0;
-            }
-            if (LOWORD(wparam) == easnap::ui::kAppearanceSystem) {
-                coordinator.SetAppearanceFollowsSystem();
-                return 0;
-            }
-            OnTrayCommand(hwnd, LOWORD(wparam));
-            return 0;
+            return OnTrayMenuCommand(hwnd, wparam);
 
         case easnap::app::kMsgSessionCleanup:
             coordinator.OnDeferredCleanup();
@@ -609,48 +233,21 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
             return 0;
 
         case WM_TIMER:
-            if (wparam == easnap::app::kTimerDeferredCleanup) {
-                coordinator.OnDeferredCleanup();
-                return 0;
-            }
-            if (wparam == easnap::app::kTimerVideoProbeRetry) {
-                coordinator.OnVideoProbeTimer();
-                return 0;
-            }
+            if (const std::optional<LRESULT> result = OnHostTimer(wparam)) { return *result; }
             break;
 
         case WM_QUERYENDSESSION:
-            // Sign-out or shutdown while work would be lost: Windows shows the
-            // reason and lets the user decide. A process without a visible
-            // window is only listed there when it gives a reason.
-            if (const wchar_t* reason = coordinator.ShutdownBlockReason()) {
-                ::ShutdownBlockReasonCreate(hwnd, reason);
-                return FALSE;
-            }
-            return TRUE;
+            return OnHostQueryEndSession(hwnd);
 
         case WM_ENDSESSION:
-            ::ShutdownBlockReasonDestroy(hwnd);
-            if (wparam != FALSE) {
-                coordinator.PrepareForSessionEnd();
-                easnap::platform::diagnostics::StopLog();
-            }
-            return 0;
+            return OnHostEndSession(hwnd, wparam);
 
         case WM_CLOSE:
             if (coordinator.ConfirmExit()) { ::DestroyWindow(hwnd); }
             return 0;
 
         case WM_DESTROY:
-            if (g_hotkey_registered) {
-                ::UnregisterHotKey(hwnd, IDH_EASNAP_CAPTURE);
-                g_hotkey_registered = false;
-            }
-            coordinator.PersistSettings(CaptureCoordinator::IfNotSaved::LogOnly);
-            coordinator.Shutdown();
-            g_tray.Remove();
-            ::PostQuitMessage(0);
-            return 0;
+            return OnHostDestroy(hwnd);
 
         default:
             break;
@@ -660,13 +257,12 @@ LRESULT CALLBACK HostWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM l
 
 HWND CreateHostWindow(HINSTANCE instance) {
     WNDCLASSEXW wc{};
-    wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = HostWindowProc;
     wc.hInstance = instance;
     wc.lpszClassName = kHostClassName;
     wc.hIcon = ::LoadIconW(instance, MAKEINTRESOURCEW(IDI_EASNAP_APP));
     wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
-    if (::RegisterClassExW(&wc) == 0) {
+    if (!easnap::platform::RegisterWindowClass(wc)) {
         return nullptr;
     }
 
@@ -743,7 +339,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
     const easnap::platform::UniqueHandle instance_mutex{::CreateMutexW(nullptr, TRUE, kSingleInstanceMutex)};
     if (!instance_mutex || ::GetLastError() == ERROR_ALREADY_EXISTS) {
         // Anything this process says, it says in the running Easnap's language.
-        easnap::strings::SetPreference(ToPreference(easnap::app::AppSettings::Load().language));
+        easnap::strings::SetPreference(ToLanguagePreference(easnap::app::AppSettings::Load().language));
         if (!request.open_path.empty()) {
             HandOverVideo(request.open_path);
             return 0;
@@ -803,7 +399,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
     auto& coordinator = CaptureCoordinator::Instance();
     coordinator.Initialize(host);
     // Text shown before this line follows Windows; from here the choice in Settings applies.
-    easnap::strings::SetPreference(ToPreference(coordinator.settings().language));
+    easnap::strings::SetPreference(ToLanguagePreference(coordinator.settings().language));
 
     // Explorer broadcasts this when it restarts and every tray icon is lost.
     g_taskbar_created_message = ::RegisterWindowMessageW(L"TaskbarCreated");
@@ -812,7 +408,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
     // The tooltip and the menu say whether the shortcut works, so the icon is
     // added after the attempt to register it.
     const bool shortcut_works = RegisterCaptureHotkey(host);
-    if (!g_tray.Add(host, TrayTooltip())) {
+    if (!ShellTrayIcon().Add(host, TrayTooltip())) {
         easnap::ui::ShowMessage(nullptr, easnap::strings::Get(IDS_SHELL_TRAY_ICON_FAILED), kProductName,
                                 MB_OK | MB_ICONERROR);
     }
@@ -821,14 +417,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
         // Another application holds the shortcut. Said in a notification, not
         // in a dialog that would have to be dismissed at every start.
         if (!started_at_sign_in) {
-            g_tray.ShowBalloon(kProductName, easnap::strings::Format(IDS_TRAY_SHORTCUT_UNAVAILABLE, {shortcut}).c_str());
+            ShellTrayIcon().ShowBalloon(kProductName, easnap::strings::Format(IDS_TRAY_SHORTCUT_UNAVAILABLE, {shortcut}).c_str());
         }
     } else if (!coordinator.settings().first_run_notice_shown) {
         // Where Easnap lives and how to start a capture: said once per computer.
         // Where the settings cannot be saved, that is said instead.
         coordinator.settings().first_run_notice_shown = true;
         if (coordinator.PersistSettings()) {
-            g_tray.ShowBalloon(kProductName, easnap::strings::Format(IDS_SHELL_TRAY_READY_BALLOON, {shortcut}).c_str());
+            ShellTrayIcon().ShowBalloon(kProductName, easnap::strings::Format(IDS_SHELL_TRAY_READY_BALLOON, {shortcut}).c_str());
         } else {
             coordinator.settings().first_run_notice_shown = false;
             TellSettingsNotSaved();
@@ -864,7 +460,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE, _In_ LPWSTR, 
     // WM_DESTROY has done this. Repeated so that the function-static
     // coordinator never shuts down in its destructor, after COM is gone.
     coordinator.Shutdown();
-    g_tray.Remove();
+    ShellTrayIcon().Remove();
     // Release process-wide graphics COM objects while the main apartment is
     // still initialized; the function-static environment is destroyed later.
     easnap::platform::GraphicsEnvironment::Get().Shutdown();

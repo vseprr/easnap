@@ -1,9 +1,10 @@
 #pragma once
 
+#include <windows.h>
+
 #include <array>
 #include <functional>
 #include <memory>
-#include "platform/platform_utils.h"
 
 namespace easnap::ui {
 

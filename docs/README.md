@@ -3,6 +3,10 @@
 Start with [project status](project-status.md) for the current baseline, actual
 validation, limitations and next slice. Read the [roadmap](../EASNAP_ROADMAP.md)
 alongside it. Contributor instructions are in [CONTRIBUTING.md](../CONTRIBUTING.md).
+To find where a change is made, open the [change map](ui/change-map.md); the
+module map is in [architecture](architecture.md#module-map) and the layer
+order of the source folders in
+[ADR-043](decisions/ADR-043-structure-for-cheap-changes.md#layer-order-checked).
 
 | Document | Purpose |
 |---|---|
@@ -16,9 +20,10 @@ alongside it. Contributor instructions are in [CONTRIBUTING.md](../CONTRIBUTING.
 | [Distribution](distribution.md) | Version text, packages, symbol files, the release steps and package-manager manifests |
 | [Design system](ui/design-system.md) | Implemented colors, controls, accessibility and layout |
 | [Window implementation guide](ui/window-implementation-guide.md) | Required shared-code, layout, painting and regression-validation path for new or changed windows |
+| [Change map](ui/change-map.md) | The file and symbol to edit for each common change: colours, metrics, icons, buttons, tools, shortcuts, messages, identifiers |
 | [Security](../SECURITY.md) | Reporting, private storage and publication model |
 | Release notes | [v1.3.1](releases/v1.3.1.md), [v1.3.0](releases/v1.3.0.md), [v1.2.0](releases/v1.2.0.md), [v1.1.0](releases/v1.1.0.md), [v1.1.0-rc.1](releases/v1.1.0-rc.1.md) (not published), [v1.1.0-beta.2](releases/v1.1.0-beta.2.md), [v1.1.0-beta.1](releases/v1.1.0-beta.1.md), [v1.0.2](releases/v1.0.2.md), [v1.0.1](releases/v1.0.1.md), [v1.0.0](releases/v1.0.0.md): what each version changed and how it was checked |
-| [Validation records](releases/validation-history.md) | The individual runs behind the release notes of each release since v1.0.1, including the ones that failed |
+| [Validation records](releases/validation-history.md) | Every lab, CI and package check of each release since v1.0.1, including failures; per-release run records go here, not into project status |
 
 ## Decisions
 
@@ -51,7 +56,7 @@ not unfinished roadmap instructions.
 - Media/completion: [MP4 trim](decisions/ADR-009-mp4-trim-boundaries-and-publication.md),
   [preview ownership](decisions/ADR-010-trim-view-ownership-and-orchestration.md),
   [trimming in a flow of its own](decisions/ADR-039-coordinator-trim-flow.md),
-  [external videos in the trim view (proposed)](decisions/ADR-040-external-video-in-the-trim-view.md),
+  [external videos in the trim view](decisions/ADR-040-external-video-in-the-trim-view.md),
   [publication/clipboard lifetime](decisions/ADR-011-recording-completion-and-clipboard-lifetime.md),
   [GIF policy](decisions/ADR-013-gif-stream-timing-palette-and-publication.md),
   [shared configuration/completion](decisions/ADR-014-unified-recording-configuration-and-format-completion.md).
@@ -65,12 +70,15 @@ not unfinished roadmap instructions.
   [Settings, the capture shortcut and how Easnap starts](decisions/ADR-033-settings-shortcut-and-launch-behaviour.md),
   [Media Foundation on first use](decisions/ADR-034-media-foundation-on-first-use.md),
   [prerelease versions, one channel and symbol files](decisions/ADR-035-prerelease-versions-and-distribution.md).
+- Code structure: [layers, tables and units in which a change touches one place](decisions/ADR-043-structure-for-cheap-changes.md).
 - Development/testing: [incremental execution and desktop ownership](decisions/ADR-025-incremental-test-execution.md),
   [test tiers and desktop isolation](decisions/ADR-026-test-tiers-and-desktop-isolation.md),
   [isolated test lab in a Hyper-V VM](decisions/ADR-037-isolated-test-lab.md).
 
 Keep progress in project status, durable decisions in ADRs, and measured
 evidence in the ADR it supports or in the validation record of its release.
+Per-release runs go into the validation records; project status keeps no
+per-release sections.
 A finished investigation leaves its conclusion in an ADR; the report itself is
 not kept. Avoid duplicating phase histories across these files.
 

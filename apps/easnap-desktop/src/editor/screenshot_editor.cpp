@@ -1,9 +1,20 @@
 // Easnap - screenshot annotation editor implementation.
 #include "editor/screenshot_editor.h"
 
+#include "editor/annotation_renderer.h"
+#include "editor/annotation_tools.h"
+#include "editor/editor_export.h"
+#include "editor/key_commands.h"
+#include "editor/toolbar_item.h"
+#include "platform/graphics_device.h"
+#include "platform/image_output.h"
+#include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "ui/island_layout.h"
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
+#include "ui/control_ids.h"
+#include "ui/image_export_outcome.h"
 #include "ui/native_controls.h"
 #include <commctrl.h>
 
@@ -12,7 +23,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstring>
 #include <cwchar>
 #include <iterator>
 #include <deque>
@@ -27,94 +37,12 @@ constexpr wchar_t kEditorClassName[] = L"EasnapScreenshotEditor";
 constexpr DWORD kEditorStyle = WS_POPUP | WS_CLIPCHILDREN;
 constexpr DWORD kEditorExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTROLPARENT;
 
-// Toolbar metrics in device-independent pixels.
-constexpr float kToolbarRowHeight = 48.0f;
-constexpr float kToolButton = 34.0f;
-constexpr float kCommandButton = 34.0f;
-constexpr float kSwatch = 32.0f;
-constexpr float kItemGap = 4.0f;
-constexpr float kGroupGap = 14.0f;
-constexpr float kEdgePadding = 10.0f;
-constexpr float kCanvasGap = 8.0f;
-
 // Smallest useful window, in device-independent pixels of the client area.
 constexpr float kMinClientWidth = 460.0f;
 constexpr float kMinClientHeight = kToolbarRowHeight;
 
-/// A picture up to this height is one Direct2D bitmap and one composite pass,
-/// as every screenshot is. A taller document is shown and exported in bands,
-/// which keeps each bitmap within what Direct2D and WIC accept.
-constexpr int kWholeBitmapRows = 8192;
+/// Rows of each preview band of a document taller than kWholeBitmapRows.
 constexpr int kPreviewBandRows = 4096;
-constexpr int kCompositeBandRows = 2048;
-
-/// Preferred tool island width, clamped to the current monitor. One row of
-/// tools and commands, with 28 DIPs to spare after the last command.
-constexpr float kIslandWidth = 870.0f;
-constexpr float kIslandGrip = 24.0f;
-
-enum CommandId {
-    kCommandUndo = 1,
-    kCommandRedo,
-    kCommandClear,
-    kCommandCopy,
-    kCommandSave,
-    kCommandCancel,
-    kCommandTheme,
-    kCommandScrollshot,
-    kCommandPin,
-};
-
-/// Tooltip tool on the island itself: a disabled button receives no mouse
-/// messages, so its reason for being disabled is shown through the parent.
-constexpr UINT_PTR kScrollshotDisabledTip = 0xEA70;
-
-constexpr std::array<D2D1_COLOR_F, 8> kPaletteColors = {{
-    {0.898f, 0.243f, 0.259f, 1.0f},  // red
-    {0.976f, 0.639f, 0.157f, 1.0f},  // amber
-    {0.188f, 0.686f, 0.427f, 1.0f},  // green
-    {0.161f, 0.635f, 1.0f, 1.0f},    // Easnap blue
-    {0.612f, 0.318f, 0.851f, 1.0f},  // violet
-    {1.0f, 1.0f, 1.0f, 1.0f},        // white
-    {0.0f, 0.0f, 0.0f, 1.0f},        // black
-    {0.5f, 0.5f, 0.5f, 1.0f},        // gray
-}};
-
-constexpr std::array<float, 3> kThicknessOptions = {2.0f, 4.0f, 7.0f};
-
-/// Mosaic brush diameters in captured pixels (independent of the preview zoom).
-constexpr std::array<float, 3> kBrushSizeOptions = {16.0f, 32.0f, 64.0f};
-
-/// Selection chrome in device-independent pixels; it keeps its size on screen
-/// at every zoom. A frame follows the outline, with a gap around text, and
-/// handles are rings on the corners or ends.
-constexpr float kSelectionStroke = 1.2f;
-constexpr float kSelectionTextGap = 3.0f;
-constexpr float kHandleRadius = 4.5f;
-constexpr float kHandleStroke = 1.5f;
-/// How far the chrome reaches past an annotation's bounds.
-constexpr float kSelectionReach = std::max(kHandleRadius + kHandleStroke / 2, kSelectionTextGap + kSelectionStroke / 2);
-
-/// Round caps/joins make freehand strokes and arrows look continuous.
-ID2D1StrokeStyle* RoundStrokeStyle() {
-    static platform::ComPtr<ID2D1StrokeStyle> style = [] {
-        platform::ComPtr<ID2D1StrokeStyle> created;
-        auto* factory = platform::GraphicsEnvironment::Get().d2d_factory();
-        if (factory != nullptr) {
-            const D2D1_STROKE_STYLE_PROPERTIES properties = D2D1::StrokeStyleProperties(
-                D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND, 10.0f,
-                D2D1_DASH_STYLE_SOLID, 0.0f);
-            factory->CreateStrokeStyle(properties, nullptr, 0, &created);
-        }
-        return created;
-    }();
-    return style.Get();
-}
-
-D2D1_RECT_F NormalizedD2DRect(D2D1_POINT_2F a, D2D1_POINT_2F b) {
-    return D2D1::RectF(std::min(a.x, b.x), std::min(a.y, b.y), std::max(a.x, b.x), std::max(a.y, b.y));
-}
-
 
 /// Grows `rect` by the non-client frame of `style`. Uses the per-monitor aware
 /// entry point when the running build of Windows offers it (capability probing,
@@ -133,700 +61,22 @@ void AdjustForNonClient(RECT& rect, UINT dpi) {
     ::AdjustWindowRectEx(&rect, kEditorStyle, FALSE, kEditorExStyle);
 }
 
-/// The width in pixels of `text` on one line in `font`, as a static label draws it.
-float TextPixelWidth(HFONT font, const std::wstring& text) {
-    float width = 0;
-    if (HDC dc = ::CreateCompatibleDC(nullptr)) {
-        const HGDIOBJ previous = font != nullptr ? ::SelectObject(dc, font) : nullptr;
-        RECT box{};
-        ::DrawTextW(dc, text.c_str(), -1, &box, DT_CALCRECT | DT_SINGLELINE | DT_NOPREFIX);
-        width = static_cast<float>(box.right - box.left);
-        if (previous != nullptr) { ::SelectObject(dc, previous); }
-        ::DeleteDC(dc);
-    }
-    return width;
-}
-
-void DrawArrow(ID2D1RenderTarget* target, const Annotation& annotation, ID2D1SolidColorBrush* brush) {
-    const D2D1_POINT_2F start = annotation.points.front();
-    const D2D1_POINT_2F end = annotation.points.back();
-    const float dx = end.x - start.x;
-    const float dy = end.y - start.y;
-    const float length = std::sqrt(dx * dx + dy * dy);
-    if (length < 1.0f) {
-        return;
-    }
-    const float ux = dx / length;
-    const float uy = dy / length;
-    const float head_length = std::min(length, std::max(14.0f, annotation.style.thickness * 5.0f));
-    const float head_width = head_length * 0.62f;
-    const D2D1_POINT_2F base = D2D1::Point2F(end.x - ux * head_length, end.y - uy * head_length);
-
-    target->DrawLine(start, base, brush, annotation.style.thickness, RoundStrokeStyle());
-
-    platform::ComPtr<ID2D1PathGeometry> geometry;
-    auto* factory = platform::GraphicsEnvironment::Get().d2d_factory();
-    if (factory == nullptr || FAILED(factory->CreatePathGeometry(&geometry))) {
-        return;
-    }
-    platform::ComPtr<ID2D1GeometrySink> sink;
-    if (FAILED(geometry->Open(&sink))) {
-        return;
-    }
-    const D2D1_POINT_2F left = D2D1::Point2F(base.x - uy * head_width * 0.5f, base.y + ux * head_width * 0.5f);
-    const D2D1_POINT_2F right = D2D1::Point2F(base.x + uy * head_width * 0.5f, base.y - ux * head_width * 0.5f);
-    sink->BeginFigure(end, D2D1_FIGURE_BEGIN_FILLED);
-    sink->AddLine(left);
-    sink->AddLine(right);
-    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-    sink->Close();
-    target->FillGeometry(geometry.Get(), brush);
-}
-
-/// Draws a freehand path with round joins, or a single dot for a lone click.
-void DrawFreehand(ID2D1RenderTarget* target, const std::vector<D2D1_POINT_2F>& points, ID2D1SolidColorBrush* brush,
-                  float thickness) {
-    if (points.size() == 1) {
-        target->FillEllipse(D2D1::Ellipse(points.front(), thickness * 0.5f, thickness * 0.5f), brush);
-        return;
-    }
-    for (size_t i = 1; i < points.size(); ++i) {
-        target->DrawLine(points[i - 1], points[i], brush, thickness, RoundStrokeStyle());
-    }
-}
-
-/// The bounding box of `area` mapped through `transform`.
-D2D1_RECT_F TransformedBounds(const D2D1_RECT_F& area, const D2D1::Matrix3x2F& transform) {
-    const std::array<D2D1_POINT_2F, 4> corners{{{area.left, area.top}, {area.right, area.top}, {area.right, area.bottom}, {area.left, area.bottom}}};
-    const D2D1_POINT_2F first = transform.TransformPoint(corners[0]);
-    D2D1_RECT_F bounds{first.x, first.y, first.x, first.y};
-    for (const auto& corner : corners) {
-        const D2D1_POINT_2F point = transform.TransformPoint(corner);
-        bounds.left = std::min(bounds.left, point.x);
-        bounds.top = std::min(bounds.top, point.y);
-        bounds.right = std::max(bounds.right, point.x);
-        bounds.bottom = std::max(bounds.bottom, point.y);
-    }
-    return bounds;
-}
-
-/// The part of the space `transform` maps onto `target` that the target
-/// shows, grown by `margin` target pixels for antialiasing. Empty when the
-/// transform cannot be inverted.
-std::optional<D2D1_RECT_F> ShownArea(ID2D1RenderTarget* target, const D2D1_MATRIX_3X2_F& m, float margin) {
-    const float determinant = m._11 * m._22 - m._12 * m._21;
-    if (determinant == 0.0f || !std::isfinite(determinant)) { return std::nullopt; }
-    // The inverse of the 2x3 matrix, written out.
-    const D2D1::Matrix3x2F inverse(m._22 / determinant, -m._12 / determinant, -m._21 / determinant, m._11 / determinant,
-                                   (m._21 * m._32 - m._22 * m._31) / determinant,
-                                   (m._12 * m._31 - m._11 * m._32) / determinant);
-    const D2D1_SIZE_F size = target->GetSize();
-    const D2D1_RECT_F shown = TransformedBounds({-margin, -margin, size.width + margin, size.height + margin}, inverse);
-    if (!std::isfinite(shown.left) || !std::isfinite(shown.top) || !std::isfinite(shown.right) || !std::isfinite(shown.bottom)) {
-        return std::nullopt;
-    }
-    return shown;
-}
-
-/// Draws one annotation in image space. Mosaic strokes are baked into the base
-/// bitmap beforehand, so they only render a translucent trail while being drawn.
-ComPtr<IDWriteTextLayout> TextLayout(const Annotation& a);
-
-// DirectWrite supplies glyph outlines, so Outline is a glyph stroke, never a
-// selection rectangle or a bitmap dilation of the whole label.
-class OutlineRenderer final : public IDWriteTextRenderer {
-public:
-    OutlineRenderer(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush, D2D1_COLOR_F outline, D2D1_COLOR_F fill, float width)
-        : target_(target), brush_(brush), outline_(outline), fill_(fill), width_(width) {}
-    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** result) override {
-        if (!result) { return E_POINTER; }
-        *result = nullptr;
-        if (iid == __uuidof(IUnknown) || iid == __uuidof(IDWritePixelSnapping) || iid == __uuidof(IDWriteTextRenderer)) {
-            *result = static_cast<IDWriteTextRenderer*>(this);
-            AddRef();
-            return S_OK;
-        }
-        return E_NOINTERFACE;
-    }
-    ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
-    ULONG STDMETHODCALLTYPE Release() override { return 1; }
-    HRESULT STDMETHODCALLTYPE IsPixelSnappingDisabled(void*, BOOL* disabled) override {
-        *disabled = FALSE;
-        return S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE GetCurrentTransform(void*, DWRITE_MATRIX* transform) override {
-        D2D1_MATRIX_3X2_F matrix;
-        target_->GetTransform(&matrix);
-        std::memcpy(transform, &matrix, sizeof(matrix));
-        return S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE GetPixelsPerDip(void*, FLOAT* pixels) override {
-        *pixels = 1;
-        return S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE DrawGlyphRun(void*, FLOAT x, FLOAT y, DWRITE_MEASURING_MODE,
-                                           const DWRITE_GLYPH_RUN* run, const DWRITE_GLYPH_RUN_DESCRIPTION*, IUnknown*) override {
-        ComPtr<ID2D1PathGeometry> geometry;
-        ComPtr<ID2D1GeometrySink> sink;
-        auto* factory = platform::GraphicsEnvironment::Get().d2d_factory();
-        HRESULT hr = factory->CreatePathGeometry(&geometry);
-        if (FAILED(hr)) { return hr; }
-        hr = geometry->Open(&sink);
-        if (FAILED(hr)) { return hr; }
-        hr = run->fontFace->GetGlyphRunOutline(run->fontEmSize, run->glyphIndices, run->glyphAdvances, run->glyphOffsets,
-                                               run->glyphCount, run->isSideways, run->bidiLevel % 2, sink.Get());
-        if (FAILED(hr)) { return hr; }
-        hr = sink->Close();
-        if (FAILED(hr)) { return hr; }
-        D2D1_MATRIX_3X2_F original;
-        target_->GetTransform(&original);
-        target_->SetTransform(D2D1::Matrix3x2F::Translation(x, y) * original);
-        brush_->SetColor(outline_);
-        target_->DrawGeometry(geometry.Get(), brush_, width_, RoundStrokeStyle());
-        brush_->SetColor(fill_);
-        target_->FillGeometry(geometry.Get(), brush_);
-        target_->SetTransform(original);
-        return S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE DrawUnderline(void*, FLOAT x, FLOAT y, const DWRITE_UNDERLINE* line, IUnknown*) override {
-        brush_->SetColor(fill_);
-        target_->FillRectangle({x, y + line->offset, x + line->width, y + line->offset + line->thickness}, brush_);
-        return S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE DrawStrikethrough(void*, FLOAT x, FLOAT y, const DWRITE_STRIKETHROUGH* line, IUnknown*) override {
-        brush_->SetColor(fill_);
-        target_->FillRectangle({x, y + line->offset, x + line->width, y + line->offset + line->thickness}, brush_);
-        return S_OK;
-    }
-    HRESULT STDMETHODCALLTYPE DrawInlineObject(void* context, FLOAT x, FLOAT y, IDWriteInlineObject* object, BOOL sideways, BOOL rtl, IUnknown* effect) override {
-        return object->Draw(context, this, x, y, sideways, rtl, effect);
-    }
-
-private:
-    ID2D1RenderTarget* target_;
-    ID2D1SolidColorBrush* brush_;
-    D2D1_COLOR_F outline_, fill_;
-    float width_;
-};
-
-void DrawAnnotation(ID2D1RenderTarget* target, const Annotation& annotation,
-                    ID2D1SolidColorBrush* brush, bool preview) {
-    if (annotation.points.empty() || brush == nullptr) {
-        return;
-    }
-    brush->SetColor(annotation.style.color);
-    const float thickness = annotation.style.thickness;
-
-    switch (annotation.tool) {
-        case ToolId::Pen:
-            DrawFreehand(target, annotation.points, brush, thickness);
-            break;
-        case ToolId::Arrow:
-            if (annotation.points.size() >= 2) {
-                DrawArrow(target, annotation, brush);
-            }
-            break;
-        case ToolId::Rectangle:
-            if (annotation.points.size() >= 2) {
-                target->DrawRectangle(NormalizedD2DRect(annotation.points.front(), annotation.points.back()), brush,
-                                      thickness);
-            }
-            break;
-        case ToolId::Ellipse:
-            if (annotation.points.size() >= 2) {
-                const D2D1_RECT_F r = NormalizedD2DRect(annotation.points.front(), annotation.points.back());
-                target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F((r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f),
-                                                  (r.right - r.left) * 0.5f, (r.bottom - r.top) * 0.5f),
-                                    brush, thickness);
-            }
-            break;
-        case ToolId::Line:
-            if (annotation.points.size() >= 2) { target->DrawLine(annotation.points.front(), annotation.points.back(), brush, thickness, RoundStrokeStyle()); }
-            break;
-        case ToolId::Text:
-        case ToolId::Tag: {
-            auto layout = TextLayout(annotation);
-            if (!layout || annotation.text.empty()) { break; }
-            const auto box = annotation.bounds();
-            auto origin = annotation.points.front();
-            const float em = annotation.FontPixels();
-            const bool white = annotation.style.color.r > 0.98f && annotation.style.color.g > 0.98f && annotation.style.color.b > 0.98f;
-            const auto ink = D2D1::ColorF(white ? D2D1::ColorF::Black : D2D1::ColorF::White);
-            if (annotation.tool == ToolId::Tag) {
-                const float dot = em * 0.16f, body = origin.x + em * 0.9f;
-                brush->SetColor(annotation.style.color);
-                target->FillEllipse(D2D1::Ellipse({origin.x + dot, (box.top + box.bottom) / 2}, dot, dot), brush);
-                brush->SetColor(D2D1::ColorF(0x30343c));
-                target->FillRoundedRectangle(D2D1::RoundedRect({body, box.top, box.right, box.bottom}, em * 0.2f, em * 0.2f), brush);
-                ComPtr<ID2D1PathGeometry> notch;
-                ComPtr<ID2D1GeometrySink> sink;
-                if (SUCCEEDED(platform::GraphicsEnvironment::Get().d2d_factory()->CreatePathGeometry(&notch)) && SUCCEEDED(notch->Open(&sink))) {
-                    const float mid = (box.top + box.bottom) / 2;
-                    sink->BeginFigure({body - em * 0.25f, mid}, D2D1_FIGURE_BEGIN_FILLED);
-                    sink->AddLine({body + 1, mid - em * 0.25f});
-                    sink->AddLine({body + 1, mid + em * 0.25f});
-                    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-                    sink->Close();
-                    target->FillGeometry(notch.Get(), brush);
-                }
-                origin = {body + em * 0.45f, origin.y + em * 0.45f};
-                brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
-                target->DrawTextLayout(origin, layout.Get(), brush);
-                break;
-            }
-            if (annotation.style.text_mode == TextMode::Fill) {
-                target->FillRoundedRectangle(D2D1::RoundedRect(box, em * 0.22f, em * 0.22f), brush);
-                origin.x += em * 0.25f;
-                origin.y += em * 0.25f;
-                brush->SetColor(ink);
-            }
-            if (annotation.style.text_mode == TextMode::Outline) {
-                origin.x += em * 0.075f;
-                origin.y += em * 0.075f;
-                OutlineRenderer renderer(target, brush, annotation.style.color, ink, em * 0.12f);
-                layout->Draw(nullptr, &renderer, origin.x, origin.y);
-            } else {
-                target->DrawTextLayout(origin, layout.Get(), brush);
-            }
-            break;
-        }
-        case ToolId::Watermark: {
-            auto layout = TextLayout(annotation);
-            if (!layout || annotation.text.empty() || annotation.points.size() < 2) { break; }
-            DWRITE_TEXT_METRICS metrics{};
-            layout->GetMetrics(&metrics);
-            const float stepX = std::max(annotation.FontPixels() * 5, metrics.width + annotation.FontPixels() * 3);
-            const float stepY = std::max(annotation.FontPixels() * 4, metrics.height * 3);
-            D2D1_MATRIX_3X2_F original;
-            target->GetTransform(&original);
-            auto color = annotation.style.color;
-            color.a = annotation.style.opacity / 100;
-            brush->SetColor(color);
-            target->PushAxisAlignedClip({0, 0, annotation.points.back().x, annotation.points.back().y}, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            const D2D1_POINT_2F center{annotation.points.back().x / 2, annotation.points.back().y / 2};
-            const float reach = std::hypot(center.x, center.y) + std::max(stepX, stepY);
-            target->SetTransform(D2D1::Matrix3x2F::Rotation(-18, center) * original);
-            const int columns = static_cast<int>(std::ceil(reach / stepX)), rows = static_cast<int>(std::ceil(reach / stepY));
-            // A tall picture has thousands of tiles. Only those that can reach
-            // what the target shows are drawn, in the order of the full grid.
-            int first_row = -rows, last_row = rows, first_column = -columns, last_column = columns;
-            if (const auto shown = ShownArea(target, original, 2.0f)) {
-                // Tiles are laid out in image space turned back by their rotation.
-                const D2D1_RECT_F area = TransformedBounds(*shown, D2D1::Matrix3x2F::Rotation(18, center));
-                // Glyphs may overhang their layout box: an em on every side.
-                const float em = annotation.FontPixels();
-                const float width = metrics.widthIncludingTrailingWhitespace, height = metrics.height;
-                const auto index = [](float position, float step, int limit, bool upward) {
-                    const float value = upward ? std::ceil(position / step) : std::floor(position / step);
-                    return static_cast<int>(std::clamp(value, static_cast<float>(-limit), static_cast<float>(limit)));
-                };
-                first_column = index(area.left - em - center.x - width / 2, stepX, columns, false);
-                last_column = index(area.right + em - center.x + width / 2, stepX, columns, true);
-                first_row = index(area.top - em - center.y - height / 2, stepY, rows, false);
-                last_row = index(area.bottom + em - center.y + height / 2, stepY, rows, true);
-            }
-            for (int row = first_row; row <= last_row; ++row)
-                for (int column = first_column; column <= last_column; ++column) {
-                    const D2D1_POINT_2F origin{center.x + column * stepX - metrics.widthIncludingTrailingWhitespace / 2,
-                                               center.y + row * stepY - metrics.height / 2};
-                    target->DrawTextLayout(origin, layout.Get(), brush);
-                }
-            target->SetTransform(original);
-            target->PopAxisAlignedClip();
-            break;
-        }
-        case ToolId::Spotlight: break; // Union dim layer is derived with the base pixels.
-        case ToolId::Mosaic: {
-            if (!preview) {
-                break;  // Already destructive on the pixels.
-            }
-            brush->SetColor(D2D1::ColorF(0.85f, 0.89f, 0.98f, 0.45f));
-            DrawFreehand(target, annotation.points, brush, std::max(2.0f, annotation.style.brush_size));
-            break;
-        }
-        case ToolId::Pointer:
-        default:
-            break;
-    }
-}
-
 }  // namespace
-
-// ---------------------------------------------------------------------------
-// Annotation / AnnotationDocument
-// ---------------------------------------------------------------------------
-
-namespace {
-ComPtr<IDWriteTextLayout> TextLayout(const Annotation& a) {
-    struct Entry {
-        std::wstring text;
-        float size;
-        ComPtr<IDWriteTextLayout> layout;
-    };
-    static thread_local std::deque<Entry> cache;
-    const float size = a.FontPixels();
-    for (const auto& e : cache)
-        if (e.text == a.text && e.size == size) { return e.layout; }
-    auto& graphics = platform::GraphicsEnvironment::Get();
-    if (!graphics.EnsureInitialized()) { return {}; }
-    auto format = graphics.CreateTextFormat(size, DWRITE_FONT_WEIGHT_NORMAL);
-    if (!format) { return {}; }
-    format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-    ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(graphics.dwrite_factory()->CreateTextLayout(a.text.c_str(), static_cast<UINT32>(a.text.size()), format.Get(),
-                                                           65536, 65536, &layout))) { return {}; }
-    if (cache.size() == 64) { cache.pop_front(); }
-    cache.push_back({a.text, size, layout});
-    return layout;
-}
-float SegmentDistance(D2D1_POINT_2F p, D2D1_POINT_2F a, D2D1_POINT_2F b) {
-    const float dx = b.x - a.x, dy = b.y - a.y;
-    const float t = dx * dx + dy * dy > 0 ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy), 0.0f, 1.0f) : 0;
-    return std::hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
-}
-bool SameList(const std::vector<Annotation>& a, const std::vector<Annotation>& b) {
-    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](const auto& x, const auto& y) { return x.Same(y); });
-}
-}  // namespace
-
-D2D1_RECT_F Annotation::bounds() const {
-    if (points.empty()) { return {}; }
-    auto box = NormalizedD2DRect(points.front(), points.front());
-    for (const auto& point : points) {
-        box.left = std::min(box.left, point.x);
-        box.top = std::min(box.top, point.y);
-        box.right = std::max(box.right, point.x);
-        box.bottom = std::max(box.bottom, point.y);
-    }
-    if (tool == ToolId::Text || tool == ToolId::Tag) {
-        auto layout = TextLayout(*this);
-        DWRITE_TEXT_METRICS metrics{};
-        if (layout) { layout->GetMetrics(&metrics); }
-        const float padding = tool == ToolId::Tag ? FontPixels() * 0.45f : style.text_mode == TextMode::Fill  ? FontPixels() * 0.25f
-                                                                       : style.text_mode == TextMode::Outline ? FontPixels() * 0.075f
-                                                                                                              : 0;
-        box.right = box.left + std::max(1.0f, metrics.widthIncludingTrailingWhitespace) + padding * 2;
-        box.bottom = box.top + std::max(FontPixels(), metrics.height) + padding * 2;
-        if (tool == ToolId::Tag) { box.right += FontPixels() * 0.9f; }
-        return box;
-    }
-    const float pad = tool == ToolId::Mosaic ? (style.method == EffectMethod::Brush ? style.brush_size / 2 : 0) : tool == ToolId::Spotlight ? 0
-                                                                                                              : tool == ToolId::Arrow       ? style.thickness * 3
-                                                                                                                                            : style.thickness / 2;
-    box.left -= pad;
-    box.top -= pad;
-    box.right += pad;
-    box.bottom += pad;
-    return box;
-}
-
-bool Annotation::Same(const Annotation& b) const {
-    const auto& x = style;
-    const auto& y = b.style;
-    return tool == b.tool && text == b.text && points.size() == b.points.size() &&
-           x.color.r == y.color.r && x.color.g == y.color.g && x.color.b == y.color.b && x.color.a == y.color.a &&
-           x.thickness == y.thickness && x.font_size == y.font_size && x.image_scale == y.image_scale &&
-           x.brush_size == y.brush_size && x.text_mode == y.text_mode && x.effect == y.effect && x.method == y.method &&
-           x.shape == y.shape && x.strength == y.strength && x.opacity == y.opacity &&
-           std::equal(points.begin(), points.end(), b.points.begin(), [](auto a, auto c) { return a.x == c.x && a.y == c.y; });
-}
-
-bool Annotation::HitTest(D2D1_POINT_2F p, float tolerance) const {
-    if (points.empty() || tool == ToolId::Watermark) { return false; }
-    const auto r = bounds();
-    if (p.x < r.left - tolerance || p.x > r.right + tolerance || p.y < r.top - tolerance || p.y > r.bottom + tolerance) { return false; }
-    // Text remains directly editable. Closed geometry only responds at its
-    // outline, so another annotation can start inside an existing shape.
-    if (tool == ToolId::Text || tool == ToolId::Tag) { return true; }
-    if (tool == ToolId::Arrow && points.size() >= 2) {
-        const auto a = points.front(), b = points.back();
-        const float dx = b.x - a.x, dy = b.y - a.y, length = std::hypot(dx, dy);
-        if (length < 1) { return false; }
-        const float ux = dx / length, uy = dy / length;
-        const float head = std::min(length, std::max(14.0f, style.thickness * 5));
-        const D2D1_POINT_2F base{b.x - ux * head, b.y - uy * head};
-        const D2D1_POINT_2F left{base.x - uy * head * .31f, base.y + ux * head * .31f};
-        const D2D1_POINT_2F right{base.x + uy * head * .31f, base.y - ux * head * .31f};
-        return SegmentDistance(p, a, base) <= style.thickness / 2 + tolerance ||
-               SegmentDistance(p, b, left) <= tolerance || SegmentDistance(p, left, right) <= tolerance || SegmentDistance(p, right, b) <= tolerance;
-    }
-    if (tool == ToolId::Line || tool == ToolId::Pen || (tool == ToolId::Mosaic && style.method == EffectMethod::Brush)) {
-        float distance = std::hypot(p.x - points[0].x, p.y - points[0].y);
-        for (size_t i = 1; i < points.size(); ++i) { distance = std::min(distance, SegmentDistance(p, points[i - 1], points[i])); }
-        if (tool == ToolId::Mosaic) { return std::abs(distance - style.brush_size / 2) <= tolerance; }
-        return distance <= style.thickness / 2 + tolerance;
-    }
-    const auto box = NormalizedD2DRect(points.front(), points.back());
-    const float margin = tolerance + ((tool == ToolId::Rectangle || tool == ToolId::Ellipse) ? style.thickness / 2 : 0);
-    if (tool == ToolId::Ellipse || (tool == ToolId::Spotlight && style.shape == SpotlightShape::Ellipse)) {
-        const float rx = (box.right - box.left) / 2, ry = (box.bottom - box.top) / 2;
-        const float dx = p.x - (box.left + box.right) / 2, dy = p.y - (box.top + box.bottom) / 2;
-        const auto ellipse = [&](float x, float y) { return x > 0 && y > 0 && dx * dx / (x * x) + dy * dy / (y * y) < 1; };
-        return ellipse(rx + margin, ry + margin) && !ellipse(rx - margin, ry - margin);
-    }
-    if (tool == ToolId::Spotlight && style.shape == SpotlightShape::Rounded) {
-        const float rx = (box.right - box.left) / 2, ry = (box.bottom - box.top) / 2;
-        const float radius = std::min({rx, ry, 16 * style.image_scale});
-        const float dx = std::abs(p.x - (box.left + rx)) - (rx - radius), dy = std::abs(p.y - (box.top + ry)) - (ry - radius);
-        const float distance = std::hypot(std::max(dx, 0.0f), std::max(dy, 0.0f)) + std::min(std::max(dx, dy), 0.0f) - radius;
-        return std::abs(distance) <= margin;
-    }
-    const D2D1_POINT_2F tl{box.left, box.top}, tr{box.right, box.top}, br{box.right, box.bottom}, bl{box.left, box.bottom};
-    return std::min({SegmentDistance(p, tl, tr), SegmentDistance(p, tr, br), SegmentDistance(p, br, bl), SegmentDistance(p, bl, tl)}) <= margin;
-}
-
-std::vector<D2D1_POINT_2F> Annotation::Handles() const {
-    if (points.size() < 2) { return {}; }
-    if (tool == ToolId::Line || tool == ToolId::Arrow) { return {points.front(), points.back()}; }
-    if (tool == ToolId::Rectangle || tool == ToolId::Ellipse || tool == ToolId::Spotlight ||
-        (tool == ToolId::Mosaic && style.method == EffectMethod::Region)) {
-        const auto r = NormalizedD2DRect(points.front(), points.back());
-        return {{r.left, r.top}, {r.right, r.top}, {r.right, r.bottom}, {r.left, r.bottom}};
-    }
-    return {};
-}
-
-void AnnotationDocument::PushUndo(std::vector<Annotation> snapshot) {
-    undo_stack_.push_back(std::move(snapshot));
-    if (undo_stack_.size() > kUndoLimit) { undo_stack_.pop_front(); }
-}
-void AnnotationDocument::Checkpoint() {
-    if (!transaction_) {
-        PushUndo(annotations_);
-        redo_stack_.clear();
-    }
-}
-void AnnotationDocument::Apply(Annotation annotation) {
-    Checkpoint();
-    annotations_.push_back(std::move(annotation));
-    ++revision_;
-}
-void AnnotationDocument::Replace(size_t index, Annotation annotation) {
-    if (index >= annotations_.size() || annotations_[index].Same(annotation)) { return; }
-    Checkpoint();
-    annotations_[index] = std::move(annotation);
-    ++revision_;
-}
-void AnnotationDocument::Remove(size_t index) {
-    if (index >= annotations_.size()) { return; }
-    Checkpoint();
-    annotations_.erase(annotations_.begin() + static_cast<ptrdiff_t>(index));
-    ++revision_;
-}
-void AnnotationDocument::BeginTransaction() {
-    if (!transaction_) { transaction_ = annotations_; }
-}
-void AnnotationDocument::CommitTransaction() {
-    if (!transaction_) { return; }
-    if (!SameList(*transaction_, annotations_)) {
-        PushUndo(std::move(*transaction_));
-        redo_stack_.clear();
-    }
-    transaction_.reset();
-}
-void AnnotationDocument::CancelTransaction() {
-    if (!transaction_) { return; }
-    if (!SameList(*transaction_, annotations_)) {
-        annotations_ = std::move(*transaction_);
-        ++revision_;
-    }
-    transaction_.reset();
-}
-bool AnnotationDocument::Undo() {
-    CancelTransaction();
-    if (undo_stack_.empty()) { return false; }
-    redo_stack_.push_back(std::move(annotations_));
-    annotations_ = std::move(undo_stack_.back());
-    undo_stack_.pop_back();
-    ++revision_;
-    return true;
-}
-bool AnnotationDocument::Redo() {
-    CancelTransaction();
-    if (redo_stack_.empty()) { return false; }
-    PushUndo(std::move(annotations_));
-    annotations_ = std::move(redo_stack_.back());
-    redo_stack_.pop_back();
-    ++revision_;
-    return true;
-}
-void AnnotationDocument::Clear() {
-    if (annotations_.empty()) { return; }
-    Checkpoint();
-    annotations_.clear();
-    ++revision_;
-}
-void AnnotationDocument::Reset() {
-    annotations_ = {};
-    undo_stack_ = {};
-    redo_stack_ = {};
-    transaction_.reset();
-    revision_ = 0;
-}
-bool AnnotationDocument::HasRedactions() const {
-    return std::any_of(annotations_.begin(), annotations_.end(), [](const auto& a) { return a.tool == ToolId::Mosaic; });
-}
-std::optional<size_t> AnnotationDocument::HitTest(D2D1_POINT_2F point, float tolerance) const {
-    for (size_t i = annotations_.size(); i > 0; --i)
-        if (annotations_[i - 1].HitTest(point, tolerance)) { return i - 1; }
-    return {};
-}
-
-// ---------------------------------------------------------------------------
-// ScreenshotEditor - toolbar model
-// ---------------------------------------------------------------------------
-
-struct ScreenshotEditor::ToolbarItem {
-    enum class Kind { Tool,
-                      Color,
-                      Thickness,
-                      BrushSize,
-                      Option,
-                      Command };
-
-    Kind kind{Kind::Tool};
-    ToolId tool{ToolId::Pointer};
-    D2D1_COLOR_F color{};
-    float thickness{0.0f};
-    float brush_size{0.0f};
-    int command{0};
-    const wchar_t* label{L""};
-    const wchar_t* tooltip{L""};
-    D2D1_RECT_F rect{};
-    int identifier{};
-    bool shown{true};
-};
 
 ScreenshotEditor::ScreenshotEditor(Callbacks callbacks) : callbacks_(std::move(callbacks)) {}
 
 ScreenshotEditor::~ScreenshotEditor() { Destroy(); }
 
 bool ScreenshotEditor::CreateToolbarControls() {
-    using namespace ui;
-    constexpr std::array<Icon, 11> tools{Icon::Cursor, Icon::Pen, Icon::Arrow, Icon::Rectangle,
-                                         Icon::Ellipse, Icon::Text, Icon::Mosaic, Icon::Line, Icon::Tag, Icon::Spotlight, Icon::Watermark};
-    constexpr std::array<UINT, 8> colors{IDS_EDITOR_COLOR_RED, IDS_EDITOR_COLOR_AMBER, IDS_EDITOR_COLOR_GREEN, IDS_EDITOR_COLOR_BLUE,
-                                         IDS_EDITOR_COLOR_VIOLET, IDS_EDITOR_COLOR_WHITE, IDS_EDITOR_COLOR_BLACK, IDS_EDITOR_COLOR_GRAY};
-    tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
-                                 WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, hwnd_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
-    StyleTooltip(tooltip_);
-    for (const auto& item : toolbar_) {
-        ButtonStyle style;
-        std::wstring name = item.tooltip;
-        style.icon_only = true;
-        switch (item.kind) {
-            case ToolbarItem::Kind::Tool:
-                style.icon = tools[static_cast<size_t>(item.tool)];
-                break;
-            case ToolbarItem::Kind::Color:
-                name = strings::Get(colors[static_cast<size_t>(item.identifier - 2100)]);
-                style.swatch = true;
-                style.content_color = RGB(static_cast<BYTE>(std::lround(item.color.r * 255)),
-                                          static_cast<BYTE>(std::lround(item.color.g * 255)), static_cast<BYTE>(std::lround(item.color.b * 255)));
-                break;
-            case ToolbarItem::Kind::Thickness:
-                name = strings::Format(IDS_EDITOR_THICKNESS_BUTTON, {std::to_wstring(static_cast<int>(item.thickness))});
-                style.sample = 2;
-                style.sample_size = kBrushSizeOptions[static_cast<size_t>(item.identifier - 2200)];
-                break;
-            case ToolbarItem::Kind::BrushSize:
-                name = strings::Format(IDS_EDITOR_BRUSH_SIZE_BUTTON, {std::to_wstring(static_cast<int>(item.brush_size))});
-                style.sample = 2;
-                style.sample_size = item.brush_size;
-                break;
-            case ToolbarItem::Kind::Option:
-                style.segmented = true;
-                if (item.identifier == 2500) { style.icon = Icon::Text; }
-                if (item.identifier == 2501) { style.icon = Icon::TextFill; }
-                if (item.identifier == 2502) { style.icon = Icon::TextOutline; }
-                if (item.identifier == 2510) { style.icon = Icon::Droplet; }
-                if (item.identifier == 2511) { style.icon = Icon::Mosaic; }
-                if (item.identifier == 2520) {
-                    style.icon = Icon::Hand;
-                    style.dropdown = true;
-                }
-                if (item.identifier == 2521) { style.icon = Icon::Region; }
-                if (item.identifier == 2530) { style.icon = Icon::Rectangle; }
-                if (item.identifier == 2531) { style.icon = Icon::Ellipse; }
-                if (item.identifier == 2532) { style.icon = Icon::RoundedRectangle; }
-                break;
-            case ToolbarItem::Kind::Command:
-                style.icon_only = true;
-                if (item.command == kCommandUndo) {
-                    style.icon = Icon::Undo;
-                    name = strings::Get(IDS_EDITOR_UNDO_BUTTON);
-                }
-                if (item.command == kCommandRedo) {
-                    style.icon = Icon::Redo;
-                    name = strings::Get(IDS_EDITOR_REDO_BUTTON);
-                }
-                if (item.command == kCommandClear) {
-                    style.icon = Icon::Clear;
-                    name = strings::Get(IDS_EDITOR_CLEAR_BUTTON);
-                }
-                if (item.command == kCommandCopy) {
-                    style.icon = Icon::Check;
-                    style.role = ButtonRole::Success;
-                }
-                if (item.command == kCommandSave) {
-                    style.icon = Icon::Save;
-                    name = strings::Get(IDS_EDITOR_SAVE_BUTTON);
-                }
-                if (item.command == kCommandCancel) {
-                    style.icon = Icon::Discard;
-                    name = strings::Get(IDS_EDITOR_DISCARD_BUTTON);
-                }
-                if (item.command == kCommandTheme) {
-                    style.icon = Icon::Appearance;
-                    name = strings::Get(IDS_EDITOR_THEME_BUTTON);
-                }
-                if (item.command == kCommandScrollshot) {
-                    style.icon = Icon::Scissors;
-                    name = strings::Get(IDS_SCROLLSHOT_TOOL);
-                }
-                if (item.command == kCommandPin) {
-                    style.icon = Icon::Pin;
-                    name = strings::Get(IDS_EDITOR_PIN_BUTTON);
-                }
-                break;
-        }
-        const DWORD type = item.kind == ToolbarItem::Kind::Command ? BS_PUSHBUTTON : BS_RADIOBUTTON | BS_PUSHLIKE;
-        const bool first = item.identifier == 2000 || item.identifier == 2100 || item.identifier == 2200 ||
-                           item.identifier == 2300 || item.identifier == 2401 ||
-                           item.identifier == 2400 + kCommandScrollshot;
-        const HWND parent = item.kind == ToolbarItem::Kind::Tool || item.kind == ToolbarItem::Kind::Command ? hwnd_ : item.kind == ToolbarItem::Kind::BrushSize ? brush_popup_
-                                                                                                                                                                : context_;
-        HWND button = ::CreateWindowExW(0, L"BUTTON", name.c_str(), WS_CHILD | WS_TABSTOP | type | (first ? WS_GROUP : 0),
-                                        0, 0, 1, 1, parent, reinterpret_cast<HMENU>(static_cast<INT_PTR>(item.identifier)), ::GetModuleHandleW(nullptr), nullptr);
-        if (!button || !StyleButton(button, style) ||
-            !::SetWindowSubclass(button, ToolbarButtonProc, 1, reinterpret_cast<DWORD_PTR>(this))) { return false; }
-        if (tooltip_) {
-            TOOLINFOW info{sizeof(info)};
-            info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-            info.hwnd = parent;
-            info.uId = reinterpret_cast<UINT_PTR>(button);
-            info.lpszText = name.data();
-            ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
-        }
-    }
-    if (tooltip_) {
-        TOOLINFOW info{sizeof(info)};
-        info.uFlags = TTF_SUBCLASS;
-        info.hwnd = hwnd_;
-        info.uId = kScrollshotDisabledTip;
-        info.lpszText = const_cast<wchar_t*>(strings::Get(IDS_SCROLLSHOT_TOOL_FIXED));
-        ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
-    }
+    // The tools island's buttons first, then the property island's: the order
+    // inside each parent window is its tab and z-order.
+    if (!toolbar_.CreateButtons(hwnd_, *this)) { return false; }
+    if (!context_panel_.CreateButtons(toolbar_.tooltip(), *this)) { return false; }
+    toolbar_.AddScrollshotDisabledTip(hwnd_);
     SyncToolbarControls();
     return true;
 }
 
-HWND ScreenshotEditor::Control(int id) const {
-    if (id == 2605) { return context_ ? ::GetDlgItem(::GetDlgItem(context_, 2604), id) : nullptr; }
-    if (const auto child = ::GetDlgItem(hwnd_, id)) { return child; }
-    if (const auto child = context_ ? ::GetDlgItem(context_, id) : nullptr) { return child; }
-    return brush_popup_ ? ::GetDlgItem(brush_popup_, id) : nullptr;
-}
 std::optional<size_t> ScreenshotEditor::WatermarkIndex() const {
     const auto& items = document_.annotations();
     const auto found = std::find_if(items.begin(), items.end(), [](const auto& a) { return a.tool == ToolId::Watermark; });
@@ -870,410 +120,92 @@ void ScreenshotEditor::ChangeStyle(const AnnotationStyle& value) {
         annotation.style = value;
         document_.Replace(*target, std::move(annotation));
         if (own_transaction) { document_.CommitTransaction(); }
-        if (editing_text_) {
-            pending_ = document_.annotations()[*target];
-            LayoutTextEditor();
-        }
+        if (text_editor_.editing()) { text_editor_.Layout(); }
     } else {
         style_ = value;
     }
-    SyncContext(false);
+    context_panel_.Sync(false);
     Invalidate();
     NotifyMutation(revision);
-}
-void ScreenshotEditor::CreateContextControls() {
-    const auto make = [&](const wchar_t* cls, const wchar_t* name, DWORD style, int id) {
-        HWND child = ::CreateWindowExW(0, cls, name, WS_CHILD | WS_TABSTOP | style, 0, 0, 1, 1, context_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), ::GetModuleHandleW(nullptr), nullptr);
-        if (child) { ::SetWindowSubclass(child, PropertyProc, 1, reinterpret_cast<DWORD_PTR>(this)); }
-        if (child && ::lstrcmpW(cls, L"STATIC") == 0 && !ui::StyleLabel(child)) {
-            ::DestroyWindow(child);
-            return static_cast<HWND>(nullptr);
-        }
-        return child;
-    };
-    HWND font = make(L"COMBOBOX", strings::Get(IDS_EDITOR_FONT_SIZE_NAME), CBS_DROPDOWN | CBS_AUTOHSCROLL | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS, 2600);
-    if (font) {
-        for (const wchar_t* value : {L"12 pt", L"16 pt", L"24 pt", L"36 pt", L"48 pt", L"60 pt", L"72 pt", L"96 pt"}) { ::SendMessageW(font, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(value)); }
-        ::SendMessageW(font, CB_LIMITTEXT, 10, 0);
-        static_cast<void>(ui::StyleInput(font));
-        ui::SetAccessibleName(font, strings::Get(IDS_EDITOR_FONT_SIZE_NAME));
-    }
-    for (int id : {2601, 2602, 2603}) {
-        HWND slider = make(TRACKBAR_CLASSW, strings::Get(id == 2601 ? IDS_EDITOR_EFFECT_STRENGTH_NAME : id == 2602 ? IDS_EDITOR_OPACITY_NAME
-                                                                                                                   : IDS_EDITOR_WATERMARK_SIZE_NAME),
-                           TBS_HORZ | TBS_NOTICKS, id);
-        ::SendMessageW(slider, TBM_SETRANGE, TRUE, MAKELPARAM(id == 2603 ? 8 : 0, id == 2603 ? 96 : 100));
-        ::SendMessageW(slider, TBM_SETPAGESIZE, 0, 10);
-        static_cast<void>(ui::StyleSlider(slider));
-    }
-    HWND text = make(L"EDIT", L"", ES_AUTOHSCROLL, 2604);
-    ::SendMessageW(text, EM_SETCUEBANNER, TRUE, reinterpret_cast<LPARAM>(strings::Get(IDS_EDITOR_WATERMARK_TEXT_CUE)));
-    ::SendMessageW(text, EM_SETLIMITTEXT, 16, 0);
-    static_cast<void>(ui::StyleInput(text));
-    ui::SetAccessibleName(text, strings::Get(IDS_EDITOR_WATERMARK_TEXT_NAME));
-    HWND clear = make(L"BUTTON", strings::Get(IDS_EDITOR_WATERMARK_CLEAR_BUTTON), BS_PUSHBUTTON, 2605);
-    ui::ButtonStyle clear_style;
-    clear_style.icon = ui::Icon::Discard;
-    clear_style.icon_only = true;
-    clear_style.segmented = true;
-    clear_style.circular = true;
-    static_cast<void>(ui::StyleButton(clear, clear_style));
-    ::RemoveWindowSubclass(clear, PropertyProc, 1);
-    ::SetWindowSubclass(clear, PropertyProc, 1, reinterpret_cast<DWORD_PTR>(this));
-    ::SetParent(clear, text);
-    ::SetWindowLongPtrW(text, GWL_STYLE, ::GetWindowLongPtrW(text, GWL_STYLE) | WS_CLIPCHILDREN);
-    for (int id : {2611, 2612, 2613}) { make(L"STATIC", L"", SS_CENTERIMAGE, id); }
-}
-void ScreenshotEditor::SyncWatermarkClear() {
-    const HWND text = Control(2604), clear = Control(2605);
-    if (!text || !clear) { return; }
-    RECT field{};
-    ::GetWindowRect(text, &field);
-    POINT cursor{};
-    ::GetCursorPos(&cursor);
-    const bool over = ::PtInRect(&field, cursor) != FALSE;
-    const bool show = !modal_active_ && ContextTool() == ToolId::Watermark && ::IsWindowVisible(context_) &&
-                      ::GetWindowTextLengthW(text) > 0 && over;
-    const bool shown = (::GetWindowLongPtrW(clear, GWL_STYLE) & WS_VISIBLE) != 0;
-    if (shown != show) {
-        ::ShowWindow(clear, show ? SW_SHOWNOACTIVATE : SW_HIDE);
-        if (show) {
-            ::SetTimer(context_, 0xEA63, 40, nullptr);
-        } else {
-            ::KillTimer(context_, 0xEA63);
-        }
-    }
-}
-LRESULT CALLBACK ScreenshotEditor::PropertyProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR reference) {
-    auto* self = reinterpret_cast<ScreenshotEditor*>(reference);
-    if (message == WM_NCDESTROY) {
-        ::RemoveWindowSubclass(hwnd, PropertyProc, id);
-        return ::DefSubclassProc(hwnd, message, wparam, lparam);
-    }
-    const int control = ::GetDlgCtrlID(hwnd);
-    if (control == 2604 && message == WM_COMMAND && LOWORD(wparam) == 2605) { return self->HandleMessage(self->context_, message, wparam, lparam); }
-    const bool clear_hover = (control == 2604 || control == 2605) &&
-                             (message == WM_MOUSEMOVE || message == WM_MOUSELEAVE || message == WM_SETFOCUS || message == WM_KILLFOCUS);
-    if (clear_hover && message == WM_MOUSEMOVE) {
-        TRACKMOUSEEVENT track{sizeof(track), TME_LEAVE, hwnd, 0};
-        ::TrackMouseEvent(&track);
-    }
-    const bool slider = control >= 2601 && control <= 2603;
-    if (!self->syncing_context_ && ((slider && (message == WM_LBUTTONDOWN || message == WM_KEYDOWN)) || (!slider && message == WM_SETFOCUS))) {
-        // Only a transaction opened here is committed here: a text edit or a
-        // transform that is already open keeps its own undo boundary.
-        if (!self->document_.in_transaction()) {
-            self->context_owns_transaction_ = true;
-            self->document_.BeginTransaction();
-        }
-    }
-    if (message == WM_KEYDOWN && wparam == VK_ESCAPE) {
-        self->context_owns_transaction_ = false;
-        self->document_.CancelTransaction();
-        self->RequestDiscard();
-        return 0;
-    }
-    const LRESULT result = ::DefSubclassProc(hwnd, message, wparam, lparam);
-    if (clear_hover) { self->SyncWatermarkClear(); }
-    if ((slider && (message == WM_LBUTTONUP || message == WM_KEYUP)) || (!slider && message == WM_KILLFOCUS)) { self->CommitContextTransaction(); }
-    if (slider && message == WM_CAPTURECHANGED && ::GetKeyState(VK_LBUTTON) < 0 && self->context_owns_transaction_) {
-        self->context_owns_transaction_ = false;
-        self->document_.CancelTransaction();
-        self->SyncContext();
-        self->Invalidate();
-    }
-    return result;
 }
 void ScreenshotEditor::CommitContextTransaction() {
     if (!context_owns_transaction_) { return; }
     context_owns_transaction_ = false;
     document_.CommitTransaction();
 }
-void ScreenshotEditor::SyncContext(bool layout) {
-    if (!context_ || syncing_context_) { return; }
-    syncing_context_ = true;
-    const auto tool = ContextTool();
-    const auto style = ContextStyle();
-    const bool text = tool == ToolId::Text || tool == ToolId::Tag, watermark = tool == ToolId::Watermark;
-    const auto position = [&](int id, bool shown, float x, float y, float width, float height) {
-        HWND child = Control(id);
-        if (!child) { return; }
-        if ((::IsWindowVisible(child) != FALSE) != shown) { ::ShowWindow(child, shown ? SW_SHOWNA : SW_HIDE); }
-        if (shown) {
-            RECT old{};
-            ::GetWindowRect(child, &old);
-            ::MapWindowPoints(nullptr, context_, reinterpret_cast<POINT*>(&old), 2);
-            const RECT next{static_cast<LONG>(x * scale_), static_cast<LONG>(y * scale_), static_cast<LONG>((x + width) * scale_), static_cast<LONG>((y + height) * scale_)};
-            if (old.left != next.left || old.top != next.top || old.right != next.right || (id != 2600 && old.bottom != next.bottom)) {
-                ::SetWindowPos(child, nullptr, next.left, next.top, next.right - next.left, next.bottom - next.top, SWP_NOZORDER | SWP_NOACTIVATE);
-            }
-        }
-        if (reinterpret_cast<HFONT>(::SendMessageW(child, WM_GETFONT, 0, 0)) != toolbar_font_) { ::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(toolbar_font_), TRUE); }
-    };
-    if (layout)
-        for (int id : {2600, 2601, 2602, 2603, 2604, 2611, 2612, 2613}) {
-            const auto it = std::find_if(context_fields_.begin(), context_fields_.end(), [id](const auto& field) { return field.first == id; });
-            if (it == context_fields_.end()) {
-                position(id, false, 0, 0, 1, 1);
-                continue;
-            }
-            const auto r = it->second;
-            position(id, true, r.left / scale_, r.top / scale_, (r.right - r.left) / scale_, id == 2600 ? 280.0f : (r.bottom - r.top) / scale_);
-        }
-    const auto label = [&](int id, const wchar_t* value) {
-        wchar_t old[256]{};
-        ::GetWindowTextW(Control(id), old, 256);
-        if (::lstrcmpW(old, value) != 0) { ::SetWindowTextW(Control(id), value); }
-    };
-    const auto slider = [&](int id, float value) {
-        if (::SendMessageW(Control(id), TBM_GETPOS, 0, 0) != static_cast<LPARAM>(value)) { ::SendMessageW(Control(id), TBM_SETPOS, TRUE, static_cast<LPARAM>(value)); }
-    };
-    if (text && ::GetFocus() != Control(2600) && !::IsChild(Control(2600), ::GetFocus())) {
-        wchar_t value[32]{};
-        ::swprintf_s(value, L"%g pt", static_cast<double>(style.font_size));
-        label(2600, value);
+void ScreenshotEditor::OpenContextTransaction() {
+    if (!document_.in_transaction()) {
+        context_owns_transaction_ = true;
+        document_.BeginTransaction();
     }
-    if (watermark) {
-        const auto& annotations = document_.annotations();
-        const auto found = std::find_if(annotations.begin(), annotations.end(), [](const auto& a) { return a.tool == ToolId::Watermark; });
-        // Undo may clear selection while the input still owns focus. Always
-        // synchronize from the document; unchanged typing never resets EDIT.
-        label(2604, found != annotations.end() ? found->text.c_str() : L"");
-    }
-    if (watermark) {
-        RECT field{};
-        ::GetClientRect(Control(2604), &field);
-        const LONG size = ui::theme::Scaled(32, scale_), inset = ui::theme::Scaled(2, scale_);
-        // Moved and the margin set only when they change: this runs on every
-        // key, and a window moved under the pointer makes Windows re-send it.
-        const RECT place{field.right - size - inset, field.top + (field.bottom - field.top - size) / 2,
-                         field.right - inset, field.top + (field.bottom - field.top - size) / 2 + size};
-        RECT current{};
-        ::GetWindowRect(Control(2605), &current);
-        ::MapWindowPoints(nullptr, Control(2604), reinterpret_cast<POINT*>(&current), 2);
-        if (::EqualRect(&current, &place) == FALSE) {
-            ::SetWindowPos(Control(2605), HWND_TOP, place.left, place.top, size, size, SWP_NOACTIVATE);
-        }
-        const LONG margin = size + inset * 2;
-        if (static_cast<LONG>(HIWORD(::SendMessageW(Control(2604), EM_GETMARGINS, 0, 0))) != margin) {
-            ::SendMessageW(Control(2604), EM_SETMARGINS, EC_RIGHTMARGIN, MAKELPARAM(0, margin));
-        }
-    }
-    SyncWatermarkClear();
-    slider(2601, style.strength);
-    slider(2602, style.opacity);
-    slider(2603, style.font_size);
-    const std::wstring strength = strings::Format(style.effect == EffectMode::Blur ? IDS_EDITOR_BLUR_INTENSITY_VALUE : IDS_EDITOR_BLOCK_SIZE_VALUE, {std::to_wstring(static_cast<int>(style.effect == EffectMode::Blur ? style.strength : 2 + style.strength * 0.7f))});
-    label(2611, strength.c_str());
-    label(2612, strings::Format(IDS_EDITOR_OPACITY_VALUE, {std::to_wstring(static_cast<int>(style.opacity))}).c_str());
-    label(2613, strings::Format(IDS_EDITOR_SIZE_VALUE, {std::to_wstring(static_cast<int>(style.font_size))}).c_str());
-    syncing_context_ = false;
 }
-SIZE ScreenshotEditor::island_group_size() const noexcept {
-    RECT main{};
-    if (!hwnd_ || !::GetWindowRect(hwnd_, &main)) { return {}; }
-    const LONG context = std::max(context_visible_ ? context_height_ : 0, reserved_context_height_);
-    return SIZE{main.right - main.left, main.bottom - main.top + (context > 0 ? ui::theme::Scaled(8, scale_) + context : 0)};
+void ScreenshotEditor::CancelContextTransaction() {
+    context_owns_transaction_ = false;
+    document_.CancelTransaction();
 }
-void ScreenshotEditor::PlaceContext(bool follow_frame) {
-    if (!hwnd_ || !context_ || repositioning_ || modal_active_) { return; }
-    repositioning_ = true;
-    RECT main{};
-    ::GetWindowRect(hwnd_, &main);
-    const auto monitor = platform::MonitorForRect(follow_frame ? region_ : main);
-    const auto work = monitor.work_area;
-    const LONG gap = ui::theme::Scaled(8, scale_);
-    const LONG width = main.right - main.left;
-    const LONG height = main.bottom - main.top;
-    const LONG popup_space = brush_popup_open_ ? gap + ui::theme::Scaled(kToolbarRowHeight + 6, scale_) : 0;
-    const LONG shown = height + (context_visible_ ? gap + context_height_ : 0) + popup_space;
-    // Outside the frame while anything outside has room, and never over the
-    // mode island (ui/island_layout.h). An island the user moved, or one that
-    // only changed its height, stays where it is unless that covers the mode
-    // island.
-    const RECT keep_clear = callbacks_.keep_clear ? callbacks_.keep_clear() : RECT{};
-    RECT group = platform::ClampRectToBounds({main.left, main.top, main.left + width, main.top + shown}, work);
-    RECT covered{};
-    if (follow_frame || ::IntersectRect(&covered, &group, &keep_clear)) {
-        // Placed around the frame with room for the tallest property island,
-        // shown or not: choosing a tool must not send the islands to the other
-        // side of the frame.
-        const LONG reserved = std::max(shown, island_group_size().cy + popup_space);
-        const auto frame_monitor = platform::MonitorForRect(region_);
-        group = ui::PlaceIslandForFrame(region_, frame_monitor.bounds, frame_monitor.work_area, SIZE{width, reserved}, gap, keep_clear).rect;
-    }
-    ::SetWindowPos(hwnd_, nullptr, group.left, group.top, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
-    RECT context{group.left + (width - context_width_) / 2, group.top + height + gap, 0, 0};
-    context.right = context.left + context_width_;
-    context.bottom = context.top + context_height_;
-    context = platform::ClampRectToBounds(context, platform::MonitorForRect(group).work_area);
-    ::SetWindowPos(context_, HWND_TOPMOST, context.left, context.top, context_width_, std::max(1, context_height_), SWP_NOACTIVATE);
-    ui::RoundWindow(context_);
-    ui::RoundWindow(hwnd_);
-    const bool show = visible_ && !frame_interacting_ && context_visible_;
-    if (show && !::IsWindowVisible(context_) && ui::theme::AnimationsEnabled()) {
-        context_fade_started_ = ::GetTickCount64();
-        ::SetLayeredWindowAttributes(context_, 0, 0, LWA_ALPHA);
-        ::SetTimer(context_, 0xEA61, 15, nullptr);
-    }
-    if (!show) {
-        ::KillTimer(context_, 0xEA61);
-        context_fade_started_ = 0;
-        ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
-    }
-    ::ShowWindow(context_, show ? SW_SHOWNOACTIVATE : SW_HIDE);
-    if (brush_popup_open_) { ShowBrushPopup(true); }
-    repositioning_ = false;
+void ScreenshotEditor::ClearWatermarkField(HWND field) {
+    document_.BeginTransaction();
+    ::SetWindowTextW(field, L"");
+    document_.CommitTransaction();
+    context_owns_transaction_ = false;
 }
-void ScreenshotEditor::ShowBrushPopup(bool show) {
-    if (!brush_popup_) { return; }
-    if (show && visible_ && !modal_active_ && ContextTool() == ToolId::Mosaic) {
-        brush_popup_open_ = true;
-        // Reserve all three islands as one group before showing the final one.
-        // At the bottom edge, move the group upward instead of covering tools.
-        if (!repositioning_) {
-            PlaceContext();
-            return;
-        }
-        RECT anchor{}, context{};
-        ::GetWindowRect(Control(2520), &anchor);
-        ::GetWindowRect(context_, &context);
-        const LONG width = ui::theme::Scaled(132, scale_), height = ui::theme::Scaled(kToolbarRowHeight + 6, scale_), gap = ui::theme::Scaled(8, scale_);
-        const auto work = platform::MonitorForRect(anchor).work_area;
-        const LONG center = (anchor.left + anchor.right) / 2, callout = ui::theme::Scaled(6, scale_);
-        const LONG top = context.bottom + gap;
-        RECT r{center - width / 2, top, center + width - width / 2, top + height};
-        r = platform::ClampRectToBounds(r, work);
-        const LONG callout_x = std::clamp(center - r.left, callout * 2, width - callout * 2);
-        HRGN shape = ::CreateRoundRectRgn(0, callout, width + 1, height + 1, gap * 2, gap * 2);
-        POINT triangle[] = {{callout_x - callout, callout}, {callout_x, 0}, {callout_x + callout, callout}};
-        HRGN pointer = ::CreatePolygonRgn(triangle, 3, WINDING);
-        if (shape && pointer) { ::CombineRgn(shape, shape, pointer, RGN_OR); }
-        if (pointer) { ::DeleteObject(pointer); }
-        if (shape && !::SetWindowRgn(brush_popup_, shape, FALSE)) { ::DeleteObject(shape); }
-        for (int id = 2300; id < 2303; ++id) {
-            const auto item = std::find_if(toolbar_.begin(), toolbar_.end(), [id](const auto& value) { return value.identifier == id; });
-            if (item != toolbar_.end()) { ::SetWindowPos(Control(id), nullptr, static_cast<int>(item->rect.left), static_cast<int>(item->rect.top), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE); }
-        }
-        ::SetWindowPos(brush_popup_, HWND_TOPMOST, r.left, r.top, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        ::InvalidateRect(brush_popup_, nullptr, FALSE);
-        brush_leave_started_ = 0;
-        ::SetTimer(context_, 0xEA62, 30, nullptr);
+void ScreenshotEditor::SetWatermarkText(std::wstring text) {
+    if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
+    // The image has one watermark: the field edits it whether or not it
+    // is selected, and creates it only when there is none.
+    const auto target = ContextAnnotation();
+    Annotation a;
+    if (target) {
+        a = document_.annotations()[*target];
     } else {
-        brush_popup_open_ = false;
-        ::ShowWindow(brush_popup_, SW_HIDE);
-        ::KillTimer(context_, 0xEA62);
-        brush_hover_started_ = brush_leave_started_ = 0;
+        a.tool = ToolId::Watermark;
+        a.style = style_;
+        a.style.opacity = 30;
+        a.points = {{0, 0}, {static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)}};
     }
+    a.text = std::move(text);
+    if (target) {
+        document_.Replace(*target, std::move(a));
+        selected_ = target;
+    } else {
+        document_.Apply(std::move(a));
+        selected_ = document_.annotations().size() - 1;
+    }
+    context_panel_.Sync();
+    Invalidate();
 }
-void ScreenshotEditor::PaintContext(HDC dc, HWND window) const {
-    RECT client{};
-    ::GetClientRect(window, &client);
-    ui::PaintBuffer buffer(dc, client);
-    dc = buffer.dc();
-    ui::theme::DrawPanel(dc, client, scale_);
-    if (window == context_)
-        for (const auto& r : context_separators_) { ui::DrawSeparator(dc, r, scale_); }
-}
+RECT ScreenshotEditor::IslandKeepClear() const { return callbacks_.keep_clear ? callbacks_.keep_clear() : RECT{}; }
+SIZE ScreenshotEditor::island_group_size() const noexcept { return context_panel_.GroupSize(); }
 void ScreenshotEditor::SetFrameInteracting(bool interacting) {
     if (frame_interacting_ == interacting) { return; }
     frame_interacting_ = interacting;
     if (interacting) {
-        ShowBrushPopup(false);
+        context_panel_.ShowBrushPopup(false);
         ::ShowWindow(hwnd_, SW_HIDE);
-        if (context_) { ::ShowWindow(context_, SW_HIDE); }
+        if (context_panel_.island()) { ::ShowWindow(context_panel_.island(), SW_HIDE); }
     } else if (visible_) {
-        PlaceContext(true);
+        context_panel_.Place(true);
         ::ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     }
 }
 
-LRESULT CALLBACK ScreenshotEditor::ToolbarButtonProc(HWND hwnd, UINT message, WPARAM wparam,
-                                                     LPARAM lparam, UINT_PTR identifier, DWORD_PTR reference) {
-    auto* self = reinterpret_cast<ScreenshotEditor*>(reference);
-    if (message == WM_NCDESTROY) {
-        ::RemoveWindowSubclass(hwnd, ToolbarButtonProc, identifier);
-        return ::DefSubclassProc(hwnd, message, wparam, lparam);
-    }
-    if (ui::ConsumePopupInput(message, wparam)) { return 0; }
-    if (message == WM_MOUSEMOVE && ::GetDlgCtrlID(hwnd) == 2520) {
-        if (!self->brush_hover_started_) { self->brush_hover_started_ = ::GetTickCount64(); }
-        ::SetTimer(self->context_, 0xEA62, 30, nullptr);
-    }
-    // Every other control fixes the screenshot on its first press. Cancel,
-    // the theme switch and Scrollshot must not acquire an image.
-    if ((message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) &&
-        ::GetDlgCtrlID(hwnd) != 2400 + kCommandCancel && ::GetDlgCtrlID(hwnd) != 2400 + kCommandTheme &&
-        ::GetDlgCtrlID(hwnd) != 2400 + kCommandScrollshot && !self->FeatureUsed()) { return 0; }
-    if (message == WM_KEYDOWN && (wparam == VK_ESCAPE || (::GetKeyState(VK_CONTROL) & 0x8000) != 0)) {
-        return self->HandleMessage(self->hwnd_, message, wparam, lparam);
-    }
-    return ::DefSubclassProc(hwnd, message, wparam, lparam);
+LRESULT ScreenshotEditor::ForwardButtonKey(UINT message, WPARAM key, LPARAM flags) {
+    return HandleMessage(hwnd_, message, key, flags);
 }
+
+void ScreenshotEditor::BrushMethodHovered() { context_panel_.OnBrushMethodHover(); }
 
 void ScreenshotEditor::SyncToolbarControls() const {
     if (!hwnd_) { return; }
     const auto style = ContextStyle();
-    for (const auto& item : toolbar_) {
-        HWND button = Control(item.identifier);
-        if (!button) { continue; }
-        if (((::GetWindowLongPtrW(button, GWL_STYLE) & WS_VISIBLE) != 0) != item.shown) { ::ShowWindow(button, item.shown ? SW_SHOWNA : SW_HIDE); }
-        if (item.shown) {
-            const RECT rect{static_cast<LONG>(item.rect.left), static_cast<LONG>(item.rect.top),
-                            static_cast<LONG>(item.rect.right), static_cast<LONG>(item.rect.bottom)};
-            RECT old{};
-            ::GetWindowRect(button, &old);
-            ::MapWindowPoints(nullptr, ::GetParent(button), reinterpret_cast<POINT*>(&old), 2);
-            if (!::EqualRect(&rect, &old)) { ::MoveWindow(button, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, TRUE); }
-        }
-        if (reinterpret_cast<HFONT>(::SendMessageW(button, WM_GETFONT, 0, 0)) != toolbar_font_) {
-            ::SendMessageW(button, WM_SETFONT, reinterpret_cast<WPARAM>(toolbar_font_), TRUE);
-        }
-        bool selected = false;
-        bool enabled = true;
-        switch (item.kind) {
-            case ToolbarItem::Kind::Tool: selected = item.tool == ContextTool(); break;
-            case ToolbarItem::Kind::Color: selected = item.color.r == style.color.r && item.color.g == style.color.g && item.color.b == style.color.b; break;
-            case ToolbarItem::Kind::Thickness: selected = item.thickness == style.thickness; break;
-            case ToolbarItem::Kind::BrushSize: selected = item.brush_size == style.brush_size; break;
-            case ToolbarItem::Kind::Option:
-                selected = (item.identifier >= 2500 && item.identifier <= 2502 && static_cast<int>(style.text_mode) == item.identifier - 2500) ||
-                           (item.identifier >= 2510 && item.identifier <= 2511 && static_cast<int>(style.effect) == item.identifier - 2510) ||
-                           (item.identifier >= 2520 && item.identifier <= 2521 && static_cast<int>(style.method) == item.identifier - 2520) ||
-                           (item.identifier >= 2530 && item.identifier <= 2532 && static_cast<int>(style.shape) == item.identifier - 2530);
-                break;
-            case ToolbarItem::Kind::Command:
-                if (item.command == kCommandUndo || item.command == kCommandClear) { enabled = document_.CanUndo(); }
-                if (item.command == kCommandCopy || item.command == kCommandSave || item.command == kCommandPin) {
-                    enabled = !exporting_;
-                }
-                if (item.command == kCommandRedo) { enabled = document_.CanRedo(); }
-                if (item.command == kCommandScrollshot) {
-                    // A scrolling capture starts from a provisional frame only.
-                    enabled = !has_image() && ui::CaptureExclusionSupported();
-                    if (tooltip_ && item.shown) {
-                        TOOLINFOW info{sizeof(info)};
-                        info.hwnd = hwnd_;
-                        info.uId = kScrollshotDisabledTip;
-                        info.rect = RECT{static_cast<LONG>(item.rect.left), static_cast<LONG>(item.rect.top),
-                                         static_cast<LONG>(item.rect.right), static_cast<LONG>(item.rect.bottom)};
-                        ::SendMessageW(tooltip_, TTM_NEWTOOLRECTW, 0, reinterpret_cast<LPARAM>(&info));
-                    }
-                }
-                break;
-        }
-        if ((::IsWindowEnabled(button) != FALSE) != enabled) { ::EnableWindow(button, enabled); }
-        const WPARAM checked = selected ? BST_CHECKED : BST_UNCHECKED;
-        if (item.kind != ToolbarItem::Kind::Command && ::SendMessageW(button, BM_GETCHECK, 0, 0) != static_cast<LRESULT>(checked)) {
-            ::SendMessageW(button, BM_SETCHECK, checked, 0);
-        }
-    }
+    toolbar_.SyncButtons(hwnd_, {ContextTool(), document_.CanUndo(), document_.CanRedo(), exporting(), has_image()}, toolbar_font_);
+    context_panel_.SyncButtons(style, toolbar_font_);
 }
 
 void ScreenshotEditor::ReflowToolbar() {
     if (!hwnd_) { return; }
-    BuildToolbar(static_cast<float>(client_width_));
-    const int height = toolbar_rect_.bottom;
+    BuildToolbar(static_cast<float>(toolbar_.client_width()));
+    const int height = toolbar_.height();
     RECT current{};
     ::GetWindowRect(hwnd_, &current);
     const auto monitor = platform::MonitorForRect(current);
@@ -1282,18 +214,18 @@ void ScreenshotEditor::ReflowToolbar() {
     ::SetWindowPos(hwnd_, nullptr, current.left, current.top, current.right - current.left, current.bottom - current.top,
                    SWP_NOZORDER | SWP_NOACTIVATE);
     SyncToolbarControls();
-    SyncContext();
-    PlaceContext(!island_user_positioned_);
+    context_panel_.Sync();
+    context_panel_.Place(!island_user_positioned_);
 }
 
 bool ScreenshotEditor::ProcessDialogMessage(MSG& message) const {
     if (!visible_) { return false; }
-    for (HWND parent : {text_host_, brush_popup_, context_, hwnd_}) {
+    for (HWND parent : {text_editor_.host(), context_panel_.brush_popup(), context_panel_.island(), hwnd_}) {
         if (parent && (message.hwnd == parent || ::IsChild(parent, message.hwnd))) {
-            if (parent == text_host_) { return false; } // EDIT owns multiline Return, arrows and clipboard keys.
+            if (parent == text_editor_.host()) { return false; } // EDIT owns multiline Return, arrows and clipboard keys.
             if (message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
-                if (::SendMessageW(Control(2600), CB_GETDROPPEDSTATE, 0, 0)) {
-                    ::SendMessageW(Control(2600), CB_SHOWDROPDOWN, FALSE, 0);
+                if (::SendMessageW(context_panel_.Control(kFontSizeCombo), CB_GETDROPPEDSTATE, 0, 0)) {
+                    ::SendMessageW(context_panel_.Control(kFontSizeCombo), CB_SHOWDROPDOWN, FALSE, 0);
                 } else {
                     ::SendMessageW(hwnd_, WM_KEYDOWN, VK_ESCAPE, message.lParam);
                 }
@@ -1310,229 +242,16 @@ bool ScreenshotEditor::ProcessDialogMessage(MSG& message) const {
 // ---------------------------------------------------------------------------
 
 void ScreenshotEditor::BuildToolbar(float available_width) {
-    toolbar_.clear();
-    main_separators_.clear();
-    const float s = scale_, pad = kEdgePadding * s, gap = kItemGap * s, row = kToolbarRowHeight * s;
-    const float limit = std::max(available_width - pad, pad + kToolButton * s);
-    float x = pad + kIslandGrip * s, y = 0;
-    const auto place = [&](float width) {
-        if (x > pad && x + width > limit) {
-            x = pad;
-            y += row;
-        }
-        const D2D1_RECT_F r{x, y + (row - kToolButton * s) / 2, x + width, y + (row + kToolButton * s) / 2};
-        x += width + gap;
-        return r;
-    };
-    struct Entry {
-        ToolId tool;
-        UINT name;
-    };
-    constexpr Entry tools[] = {{ToolId::Pointer, IDS_EDITOR_TOOL_POINTER}, {ToolId::Rectangle, IDS_EDITOR_TOOL_RECTANGLE}, {ToolId::Ellipse, IDS_EDITOR_TOOL_ELLIPSE}, {ToolId::Line, IDS_EDITOR_TOOL_LINE}, {ToolId::Arrow, IDS_EDITOR_TOOL_ARROW}, {ToolId::Pen, IDS_EDITOR_TOOL_PEN}, {ToolId::Text, IDS_EDITOR_TOOL_TEXT}, {ToolId::Tag, IDS_EDITOR_TOOL_TAG}, {ToolId::Mosaic, IDS_EDITOR_TOOL_MOSAIC}, {ToolId::Spotlight, IDS_EDITOR_TOOL_SPOTLIGHT}, {ToolId::Watermark, IDS_EDITOR_TOOL_WATERMARK}};
-    for (const auto& entry : tools) {
-        if (entry.tool == ToolId::Mosaic) {
-            const auto split = place(8 * s);
-            main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
-        }
-        ToolbarItem item;
-        item.tool = entry.tool;
-        item.identifier = 2000 + static_cast<int>(entry.tool);
-        item.label = item.tooltip = strings::Get(entry.name);
-        item.rect = place(kToolButton * s);
-        toolbar_.push_back(item);
-    }
-    {
-        const auto split = place(kGroupGap * s);
-        main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
-    }
-    {
-        // Scrollshot is a different kind of capture, not an annotation tool or
-        // an edit command, so it stands alone between the two groups.
-        ToolbarItem item;
-        item.kind = ToolbarItem::Kind::Command;
-        item.command = kCommandScrollshot;
-        item.identifier = 2400 + kCommandScrollshot;
-        item.label = item.tooltip = strings::Get(IDS_SCROLLSHOT_TOOL);
-        item.rect = place(kCommandButton * s);
-        toolbar_.push_back(item);
-        const auto split = place(8 * s);
-        main_separators_.push_back({static_cast<LONG>((split.left + split.right) / 2), static_cast<LONG>(split.top + 8 * s), static_cast<LONG>((split.left + split.right) / 2 + 1), static_cast<LONG>(split.bottom - 8 * s)});
-    }
-    struct Command {
-        int id;
-        const wchar_t* name;
-    };
-    // Only Copy keeps its name from here; CreateToolbarControls names the others.
-    const Command commands[] = {{kCommandUndo, L"Undo"}, {kCommandRedo, L"Redo"}, {kCommandClear, L"Clear annotations"}, {kCommandTheme, L"Switch theme"}, {kCommandPin, L"Pin"}, {kCommandSave, L"Save"}, {kCommandCancel, L"Discard"}, {kCommandCopy, strings::Get(IDS_EDITOR_COPY_BUTTON)}};
-    for (const auto& entry : commands) {
-        ToolbarItem item;
-        item.kind = ToolbarItem::Kind::Command;
-        item.command = entry.id;
-        item.identifier = 2400 + entry.id;
-        item.label = item.tooltip = entry.name;
-        item.rect = place(kCommandButton * s);
-        toolbar_.push_back(item);
-    }
-    toolbar_rect_ = {0, 0, static_cast<LONG>(available_width), static_cast<LONG>(std::ceil(y + row))};
-    // The property island of `tool`, wrapped in the width of the tools island.
-    // Returns its height (0 for the pointer, which has none) and its widest row.
-    const auto layout_context = [&](ToolId tool, std::vector<ToolbarItem>& items, std::vector<std::pair<int, RECT>>& fields,
-                                    std::vector<RECT>& separators) {
-        x = pad;
-        y = 0;
-        const bool text = tool == ToolId::Text, tag = tool == ToolId::Tag, effect = tool == ToolId::Mosaic, spot = tool == ToolId::Spotlight, watermark = tool == ToolId::Watermark;
-        float widest = 0;
-        const auto field = [&](int id, float width) {
-            auto r = place(width * s);
-            widest = std::max(widest, r.right + pad);
-            fields.push_back({id, {static_cast<LONG>(r.left), static_cast<LONG>(r.top), static_cast<LONG>(r.right), static_cast<LONG>(r.bottom)}});
-        };
-        // A value label is as wide as the widest text it can show, and never
-        // narrower than its design width. A font's pixel height does not follow
-        // the scale exactly, so a fixed width that fits at 125 % cut
-        // "Boyut 96 pt" at 150 %.
-        const auto value_field = [&](int id, float minimum, std::initializer_list<std::wstring> texts) {
-            float text_width = 0;
-            for (const std::wstring& value : texts) { text_width = std::max(text_width, TextPixelWidth(toolbar_font_, value)); }
-            field(id, std::max(minimum, (text_width + 1.0f) / s));
-        };
-        const auto separator = [&] {
-            const auto r = place(8 * s);
-            separators.push_back({static_cast<LONG>((r.left + r.right) / 2), static_cast<LONG>(r.top + 8 * s), static_cast<LONG>((r.left + r.right) / 2 + 1), static_cast<LONG>(r.bottom - 8 * s)});
-        };
-        const auto option = [&](int id, UINT name, bool shown, float width = kToolButton) {
-            ToolbarItem item;
-            item.kind = ToolbarItem::Kind::Option;
-            item.identifier = id;
-            item.label = item.tooltip = strings::Get(name);
-            item.shown = shown;
-            if (shown) {
-                item.rect = place(width * s);
-                widest = std::max(widest, item.rect.right + pad);
-            }
-            items.push_back(item);
-        };
-        option(2500, IDS_EDITOR_OPTION_PLAIN_TEXT, text);
-        option(2501, IDS_EDITOR_OPTION_FILLED_TEXT, text);
-        option(2502, IDS_EDITOR_OPTION_OUTLINED_TEXT, text);
-        option(2511, IDS_EDITOR_OPTION_PIXELATE, effect);
-        option(2510, IDS_EDITOR_OPTION_BLUR, effect);
-        if (effect) { separator(); }
-        option(2520, IDS_EDITOR_OPTION_BRUSH, effect, 48);
-        option(2521, IDS_EDITOR_OPTION_REGION, effect);
-        if (effect) {
-            separator();
-            value_field(2611, 125, {strings::Format(IDS_EDITOR_BLUR_INTENSITY_VALUE, {L"100"}), strings::Format(IDS_EDITOR_BLOCK_SIZE_VALUE, {L"72"})});
-            field(2601, 155);
-        }
-        option(2530, IDS_EDITOR_OPTION_SPOTLIGHT_RECTANGLE, spot);
-        option(2531, IDS_EDITOR_OPTION_SPOTLIGHT_ELLIPSE, spot);
-        option(2532, IDS_EDITOR_OPTION_SPOTLIGHT_ROUNDED, spot);
-        if (spot) {
-            separator();
-            value_field(2612, 110, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
-            field(2602, 155);
-        }
-        if (text || tag) {
-            field(2600, 96);
-            separator();
-        }
-        if (watermark) {
-            field(2604, 140);
-            separator();
-        }
-        const bool stroke = tool != ToolId::Pointer && !text && !tag && !effect && !spot && !watermark;
-        for (size_t i = 0; i < kThicknessOptions.size(); ++i) {
-            ToolbarItem item;
-            item.kind = ToolbarItem::Kind::Thickness;
-            item.thickness = kThicknessOptions[i];
-            item.identifier = 2200 + static_cast<int>(i);
-            item.tooltip = L"Stroke width";
-            item.shown = stroke;
-            if (item.shown) {
-                item.rect = place(kToolButton * s);
-                widest = std::max(widest, item.rect.right + pad);
-            }
-            items.push_back(item);
-        }
-        if (stroke) { separator(); }
-        for (size_t i = 0; i < kPaletteColors.size(); ++i) {
-            ToolbarItem item;
-            item.kind = ToolbarItem::Kind::Color;
-            item.color = kPaletteColors[i];
-            item.identifier = 2100 + static_cast<int>(i);
-            item.tooltip = L"Annotation color";
-            item.shown = tool != ToolId::Pointer && !effect && !spot;
-            if (item.shown) {
-                item.rect = place(kSwatch * s);
-                widest = std::max(widest, item.rect.right + pad);
-            }
-            items.push_back(item);
-        }
-        if (watermark) {
-            separator();
-            value_field(2612, 85, {strings::Format(IDS_EDITOR_OPACITY_VALUE, {L"100"})});
-            field(2602, 100);
-            separator();
-            value_field(2613, 65, {strings::Format(IDS_EDITOR_SIZE_VALUE, {L"96"})});
-            field(2603, 100);
-        }
-        for (size_t i = 0; i < kBrushSizeOptions.size(); ++i) {
-            ToolbarItem item;
-            item.kind = ToolbarItem::Kind::BrushSize;
-            item.brush_size = kBrushSizeOptions[i];
-            item.identifier = 2300 + static_cast<int>(i);
-            item.tooltip = L"Brush size";
-            item.shown = true;
-            const float left = pad + static_cast<float>(i) * (kToolButton + kItemGap) * s;
-            const float callout = 6 * s;
-            item.rect = {left, callout + (row - kToolButton * s) / 2, left + kToolButton * s, callout + (row + kToolButton * s) / 2};
-            items.push_back(item);
-        }
-        return std::pair<float, float>{tool != ToolId::Pointer ? y + row : 0.0f, widest};
-    };
-    context_fields_.clear();
-    context_separators_.clear();
-    const auto tool = ContextTool();
-    const auto [context_height, widest] = layout_context(tool, toolbar_, context_fields_, context_separators_);
-    context_visible_ = tool != ToolId::Pointer;
-    context_width_ = static_cast<int>(std::ceil(std::min(available_width, std::max(widest, 200 * s))));
-    context_height_ = context_visible_ ? static_cast<int>(std::ceil(context_height)) : 0;
-    // The islands are placed around the frame with room for the tallest
-    // property island any tool shows, so choosing a tool never moves them.
-    float tallest = context_height;
-    std::vector<ToolbarItem> scratch_items;
-    std::vector<std::pair<int, RECT>> scratch_fields;
-    std::vector<RECT> scratch_separators;
-    for (const auto& entry : tools) {
-        scratch_items.clear();
-        scratch_fields.clear();
-        scratch_separators.clear();
-        tallest = std::max(tallest, layout_context(entry.tool, scratch_items, scratch_fields, scratch_separators).first);
-    }
-    reserved_context_height_ = static_cast<int>(std::ceil(tallest));
+    toolbar_.Build(available_width, scale_);
+    context_panel_.Build(available_width);
 }
 
 void ScreenshotEditor::LayoutClient(int client_width, int client_height) {
-    client_width_ = std::max(1, client_width);
-    client_height_ = std::max(1, client_height);
-    BuildToolbar(static_cast<float>(client_width_));
-    toolbar_rect_.right = client_width_;
+    toolbar_.Resize(client_width, client_height);
+    // The rows span the client width, which BuildToolbar is given.
+    BuildToolbar(static_cast<float>(toolbar_.client_width()));
     if (!document_mode_) { ResetFixedView(); }
     SyncToolbarControls();
-}
-
-RECT ScreenshotEditor::InitialWindowRect(const RECT& screen_region) const {
-    const auto monitor = platform::MonitorForRect(screen_region);
-    RECT work = monitor.work_area;
-    work.top = std::max(work.top, monitor.bounds.top + ui::theme::Scaled(
-                                                           ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, monitor.scale()));
-    const LONG width = std::min(platform::RectWidth(work), static_cast<LONG>(kIslandWidth * scale_));
-    const LONG height = toolbar_rect_.bottom;
-    const LONG margin = static_cast<LONG>(kCanvasGap * scale_);
-    const LONG left = screen_region.left + (platform::RectWidth(screen_region) - width) / 2;
-    const LONG top = std::min(work.bottom - height - margin, screen_region.bottom + margin);
-    return platform::ClampRectToBounds(RECT{left, top, left + width, top + height}, work);
 }
 
 // ---------------------------------------------------------------------------
@@ -1540,7 +259,7 @@ RECT ScreenshotEditor::InitialWindowRect(const RECT& screen_region) const {
 // ---------------------------------------------------------------------------
 
 void ScreenshotEditor::ResetSession() {
-    brush_popup_open_ = false;
+    context_panel_.ResetSession();
     // Undo/redo is strictly per session: nothing from a previous capture may be
     // reachable once that capture is gone.
     document_.Reset();
@@ -1548,14 +267,10 @@ void ScreenshotEditor::ResetSession() {
     transforming_ = false;
     frame_interacting_ = false;
     island_user_positioned_ = false;
-    if (text_host_) {
-        ::DestroyWindow(text_host_);
-        text_host_ = text_edit_ = nullptr;
-    }
+    text_editor_.Reset();
     pending_ = Annotation{};
     has_pending_ = false;
     dragging_ = false;
-    editing_text_ = false;
     redaction_revision_ = UINT64_MAX;
     redaction_.Reset();
     image_bitmap_.Reset();
@@ -1563,7 +278,7 @@ void ScreenshotEditor::ResetSession() {
 }
 
 void ScreenshotEditor::CreateTextFormats() {
-    HFONT font = ui::theme::CreateUiFont(13.0f, scale_, false);
+    HFONT font = ui::theme::CreateUiFont(ui::theme::kBodyFontSize, scale_, false);
     if (font) {
         if (toolbar_font_) { ::DeleteObject(toolbar_font_); }
         toolbar_font_ = font;
@@ -1621,15 +336,14 @@ void ScreenshotEditor::BeginSession(const RECT& frame, app::AppSettings* setting
 bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     static bool class_registered = [] {
         WNDCLASSEXW wc{};
-        wc.cbSize = sizeof(wc);
         wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
-        wc.lpfnWndProc = &ScreenshotEditor::WindowProc;
+        wc.lpfnWndProc = platform::BoundWindowProc<ScreenshotEditor, &ScreenshotEditor::HandleMessage>;
         wc.hInstance = ::GetModuleHandleW(nullptr);
         wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
         wc.hIcon = platform::LoadAppIcon(::GetSystemMetrics(SM_CXICON));
         wc.hIconSm = platform::LoadAppIcon(::GetSystemMetrics(SM_CXSMICON));
         wc.lpszClassName = kEditorClassName;
-        return ::RegisterClassExW(&wc) != 0;
+        return platform::RegisterWindowClass(wc);
     }();
     if (!class_registered) {
         return false;
@@ -1637,7 +351,7 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
 
     BuildToolbar(std::min(kIslandWidth * scale_,
                           static_cast<float>(platform::RectWidth(platform::MonitorForRect(screen_region).work_area))));
-    const RECT window = InitialWindowRect(screen_region);
+    const RECT window = toolbar_.InitialWindowRect(screen_region, scale_);
     hwnd_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, strings::Get(IDS_EDITOR_WINDOW_TITLE), kEditorStyle,
                               static_cast<int>(window.left), static_cast<int>(window.top),
                               static_cast<int>(platform::RectWidth(window)),
@@ -1652,24 +366,24 @@ bool ScreenshotEditor::CreateWindows(const RECT& screen_region, HWND owner) {
     ::GetClientRect(hwnd_, &client);
     LayoutClient(static_cast<int>(platform::RectWidth(client)), static_cast<int>(platform::RectHeight(client)));
 
-    context_ = ::CreateWindowExW(kEditorExStyle | WS_EX_LAYERED, kEditorClassName, strings::Get(IDS_EDITOR_CONTEXT_TITLE), kEditorStyle, window.left, window.bottom + 8,
-                                 static_cast<int>(window.right - window.left), 48, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
+    context_panel_.AdoptIsland(::CreateWindowExW(kEditorExStyle | WS_EX_LAYERED, kEditorClassName, strings::Get(IDS_EDITOR_CONTEXT_TITLE), kEditorStyle, window.left, window.bottom + 8,
+                                                 static_cast<int>(window.right - window.left), 48, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this));
     // This title identifies the pop-up to tests (FindWindow); it is not localized.
-    brush_popup_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, L"Brush sizes", kEditorStyle, window.left, window.bottom,
-                                     static_cast<int>(132 * scale_), static_cast<int>((kToolbarRowHeight + 6) * scale_), hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
-    if (brush_popup_) { static_cast<void>(ui::ExcludeFromCapture(brush_popup_)); }
-    if (!context_ || !brush_popup_ || !CreateToolbarControls()) {
+    context_panel_.AdoptBrushPopup(::CreateWindowExW(kEditorExStyle, kEditorClassName, L"Brush sizes", kEditorStyle, window.left, window.bottom,
+                                                     static_cast<int>(132 * scale_), static_cast<int>((kToolbarRowHeight + 6) * scale_), hwnd_, nullptr, ::GetModuleHandleW(nullptr), this));
+    if (context_panel_.brush_popup()) { static_cast<void>(ui::ExcludeFromCapture(context_panel_.brush_popup())); }
+    if (!context_panel_.island() || !context_panel_.brush_popup() || !CreateToolbarControls()) {
         Destroy();
         return false;
     }
-    CreateContextControls();
-    if (!Control(2600) || !Control(2601) || !Control(2604)) {
+    context_panel_.CreateControls();
+    if (!context_panel_.Control(kFontSizeCombo) || !context_panel_.Control(kEffectStrengthSlider) || !context_panel_.Control(kWatermarkTextEdit)) {
         Destroy();
         return false;
     }
     // The property island is layered already: it fades in.
-    ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
-    static_cast<void>(ui::ExcludeFromCapture(context_));
+    ::SetLayeredWindowAttributes(context_panel_.island(), 0, 255, LWA_ALPHA);
+    static_cast<void>(ui::ExcludeFromCapture(context_panel_.island()));
     static_cast<void>(ui::ExcludeFromCapture(hwnd_));
     CreateTextFormats();
     RebuildRedactedBase();
@@ -1693,17 +407,17 @@ bool ScreenshotEditor::SetImage(platform::BgraImage image) {
 void ScreenshotEditor::Show() {
     visible_ = true;
     ::ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
-    PlaceContext();
+    context_panel_.Place();
     Invalidate();
 }
 
 void ScreenshotEditor::Hide() {
     visible_ = false;
-    typing_pointer_.Restore();
-    ShowBrushPopup(false);
+    text_editor_.RestorePointer();
+    context_panel_.ShowBrushPopup(false);
     ::ShowWindow(hwnd_, SW_HIDE);
-    if (context_) { ::ShowWindow(context_, SW_HIDE); }
-    if (text_host_) { ::ShowWindow(text_host_, SW_HIDE); }
+    if (context_panel_.island()) { ::ShowWindow(context_panel_.island(), SW_HIDE); }
+    text_editor_.HideHost();
 }
 
 void ScreenshotEditor::SetRegion(const RECT& region, bool interacting) {
@@ -1711,7 +425,7 @@ void ScreenshotEditor::SetRegion(const RECT& region, bool interacting) {
     if (!::EqualRect(&region_, &region)) { island_user_positioned_ = false; }
     region_ = region;
     SetFrameInteracting(interacting);
-    if (!interacting) { PlaceContext(true); }
+    if (!interacting) { context_panel_.Place(true); }
 }
 
 bool ScreenshotEditor::EnsureImage() {
@@ -1736,7 +450,7 @@ void ScreenshotEditor::NotifyMutation(uint64_t previous_revision) {
 
 void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
     if (!visible_ || modal_active_) { return; }
-    if (exporting_) {
+    if (exporting()) {
         if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) { RefuseWhileExporting(); }
         return;
     }
@@ -1747,20 +461,16 @@ void ScreenshotEditor::ImagePointer(UINT message, POINT point) {
         case WM_LBUTTONDBLCLK: {
             if (!FeatureUsed()) { break; }
             const auto hit = document_.HitTest(ToImagePoint(point), 5.0f / zoom_);
-            if (hit && (document_.annotations()[*hit].tool == ToolId::Text || document_.annotations()[*hit].tool == ToolId::Tag)) {
+            if (hit && IsTextTool(document_.annotations()[*hit].tool)) {
                 CancelStroke();
-                StartTextEditing(hit, point);
-                if (text_edit_) {
-                    POINT local = point;
-                    ::ScreenToClient(text_edit_, &local);
-                    ::SendMessageW(text_edit_, WM_LBUTTONDBLCLK, MK_LBUTTON, MAKELPARAM(local.x, local.y));
-                }
-            } else if (editing_text_) {
+                text_editor_.Start(hit, point);
+                text_editor_.ForwardDoubleClick(point);
+            } else if (text_editor_.editing()) {
                 // A blank double-click is the continuation of the first press,
                 // not another creation request. It can only finish an edit.
-                CommitPendingText();
+                text_editor_.Commit();
                 Select({});
-            } else if (tool_ != ToolId::Text && tool_ != ToolId::Tag) {
+            } else if (!IsTextTool(tool_)) {
                 BeginStroke(point);
             }
             break;
@@ -1777,13 +487,13 @@ void ScreenshotEditor::Keyboard(UINT message, WPARAM key, LPARAM flags) {
 }
 
 bool ScreenshotEditor::CompleteCopy() {
-    if (exporting_) {
+    if (exporting()) {
         RefuseWhileExporting();
         return false;
     }
     if (!EnsureImage()) { return false; }
     completing_ = true;
-    CommitPendingText();
+    text_editor_.Commit();
     completing_ = false;
     // Composited here: the worker never sees the editor's own pixels.
     platform::BgraImage image = Composite();
@@ -1797,7 +507,7 @@ bool ScreenshotEditor::CompleteCopy() {
 }
 
 bool ScreenshotEditor::CompletePin() {
-    if (exporting_) {
+    if (exporting()) {
         RefuseWhileExporting();
         return false;
     }
@@ -1821,7 +531,7 @@ bool ScreenshotEditor::CompletePin() {
 
 void ScreenshotEditor::RequestDiscard() {
     if (modal_active_) { return; }  // Already asking, or a file dialog is open.
-    if (exporting_) {
+    if (exporting()) {
         // The image is being copied or saved; the editor closes when that ends.
         RefuseWhileExporting();
         return;
@@ -1837,10 +547,10 @@ void ScreenshotEditor::RequestDiscard() {
 }
 
 void ScreenshotEditor::Close(bool exported) {
-    if (exporting_) {
+    if (exporting()) {
         // Only the end of the session closes an editor during an export.
-        export_job_.Discard();
-        EndExport();
+        export_.Discard();
+        export_.End();
     }
     Hide();
     if (hwnd_ != nullptr) {
@@ -1859,35 +569,20 @@ void ScreenshotEditor::Close(bool exported) {
 }
 
 void ScreenshotEditor::Destroy() {
-    export_job_.Discard();
-    if (exporting_) { EndExport(); }
-    if (brush_popup_) {
-        ::DestroyWindow(brush_popup_);
-        brush_popup_ = nullptr;
-    }
-    if (text_host_) {
-        ::DestroyWindow(text_host_);
-        text_host_ = text_edit_ = nullptr;
-    }
-    if (context_) {
-        ::DestroyWindow(context_);
-        context_ = nullptr;
-    }
-    if (text_font_) {
-        ::DeleteObject(text_font_);
-        text_font_ = nullptr;
-    }
+    export_.Discard();
+    if (export_.running()) { export_.End(); }
+    context_panel_.DestroyBrushPopup();
+    text_editor_.DestroyHost();
+    context_panel_.DestroyIsland();
+    text_editor_.ReleaseFont();
     ResetSession();
 
-    if (tooltip_) {
-        ::DestroyWindow(tooltip_);
-        tooltip_ = nullptr;
-    }
+    toolbar_.DestroyTooltip();
     image_target_.Reset();
     image_bitmap_.Reset();
     image_brush_.Reset();
     if (hwnd_ != nullptr) {
-        ::SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
+        platform::UnbindWindowOwner(hwnd_);
         ::DestroyWindow(hwnd_);
         hwnd_ = nullptr;
     }
@@ -1940,10 +635,10 @@ void ScreenshotEditor::ApplyView(const ImageView& view, bool notify) {
     zoom_ = view.zoom;
     view_origin_ = view.origin();
     region_ = view.viewport;
-    if (editing_text_) { LayoutTextEditor(); }
+    if (text_editor_.editing()) { text_editor_.Layout(); }
     // The workspace moves its image plane before anything is repainted into it.
     if (notify && callbacks_.on_view_changed) { callbacks_.on_view_changed(view_); }
-    if (moved && hwnd_ && !island_user_positioned_) { PlaceContext(true); }
+    if (moved && hwnd_ && !island_user_positioned_) { context_panel_.Place(true); }
     Invalidate();
 }
 
@@ -1991,7 +686,7 @@ RECT ScreenshotEditor::AnnotationDamage(const Annotation& annotation, bool selec
     // Stroke ends, arrow heads and the mosaic brush reach past the points.
     float pad = std::max(annotation.style.brush_size, annotation.style.thickness * 6.0f) + 3.0f;
     // Glyphs overhang their layout box, and outlined text is stroked around it.
-    if (annotation.tool == ToolId::Text || annotation.tool == ToolId::Tag) { pad += annotation.FontPixels(); }
+    if (IsTextTool(annotation.tool)) { pad += annotation.FontPixels(); }
     // The selection frame and its handles keep their size on screen.
     if (selected) { pad += kSelectionReach * scale_ / zoom_; }
     // Antialiasing reaches one screen pixel further.
@@ -2009,291 +704,234 @@ RECT ScreenshotEditor::PendingDamage() const {
 // Message handling
 // ---------------------------------------------------------------------------
 
-LRESULT CALLBACK ScreenshotEditor::WindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-    if (message == WM_NCCREATE) {
-        auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-    }
-    auto* self = reinterpret_cast<ScreenshotEditor*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    if (self != nullptr) {
-        return self->HandleMessage(hwnd, message, wparam, lparam);
-    }
-    return ::DefWindowProcW(hwnd, message, wparam, lparam);
-}
-
 LRESULT ScreenshotEditor::HandleMessage(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     if (ui::ConsumePopupInput(message, wparam)) { return 0; }
     if (message == platform::kMsgImageExportCompleted && hwnd == hwnd_) {
         OnExportCompleted(static_cast<platform::ImageExportJob::Generation>(wparam));
         return 0;
     }
-    if (message == WM_SETCURSOR && exporting_) {
-        ::SetCursor(::LoadCursorW(nullptr, IDC_APPSTARTING));
-        return TRUE;
-    }
-    if (message == WM_TIMER && wparam == 0xEA63) {
-        SyncWatermarkClear();
-        return 0;
-    }
-    if (message == WM_TIMER && wparam == ui::TypingPointer::kTimerId) {
-        typing_pointer_.Poll();
-        return 0;
-    }
-    if (message == WM_TIMER && wparam == 0xEA62) {
-        POINT point{};
-        ::GetCursorPos(&point);
-        const auto over = [&](HWND window) { RECT r{}; ::GetWindowRect(window,&r); return ::IsWindowVisible(window) && ::PtInRect(&r,point); };
-        const auto now = ::GetTickCount64();
-        const bool hand = over(Control(2520));
-        if (hand || over(brush_popup_)) {
-            brush_leave_started_ = 0;
-            if (hand && brush_hover_started_ && now - brush_hover_started_ >= 350 && !::IsWindowVisible(brush_popup_)) { ShowBrushPopup(true); }
-        } else if (!brush_leave_started_) {
-            brush_leave_started_ = now;
-        } else if (now - brush_leave_started_ >= 250) {
-            ShowBrushPopup(false);
-        }
-        return 0;
-    }
-    if (message == WM_TIMER && wparam == 0xEA61 && hwnd == context_) {
-        const float progress = std::clamp(static_cast<float>(::GetTickCount64() - context_fade_started_) / 160.0f, 0.0f, 1.0f);
-        ::SetLayeredWindowAttributes(context_, 0, static_cast<BYTE>(255 * progress), LWA_ALPHA);
-        if (progress >= 1 || !ui::theme::AnimationsEnabled()) {
-            ::KillTimer(context_, 0xEA61);
-            ::SetLayeredWindowAttributes(context_, 0, 255, LWA_ALPHA);
-        }
-        return 0;
-    }
+    if (message == WM_SETCURSOR && exporting()) { return OnBusyCursor(); }
+    // The property island's timers, slider scrolls and font size list.
+    if (const auto handled = context_panel_.HandleMessage(hwnd, message, wparam, lparam)) { return *handled; }
+    // The typing pointer's timer and the text field's control colour.
+    if (const auto handled = text_editor_.HandleMessage(message, wparam, lparam)) { return *handled; }
     const bool auxiliary = hwnd_ && hwnd != hwnd_;
     if (auxiliary) {
-        if (message == WM_SIZE || message == WM_DPICHANGED || message == WM_GETMINMAXINFO) { return 0; }
-        if (message == WM_NCHITTEST) { return HTCLIENT; }
-        if (message == WM_PAINT || message == WM_PRINTCLIENT) {
-            PAINTSTRUCT ps{};
-            HDC dc = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
-            if (hwnd == text_host_) {
-                RECT bounds{};
-                ::GetWindowRect(hwnd, &bounds);
-                RenderImage(dc, bounds);
-            } else {
-                PaintContext(dc, hwnd);
-            }
-            if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
-            return 0;
-        }
-        if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_MOUSEMOVE || message == WM_CAPTURECHANGED) { return 0; }
+        if (const auto handled = OnAuxiliaryMessage(hwnd, message, wparam)) { return *handled; }
     }
     if (message == WM_CTLCOLOREDIT || message == WM_CTLCOLORLISTBOX || message == WM_CTLCOLORSTATIC) {
-        if (text_edit_ && reinterpret_cast<HWND>(lparam) == text_edit_) {
-            // EDIT can paint synchronously during input while WS_VISIBLE is
-            // retained for its native caret. Its GDI glyphs/backing are never
-            // the annotation presentation: only PaintTextEditor owns those.
-            // This DC belongs to the native draw and is reset on release; the
-            // custom paint pass obtains its own unrestricted client DC.
-            ::IntersectClipRect(reinterpret_cast<HDC>(wparam), 0, 0, 0, 0);
-            return reinterpret_cast<LRESULT>(::GetStockObject(NULL_BRUSH));
-        }
         return ui::ControlBackground(wparam, ui::theme::Current().text);
     }
-    if (message == WM_HSCROLL && !syncing_context_) {
-        const int id = ::GetDlgCtrlID(reinterpret_cast<HWND>(lparam));
-        auto value = ContextStyle();
-        const float position = static_cast<float>(::SendMessageW(reinterpret_cast<HWND>(lparam), TBM_GETPOS, 0, 0));
-        if (id == 2601) { value.strength = position; }
-        if (id == 2602) { value.opacity = position; }
-        if (id == 2603) { value.font_size = position; }
-        ChangeStyle(value);
-        if (LOWORD(wparam) == TB_ENDTRACK) { CommitContextTransaction(); }
-        return 0;
-    }
-
     switch (message) {
-        case ui::theme::kChangedMessage:
-            ::RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
-            return 0; // No document/history/fade/placement work.
-        case WM_MEASUREITEM: {
-            auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lparam);
-            if (measure && measure->CtlType == ODT_COMBOBOX) {
-                measure->itemHeight = ui::theme::Scaled(32, scale_);
-                return TRUE;
-            }
-            break;
-        }
-        case WM_DRAWITEM: {
-            const auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lparam);
-            if (draw && ui::DrawComboItem(*draw)) { return TRUE; }
-            break;
-        }
-        case WM_COMMAND:
-            OnCommand(LOWORD(wparam), HIWORD(wparam));
-            return 0;
-        case WM_PRINTCLIENT:
-            PaintToolbar(reinterpret_cast<HDC>(wparam));
-            return 0;
-        case WM_NCHITTEST: {
-            POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            ::ScreenToClient(hwnd, &point);
-            if (::ChildWindowFromPointEx(hwnd, point, CWP_SKIPINVISIBLE) == hwnd) { return HTCAPTION; }
-            return HTCLIENT;
-        }
-        case WM_NCLBUTTONDBLCLK:
-            if (wparam == HTCAPTION) { FeatureUsed(); }
-            return 0; // Grip double-click never maximizes or completes.
-
+        case ui::theme::kChangedMessage: return OnThemeChanged(hwnd);
+        case WM_COMMAND: OnCommand(LOWORD(wparam), HIWORD(wparam)); return 0;
+        case WM_PRINTCLIENT: toolbar_.Paint(reinterpret_cast<HDC>(wparam), scale_); return 0;
+        case WM_NCHITTEST: return OnNcHitTest(hwnd, lparam);
+        case WM_NCLBUTTONDBLCLK: return OnGripDoubleClick(wparam);
         case WM_NCLBUTTONDOWN:
-            // The grip is part of the floating toolbar. Fix the image before
-            // Windows enters its native move loop; moving the island remains allowed.
-            if (wparam == HTCAPTION && !FeatureUsed()) { return 0; }
+            if (OnGripPress(wparam)) { return 0; }
             break;
-
-        case WM_ENTERSIZEMOVE:
-            if (!auxiliary) { island_user_positioned_ = true; }
-            return 0;
-        case WM_WINDOWPOSCHANGED:
-            if (!auxiliary) { PlaceContext(); }
-            break;
-        case WM_ERASEBKGND:
-            return 1;
-
-        case WM_PAINT: {
-            PAINTSTRUCT ps{};
-            HDC dc = ::BeginPaint(hwnd, &ps);
-            PaintToolbar(dc);
-            ::EndPaint(hwnd, &ps);
-            return 0;
-        }
-
-        case WM_SIZE: {
-            if (wparam == SIZE_MINIMIZED) {
-                return 0;
-            }
-            const int width = static_cast<int>(LOWORD(lparam));
-            const int height = static_cast<int>(HIWORD(lparam));
-            LayoutClient(width, height);
-            Invalidate();
-            return 0;
-        }
-
-        case WM_GETMINMAXINFO: {
-            RECT minimum{0, 0, static_cast<LONG>(kMinClientWidth * scale_),
-                         static_cast<LONG>(kMinClientHeight * scale_)};
-            AdjustForNonClient(minimum, static_cast<UINT>(std::lround(scale_ * 96.0f)));
-            auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
-            info->ptMinTrackSize.x = platform::RectWidth(minimum);
-            info->ptMinTrackSize.y = platform::RectHeight(minimum);
-            return 0;
-        }
-
-        case WM_DPICHANGED: {
-            scale_ = static_cast<float>(HIWORD(wparam)) / 96.0f;
-            CreateTextFormats();
-            const auto* suggested = reinterpret_cast<const RECT*>(lparam);
-            if (suggested != nullptr) {
-                const auto monitor = platform::MonitorForRect(*suggested);
-                RECT available = monitor.work_area;
-                available.top = std::max(available.top, monitor.bounds.top + ui::theme::Scaled(
-                                                                                 ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, scale_));
-                const LONG width = std::min(platform::RectWidth(available), static_cast<LONG>(kIslandWidth * scale_));
-                BuildToolbar(static_cast<float>(width));
-                const LONG height = toolbar_rect_.bottom;
-                const RECT placement = platform::ClampRectToBounds(
-                    RECT{suggested->left, suggested->top, suggested->left + width, suggested->top + height}, available);
-                ::SetWindowPos(hwnd, nullptr, placement.left, placement.top, platform::RectWidth(placement),
-                               platform::RectHeight(placement), SWP_NOZORDER | SWP_NOACTIVATE);
-            }
-            // CreateTextFormats replaced the shared font; the context island
-            // still holds the deleted handle until its controls are resynced.
-            SyncContext();
-            Invalidate();
-            return 0;
-        }
-
-        case WM_MOVING: {
-            auto* proposed = reinterpret_cast<RECT*>(lparam);
-            if (proposed) {
-                const auto monitor = platform::MonitorForRect(*proposed);
-                RECT available = monitor.work_area;
-                available.top = std::max(available.top, monitor.bounds.top +
-                                                            ui::theme::Scaled(ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, monitor.scale()));
-                *proposed = platform::ClampRectToBounds(*proposed, available);
-            }
-            return TRUE;
-        }
-
-        case WM_MOUSEMOVE: {
-            const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            if ((dragging_ || transforming_) && ::GetCapture() == hwnd) {
-                POINT desktop = pt;
-                ::ClientToScreen(hwnd, &desktop);
-                UpdateStroke(desktop);
-            }
-            return 0;
-        }
-
-        case WM_LBUTTONDOWN: {
-            ::SetFocus(hwnd);
-            const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            if (const ToolbarItem* item = HitTestToolbar(pt)) {
-                OnToolbarActivated(*item);
-            } else {
-                FeatureUsed();
-            } // Padding and empty toolbar space also fix the image.
-            return 0;
-        }
-        case WM_LBUTTONDBLCLK:
-            FeatureUsed();
-            return 0;
-
-        case WM_LBUTTONUP: {
-            // Finish the stroke *before* releasing capture: ReleaseCapture sends
-            // WM_CAPTURECHANGED synchronously, which cancels an unfinished one.
-            if (dragging_ || transforming_) {
-                POINT desktop{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-                ::ClientToScreen(hwnd, &desktop);
-                EndStroke(desktop);
-            }
-            if (::GetCapture() == hwnd) {
-                ::ReleaseCapture();
-            }
-            return 0;
-        }
-
-        case WM_CAPTURECHANGED:
-            // Losing capture (alt-tab, resize, ...) must not leave a half stroke.
-            CancelStroke();
-            return 0;
-
+        case WM_ENTERSIZEMOVE: return OnEnterSizeMove(auxiliary);
+        case WM_WINDOWPOSCHANGED: OnWindowPosChanged(auxiliary); break;
+        case WM_ERASEBKGND: return 1;
+        case WM_PAINT: return OnPaint(hwnd);
+        case WM_SIZE: return OnSize(wparam, lparam);
+        case WM_GETMINMAXINFO: return OnGetMinMaxInfo(lparam);
+        case WM_DPICHANGED: return OnDpiChanged(hwnd, wparam, lparam);
+        case WM_MOVING: return OnMoving(lparam);
+        case WM_MOUSEMOVE: return OnPointerMove(hwnd, lparam);
+        case WM_LBUTTONDOWN: return OnPointerDown(hwnd, lparam);
+        case WM_LBUTTONDBLCLK: return OnPointerDoubleClick();
+        case WM_LBUTTONUP: return OnPointerUp(hwnd, lparam);
+        case WM_CAPTURECHANGED: return OnCaptureChanged();
         case WM_MOUSEWHEEL:
-        case WM_MOUSEHWHEEL: {
-            // An island that holds the focus receives the wheel where Windows
-            // routes it by focus. It belongs to the document all the same.
-            const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
-            const WORD keys = GET_KEYSTATE_WPARAM(wparam);
-            const bool horizontal = message == WM_MOUSEHWHEEL;
-            Wheel(horizontal ? -delta : delta, (keys & MK_CONTROL) != 0, horizontal || (keys & MK_SHIFT) != 0,
-                  POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)});
-            return 0;
-        }
-
-        case WM_CHAR:
-            OnCharacter(static_cast<wchar_t>(wparam));
-            return 0;
-
-        case WM_KEYDOWN:
-            OnKeyDown(wparam, lparam);
-            return 0;
-
-        case WM_CLOSE:
-            RequestDiscard();
-            return 0;
-
-        case WM_DESTROY:
-            return 0;
-
-        default:
-            break;
+        case WM_MOUSEHWHEEL: return OnMouseWheel(message, wparam, lparam);
+        case WM_CHAR: text_editor_.OnCharacter(static_cast<wchar_t>(wparam)); return 0;
+        case WM_KEYDOWN: OnKeyDown(wparam, lparam); return 0;
+        case WM_CLOSE: RequestDiscard(); return 0;
+        case WM_DESTROY: return 0;
+        default: break;
     }
     return ::DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+LRESULT ScreenshotEditor::OnBusyCursor() {
+    ::SetCursor(::LoadCursorW(nullptr, IDC_APPSTARTING));
+    return TRUE;
+}
+
+std::optional<LRESULT> ScreenshotEditor::OnAuxiliaryMessage(HWND hwnd, UINT message, WPARAM wparam) {
+    if (message == WM_SIZE || message == WM_DPICHANGED || message == WM_GETMINMAXINFO) { return 0; }
+    if (message == WM_NCHITTEST) { return HTCLIENT; }
+    if (message == WM_PAINT || message == WM_PRINTCLIENT) {
+        PAINTSTRUCT ps{};
+        HDC dc = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
+        if (hwnd == text_editor_.host()) {
+            RECT bounds{};
+            ::GetWindowRect(hwnd, &bounds);
+            RenderImage(dc, bounds);
+        } else {
+            context_panel_.Paint(dc, hwnd);
+        }
+        if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
+        return 0;
+    }
+    if (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_MOUSEMOVE || message == WM_CAPTURECHANGED) { return 0; }
+    return std::nullopt;
+}
+
+LRESULT ScreenshotEditor::OnThemeChanged(HWND hwnd) {
+    ::RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+    return 0; // No document/history/fade/placement work.
+}
+
+LRESULT ScreenshotEditor::OnNcHitTest(HWND hwnd, LPARAM lparam) {
+    POINT point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    ::ScreenToClient(hwnd, &point);
+    if (::ChildWindowFromPointEx(hwnd, point, CWP_SKIPINVISIBLE) == hwnd) { return HTCAPTION; }
+    return HTCLIENT;
+}
+
+LRESULT ScreenshotEditor::OnGripDoubleClick(WPARAM hit) {
+    if (hit == HTCAPTION) { FeatureUsed(); }
+    return 0; // Grip double-click never maximizes or completes.
+}
+
+bool ScreenshotEditor::OnGripPress(WPARAM hit) {
+    // The grip is part of the floating toolbar. Fix the image before
+    // Windows enters its native move loop; moving the island remains allowed.
+    return hit == HTCAPTION && !FeatureUsed();
+}
+
+LRESULT ScreenshotEditor::OnEnterSizeMove(bool auxiliary) {
+    if (!auxiliary) { island_user_positioned_ = true; }
+    return 0;
+}
+
+void ScreenshotEditor::OnWindowPosChanged(bool auxiliary) {
+    if (!auxiliary) { context_panel_.Place(); }
+}
+
+LRESULT ScreenshotEditor::OnPaint(HWND hwnd) {
+    PAINTSTRUCT ps{};
+    HDC dc = ::BeginPaint(hwnd, &ps);
+    toolbar_.Paint(dc, scale_);
+    ::EndPaint(hwnd, &ps);
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnSize(WPARAM kind, LPARAM lparam) {
+    if (kind == SIZE_MINIMIZED) {
+        return 0;
+    }
+    const int width = static_cast<int>(LOWORD(lparam));
+    const int height = static_cast<int>(HIWORD(lparam));
+    LayoutClient(width, height);
+    Invalidate();
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnGetMinMaxInfo(LPARAM lparam) const {
+    RECT minimum{0, 0, static_cast<LONG>(kMinClientWidth * scale_),
+                 static_cast<LONG>(kMinClientHeight * scale_)};
+    AdjustForNonClient(minimum, static_cast<UINT>(std::lround(scale_ * 96.0f)));
+    auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
+    info->ptMinTrackSize.x = platform::RectWidth(minimum);
+    info->ptMinTrackSize.y = platform::RectHeight(minimum);
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnDpiChanged(HWND hwnd, WPARAM wparam, LPARAM lparam) {
+    scale_ = static_cast<float>(HIWORD(wparam)) / 96.0f;
+    CreateTextFormats();
+    const auto* suggested = reinterpret_cast<const RECT*>(lparam);
+    if (suggested != nullptr) {
+        const auto monitor = platform::MonitorForRect(*suggested);
+        RECT available = monitor.work_area;
+        available.top = std::max(available.top, monitor.bounds.top + ui::theme::Scaled(
+                                                                         ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, scale_));
+        const LONG width = std::min(platform::RectWidth(available), static_cast<LONG>(kIslandWidth * scale_));
+        BuildToolbar(static_cast<float>(width));
+        const LONG height = toolbar_.height();
+        const RECT placement = platform::ClampRectToBounds(
+            RECT{suggested->left, suggested->top, suggested->left + width, suggested->top + height}, available);
+        ::SetWindowPos(hwnd, nullptr, placement.left, placement.top, platform::RectWidth(placement),
+                       platform::RectHeight(placement), SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    // CreateTextFormats replaced the shared font; the context island
+    // still holds the deleted handle until its controls are resynced.
+    context_panel_.Sync();
+    Invalidate();
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnMoving(LPARAM lparam) {
+    auto* proposed = reinterpret_cast<RECT*>(lparam);
+    if (proposed) {
+        const auto monitor = platform::MonitorForRect(*proposed);
+        RECT available = monitor.work_area;
+        available.top = std::max(available.top, monitor.bounds.top +
+                                                    ui::theme::Scaled(ui::theme::kPaletteButtonHeight + 2 * ui::theme::kPalettePadding, monitor.scale()));
+        *proposed = platform::ClampRectToBounds(*proposed, available);
+    }
+    return TRUE;
+}
+
+LRESULT ScreenshotEditor::OnPointerMove(HWND hwnd, LPARAM lparam) {
+    const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    if ((dragging_ || transforming_) && ::GetCapture() == hwnd) {
+        POINT desktop = pt;
+        ::ClientToScreen(hwnd, &desktop);
+        UpdateStroke(desktop);
+    }
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnPointerDown(HWND hwnd, LPARAM lparam) {
+    ::SetFocus(hwnd);
+    const POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+    if (const auto item = toolbar_.HitTest(pt)) {
+        OnToolbarActivated(*item);
+    } else {
+        FeatureUsed();
+    } // Padding and empty toolbar space also fix the image.
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnPointerDoubleClick() {
+    FeatureUsed();
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnPointerUp(HWND hwnd, LPARAM lparam) {
+    // Finish the stroke *before* releasing capture: ReleaseCapture sends
+    // WM_CAPTURECHANGED synchronously, which cancels an unfinished one.
+    if (dragging_ || transforming_) {
+        POINT desktop{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        ::ClientToScreen(hwnd, &desktop);
+        EndStroke(desktop);
+    }
+    if (::GetCapture() == hwnd) {
+        ::ReleaseCapture();
+    }
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnCaptureChanged() {
+    // Losing capture (alt-tab, resize, ...) must not leave a half stroke.
+    CancelStroke();
+    return 0;
+}
+
+LRESULT ScreenshotEditor::OnMouseWheel(UINT message, WPARAM wparam, LPARAM lparam) {
+    // An island that holds the focus receives the wheel where Windows
+    // routes it by focus. It belongs to the document all the same.
+    const int delta = GET_WHEEL_DELTA_WPARAM(wparam);
+    const WORD keys = GET_KEYSTATE_WPARAM(wparam);
+    const bool horizontal = message == WM_MOUSEHWHEEL;
+    Wheel(horizontal ? -delta : delta, (keys & MK_CONTROL) != 0, horizontal || (keys & MK_SHIFT) != 0,
+          POINT{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)});
+    return 0;
 }
 
 void ScreenshotEditor::OnCommand(int id, int notification) {
@@ -2301,119 +939,26 @@ void ScreenshotEditor::OnCommand(int id, int notification) {
         RequestDiscard();
         return;
     }
-    if (id == 2600 && notification == CBN_DROPDOWN) {
-        COMBOBOXINFO info{sizeof(info)};
-        ::GetComboBoxInfo(Control(2600), &info);
-        ::SetWindowLongPtrW(info.hwndList, GWL_STYLE, ::GetWindowLongPtrW(info.hwndList, GWL_STYLE) & ~WS_BORDER);
-        ::SetWindowLongPtrW(info.hwndList, GWL_EXSTYLE, ::GetWindowLongPtrW(info.hwndList, GWL_EXSTYLE) & ~WS_EX_CLIENTEDGE);
-        ui::RoundWindow(info.hwndList);
-        // Shown again on every drop-down: excluded as an opaque layered
-        // window, it leaves no hole in a capture.
-        static_cast<void>(ui::ExcludeFromCapture(info.hwndList));
-        return;
-    }
-    if (id == 2700 && notification == EN_CHANGE) {
-        UpdateTextFromControl();
-        return;
-    }
-    if (syncing_context_) { return; }
-    if (id == 2600 && (notification == CBN_SELCHANGE || notification == CBN_KILLFOCUS)) {
-        wchar_t text[32]{};
-        if (notification == CBN_SELCHANGE) {
-            ::SendMessageW(Control(2600), CB_GETLBTEXT, ::SendMessageW(Control(2600), CB_GETCURSEL, 0, 0), reinterpret_cast<LPARAM>(text));
-        } else {
-            ::GetWindowTextW(Control(2600), text, 32);
-        }
-        wchar_t* end = nullptr;
-        const double size = std::wcstod(text, &end);
-        while (end && std::iswspace(*end)) { ++end; }
-        if (end && ::lstrcmpiW(end, L"pt") == 0) { end += 2; }
-        if (end && *end == 0 && std::isfinite(size) && size >= 6 && size <= 288) {
-            auto value = ContextStyle();
-            value.font_size = static_cast<float>(size);
-            ChangeStyle(value);
-        } else {
-            ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_FONT_SIZE_RANGE));
-            SyncContext();
-            Invalidate();
-        }
-        if (notification == CBN_KILLFOCUS) { CommitContextTransaction(); }
-        return;
-    }
-    if (id == 2605 && notification == BN_CLICKED) {
-        // The clearing is kept, with what the field held before it.
-        document_.BeginTransaction();
-        ::SetWindowTextW(Control(2604), L"");
-        document_.CommitTransaction();
-        context_owns_transaction_ = false;
-        ::SetFocus(Control(2604));
-        // A field that kept the focus gets no WM_SETFOCUS to open the next
-        // edit: open it here, so that Esc reverts what is typed after this.
-        if (::GetFocus() == Control(2604) && !document_.in_transaction()) {
-            context_owns_transaction_ = true;
-            document_.BeginTransaction();
-        }
-        SyncWatermarkClear();
-        return;
-    }
-    // The island writing the document's text into the field changes nothing.
-    if (id == 2604 && notification == EN_CHANGE && !syncing_context_ && ContextTool() == ToolId::Watermark) {
-        if (!FeatureUsed()) { return; }
-        const int length = ::GetWindowTextLengthW(Control(2604));
-        std::wstring text(static_cast<size_t>(length) + 1, L'\0');
-        ::GetWindowTextW(Control(2604), text.data(), length + 1);
-        text.resize(std::min(length, 16));
-        if (!text.empty() && text.back() >= 0xd800 && text.back() <= 0xdbff) { text.pop_back(); }
-        if (text.size() != static_cast<size_t>(length)) {
-            syncing_context_ = true;
-            ::SetWindowTextW(Control(2604), text.c_str());
-            ::SendMessageW(Control(2604), EM_SETSEL, text.size(), text.size());
-            syncing_context_ = false;
-        }
-        if (selected_ && *selected_ >= document_.annotations().size()) { selected_.reset(); }
-        // The image has one watermark: the field edits it whether or not it
-        // is selected, and creates it only when there is none.
-        const auto target = ContextAnnotation();
-        Annotation a;
-        if (target) {
-            a = document_.annotations()[*target];
-        } else {
-            a.tool = ToolId::Watermark;
-            a.style = style_;
-            a.style.opacity = 30;
-            a.points = {{0, 0}, {static_cast<float>(source_image_.width), static_cast<float>(source_image_.height)}};
-        }
-        a.text = std::move(text);
-        if (target) {
-            document_.Replace(*target, std::move(a));
-            selected_ = target;
-        } else {
-            document_.Apply(std::move(a));
-            selected_ = document_.annotations().size() - 1;
-        }
-        SyncContext();
-        Invalidate();
-        return;
-    }
+    // The text field's EN_CHANGE.
+    if (text_editor_.HandleCommand(id, notification)) { return; }
+    // The property island's font size box, watermark field and clear button.
+    if (context_panel_.HandleCommand(id, notification) || context_panel_.syncing()) { return; }
     if (notification == BN_CLICKED) {
-        const auto found = std::find_if(toolbar_.begin(), toolbar_.end(), [id](const auto& item) { return item.identifier == id; });
-        if (found != toolbar_.end()) {
-            const auto item = *found;
-            OnToolbarActivated(item);
+        if (const auto item = toolbar_.Find(id)) {
+            OnToolbarActivated(*item);
+            return;
         }
+        if (const auto item = context_panel_.Find(id)) { OnToolbarActivated(*item); }
     }
 }
 
 void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
-    if (exporting_) {
+    if (exporting()) {
         // Nothing may change or end the image while it is copied or saved.
         if (key != VK_CONTROL && key != VK_SHIFT && key != VK_MENU) { RefuseWhileExporting(); }
         return;
     }
-    if (editing_text_ && text_edit_) {
-        ::SendMessageW(text_edit_, WM_KEYDOWN, key, flags);
-        return;
-    }
+    if (text_editor_.ForwardKeyDown(key, flags)) { return; }
     if (key == VK_ESCAPE && (transforming_ || dragging_ || document_.in_transaction())) {
         // The rollback can remove the selected annotation (a watermark created in this transaction).
         CancelStroke();
@@ -2422,12 +967,12 @@ void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
         // In the watermark field Esc reverts what was typed since the field
         // took the focus. The focus stays there, so the next Esc reverts what
         // is typed after this one, however often it is pressed.
-        if (context_owns_transaction_ && ::GetFocus() == Control(2604) && ContextTool() == ToolId::Watermark) {
+        if (context_owns_transaction_ && ::GetFocus() == context_panel_.Control(kWatermarkTextEdit) && PropertiesOf(ContextTool()).watermark) {
             document_.BeginTransaction();
         } else {
             context_owns_transaction_ = false;
         }
-        SyncContext();
+        context_panel_.Sync();
         Invalidate();
         return;
     }
@@ -2454,100 +999,59 @@ void ScreenshotEditor::OnKeyDown(WPARAM key, LPARAM flags) {
         return;
     }
     if (key == VK_TAB) {
-        ::SetFocus(::GetDlgItem(hwnd_, 2000));
+        ::SetFocus(::GetDlgItem(hwnd_, kToolButtons.first));
         return;
     }
     const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
-    if (document_mode_) {
-        // A document larger than its viewport is moved and scaled from
-        // the keyboard as well as with the wheel.
-        const float page = static_cast<float>(platform::RectHeight(region_)) / zoom_ * 0.9f;
-        const POINT centre{(region_.left + region_.right) / 2, (region_.top + region_.bottom) / 2};
-        switch (key) {
-            case VK_PRIOR: ScrollDocument(0.0f, -page); return;
-            case VK_NEXT: ScrollDocument(0.0f, page); return;
-            case VK_HOME: ScrollDocument(0.0f, -static_cast<float>(source_image_.height)); return;
-            case VK_END: ScrollDocument(0.0f, static_cast<float>(source_image_.height)); return;
-            case VK_UP: ScrollDocument(0.0f, -48.0f * scale_ / zoom_); return;
-            case VK_DOWN: ScrollDocument(0.0f, 48.0f * scale_ / zoom_); return;
-            case VK_LEFT: ScrollDocument(-48.0f * scale_ / zoom_, 0.0f); return;
-            case VK_RIGHT: ScrollDocument(48.0f * scale_ / zoom_, 0.0f); return;
-            case VK_OEM_PLUS:
-            case VK_ADD:
-                if (control) {
-                    ZoomDocument(StepZoom(zoom_, 1), centre);
-                    return;
-                }
-                break;
-            case VK_OEM_MINUS:
-            case VK_SUBTRACT:
-                if (control) {
-                    ZoomDocument(StepZoom(zoom_, -1), centre);
-                    return;
-                }
-                break;
-            case '0':
-            case VK_NUMPAD0:
-                if (control) {
-                    ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre);
-                    return;
-                }
-                break;
-            case '1':
-            case VK_NUMPAD1:
-                if (control) {
-                    ZoomDocument(1.0f, centre);
-                    return;
-                }
-                break;
-            default:
-                break;
-        }
-    }
-    if (control) {
-        switch (key) {
-            case 'Z': {
-                selected_.reset();
-                if (!FeatureUsed()) { return; }
-                const auto revision = document_.revision();
-                if (shift) {
-                    document_.Redo();
-                } else {
-                    document_.Undo();
-                }
-                Invalidate();
-                NotifyMutation(revision);
-                return;
-            }
-            case 'Y': {
-                selected_.reset();
-                if (!FeatureUsed()) { return; }
-                const auto revision = document_.revision();
+    if (const auto command = FindKeyCommand(key, control, shift, document_mode_)) { RunKeyCommand(*command); }
+}
+
+void ScreenshotEditor::RunKeyCommand(KeyCommand command) {
+    const float page = static_cast<float>(platform::RectHeight(region_)) / zoom_ * 0.9f;
+    const POINT centre{(region_.left + region_.right) / 2, (region_.top + region_.bottom) / 2};
+    switch (command) {
+        case KeyCommand::ScrollPageUp: ScrollDocument(0.0f, -page); return;
+        case KeyCommand::ScrollPageDown: ScrollDocument(0.0f, page); return;
+        case KeyCommand::ScrollToTop: ScrollDocument(0.0f, -static_cast<float>(source_image_.height)); return;
+        case KeyCommand::ScrollToBottom: ScrollDocument(0.0f, static_cast<float>(source_image_.height)); return;
+        case KeyCommand::ScrollUp: ScrollDocument(0.0f, -48.0f * scale_ / zoom_); return;
+        case KeyCommand::ScrollDown: ScrollDocument(0.0f, 48.0f * scale_ / zoom_); return;
+        case KeyCommand::ScrollLeft: ScrollDocument(-48.0f * scale_ / zoom_, 0.0f); return;
+        case KeyCommand::ScrollRight: ScrollDocument(48.0f * scale_ / zoom_, 0.0f); return;
+        case KeyCommand::ZoomIn: ZoomDocument(StepZoom(zoom_, 1), centre); return;
+        case KeyCommand::ZoomOut: ZoomDocument(StepZoom(zoom_, -1), centre); return;
+        case KeyCommand::ZoomToFitWidth: ZoomDocument(FitWidthZoom(source_image_.width, view_area_), centre); return;
+        case KeyCommand::ZoomToActualSize: ZoomDocument(1.0f, centre); return;
+        case KeyCommand::Undo:
+        case KeyCommand::Redo: {
+            // The selection is cleared even when the image cannot be fixed.
+            selected_.reset();
+            if (!FeatureUsed()) { return; }
+            const auto revision = document_.revision();
+            if (command == KeyCommand::Redo) {
                 document_.Redo();
-                Invalidate();
-                NotifyMutation(revision);
-                return;
+            } else {
+                document_.Undo();
             }
-            case 'C':
-                if (!FeatureUsed()) { return; }
-                CompleteCopy();
-                return;
-            case 'S':
-                if (!FeatureUsed()) { return; }
-                SaveToFile();
-                return;
-            case 'T':
-                if (!FeatureUsed()) { return; }
-                CompletePin();
-                return;
-            default:
-                break;
+            Invalidate();
+            NotifyMutation(revision);
+            return;
         }
-    }
-    if (key == VK_ESCAPE) {
-        RequestDiscard();
-        return;
+        case KeyCommand::Copy:
+            if (!FeatureUsed()) { return; }
+            CompleteCopy();
+            return;
+        case KeyCommand::Save:
+            if (!FeatureUsed()) { return; }
+            SaveToFile();
+            return;
+        case KeyCommand::Pin:
+            if (!FeatureUsed()) { return; }
+            CompletePin();
+            return;
+        case KeyCommand::Discard: RequestDiscard(); return;
+        case KeyCommand::None: return;  // No row names it; see EveryKeyBindingHasCommand.
     }
 }
 
@@ -2561,22 +1065,8 @@ D2D1_POINT_2F ScreenshotEditor::ToImagePoint(POINT desktop_pt) const {
                          (static_cast<float>(desktop_pt.y) - view_origin_.y) / zoom);
 }
 
-const ScreenshotEditor::ToolbarItem* ScreenshotEditor::HitTestToolbar(POINT client_pt) const {
-    if (::PtInRect(&toolbar_rect_, client_pt) == FALSE) {
-        return nullptr;
-    }
-    const float x = static_cast<float>(client_pt.x - toolbar_rect_.left);
-    const float y = static_cast<float>(client_pt.y - toolbar_rect_.top);
-    for (const ToolbarItem& item : toolbar_) {
-        if (item.shown && x >= item.rect.left && x <= item.rect.right && y >= item.rect.top && y <= item.rect.bottom) {
-            return &item;
-        }
-    }
-    return nullptr;
-}
-
-void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
-    if (exporting_ && !(item.kind == ToolbarItem::Kind::Command && item.command == kCommandTheme)) {
+void ScreenshotEditor::OnToolbarActivated(ToolbarItem item) {
+    if (exporting() && !(item.kind == ToolbarItem::Kind::Command && item.command == kCommandTheme)) {
         RefuseWhileExporting();
         return;
     }
@@ -2599,8 +1089,8 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
         return;
     }
     if (!FeatureUsed()) { return; }
-    if (item.identifier == 2520 && ContextStyle().method == EffectMethod::Brush) {
-        ShowBrushPopup(!::IsWindowVisible(brush_popup_));
+    if (item.identifier == kBrushMethodButton && ContextStyle().method == EffectMethod::Brush) {
+        context_panel_.ShowBrushPopup(!::IsWindowVisible(context_panel_.brush_popup()));
         return;
     }
     if (item.kind == ToolbarItem::Kind::Command && item.command == kCommandCopy) {
@@ -2613,8 +1103,8 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
     }
     const auto revision = document_.revision();
     if (item.kind == ToolbarItem::Kind::Tool || item.kind == ToolbarItem::Kind::Command) {
-        ShowBrushPopup(false);
-        CommitPendingText();
+        context_panel_.ShowBrushPopup(false);
+        text_editor_.Commit();
         document_.CommitTransaction();
         CancelStroke();
     }
@@ -2644,12 +1134,12 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
         case ToolbarItem::Kind::BrushSize:
             style.brush_size = item.brush_size;
             ChangeStyle(style);
-            ShowBrushPopup(false);
+            context_panel_.ShowBrushPopup(false);
             break;
         case ToolbarItem::Kind::Option:
-            if (item.identifier >= 2500 && item.identifier <= 2502) { style.text_mode = static_cast<TextMode>(item.identifier - 2500); }
-            if (item.identifier >= 2510 && item.identifier <= 2511) { style.effect = static_cast<EffectMode>(item.identifier - 2510); }
-            if (item.identifier >= 2520 && item.identifier <= 2521) {
+            if (kTextModeButtons.Contains(item.identifier)) { style.text_mode = static_cast<TextMode>(kTextModeButtons.Index(item.identifier)); }
+            if (kEffectButtons.Contains(item.identifier)) { style.effect = static_cast<EffectMode>(kEffectButtons.Index(item.identifier)); }
+            if (kEffectMethodButtons.Contains(item.identifier)) {
                 // Application method is a new-tool default. Existing region or
                 // brush geometry retains its transform contract.
                 if (selected_) {
@@ -2657,9 +1147,9 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
                     style = style_;
                 }
                 tool_ = ToolId::Mosaic;
-                style.method = static_cast<EffectMethod>(item.identifier - 2520);
+                style.method = static_cast<EffectMethod>(kEffectMethodButtons.Index(item.identifier));
             }
-            if (item.identifier >= 2530 && item.identifier <= 2532) { style.shape = static_cast<SpotlightShape>(item.identifier - 2530); }
+            if (kSpotlightShapeButtons.Contains(item.identifier)) { style.shape = static_cast<SpotlightShape>(kSpotlightShapeButtons.Index(item.identifier)); }
             ChangeStyle(style);
             break;
         case ToolbarItem::Kind::Command:
@@ -2673,18 +1163,18 @@ void ScreenshotEditor::OnToolbarActivated(const ToolbarItem& item) {
     ReflowToolbar();
     Invalidate();
     NotifyMutation(revision);
-    if (item.identifier == 2520) { ShowBrushPopup(true); }
+    if (item.identifier == kBrushMethodButton) { context_panel_.ShowBrushPopup(true); }
 }
 
 bool ScreenshotEditor::WantsPointer(POINT point) const {
     // While exporting, a click on the image is refused here instead of
     // completing the screenshot a second time.
-    if (exporting_ || editing_text_ || transforming_ || dragging_ || selected_) { return true; }
+    if (exporting() || text_editor_.editing() || transforming_ || dragging_ || selected_) { return true; }
     const auto p = ToImagePoint(point);
     return tool_ != ToolId::Pointer || document_.HitTest(p, 5.0f / zoom_).has_value();
 }
 HCURSOR ScreenshotEditor::ImageCursor(POINT point) const {
-    if (exporting_) { return ::LoadCursorW(nullptr, IDC_APPSTARTING); }
+    if (exporting()) { return ::LoadCursorW(nullptr, IDC_APPSTARTING); }
     const auto p = ToImagePoint(point);
     if (selected_ && *selected_ < document_.annotations().size()) {
         const auto handles = document_.annotations()[*selected_].Handles();
@@ -2695,30 +1185,23 @@ HCURSOR ScreenshotEditor::ImageCursor(POINT point) const {
             }
     }
     const bool movable = document_.HitTest(p, 5.0f / zoom_).has_value();
-    return ::LoadCursorW(nullptr, movable ? IDC_SIZEALL : tool_ == ToolId::Pointer                    ? IDC_ARROW
-                                                      : tool_ == ToolId::Text || tool_ == ToolId::Tag ? IDC_IBEAM
-                                                                                                      : IDC_CROSS);
+    return ::LoadCursorW(nullptr, movable ? IDC_SIZEALL : CursorFor(tool_));
 }
 void ScreenshotEditor::BeginStroke(POINT point) {
-    ShowBrushPopup(false);
-    if (editing_text_) {
+    context_panel_.ShowBrushPopup(false);
+    if (text_editor_.editing()) {
         // Repeated clicks on the active object keep its editing session alive.
         // Only an actual outside click commits; that click never creates text.
         if (selected_ && document_.annotations()[*selected_].HitTest(ToImagePoint(point), 5.0f / zoom_)) {
-            if (text_edit_) {
-                POINT local = point;
-                ::ScreenToClient(text_edit_, &local);
-                ::SendMessageW(text_edit_, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(local.x, local.y));
-                ::SendMessageW(text_edit_, WM_LBUTTONUP, 0, MAKELPARAM(local.x, local.y));
-            }
+            text_editor_.ForwardClick(point);
             return;
         }
-        CommitPendingText();
+        text_editor_.Commit();
         Select({});
         // Commit can remove an empty annotation and shift later indices.
         const auto hit = document_.HitTest(ToImagePoint(point), 5.0f / zoom_);
-        if (hit && (document_.annotations()[*hit].tool == ToolId::Text || document_.annotations()[*hit].tool == ToolId::Tag)) {
-            StartTextEditing(hit, point);
+        if (hit && IsTextTool(document_.annotations()[*hit].tool)) {
+            text_editor_.Start(hit, point);
         }
         return;
     }
@@ -2751,16 +1234,15 @@ void ScreenshotEditor::BeginStroke(POINT point) {
         return;
     }
     if (tool_ == ToolId::Watermark) { return; }
-    const bool leave_text_selection = (tool_ == ToolId::Text || tool_ == ToolId::Tag) && selected_ &&
-                                      (document_.annotations()[*selected_].tool == ToolId::Text || document_.annotations()[*selected_].tool == ToolId::Tag);
+    const bool leave_text_selection = IsTextTool(tool_) && selected_ && IsTextTool(document_.annotations()[*selected_].tool);
     Select({});
     // A selected text object is still the current interaction target after a
     // select/drag. Its first outside press only leaves that state; a later
     // blank press with no active selection may create the next text object.
     if (leave_text_selection) { return; }
     if (tool_ == ToolId::Pointer) { return; }
-    if (tool_ == ToolId::Text || tool_ == ToolId::Tag) {
-        StartTextEditing({}, point);
+    if (IsTextTool(tool_)) {
+        text_editor_.Start({}, point);
         return;
     }
     pending_ = {};
@@ -2816,7 +1298,7 @@ void ScreenshotEditor::UpdateStroke(POINT point) {
     if (!has_pending_ || !dragging_) { return; }
     const auto last = pending_.points.back();
     if (p.x == last.x && p.y == last.y) { return; }
-    const bool freehand = pending_.tool == ToolId::Pen || (pending_.tool == ToolId::Mosaic && pending_.style.method == EffectMethod::Brush);
+    const bool freehand = IsFreehand(pending_);
     RECT damage{};
     if (freehand) {
         const float pad = std::max(pending_.style.brush_size / 2, pending_.style.thickness) + 3;
@@ -2848,7 +1330,7 @@ void ScreenshotEditor::EndStroke(POINT point) {
     const auto revision = document_.revision();
     UpdateStroke(point);
     dragging_ = false;
-    const bool freehand = pending_.tool == ToolId::Pen || (pending_.tool == ToolId::Mosaic && pending_.style.method == EffectMethod::Brush);
+    const bool freehand = IsFreehand(pending_);
     const auto box = NormalizedD2DRect(pending_.points.front(), pending_.points.back());
     if (freehand || box.right - box.left >= 2 || box.bottom - box.top >= 2) {
         document_.Apply(std::move(pending_));
@@ -2873,364 +1355,42 @@ void ScreenshotEditor::CancelStroke() {
     // the paint that recomputes the effects invalidates what lies outside.
     InvalidateImage(damage);
 }
-void ScreenshotEditor::StartTextEditing(std::optional<size_t> index, POINT point) {
-    if (editing_text_ && index && index == selected_) {
-        ::SetFocus(text_edit_);
-        return;
-    }
-    // Committing an empty active box erases it, shifting later hit indices.
-    if (editing_text_ && index && selected_ && *selected_ < *index &&
-        document_.annotations()[*selected_].text.empty()) { --*index; }
-    CommitPendingText();
+// ---------------------------------------------------------------------------
+// Text field owner
+// ---------------------------------------------------------------------------
+
+TextEditorView ScreenshotEditor::text_view() const {
+    return {view_origin_, zoom_, scale_, document_mode_ ? region_ : source_bounds_, region_};
+}
+HWND ScreenshotEditor::CreateTextHost(POINT point) {
+    // This title identifies the text host to tests (FindWindow); it is not localized.
+    return ::CreateWindowExW(kEditorExStyle, kEditorClassName, L"Edit annotation text", kEditorStyle,
+                             point.x, point.y, 100, 50, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
+}
+void ScreenshotEditor::BeginTextTransaction() {
     context_owns_transaction_ = false;
     document_.BeginTransaction();
-    if (!index) {
-        Annotation a;
-        a.tool = tool_ == ToolId::Tag ? ToolId::Tag : ToolId::Text;
-        a.style = style_;
-        a.points = {ToImagePoint(point)};
-        document_.Apply(std::move(a));
-        index = document_.annotations().size() - 1;
-    }
-    selected_ = index;
-    pending_ = document_.annotations()[*index];
-    editing_text_ = true;
-    has_pending_ = false;
-    // This title identifies the text host to tests (FindWindow); it is not localized.
-    text_host_ = ::CreateWindowExW(kEditorExStyle, kEditorClassName, L"Edit annotation text", kEditorStyle,
-                                   point.x, point.y, 100, 50, hwnd_, nullptr, ::GetModuleHandleW(nullptr), this);
-    if (text_host_) {
-        text_edit_ = ::CreateWindowExW(0, L"EDIT", pending_.text.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_MULTILINE | ES_WANTRETURN | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_NOHIDESEL,
-                                       0, 0, 100, 50, text_host_, reinterpret_cast<HMENU>(2700), ::GetModuleHandleW(nullptr), nullptr);
-    }
-    if (!text_edit_) {
-        if (text_host_) {
-            ::DestroyWindow(text_host_);
-            text_host_ = nullptr;
-        }
-        document_.CancelTransaction();
-        editing_text_ = false;
-        selected_.reset();
-        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_TEXT_EDITOR_FAILED));
-        Invalidate();
-        return;
-    }
-    ::SendMessageW(text_edit_, EM_SETLIMITTEXT, 65535, 0);
-    last_text_double_ = 0;
-    ui::SetAccessibleName(text_edit_, strings::Get(IDS_EDITOR_TEXT_NAME));
-    ::SetWindowSubclass(text_edit_, TextEditProc, 1, reinterpret_cast<DWORD_PTR>(this));
-    static_cast<void>(ui::ExcludeFromCapture(text_host_));
-    LayoutTextEditor();
-    ::ShowWindow(text_host_, SW_SHOWNORMAL);
-    ::SetFocus(text_edit_);
-    POINT local = point;
-    ::ScreenToClient(text_edit_, &local);
-    const auto caret = ::SendMessageW(text_edit_, EM_CHARFROMPOS, 0, MAKELPARAM(std::max(0L, local.x), std::max(0L, local.y)));
-    ::SendMessageW(text_edit_, EM_SETSEL, LOWORD(caret), LOWORD(caret));
-    ReflowToolbar();
-    Invalidate();
 }
-void ScreenshotEditor::LayoutTextEditor() {
-    if (!text_host_ || !text_edit_ || !selected_) { return; }
-    pending_ = document_.annotations()[*selected_];
-    const auto box = pending_.bounds();
-    const float em = pending_.FontPixels();
-    // The native input follows the scale the text is shown at.
-    const float shown_em = em * zoom_;
-    if (!text_font_ || text_font_pixels_ != shown_em) {
-        HFONT next = ui::theme::CreateUiFont(shown_em, 1, false);
-        if (next) {
-            ::SendMessageW(text_edit_, WM_SETFONT, reinterpret_cast<WPARAM>(next), FALSE);
-            if (text_font_) { ::DeleteObject(text_font_); }
-            text_font_ = next;
-            text_font_pixels_ = shown_em;
-        }
-    }
-    if (reinterpret_cast<HFONT>(::SendMessageW(text_edit_, WM_GETFONT, 0, 0)) != text_font_) {
-        ::SendMessageW(text_edit_, WM_SETFONT, reinterpret_cast<WPARAM>(text_font_), FALSE);
-    }
-    const LONG pad = ui::theme::Scaled(5, scale_);
-    const LONG x = static_cast<LONG>(view_origin_.x) + static_cast<LONG>(std::floor(box.left * zoom_)) - pad;
-    const LONG y = static_cast<LONG>(view_origin_.y) + static_cast<LONG>(std::floor(box.top * zoom_)) - pad;
-    const LONG w = std::max(2 * pad + 8L, static_cast<LONG>(std::ceil((box.right - box.left) * zoom_)) + 2 * pad);
-    const LONG h = std::max(2 * pad + 8L, static_cast<LONG>(std::ceil((box.bottom - box.top) * zoom_)) + 2 * pad);
-    // Only what changed is changed: Windows takes every move, resize, z-order
-    // or region change of a window for pointer movement, and shows the
-    // pointer it hides while the user types. This runs on every key.
-    RECT placed{};
-    ::GetWindowRect(text_host_, &placed);
-    const bool shown = ::IsWindowVisible(text_host_) != FALSE;
-    if (!shown || placed.left != x || placed.top != y || platform::RectWidth(placed) != w || platform::RectHeight(placed) != h) {
-        // Topmost when it appears; afterwards it keeps its place.
-        ::SetWindowPos(text_host_, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | (shown ? SWP_NOZORDER : 0));
-    }
-    RECT input{};
-    ::GetClientRect(text_edit_, &input);
-    if (input.right != w || input.bottom != h) { ::MoveWindow(text_edit_, 0, 0, w, h, FALSE); }
-    // The input keeps its full layout/caret coordinates, but nothing (including
-    // its selection frame) may paint beyond the capture canvas.
-    RECT visible = platform::IntersectRects({x, y, x + w, y + h}, document_mode_ ? region_ : source_bounds_);
-    ::OffsetRect(&visible, -x, -y);
-    HRGN current = ::CreateRectRgn(0, 0, 0, 0);
-    const bool has_region = current && ::GetWindowRgn(text_host_, current) != ERROR;
-    if (visible.left == 0 && visible.top == 0 && visible.right == w && visible.bottom == h) {
-        // Wholly on the canvas: no region at all.
-        if (has_region) { ::SetWindowRgn(text_host_, nullptr, FALSE); }
-    } else if (HRGN clip = ::CreateRectRgn(visible.left, visible.top, visible.right, visible.bottom)) {
-        if ((has_region && ::EqualRgn(current, clip)) || !::SetWindowRgn(text_host_, clip, FALSE)) { ::DeleteObject(clip); }
-    }
-    if (current) { ::DeleteObject(current); }
-    const float inset = pending_.tool == ToolId::Tag ? em * 0.45f : pending_.style.text_mode == TextMode::Fill  ? em * 0.25f
-                                                                : pending_.style.text_mode == TextMode::Outline ? em * 0.075f
-                                                                                                                : 0;
-    RECT format{pad + static_cast<LONG>((inset + (pending_.tool == ToolId::Tag ? em * 0.9f : 0)) * zoom_), pad + static_cast<LONG>(inset * zoom_), 32760, 32760};
-    ::SendMessageW(text_edit_, EM_SETRECTNP, 0, reinterpret_cast<LPARAM>(&format));
-    ::InvalidateRect(text_edit_, nullptr, FALSE);
+void ScreenshotEditor::BeginMoveFromText(POINT point) {
+    if (!visible_ || !selected_) { return; }
+    original_ = document_.annotations()[*selected_];
+    drag_origin_ = ToImagePoint(point);
+    transform_handle_ = -1;
+    transforming_ = true;
+    context_owns_transaction_ = false;
+    document_.BeginTransaction();
+    ::SetCapture(hwnd_);
+    ::SetFocus(hwnd_);
 }
-void ScreenshotEditor::UpdateTextFromControl() {
-    if (!editing_text_ || !selected_ || !text_edit_) { return; }
-    const int length = ::GetWindowTextLengthW(text_edit_);
-    std::wstring value(static_cast<size_t>(length) + 1, L'\0');
-    ::GetWindowTextW(text_edit_, value.data(), length + 1);
-    value.resize(length);
-    auto a = document_.annotations()[*selected_];
-    a.text = std::move(value);
-    document_.Replace(*selected_, a);
-    pending_ = std::move(a);
-    if (text_dispatch_depth_) {
-        text_layout_pending_ = true;
-    } else {
-        LayoutTextEditor();
-    }
-    Invalidate();
-}
-LRESULT CALLBACK ScreenshotEditor::TextEditProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR id, DWORD_PTR reference) {
-    auto* self = reinterpret_cast<ScreenshotEditor*>(reference);
-    if (message == WM_NCDESTROY) {
-        ::RemoveWindowSubclass(hwnd, TextEditProc, id);
-        return ::DefSubclassProc(hwnd, message, wparam, lparam);
-    }
-    if (message == WM_SHOWWINDOW) { ui::NativeRedrawGuard::VisibilityChanged(hwnd, wparam != 0); }
-    // The box grows with its text, and Windows shows the pointer it hides
-    // for typing at each such change: the editor keeps it hidden instead.
-    if (message == WM_CHAR) { self->typing_pointer_.Typed(self->hwnd_); }
-    if (message == WM_KILLFOCUS) { self->typing_pointer_.Restore(); }
-    if (message == WM_SETCURSOR || message == WM_LBUTTONDOWN) {
-        POINT point{};
-        ::GetCursorPos(&point);
-        ::ScreenToClient(hwnd, &point);
-        if (message == WM_LBUTTONDOWN) { point = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)}; }
-        RECT client{};
-        ::GetClientRect(hwnd, &client);
-        const LONG edge = ui::theme::Scaled(4, self->scale_);
-        const bool border = point.x < edge || point.y < edge || point.x >= client.right - edge || point.y >= client.bottom - edge;
-        if (border) {
-            if (message == WM_SETCURSOR) {
-                ::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL));
-                return TRUE;
-            }
-            ::ClientToScreen(hwnd, &point);
-            self->CommitPendingText();
-            if (self->visible_ && self->selected_) {
-                self->original_ = self->document_.annotations()[*self->selected_];
-                self->drag_origin_ = self->ToImagePoint(point);
-                self->transform_handle_ = -1;
-                self->transforming_ = true;
-                self->context_owns_transaction_ = false;
-                self->document_.BeginTransaction();
-                ::SetCapture(self->hwnd_);
-                ::SetFocus(self->hwnd_);
-            }
-            return 0;
-        }
-    }
-    if (message == WM_ERASEBKGND) { return 1; }
-    if (message == WM_PAINT || message == WM_PRINTCLIENT) {
-        PAINTSTRUCT ps{};
-        HDC dc = message == WM_PAINT ? ::BeginPaint(hwnd, &ps) : reinterpret_cast<HDC>(wparam);
-        RECT client{};
-        ::GetClientRect(hwnd, &client);
-        ::HideCaret(hwnd);
-        {
-            ui::PaintBuffer buffer(dc, client);
-            self->PaintTextEditor(buffer.dc());
-        }
-        ::ShowCaret(hwnd);
-        if (message == WM_PAINT) { ::EndPaint(hwnd, &ps); }
-        return 0;
-    }
-    if (message == WM_KEYDOWN && wparam == VK_ESCAPE) {
-        self->editing_text_ = false;
-        self->document_.CancelTransaction();
-        HWND host = self->text_host_;
-        self->text_host_ = self->text_edit_ = nullptr;
-        ::DestroyWindow(host);
-        self->selected_.reset();
-        self->ReflowToolbar();
-        self->Invalidate();
-        return 0;
-    }
-    if (message == WM_KEYDOWN && wparam == VK_RETURN && (::GetKeyState(VK_CONTROL) & 0x8000)) {
-        self->CommitPendingText();
-        return 0;
-    }
-    if (message == WM_KEYDOWN && wparam == 'A' && (::GetKeyState(VK_CONTROL) & 0x8000)) {
-        ::SendMessageW(hwnd, EM_SETSEL, 0, -1);
-        return 0;
-    }
-    if (message == WM_LBUTTONDBLCLK) {
-        self->last_text_double_ = ::GetTickCount();
-        self->last_text_point_ = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-    }
-    if (message == WM_LBUTTONDOWN && self->last_text_double_ && ::GetTickCount() - self->last_text_double_ <= ::GetDoubleClickTime() &&
-        std::abs(GET_X_LPARAM(lparam) - self->last_text_point_.x) <= ::GetSystemMetrics(SM_CXDOUBLECLK) &&
-        std::abs(GET_Y_LPARAM(lparam) - self->last_text_point_.y) <= ::GetSystemMetrics(SM_CYDOUBLECLK)) {
-        const size_t index = LOWORD(::SendMessageW(hwnd, EM_CHARFROMPOS, 0, lparam));
-        const auto& value = self->document_.annotations()[*self->selected_].text;
-        size_t start = std::min(index, value.size()), end = start;
-        while (start > 0 && value[start - 1] != L'\n') { --start; }
-        while (end < value.size() && value[end] != L'\n') { ++end; }
-        if (end < value.size()) { ++end; }
-        ::SendMessageW(hwnd, EM_SETSEL, start, end);
-        self->last_text_double_ = 0;
-        return 0;
-    }
-    const bool changes_pixels = (message >= WM_KEYFIRST && message <= WM_KEYLAST) ||
-                                (message >= WM_MOUSEFIRST && message <= WM_MOUSELAST) || message == EM_SETSEL || message == EM_REPLACESEL ||
-                                message == WM_SETTEXT || message == WM_SETFOCUS || message == WM_KILLFOCUS || message == WM_SIZE ||
-                                message == WM_CUT || message == WM_PASTE || message == WM_CLEAR || message == WM_UNDO || message == EM_UNDO ||
-                                message == WM_IME_COMPOSITION || message == WM_IME_ENDCOMPOSITION || message == WM_TIMER || message == WM_CAPTURECHANGED;
-    // The native caret stays hidden for the whole dispatch. EDIT would show it
-    // at its own GDI position first; it is placed against the rendered text
-    // below, by which time the control is invalid, and Windows does not erase
-    // a caret inside an update region. The first column would stay inverted
-    // until the next paint.
-    const bool caret_hidden = changes_pixels && ::HideCaret(hwnd) != FALSE;
-    const auto result = [&] {
-        ++self->text_dispatch_depth_;
-        // Typing is not suspended. Suspending redraw takes WS_VISIBLE away and
-        // gives it back, which Windows takes for pointer movement: the pointer
-        // it hides while the user types came back at every key. The control
-        // colour handler already keeps EDIT's own drawing off the screen.
-        const bool typing = message >= WM_KEYFIRST && message <= WM_KEYLAST;
-        ui::NativeRedrawGuard redraw(hwnd, changes_pixels && !typing);
-        // EDIT needs visibility for native caret/selection updates, even while
-        // its internal redraw flag suppresses synchronous GDI text painting.
-        const LONG_PTR style = ::GetWindowLongPtrW(hwnd, GWL_STYLE);
-        if (changes_pixels && (style & WS_VISIBLE) == 0) { ::SetWindowLongPtrW(hwnd, GWL_STYLE, style | WS_VISIBLE); }
-        const auto result = ::DefSubclassProc(hwnd, message, wparam, lparam);
-        --self->text_dispatch_depth_;
-        return result;
-    }();
-    if (!self->text_dispatch_depth_ && self->text_layout_pending_) {
-        self->text_layout_pending_ = false;
-        self->LayoutTextEditor();
-    }
-    if (changes_pixels && !self->text_dispatch_depth_ && ::IsWindow(hwnd) && ::GetFocus() == hwnd && self->selected_) {
-        DWORD start{}, end{};
-        ::SendMessageW(hwnd, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
-        // The native caret can be parked outside the old client bounds while
-        // typing grows the host. Position it against the rendered text after
-        // layout; native EDIT still owns selection, navigation and caret life.
-        if (start == end) {
-            const auto& a = self->document_.annotations()[*self->selected_];
-            auto layout = TextLayout(a);
-            float x{}, y{};
-            DWRITE_HIT_TEST_METRICS metrics{};
-            if (layout && SUCCEEDED(layout->HitTestTextPosition(start, FALSE, &x, &y, &metrics))) {
-                RECT format{};
-                ::SendMessageW(hwnd, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&format));
-                ::SetCaretPos(format.left + static_cast<int>(std::lround(x * self->zoom_)), format.top + static_cast<int>(std::lround(y * self->zoom_)));
-            }
-        }
-    }
-    // Fails harmlessly when the dispatch gave the caret away.
-    if (caret_hidden && ::IsWindow(hwnd)) { ::ShowCaret(hwnd); }
-    return result;
-}
-void ScreenshotEditor::PaintTextEditor(HDC dc) {
-    if (!text_edit_ || !selected_) { return; }
-    RECT bounds{};
-    ::GetWindowRect(text_edit_, &bounds);
-    RenderImage(dc, bounds);
-    DWORD start{}, end{};
-    ::SendMessageW(text_edit_, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
-    if (start == end) { return; }
-    const auto& a = document_.annotations()[*selected_];
-    auto layout = TextLayout(a);
-    if (!layout) { return; }
-    const float em = a.FontPixels();
-    const float inset = a.tool == ToolId::Tag ? em * 0.45f : a.style.text_mode == TextMode::Fill  ? em * 0.25f
-                                                         : a.style.text_mode == TextMode::Outline ? em * 0.075f
-                                                                                                  : 0;
-    // Layout units are image pixels; the host's pixels are scaled by the view.
-    const float x = (view_origin_.x - bounds.left) / zoom_ + a.points.front().x + inset + (a.tool == ToolId::Tag ? em * 0.9f : 0), y = (view_origin_.y - bounds.top) / zoom_ + a.points.front().y + inset;
-    UINT32 count{};
-    layout->HitTestTextRange(start, end - start, x, y, nullptr, 0, &count);
-    std::vector<DWRITE_HIT_TEST_METRICS> ranges(count);
-    if (SUCCEEDED(layout->HitTestTextRange(start, end - start, x, y, ranges.data(), count, &count))) {
-        for (const auto& r : ranges) {
-            RECT area{static_cast<LONG>(r.left * zoom_), static_cast<LONG>(r.top * zoom_), static_cast<LONG>(std::ceil((r.left + r.width) * zoom_)), static_cast<LONG>(std::ceil((r.top + r.height) * zoom_))};
-            ::InvertRect(dc, &area);
-        }
-    }
-}
-void ScreenshotEditor::CommitPendingText() {
-    typing_pointer_.Restore();
-    if (!editing_text_) { return; }
-    UpdateTextFromControl();
-    editing_text_ = false;
-    if (selected_ && document_.annotations()[*selected_].text.empty()) {
-        document_.Remove(*selected_);
-        selected_.reset();
-    }
-    document_.CommitTransaction();
-    if (text_host_) {
-        HWND host = text_host_;
-        text_host_ = text_edit_ = nullptr;
-        ::DestroyWindow(host);
-    }
+void ScreenshotEditor::TextCommitted() {
     has_pending_ = false;
     if (callbacks_.on_document_committed) { callbacks_.on_document_committed(); }
     Invalidate();
 }
-void ScreenshotEditor::OnCharacter(wchar_t character) {
-    if (!exporting_ && editing_text_ && text_edit_) { ::SendMessageW(text_edit_, WM_CHAR, character, 0); }
-}
 void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorBrush* brush) const {
     if (!selected_ || *selected_ >= document_.annotations().size()) { return; }
-    const auto& a = document_.annotations()[*selected_];
-    if (a.tool == ToolId::Watermark || a.points.empty()) { return; }
     // Frame and handles keep their size on screen at every scale of the view.
-    const float unit = scale_ / zoom_;
-    brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
-    const float width = kSelectionStroke * unit;
-    const auto box = NormalizedD2DRect(a.points.front(), a.points.back());
-    if (a.tool == ToolId::Text || a.tool == ToolId::Tag) {
-        auto r = a.bounds();
-        const float pad = kSelectionTextGap * unit;
-        r.left -= pad;
-        r.top -= pad;
-        r.right += pad;
-        r.bottom += pad;
-        target->DrawRoundedRectangle(D2D1::RoundedRect(r, 5 * unit, 5 * unit), brush, width);
-    } else if (a.tool == ToolId::Ellipse || (a.tool == ToolId::Spotlight && a.style.shape == SpotlightShape::Ellipse)) {
-        target->DrawEllipse(D2D1::Ellipse({(box.left + box.right) / 2, (box.top + box.bottom) / 2}, (box.right - box.left) / 2, (box.bottom - box.top) / 2), brush, width);
-    } else if (a.tool == ToolId::Pen || a.tool == ToolId::Line || a.tool == ToolId::Arrow) {
-        for (size_t i = 1; i < a.points.size(); ++i) { target->DrawLine(a.points[i - 1], a.points[i], brush, width, RoundStrokeStyle()); }
-    } else if (a.tool == ToolId::Spotlight && a.style.shape == SpotlightShape::Rounded) {
-        const float radius = std::min({(box.right - box.left) / 2, (box.bottom - box.top) / 2, 16 * a.style.image_scale});
-        target->DrawRoundedRectangle(D2D1::RoundedRect(box, radius, radius), brush, width);
-    } else {
-        const auto r = a.tool == ToolId::Mosaic && a.style.method == EffectMethod::Brush ? a.bounds() : box;
-        target->DrawRectangle(r, brush, width);
-    }
-    for (auto point : a.Handles()) {
-        brush->SetColor(D2D1::ColorF(D2D1::ColorF::White));
-        target->FillEllipse(D2D1::Ellipse(point, kHandleRadius * unit, kHandleRadius * unit), brush);
-        brush->SetColor(ui::theme::D2DColor(ui::theme::Current().focus));
-        target->DrawEllipse(D2D1::Ellipse(point, kHandleRadius * unit, kHandleRadius * unit), brush, kHandleStroke * unit);
-    }
+    DrawSelectionChrome(target, brush, document_.annotations()[*selected_], scale_ / zoom_);
 }
 
 // ---------------------------------------------------------------------------
@@ -3238,11 +1398,11 @@ void ScreenshotEditor::DrawSelection(ID2D1RenderTarget* target, ID2D1SolidColorB
 // ---------------------------------------------------------------------------
 
 RECT ScreenshotEditor::RebuildRedactedBase(const RECT* painting) {
-    const bool effect_preview = has_pending_ && (pending_.tool == ToolId::Mosaic || pending_.tool == ToolId::Spotlight);
+    const bool effect_preview = has_pending_ && IsBaseEffect(pending_.tool);
     if ((redaction_revision_ == document_.revision() && !effect_preview) || !has_image()) { return {}; }
     std::vector<RedactionEffect> effects;
     const auto add = [&](const Annotation& a) {
-        if ((a.tool != ToolId::Mosaic && a.tool != ToolId::Spotlight) || a.points.empty()) { return; }
+        if (!IsBaseEffect(a.tool) || a.points.empty()) { return; }
         RedactionEffect effect;
         effect.box = a.bounds();
         effect.strength = a.style.strength;
@@ -3381,7 +1541,7 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
     for (const auto& annotation : document_.annotations()) {
         DrawAnnotation(image_target_.Get(), annotation, image_brush_.Get(), false);
     }
-    if (has_pending_ && pending_.tool != ToolId::Mosaic && pending_.tool != ToolId::Spotlight) {
+    if (has_pending_ && !IsBaseEffect(pending_.tool)) {
         DrawAnnotation(image_target_.Get(), pending_, image_brush_.Get(), true);
     }
     DrawSelection(image_target_.Get(), image_brush_.Get());
@@ -3394,124 +1554,30 @@ void ScreenshotEditor::RenderImage(HDC dc, const RECT& bounds, const RECT* repai
     }
 }
 
-void ScreenshotEditor::PaintToolbar(HDC dc) const {
-    using namespace ui;
-    RECT client{0, 0, client_width_, client_height_};
-    PaintBuffer buffer(dc, client);
-    dc = buffer.dc();
-    theme::DrawPanel(dc, client, scale_);
-    theme::DrawGrip(dc, {0, 0, static_cast<LONG>(kIslandGrip * scale_), toolbar_rect_.bottom}, scale_);
-    for (const auto& split : main_separators_) { DrawSeparator(dc, split, scale_); }
-}
-
 // ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
 
 platform::BgraImage ScreenshotEditor::Composite() {
     RebuildRedactedBase();
-
-    platform::BgraImage output;
-    auto& graphics = platform::GraphicsEnvironment::Get();
-    const platform::BgraImage& base_image = redaction_.image();
-    if (!graphics.EnsureInitialized() || base_image.empty()) {
-        return output;
-    }
-    // Once the pixels exist the frame cannot move, so the export is always the
-    // whole image: the captured region, or the stitched document.
-    if (document_.annotations().empty()) {
-        return base_image;  // Nothing to composite.
-    }
-
-    // Always the captured resolution - never the window or preview size. A
-    // screenshot is one pass; a tall document is composited in bands, each
-    // with the same annotation list shifted to its rows.
-    const int width = base_image.width;
-    const int height = base_image.height;
-    const int band_rows = height <= kWholeBitmapRows ? height : kCompositeBandRows;
-    const D2D1_RENDER_TARGET_PROPERTIES properties = D2D1::RenderTargetProperties(
-        D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
-        96.0f, 96.0f);
-    const D2D1_BITMAP_PROPERTIES base_properties =
-        D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE), 96.0f, 96.0f);
-    output.Reset(width, height);
-    for (int top = 0; top < height; top += band_rows) {
-        const int rows = std::min(band_rows, height - top);
-        ComPtr<IWICBitmap> wic_bitmap;
-        HRESULT hr = graphics.wic_factory()->CreateBitmap(static_cast<UINT>(width), static_cast<UINT>(rows),
-                                                          GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &wic_bitmap);
-        if (FAILED(hr)) {
-            platform::LogHresult(L"WIC CreateBitmap(composite)", hr);
-            return {};
-        }
-        ComPtr<ID2D1RenderTarget> render_target;
-        hr = graphics.d2d_factory()->CreateWicBitmapRenderTarget(wic_bitmap.Get(), properties, &render_target);
-        if (FAILED(hr)) {
-            platform::LogHresult(L"CreateWicBitmapRenderTarget", hr);
-            return {};
-        }
-
-        ComPtr<ID2D1Bitmap> base;
-        hr = render_target->CreateBitmap(D2D1::SizeU(static_cast<UINT32>(width), static_cast<UINT32>(rows)),
-                                         base_image.row(top), static_cast<UINT32>(base_image.stride_bytes()),
-                                         base_properties, &base);
-        if (FAILED(hr)) {
-            platform::LogHresult(L"ID2D1RenderTarget::CreateBitmap", hr);
-        }
-        ComPtr<ID2D1SolidColorBrush> brush;
-        render_target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &brush);
-        if (!base || !brush) { return {}; }
-
-        render_target->BeginDraw();
-        render_target->Clear(D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f));
-        render_target->DrawBitmap(base.Get(),
-                                  D2D1::RectF(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(rows)));
-        render_target->SetTransform(D2D1::Matrix3x2F::Translation(0.0f, -static_cast<float>(top)));
-        for (const Annotation& annotation : document_.annotations()) {
-            DrawAnnotation(render_target.Get(), annotation, brush.Get(), false);
-        }
-        hr = render_target->EndDraw();
-        if (FAILED(hr)) {
-            platform::LogHresult(L"Composite EndDraw", hr);
-            return {};
-        }
-
-        WICRect lock_rect{0, 0, static_cast<INT>(width), static_cast<INT>(rows)};
-        ComPtr<IWICBitmapLock> lock;
-        hr = wic_bitmap->Lock(&lock_rect, WICBitmapLockRead, &lock);
-        if (FAILED(hr)) {
-            platform::LogHresult(L"IWICBitmap::Lock", hr);
-            return {};
-        }
-        UINT stride = 0;
-        UINT buffer_size = 0;
-        BYTE* data = nullptr;
-        if (FAILED(lock->GetStride(&stride)) || FAILED(lock->GetDataPointer(&buffer_size, &data)) || data == nullptr) {
-            return {};
-        }
-        for (int y = 0; y < rows; ++y) {
-            std::memcpy(output.row(top + y), data + static_cast<size_t>(y) * stride, output.stride_bytes());
-        }
-    }
-    output.MakeOpaque();
-    return output;
+    return CompositeAnnotations(redaction_.image(), document_.annotations());
 }
 platform::BgraImage ScreenshotEditor::CompositeCommitted() {
     completing_ = true;
-    CommitPendingText();
+    text_editor_.Commit();
     completing_ = false;
     return Composite();
 }
 
 bool ScreenshotEditor::SaveToFile() {
-    if (exporting_) {
+    if (exporting()) {
         RefuseWhileExporting();
         return false;
     }
     if (!EnsureImage()) { return false; }
-    CommitPendingText();
+    text_editor_.Commit();
     // Committing the text can complete the screenshot, which copies it.
-    if (!visible_ || exporting_) { return false; }
+    if (!visible_ || exporting()) { return false; }
     platform::BgraImage composite = Composite();
     if (composite.empty()) {
         ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_NOTHING_TO_SAVE));
@@ -3531,73 +1597,58 @@ std::optional<ui::ImageSaveDestination> ScreenshotEditor::ChooseSaveDestination(
         // dialog. Freeze their timers/placement during its nested message loop.
         dialog = true;
         modal_active_ = true;
-        ShowBrushPopup(false);
-        ::KillTimer(context_, 0xEA61);
-        context_fade_started_ = 0;
-        ::KillTimer(context_, 0xEA63);
-        ::SendMessageW(Control(2600), CB_SHOWDROPDOWN, FALSE, 0);
-        if (tooltip_) {
-            ::SendMessageW(tooltip_, TTM_POP, 0, 0);
-            ::SendMessageW(tooltip_, TTM_ACTIVATE, FALSE, 0);
-        }
-        ::ShowWindow(context_, SW_HIDE);
+        context_panel_.ShowBrushPopup(false);
+        context_panel_.StopForDialog();
+        toolbar_.SuspendTooltips();
+        ::ShowWindow(context_panel_.island(), SW_HIDE);
     });
     if (dialog) {
         modal_active_ = false;
-        if (tooltip_) { ::SendMessageW(tooltip_, TTM_ACTIVATE, TRUE, 0); }
-        if (visible_) { PlaceContext(); }
+        toolbar_.ResumeTooltips();
+        if (visible_) { context_panel_.Place(); }
     }
     return destination;
 }
 
 bool ScreenshotEditor::StartExport(platform::ImageExportTarget target, std::shared_ptr<const platform::BgraImage> image,
                                    ui::ImageSaveDestination destination) {
-    platform::ImageExportRequest request{image, target, destination.path};
-    if (!export_job_.Start(hwnd_, platform::kMsgImageExportCompleted, std::move(request))) {
+    if (!export_.Start(hwnd_, region_, target, std::move(image), std::move(destination))) {
         // Another export of Easnap is still running, from a pin or a Scrollshot.
         RefuseWhileExporting();
         return false;
     }
-    exporting_ = true;
-    export_image_ = std::move(image);
-    export_destination_ = std::move(destination);
-    const bool copy = target == platform::ImageExportTarget::Clipboard;
-    export_notice_ = ui::ShowCaptureProgressNotice(
-        region_, strings::Get(copy ? IDS_SCROLLSHOT_STATUS_COPYING : IDS_SCROLLSHOT_STATUS_SAVING));
-    ShowBrushPopup(false);
-    // The property island changes the image as well.
-    if (context_) { ::EnableWindow(context_, FALSE); }
-    SyncToolbarControls();
-    ui::RefreshCursor();
     return true;
 }
 
-void ScreenshotEditor::EndExport() {
-    exporting_ = false;
-    ui::CloseCaptureNotice(export_notice_);
-    export_notice_ = nullptr;
-    export_image_.reset();
-    export_destination_ = {};
-    if (context_) { ::EnableWindow(context_, TRUE); }
+void ScreenshotEditor::ExportStarted() {
+    context_panel_.ShowBrushPopup(false);
+    // The property island changes the image as well.
+    if (context_panel_.island()) { ::EnableWindow(context_panel_.island(), FALSE); }
+    SyncToolbarControls();
+}
+
+void ScreenshotEditor::ExportEnded() {
+    if (context_panel_.island()) { ::EnableWindow(context_panel_.island(), TRUE); }
     SyncToolbarControls();
 }
 
 void ScreenshotEditor::OnExportCompleted(platform::ImageExportJob::Generation generation) {
-    std::optional<platform::ImageExportResult> result = export_job_.TryTake(generation);
-    if (!result) { return; }  // From an export that was dropped.
-    std::shared_ptr<const platform::BgraImage> image = export_image_;
-    const ui::ImageSaveDestination destination = export_destination_;
-    EndExport();
+    std::optional<FinishedExport> finished = export_.TakeResult(generation);
+    if (!finished) { return; }  // From an export that was dropped.
+    platform::ImageExportResult& result = finished->result;
+    std::shared_ptr<const platform::BgraImage> image = std::move(finished->image);
+    const ui::ImageSaveDestination destination = std::move(finished->destination);
     ui::RefreshCursor();
-    const bool copy = result->target == platform::ImageExportTarget::Clipboard;
-    if (result->status == platform::ImageExportStatus::Succeeded) {
-        if (copy && platform::PublishClipboardImage(hwnd_, result->clipboard)) {
+    const bool published = result.status == platform::ImageExportStatus::Succeeded &&
+                           result.target == platform::ImageExportTarget::Clipboard &&
+                           platform::PublishClipboardImage(hwnd_, result.clipboard);
+    switch (ui::ChooseImageExportOutcome(result.status, result.target, published, destination.quick, visible_)) {
+        case ui::ImageExportOutcome::Copied:
             platform::LogMessage(L"Screenshot copied to the clipboard");
             ui::ShowCaptureCopiedNotice(region_);
             Close(true);
             return;
-        }
-        if (!copy) {
+        case ui::ImageExportOutcome::Saved:
             ui::RecordImageSaved(settings_, destination);
             if (destination.quick) {
                 platform::LogMessage(L"Screenshot saved without a dialog");
@@ -3607,22 +1658,26 @@ void ScreenshotEditor::OnExportCompleted(platform::ImageExportJob::Generation ge
             }
             Close(true);
             return;
+        case ui::ImageExportOutcome::RetryWithDialog: {
+            // The screenshots folder could not be written: the dialog offers
+            // every other place for the same image.
+            auto chosen = ChooseSaveDestination(false);
+            if (chosen && visible_ &&
+                StartExport(platform::ImageExportTarget::File, std::move(image), std::move(*chosen))) {
+                return;
+            }
+            break;
         }
-    }
-    if (result->status == platform::ImageExportStatus::Failed && !copy && destination.quick && visible_) {
-        // The screenshots folder could not be written: the dialog offers
-        // every other place for the same image.
-        auto chosen = ChooseSaveDestination(false);
-        if (chosen && visible_ && StartExport(platform::ImageExportTarget::File, std::move(image), std::move(*chosen))) {
-            return;
-        }
-    } else if (result->status == platform::ImageExportStatus::Failed) {
-        // Failure safety: the session stays open so no capture is lost.
-        ui::ShowCaptureStatusNotice(region_, strings::Get(copy ? IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE
-                                                               : IDS_EDITOR_NOTICE_SAVE_FAILED));
-    } else if (result->status == platform::ImageExportStatus::Succeeded) {
-        // Prepared, but the clipboard could not be opened.
-        ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
+        case ui::ImageExportOutcome::CopyFailed:
+            // Failure safety: the session stays open so no capture is lost.
+            // Also when the image was prepared but the clipboard could not be
+            // opened.
+            ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_CLIPBOARD_UNAVAILABLE));
+            break;
+        case ui::ImageExportOutcome::SaveFailed:
+            ui::ShowCaptureStatusNotice(region_, strings::Get(IDS_EDITOR_NOTICE_SAVE_FAILED));
+            break;
+        case ui::ImageExportOutcome::Cancelled: break;
     }
     Invalidate();
     if (callbacks_.on_export_ended) { callbacks_.on_export_ended(); }

@@ -10,11 +10,17 @@
 #include <cwchar>
 #include <utility>
 
+#include "platform/app_messages.h"
 #include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
+#include "ui/control_ids.h"
 #include "ui/trim_layout.h"
 #include "ui/ui_theme.h"
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
+#include "ui/window_chrome.h"
 #include <UIAutomation.h>
 
 namespace easnap::ui {
@@ -24,14 +30,31 @@ constexpr wchar_t kWindowClassName[] = L"EasnapTrimWindow";
 constexpr wchar_t kTimelineClassName[] = L"EasnapTrimTimeline";
 constexpr wchar_t kVideoClassName[] = L"EasnapTrimVideo";
 static_assert(kTrimChromeHeightDip == kWindowChromeHeight);
-constexpr UINT kPreviewEventMessage = WM_APP + 1;
-constexpr UINT_PTR kStatusTimerId = 1;
 constexpr UINT kStatusTimerIntervalMs = 100;
-constexpr int kIdPlayPause = 100;
-constexpr int kIdSetIn = 101;
-constexpr int kIdSetOut = 102;
-constexpr int kIdCancelExport = 103;
-constexpr int kIdCopy = 104;
+
+/// The trim window's buttons, indexes into kTrimButtons, in creation order.
+enum TrimButton : size_t {
+    kPlayPauseButton,
+    kSetInButton,
+    kSetOutButton,
+    kSaveButton,
+    kCopyButton,
+    kCancelExportButton,
+    kDiscardButton,
+    kTrimButtonCount
+};
+/// One row per button of the trim window; none has a tooltip. Play/Pause
+/// shows Pause while playing. Discard reads "Close" for an opened video,
+/// which is only closed and never deleted (ADR-040).
+constexpr std::array<StyledButtonRow, kTrimButtonCount> kTrimButtons{{
+    {kTrimPlayPause, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_PLAY_BUTTON, {Icon::Play}, 0, Icon::Pause, IDS_TRIM_PAUSE_BUTTON},
+    {kTrimSetIn, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_SET_IN_BUTTON},
+    {kTrimSetOut, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_SET_OUT_BUTTON},
+    {IDOK, WS_TABSTOP | BS_DEFPUSHBUTTON, IDS_TRIM_SAVE_BUTTON, {Icon::Save, ButtonRole::Primary}},
+    {kTrimCopy, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_COPY_BUTTON, {Icon::Copy}},
+    {kTrimCancelExport, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_CANCEL_EXPORT_BUTTON},
+    {IDCANCEL, WS_TABSTOP | BS_PUSHBUTTON, IDS_TRIM_DISCARD_BUTTON, {Icon::Discard}, 0, Icon::None, IDS_EXTERNAL_TRIM_CLOSE_BUTTON},
+}};
 
 constexpr DWORD kWindowStyle = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
 // Per-control buffers alone leave holes while USER32 relocates a child tree.
@@ -192,7 +215,7 @@ bool TrimWindow::Open(const std::wstring& source_path,
 
     preview_ = media::CreateMfPlayPreview();
     if (preview_ == nullptr ||
-        !preview_->Open(source_path, video_, hwnd_, kPreviewEventMessage)) {
+        !preview_->Open(source_path, video_, hwnd_, kMsgTrimPreviewEvent)) {
         const bool external = source_.kind == app::TrimSourceKind::External;
         if (preview_ != nullptr) {
             SetStatus(PreviewFailureText(preview_->snapshot(), external), true);
@@ -203,7 +226,7 @@ bool TrimWindow::Open(const std::wstring& source_path,
     }
 
     visible_ = true;
-    ::SetTimer(hwnd_, kStatusTimerId, kStatusTimerIntervalMs, nullptr);
+    ::SetTimer(hwnd_, kTrimStatusTimer, kStatusTimerIntervalMs, nullptr);
     ::ShowWindow(hwnd_, SW_SHOW);
     ::SetForegroundWindow(hwnd_);
     ::SetFocus(play_pause_);
@@ -313,7 +336,7 @@ void TrimWindow::Hide() {
     closing_ = true;
     visible_ = false;
     if (hwnd_ != nullptr) {
-        ::KillTimer(hwnd_, kStatusTimerId);
+        ::KillTimer(hwnd_, kTrimStatusTimer);
         if (::GetCapture() == timeline_) { ::ReleaseCapture(); }
         timeline_drag_ = TimelineDrag::None;
         timeline_seek_position_.reset();
@@ -327,7 +350,7 @@ void TrimWindow::ReleaseMedia() {
         preview_.reset();
     }
     if (hwnd_ != nullptr) {
-        ::KillTimer(hwnd_, kStatusTimerId);
+        ::KillTimer(hwnd_, kTrimStatusTimer);
     }
 }
 
@@ -338,8 +361,8 @@ void TrimWindow::Destroy() {
     ReleaseMedia();
     timeline_accessibility_.reset();
     if (hwnd_ != nullptr) {
-        ::KillTimer(hwnd_, kStatusTimerId);
-        ::SetWindowLongPtrW(hwnd_, GWLP_USERDATA, 0);
+        ::KillTimer(hwnd_, kTrimStatusTimer);
+        platform::UnbindWindowOwner(hwnd_);
         ::DestroyWindow(hwnd_);
         hwnd_ = nullptr;
     }
@@ -381,47 +404,6 @@ bool TrimWindow::ProcessDialogMessage(MSG& message) const {
     return hwnd_ != nullptr && visible_ && (message.hwnd == hwnd_ || ::IsChild(hwnd_, message.hwnd)) &&
            (ConsumePopupInput(message.message, message.wParam) || ActivateFocusedButton(message, hwnd_) ||
             ::IsDialogMessageW(hwnd_, &message) != FALSE);
-}
-
-LRESULT CALLBACK TrimWindow::WindowProc(HWND hwnd, UINT message, WPARAM wparam,
-                                        LPARAM lparam) {
-    if (message == WM_NCCREATE) {
-        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-    }
-    auto* self = reinterpret_cast<TrimWindow*>(
-        ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    return self != nullptr ? self->HandleMessage(hwnd, message, wparam, lparam)
-                           : ::DefWindowProcW(hwnd, message, wparam, lparam);
-}
-
-LRESULT CALLBACK TrimWindow::TimelineProc(HWND hwnd, UINT message,
-                                          WPARAM wparam, LPARAM lparam) {
-    if (message == WM_NCCREATE) {
-        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-    }
-    auto* self = reinterpret_cast<TrimWindow*>(
-        ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    return self != nullptr
-               ? self->HandleTimelineMessage(hwnd, message, wparam, lparam)
-               : ::DefWindowProcW(hwnd, message, wparam, lparam);
-}
-
-LRESULT CALLBACK TrimWindow::VideoProc(HWND hwnd, UINT message, WPARAM wparam,
-                                       LPARAM lparam) {
-    if (message == WM_NCCREATE) {
-        const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-        ::SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                            reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-    }
-    auto* self = reinterpret_cast<TrimWindow*>(
-        ::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    return self != nullptr
-               ? self->HandleVideoMessage(hwnd, message, wparam, lparam)
-               : ::DefWindowProcW(hwnd, message, wparam, lparam);
 }
 
 LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
@@ -467,7 +449,7 @@ LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
             if (!closing_) { RequestClose(); }
             return 0;
         case WM_TIMER:
-            if (wparam == kStatusTimerId && !closing_) {
+            if (wparam == kTrimStatusTimer && !closing_) {
                 if (exporting_ && !::IsWindowVisible(progress_) && ::GetTickCount64() >= export_indicator_due_ms_) { UpdateStatusLayout(); }
                 UpdatePosition();
                 if (!closing_ && callbacks_.on_status_tick) {
@@ -475,7 +457,7 @@ LRESULT TrimWindow::HandleMessage(HWND hwnd, UINT message, WPARAM wparam,
                 }
             }
             return 0;
-        case kPreviewEventMessage:
+        case kMsgTrimPreviewEvent:
             if (!closing_) { UpdatePreviewState(); }
             return 0;
         case WM_SIZE:
@@ -528,47 +510,15 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
         case theme::kChangedMessage:
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
-        case WM_GETDLGCODE: {
-            const bool backwards = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            const bool internal_tab = backwards ? timeline_focus_ > 0 : timeline_focus_ < 2;
-            return DLGC_WANTARROWS | DLGC_WANTCHARS | (internal_tab ? DLGC_WANTTAB : 0);
-        }
+        case WM_GETDLGCODE:
+            return OnTimelineDialogCode();
         case WM_SETFOCUS:
         case WM_KILLFOCUS:
             if (timeline_accessibility_) { timeline_accessibility_->NotifyChanged(); }
             ::InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
-        case WM_LBUTTONDOWN: {
-            if (!range_.valid() || exporting_) {
-                return 0;
-            }
-            ::SetFocus(hwnd);
-            const int x = GET_X_LPARAM(lparam);
-            const int left = TimelineTrackLeft(hwnd);
-            const int width = TimelineTrackWidth(hwnd);
-            const int in_x = left + static_cast<int>(
-                                        range_.TimelineOffsetFromTime(range_.in(),
-                                                                      static_cast<uint32_t>(width)));
-            const int out_x = left + static_cast<int>(
-                                         range_.TimelineOffsetFromTime(range_.out(),
-                                                                       static_cast<uint32_t>(width)));
-            const int tolerance = ScaleDip(12, scale_);
-            if (std::abs(x - in_x) <= tolerance &&
-                std::abs(x - in_x) <= std::abs(x - out_x)) {
-                timeline_drag_ = TimelineDrag::In;
-            } else if (std::abs(x - out_x) <= tolerance) {
-                timeline_drag_ = TimelineDrag::Out;
-            } else {
-                timeline_drag_ = TimelineDrag::Seek;
-            }
-            timeline_focus_ = timeline_drag_ == TimelineDrag::In ? 0 : timeline_drag_ == TimelineDrag::Out ? 2
-                                                                                                           : 1;
-            if (timeline_accessibility_) { timeline_accessibility_->NotifyChanged(); }
-            timeline_seek_position_.reset();
-            ::SetCapture(hwnd);
-            UpdateTimelineFromPoint(x, timeline_drag_);
-            return 0;
-        }
+        case WM_LBUTTONDOWN:
+            return OnTimelinePointerDown(hwnd, lparam);
         case WM_MOUSEMOVE:
             if (::GetCapture() == hwnd && timeline_drag_ != TimelineDrag::None) {
                 UpdateTimelineFromPoint(GET_X_LPARAM(lparam), timeline_drag_);
@@ -586,45 +536,9 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
             timeline_drag_ = TimelineDrag::None;
             timeline_seek_position_.reset();
             return 0;
-        case WM_KEYDOWN: {
-            if (wparam == VK_TAB) {
-                FocusTimeline(std::clamp(timeline_focus_ + ((::GetKeyState(VK_SHIFT) & 0x8000) != 0 ? -1 : 1), 0, 2));
-                return 0;
-            }
-            if (!range_.valid() || exporting_) {
-                return 0;
-            }
-            const int editing = (::GetKeyState(VK_SHIFT) & 0x8000) != 0 ? 0 : (::GetKeyState(VK_CONTROL) & 0x8000) != 0 ? 2
-                                                                                                                        : timeline_focus_;
-            media::MediaTime candidate = editing == 0 ? range_.in() : editing == 2 ? range_.out()
-                                                                                   : range_.current();
-            if (wparam == VK_HOME) {
-                candidate = media::MediaTime::zero();
-            } else if (wparam == VK_END) {
-                candidate = range_.source_duration();
-            } else if (wparam == VK_LEFT || wparam == VK_RIGHT) {
-                const media::MediaTime step{10'000'000};
-                candidate += wparam == VK_LEFT ? -step : step;
-            } else {
-                break;
-            }
-            candidate = (std::clamp)(candidate, media::MediaTime::zero(),
-                                     range_.source_duration());
-            if (editing == 0) {
-                if (range_.SetIn(candidate)) {
-                    ReconcileRangeEdit();
-                }
-            } else if (editing == 2) {
-                if (range_.SetOut(candidate)) {
-                    ReconcileRangeEdit();
-                }
-            } else {
-                SeekTo(candidate);
-            }
-            UpdateLabels();
-            ::InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        }
+        case WM_KEYDOWN:
+            if (const std::optional<LRESULT> result = OnTimelineKeyDown(hwnd, wparam)) { return *result; }
+            break;
         case WM_PAINT:
             PaintTimeline(hwnd);
             return 0;
@@ -638,6 +552,84 @@ LRESULT TrimWindow::HandleTimelineMessage(HWND hwnd, UINT message,
             break;
     }
     return ::DefWindowProcW(hwnd, message, wparam, lparam);
+}
+
+LRESULT TrimWindow::OnTimelineDialogCode() const {
+    const bool backwards = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool internal_tab = backwards ? timeline_focus_ > 0 : timeline_focus_ < 2;
+    return DLGC_WANTARROWS | DLGC_WANTCHARS | (internal_tab ? DLGC_WANTTAB : 0);
+}
+
+LRESULT TrimWindow::OnTimelinePointerDown(HWND hwnd, LPARAM lparam) {
+    if (!range_.valid() || exporting_) {
+        return 0;
+    }
+    ::SetFocus(hwnd);
+    const int x = GET_X_LPARAM(lparam);
+    const int left = TimelineTrackLeft(hwnd);
+    const int width = TimelineTrackWidth(hwnd);
+    const int in_x = left + static_cast<int>(
+                                range_.TimelineOffsetFromTime(range_.in(),
+                                                              static_cast<uint32_t>(width)));
+    const int out_x = left + static_cast<int>(
+                                 range_.TimelineOffsetFromTime(range_.out(),
+                                                               static_cast<uint32_t>(width)));
+    const int tolerance = ScaleDip(12, scale_);
+    if (std::abs(x - in_x) <= tolerance &&
+        std::abs(x - in_x) <= std::abs(x - out_x)) {
+        timeline_drag_ = TimelineDrag::In;
+    } else if (std::abs(x - out_x) <= tolerance) {
+        timeline_drag_ = TimelineDrag::Out;
+    } else {
+        timeline_drag_ = TimelineDrag::Seek;
+    }
+    timeline_focus_ = timeline_drag_ == TimelineDrag::In ? 0 : timeline_drag_ == TimelineDrag::Out ? 2
+                                                                                                   : 1;
+    if (timeline_accessibility_) { timeline_accessibility_->NotifyChanged(); }
+    timeline_seek_position_.reset();
+    ::SetCapture(hwnd);
+    UpdateTimelineFromPoint(x, timeline_drag_);
+    return 0;
+}
+
+std::optional<LRESULT> TrimWindow::OnTimelineKeyDown(HWND hwnd, WPARAM wparam) {
+    if (wparam == VK_TAB) {
+        FocusTimeline(std::clamp(timeline_focus_ + ((::GetKeyState(VK_SHIFT) & 0x8000) != 0 ? -1 : 1), 0, 2));
+        return 0;
+    }
+    if (!range_.valid() || exporting_) {
+        return 0;
+    }
+    const int editing = (::GetKeyState(VK_SHIFT) & 0x8000) != 0 ? 0 : (::GetKeyState(VK_CONTROL) & 0x8000) != 0 ? 2
+                                                                                                                : timeline_focus_;
+    media::MediaTime candidate = editing == 0 ? range_.in() : editing == 2 ? range_.out()
+                                                                           : range_.current();
+    if (wparam == VK_HOME) {
+        candidate = media::MediaTime::zero();
+    } else if (wparam == VK_END) {
+        candidate = range_.source_duration();
+    } else if (wparam == VK_LEFT || wparam == VK_RIGHT) {
+        const media::MediaTime step{10'000'000};
+        candidate += wparam == VK_LEFT ? -step : step;
+    } else {
+        return std::nullopt;
+    }
+    candidate = (std::clamp)(candidate, media::MediaTime::zero(),
+                             range_.source_duration());
+    if (editing == 0) {
+        if (range_.SetIn(candidate)) {
+            ReconcileRangeEdit();
+        }
+    } else if (editing == 2) {
+        if (range_.SetOut(candidate)) {
+            ReconcileRangeEdit();
+        }
+    } else {
+        SeekTo(candidate);
+    }
+    UpdateLabels();
+    ::InvalidateRect(hwnd, nullptr, FALSE);
+    return 0;
 }
 
 LRESULT TrimWindow::HandleVideoMessage(HWND hwnd, UINT message, WPARAM wparam,
@@ -673,9 +665,8 @@ LRESULT TrimWindow::HandleVideoMessage(HWND hwnd, UINT message, WPARAM wparam,
 bool TrimWindow::EnsureWindowClasses() {
     static const bool registered = [] {
         WNDCLASSEXW window_class{};
-        window_class.cbSize = sizeof(window_class);
         window_class.style = 0;
-        window_class.lpfnWndProc = WindowProc;
+        window_class.lpfnWndProc = platform::BoundWindowProc<TrimWindow, &TrimWindow::HandleMessage>;
         window_class.hInstance = ::GetModuleHandleW(nullptr);
         window_class.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
         window_class.hIcon = platform::LoadAppIcon(::GetSystemMetrics(SM_CXICON));
@@ -683,39 +674,34 @@ bool TrimWindow::EnsureWindowClasses() {
             platform::LoadAppIcon(::GetSystemMetrics(SM_CXSMICON));
         window_class.hbrBackground = nullptr; // Every exposed pixel is painted by us.
         window_class.lpszClassName = kWindowClassName;
-        if (::RegisterClassExW(&window_class) == 0 &&
-            ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        if (!platform::RegisterWindowClass(window_class)) {
             return false;
         }
 
         WNDCLASSEXW timeline_class{};
-        timeline_class.cbSize = sizeof(timeline_class);
         timeline_class.style = CS_HREDRAW | CS_VREDRAW;
-        timeline_class.lpfnWndProc = TimelineProc;
+        timeline_class.lpfnWndProc = platform::BoundWindowProc<TrimWindow, &TrimWindow::HandleTimelineMessage>;
         timeline_class.hInstance = ::GetModuleHandleW(nullptr);
         timeline_class.hCursor = ::LoadCursorW(nullptr, IDC_HAND);
         timeline_class.hbrBackground = nullptr;
         timeline_class.lpszClassName = kTimelineClassName;
-        if (::RegisterClassExW(&timeline_class) == 0 &&
-            ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        if (!platform::RegisterWindowClass(timeline_class)) {
             return false;
         }
 
         WNDCLASSEXW video_class{};
-        video_class.cbSize = sizeof(video_class);
-        video_class.lpfnWndProc = VideoProc;
+        video_class.lpfnWndProc = platform::BoundWindowProc<TrimWindow, &TrimWindow::HandleVideoMessage>;
         video_class.hInstance = ::GetModuleHandleW(nullptr);
         video_class.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
         video_class.hbrBackground = nullptr;
         video_class.lpszClassName = kVideoClassName;
-        return ::RegisterClassExW(&video_class) != 0 ||
-               ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+        return platform::RegisterWindowClass(video_class);
     }();
     return registered;
 }
 
 bool TrimWindow::CreateControls() {
-    // VideoProc dispatches through GWLP_USERDATA just like TimelineProc. The
+    // The video child dispatches through its bound owner like the timeline. The
     // generic control factory supplies no owner, leaving paint/resize handlers
     // unreachable and exposing stale pixels around the asynchronous presenter.
     video_ = ::CreateWindowExW(0, kVideoClassName, L"",
@@ -735,27 +721,16 @@ bool TrimWindow::CreateControls() {
         0, kTimelineClassName, strings::Get(IDS_TRIM_TIMELINE_NAME),
         WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 1, 1, hwnd_, nullptr,
         ::GetModuleHandleW(nullptr), this);
-    play_pause_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_PLAY_BUTTON),
-                                WS_TABSTOP | BS_PUSHBUTTON, kIdPlayPause);
-    set_in_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SET_IN_BUTTON),
-                            WS_TABSTOP | BS_PUSHBUTTON, kIdSetIn);
-    set_out_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SET_OUT_BUTTON),
-                             WS_TABSTOP | BS_PUSHBUTTON, kIdSetOut);
-    save_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_SAVE_BUTTON),
-                          WS_TABSTOP | BS_DEFPUSHBUTTON, IDOK);
-    copy_ = CreateControl(L"BUTTON", strings::Get(IDS_TRIM_COPY_BUTTON),
-                          WS_TABSTOP | BS_PUSHBUTTON, kIdCopy);
-    cancel_export_ = CreateControl(L"BUTTON",
-                                   strings::Get(IDS_TRIM_CANCEL_EXPORT_BUTTON),
-                                   WS_TABSTOP | BS_PUSHBUTTON,
-                                   kIdCancelExport);
+    play_pause_ = CreateStyledButton(hwnd_, kTrimButtons[kPlayPauseButton], WS_VISIBLE);
+    set_in_ = CreateStyledButton(hwnd_, kTrimButtons[kSetInButton], WS_VISIBLE);
+    set_out_ = CreateStyledButton(hwnd_, kTrimButtons[kSetOutButton], WS_VISIBLE);
+    save_ = CreateStyledButton(hwnd_, kTrimButtons[kSaveButton], WS_VISIBLE);
+    copy_ = CreateStyledButton(hwnd_, kTrimButtons[kCopyButton], WS_VISIBLE);
+    cancel_export_ = CreateStyledButton(hwnd_, kTrimButtons[kCancelExportButton], WS_VISIBLE);
     // The same cell either way: a recording is discarded, an opened video is
     // only closed and never deleted (ADR-040).
-    discard_ = CreateControl(L"BUTTON",
-                             strings::Get(source_.kind == app::TrimSourceKind::External
-                                              ? IDS_EXTERNAL_TRIM_CLOSE_BUTTON
-                                              : IDS_TRIM_DISCARD_BUTTON),
-                             WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
+    discard_ = CreateStyledButton(hwnd_, kTrimButtons[kDiscardButton], WS_VISIBLE, {},
+                                  source_.kind == app::TrimSourceKind::External);
     progress_ = CreateControl(PROGRESS_CLASSW, L"", PBS_SMOOTH, -1);
     if (progress_ && !StyleProgress(progress_)) { return false; }
     if (progress_ != nullptr) {
@@ -764,10 +739,6 @@ bool TrimWindow::CreateControls() {
     if (timeline_) {
         timeline_accessibility_ = std::make_unique<TimelineAccessibility>(timeline_, [this] { return AccessibleTimeline(); }, [this](int index, double value) { return SetAccessibleTimelineValue(index, value); }, [this](int index) { FocusTimeline(index); });
     }
-    UpdateButtonStyle(play_pause_, {Icon::Play});
-    UpdateButtonStyle(save_, {Icon::Save, ButtonRole::Primary});
-    UpdateButtonStyle(copy_, {Icon::Copy});
-    UpdateButtonStyle(discard_, {Icon::Discard});
     SetControlVisible(cancel_export_, false);
     SetControlVisible(progress_, false);
     return video_ != nullptr && time_label_ != nullptr &&
@@ -786,10 +757,6 @@ HWND TrimWindow::CreateControl(const wchar_t* class_name, const wchar_t* text,
             ? nullptr
             : reinterpret_cast<HMENU>(static_cast<INT_PTR>(identifier)),
         ::GetModuleHandleW(nullptr), nullptr);
-    if (control && ::lstrcmpW(class_name, L"BUTTON") == 0 && !StyleButton(control)) {
-        ::DestroyWindow(control);
-        return nullptr;
-    }
     if (control && ::lstrcmpW(class_name, L"STATIC") == 0 && !StyleLabel(control)) {
         ::DestroyWindow(control);
         return nullptr;
@@ -896,7 +863,7 @@ void TrimWindow::UpdateStatusLayout() {
 }
 
 void TrimWindow::RebuildFonts() {
-    HFONT new_ui = theme::CreateUiFont(12.5f, scale_, false);
+    HFONT new_ui = theme::CreateUiFont(theme::kTrimFontSize, scale_, false);
     if (new_ui == nullptr) { return; }
     for (HWND control : {time_label_, range_label_, status_, help_, play_pause_,
                          set_in_, set_out_, save_, copy_, cancel_export_,
@@ -927,12 +894,11 @@ void TrimWindow::UpdatePreviewState() {
             preview_error_reported_ = true;
             ShowErrorMessage(hwnd_, failure.c_str());
         }
-    } else if (snapshot.play_requested) {
-        ::SetWindowTextW(play_pause_, strings::Get(IDS_TRIM_PAUSE_BUTTON));
-        UpdateButtonStyle(play_pause_, {Icon::Pause});
     } else {
-        ::SetWindowTextW(play_pause_, strings::Get(IDS_TRIM_PLAY_BUTTON));
-        UpdateButtonStyle(play_pause_, {Icon::Play});
+        // Pause while playing, Play otherwise.
+        const StyledButtonRow& play_pause = kTrimButtons[kPlayPauseButton];
+        ::SetWindowTextW(play_pause_, strings::Get(RowCaption(play_pause, snapshot.play_requested)));
+        UpdateButtonStyle(play_pause_, snapshot.play_requested ? AlternateStyle(play_pause) : play_pause.style);
     }
     UpdatePosition();
     UpdateEnabledState();
@@ -1021,22 +987,22 @@ void TrimWindow::UpdateEnabledState() {
 
 void TrimWindow::HandleCommand(int identifier) {
     switch (identifier) {
-        case kIdPlayPause:
+        case kTrimPlayPause:
             TogglePlayback();
             break;
-        case kIdSetIn:
+        case kTrimSetIn:
             SetInFromCurrent();
             break;
-        case kIdSetOut:
+        case kTrimSetOut:
             SetOutFromCurrent();
             break;
         case IDOK:
             BeginSave();
             break;
-        case kIdCopy:
+        case kTrimCopy:
             BeginCopy();
             break;
-        case kIdCancelExport:
+        case kTrimCancelExport:
             if (exporting_ && !cancelling_ && callbacks_.on_cancel_export) {
                 cancelling_ = true;
                 SetExporting(true, true);

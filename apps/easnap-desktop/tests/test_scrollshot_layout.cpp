@@ -5,6 +5,7 @@
 // have (stacked, side by side, negative origins, small work areas) are covered.
 
 #include "editor/image_viewport.h"
+#include "platform/screen_geometry.h"
 #include "ui/scrollshot_layout.h"
 
 #include <cmath>

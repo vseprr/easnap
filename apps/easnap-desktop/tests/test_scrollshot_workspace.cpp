@@ -10,6 +10,9 @@
 #include "scrollshot_synthetic.h"
 
 #include "editor/screenshot_editor.h"
+#include "platform/bgra_image.h"
+#include "platform/graphics_device.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/capture_workspace.h"
 #include "ui/native_controls.h"
@@ -31,7 +34,7 @@
 namespace {
 
 using namespace easnap;
-using app::CaptureMode;
+using ui::CaptureMode;
 using easnap_test::synthetic::Image;
 using easnap_test::synthetic::MakeArticle;
 using ui::ScrollshotCommand;

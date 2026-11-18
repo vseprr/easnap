@@ -1,10 +1,14 @@
 #pragma once
 
-#include "ui/paint_buffer.h"
+#include "ui/control_ids.h"
+#include "ui/icons.h"
+#include "platform/paint_buffer.h"
 
+#include "platform/image_output.h"
 #include "ui/ui_theme.h"
 
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace easnap::app {
@@ -13,47 +17,6 @@ struct AppSettings;
 
 namespace easnap::ui {
 
-// Geometry icons shared by GDI native buttons. No font-dependent pictographs.
-enum class Icon { None,
-                  Record,
-                  Pause,
-                  Play,
-                  Stop,
-                  SystemAudio,
-                  Microphone,
-                  Cursor,
-                  Copy,
-                  Save,
-                  Discard,
-                  Appearance,
-                  Sun,
-                  Moon,
-                  Pen,
-                  Arrow,
-                  Rectangle,
-                  Ellipse,
-                  Text,
-                  Mosaic,
-                  Undo,
-                  Redo,
-                  Clear,
-                  Check,
-                  Line,
-                  Droplet,
-                  Tag,
-                  Spotlight,
-                  Watermark,
-                  TextFill,
-                  TextOutline,
-                  Hand,
-                  Region,
-                  RoundedRectangle,
-                  ChevronDown,
-                  Minimize,
-                  Maximize,
-                  Scissors,
-                  Help,
-                  Pin };
 enum class ButtonRole { Standard,
                         Primary,
                         Destructive,
@@ -72,6 +35,25 @@ struct ButtonStyle {
     bool dropdown{false}; // One icon button with an inset trailing chevron.
     bool circular{false}; // Round compact action with room for a soft drop shadow.
 };
+/// Everything a styled button's picture depends on at one moment: its style,
+/// the native BUTTON state and caption, and the animated depth.
+struct ButtonPaintState {
+    ButtonStyle style;
+    RECT client{};                 // Client rectangle of the button, in pixels.
+    float scale{1};                // Monitor DPI scale of the button.
+    bool window_enabled{true};     // IsWindowEnabled of the button.
+    bool pressed{false};           // BST_PUSHED.
+    bool checked{false};           // BST_CHECKED.
+    bool focused{false};           // The button has the keyboard focus.
+    bool focus_cues_hidden{false}; // UISF_HIDEFOCUS of the button's UI state.
+    bool hot{false};               // The pointer is over the button.
+    float depth{1};                // Current material depth of the animation.
+    LONG_PTR type{BS_PUSHBUTTON};  // BS_TYPEMASK part of the window style.
+    const wchar_t* text{L""};      // Caption; not drawn for icon-only buttons and swatches.
+    HFONT font{};                  // Caption font (WM_GETFONT).
+};
+/// Paints a styled button into `dc`: the one painter of every styled BUTTON.
+void PaintButtonFace(HDC dc, const ButtonPaintState& state);
 
 // Native controls can draw synchronously from input/state messages, outside
 // WM_PAINT. Suspend that drawing while retaining USER32 input and accessibility.
@@ -99,15 +81,14 @@ public:
     TypingPointer(const TypingPointer&) = delete;
     TypingPointer& operator=(const TypingPointer&) = delete;
     /// After a typed character: hides the pointer if the setting asks for it.
-    /// `timer_owner` receives kTimerId to watch for movement.
+    /// `timer_owner` receives kTypingPointerTimer to watch for movement.
     void Typed(HWND timer_owner);
-    /// From the owner's WM_TIMER with kTimerId: shows the pointer once it moved.
+    /// From the owner's WM_TIMER with kTypingPointerTimer: shows the pointer once it moved.
     void Poll();
     /// Shows the pointer again: typing ended, the input lost the focus or its
     /// window closes.
     void Restore();
     [[nodiscard]] bool hidden() const noexcept { return hidden_; }
-    static constexpr UINT_PTR kTimerId = 0xEA70;
 
 private:
     HWND timer_owner_{};
@@ -115,10 +96,6 @@ private:
     bool hidden_{false};
 };
 
-inline constexpr int kWindowChromeHeight = 40;
-[[nodiscard]] bool StyleWindowChrome(HWND window, bool resizable);
-
-void DrawIcon(HDC dc, const RECT& rect, Icon icon, COLORREF color, float scale);
 // Subclasses the real BUTTON, retaining its original role, radio/check behavior,
 // focus, enabled state and Windows accessibility provider.
 [[nodiscard]] bool StyleButton(HWND button, ButtonStyle style = {});
@@ -128,6 +105,40 @@ void UpdateButtonStyle(HWND button, ButtonStyle style);
 /// it, so a caption that is longer in another language widens its button
 /// instead of being cut.
 [[nodiscard]] int ButtonContentWidth(HWND button);
+
+/// One row of a surface's button table: everything that is fixed about a
+/// styled button, so that its icon, caption or tooltip is changed in one place.
+struct StyledButtonRow {
+    int id{0};                       // Control identifier; 0 for none.
+    DWORD window_style{0};           // BS_*, WS_TABSTOP and WS_GROUP bits.
+    UINT caption{0};                 // String id of the window text, which is also the accessible name.
+    ButtonStyle style{};             // Look in the first (or only) state.
+    UINT tooltip{0};                 // String id of the tooltip; 0 for a button without one.
+    Icon alternate_icon{Icon::None}; // Icon in the second state of a two-state button.
+    UINT alternate_caption{0};       // Caption in the second state; 0 when it does not change.
+};
+/// The look of `row` in its second state: its style with the alternate icon.
+[[nodiscard]] constexpr ButtonStyle AlternateStyle(const StyledButtonRow& row) noexcept {
+    ButtonStyle style = row.style;
+    if (row.alternate_icon != Icon::None) { style.icon = row.alternate_icon; }
+    return style;
+}
+/// The caption string id of `row` in the first or the second state.
+[[nodiscard]] constexpr UINT RowCaption(const StyledButtonRow& row, bool alternate) noexcept {
+    return alternate && row.alternate_caption != 0 ? row.alternate_caption : row.caption;
+}
+/// Where a new button goes in its parent's client area, in pixels.
+struct ButtonPlacement {
+    int x{0}, y{0}, width{1}, height{1};
+};
+/// Creates the BUTTON `row` describes as a child of `parent`, with
+/// `extra_style` (such as WS_VISIBLE) besides WS_CHILD and the row's bits, in
+/// the first or the `alternate` state, and styles it. nullptr on failure.
+[[nodiscard]] HWND CreateStyledButton(HWND parent, const StyledButtonRow& row, DWORD extra_style,
+                                      ButtonPlacement placement = {}, bool alternate = false);
+/// Registers the tooltip of `row`, if it has one, for `button` with `tooltip`;
+/// `owner` is the window that receives the tooltip's notifications.
+void AddButtonTooltip(HWND tooltip, HWND owner, HWND button, const StyledButtonRow& row);
 [[nodiscard]] bool StyleSlider(HWND slider);
 [[nodiscard]] bool StyleInput(HWND input);
 [[nodiscard]] bool StyleLabel(HWND label);
@@ -155,13 +166,11 @@ void DrawSeparator(HDC dc, const RECT& rect, float scale);
 void SetAccessibleName(HWND control, const wchar_t* name);
 [[nodiscard]] bool StyleProgress(HWND progress);
 void StyleTooltip(HWND tooltip);
-void PaintNativePanel(HWND window, float scale, bool grip = false);
+/// Paints the uniform panel of a native window (dialogs, Settings, trim) in WM_PAINT.
+void PaintNativePanel(HWND window, float scale);
 [[nodiscard]] LRESULT ControlBackground(WPARAM dc, COLORREF text);
 [[nodiscard]] bool ActivateFocusedButton(MSG& message, HWND parent);
 
-inline constexpr UINT kAppearanceLight = 41001;
-inline constexpr UINT kAppearanceDark = 41002;
-inline constexpr UINT kAppearanceSystem = 41003;
 /// Same as Windows, Light, Dark. `follows_system` marks the first one.
 [[nodiscard]] HMENU CreateAppearanceMenu(bool follows_system);
 
@@ -177,7 +186,6 @@ private:
     struct State;
     std::unique_ptr<State> state_;
 };
-int ShowMessage(HWND owner, const wchar_t* text, const wchar_t* title, UINT flags);
 /// The image Save dialog's text in the active language.
 [[nodiscard]] platform::SaveImageDialogText SaveImageDialogLabels();
 /// Where a finished image is saved.
@@ -201,23 +209,6 @@ void RecordImageSaved(app::AppSettings* settings, const ImageSaveDestination& de
 /// Asks the window under the pointer for its cursor again, when it belongs
 /// to this thread: a window that starts or ends busy work shows it at once.
 void RefreshCursor();
-/// One button of `ShowChoice`. The value is what the call returns for it.
-struct DialogChoice {
-    int value{0};
-    const wchar_t* label{nullptr};
-    bool destructive{false};
-};
-/// A question whose answers are named after what they do. `default_value`
-/// has the focus; Esc and the close button answer `cancel_value`. Returns the
-/// chosen value, or `cancel_value` when the dialog could not be shown.
-int ShowChoice(HWND owner, const wchar_t* text, const wchar_t* title, const std::vector<DialogChoice>& choices,
-               int default_value, int cancel_value);
-/// "Really lose this?" - `confirm` is the destructive answer, `keep` is the
-/// default and the answer to Esc. True only when `confirm` was chosen.
-[[nodiscard]] bool ConfirmDestructive(HWND owner, const wchar_t* text, const wchar_t* title, const wchar_t* confirm,
-                                      const wchar_t* keep);
-inline void ShowErrorMessage(HWND owner, const wchar_t* text) { ShowMessage(owner, text, L"Easnap", MB_OK | MB_ICONWARNING); }
-
 // Covers native menu input and capture exclusion; scope also used by the tray.
 class PopupScope final {
 public:

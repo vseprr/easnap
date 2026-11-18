@@ -14,14 +14,14 @@
 #include <optional>
 #include <string>
 
+#include "platform/app_messages.h"
+
 namespace easnap::app {
 
 /// COPYDATASTRUCT::dwData of a hand-over ("EVOP").
 inline constexpr ULONG_PTR kOpenVideoHandOverMagic = 0x45564F50;
 /// The largest payload taken, terminator included: 16,383 characters.
 inline constexpr DWORD kMaxHandOverBytes = 32 * 1024;
-/// Posted by the receiving window to itself once it has kept a request.
-inline constexpr UINT kMsgOpenVideoRequest = WM_APP + 19;
 
 /// Pure: the path a well-formed hand-over carries. Well-formed is the magic, a
 /// size that is a whole number of UTF-16 units and at most kMaxHandOverBytes,

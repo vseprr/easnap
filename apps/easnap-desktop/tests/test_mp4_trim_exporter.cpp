@@ -25,6 +25,7 @@
 
 #include "media/media_foundation_writer.h"
 #include "media/temp_session.h"
+#include "platform/bgra_image.h"
 #include "platform/platform_utils.h"
 #include "sink_writer_fixture.h"
 

@@ -53,7 +53,10 @@ before the settings are read (a failure to start) follows Windows.
 Low-level files do not depend on the string module. `platform_utils.cpp` and
 `recording_completion.cpp` are compiled into many test executables; the system
 Save dialogs take their captions from the caller (`SaveImageDialogText`,
-`SaveRecordingDialogText`).
+`SaveRecordingDialogText`). (Since
+[ADR-043](ADR-043-structure-for-cheap-changes.md#platform-split) the image Save
+dialog and `SaveImageDialogText` are in `platform/image_output`, and the whole
+`platform` layer is below the string module; the hygiene check enforces it.)
 
 ### Text has to fit
 

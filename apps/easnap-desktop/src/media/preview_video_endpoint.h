@@ -1,11 +1,12 @@
 // Easnap - exact final video position for disk-backed preview seeking.
 #pragma once
 
+#include <windows.h>
+
 #include <cstdint>
 #include <string>
 
 #include "media/media_types.h"
-#include "platform/platform_utils.h"
 
 namespace easnap::media {
 

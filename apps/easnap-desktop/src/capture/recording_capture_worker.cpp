@@ -55,19 +55,6 @@ bool RecordingWorkerLifecycle::CompleteStop() noexcept {
     return true;
 }
 
-void SaturatingCounter::Add(uint64_t amount) noexcept {
-    uint64_t current = value_.load(std::memory_order_relaxed);
-    while (current < limit_) {
-        const uint64_t available = limit_ - current;
-        const uint64_t increment = (std::min)(amount, available);
-        if (value_.compare_exchange_weak(current, current + increment,
-                                         std::memory_order_relaxed,
-                                         std::memory_order_relaxed)) {
-            return;
-        }
-    }
-}
-
 void TimingAccumulator::Add(uint64_t microseconds) noexcept {
     count_.Increment();
     total_microseconds_.Add(microseconds);
@@ -211,7 +198,7 @@ void RecordingPicturePool::Return(platform::BgraImage* picture) noexcept {
 
 bool TrySubmitVideoFrameOrDropNewest(media::FrameQueue<media::VideoFrame>& queue,
                                      media::VideoFrame&& frame,
-                                     SaturatingCounter& rejected_frames) {
+                                     platform::SaturatingCounter& rejected_frames) {
     if (queue.try_push(std::move(frame))) {
         return true;
     }

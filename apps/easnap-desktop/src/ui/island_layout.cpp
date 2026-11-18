@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cstdlib>
 
+#include "platform/screen_geometry.h"
+
 namespace easnap::ui {
 namespace {
 

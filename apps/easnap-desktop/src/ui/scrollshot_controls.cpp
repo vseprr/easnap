@@ -8,7 +8,11 @@
 #include <array>
 #include <utility>
 
+#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
+#include "platform/window_class.h"
 #include "strings/strings.h"
+#include "ui/control_ids.h"
 #include "ui/native_controls.h"
 #include "ui/scrollshot_layout.h"
 #include "ui/ui_theme.h"
@@ -19,28 +23,42 @@ namespace {
 constexpr wchar_t kIslandClassName[] = L"EasnapScrollshotControls";
 constexpr wchar_t kPreviewClassName[] = L"EasnapScrollshotPreview";
 
-constexpr int kIdHelp = 200;
-constexpr int kIdEdit = 201;
-constexpr int kIdSave = 202;
-constexpr int kIdSize = 210;
-constexpr int kIdMessage = 211;
-// Start and Copy are IDOK, Discard is IDCANCEL: Enter and Esc reach them
-// through the native dialog navigation.
-
 constexpr DWORD kIslandStyle = WS_POPUP | WS_CLIPCHILDREN;
 constexpr DWORD kIslandExStyle = WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_CONTROLPARENT;
 constexpr DWORD kPreviewExStyle =
     WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_LAYERED;
+
+/// The island's buttons, indexes into kScrollshotButtons. Start and Help show
+/// before the capture, the other four during it.
+enum ScrollshotButton : size_t {
+    kStartButton,
+    kHelpButton,
+    kEditButton,
+    kSaveButton,
+    kDiscardButton,
+    kCopyButton,
+    kScrollshotButtonCount
+};
+/// One row per button of the Scrollshot island. Start and Copy share IDOK:
+/// the island tells them apart by its view. Every button but Start has a
+/// tooltip, the same text as its caption.
+constexpr std::array<StyledButtonRow, kScrollshotButtonCount> kScrollshotButtons{{
+    {IDOK, WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDS_SCROLLSHOT_START, {Icon::Scissors, ButtonRole::Primary}},
+    {kScrollshotHelp, WS_TABSTOP | BS_PUSHBUTTON, IDS_SCROLLSHOT_HELP, {Icon::Help, ButtonRole::Standard, true}, IDS_SCROLLSHOT_HELP},
+    {kScrollshotEdit, WS_TABSTOP | WS_GROUP | BS_PUSHBUTTON, IDS_SCROLLSHOT_EDIT, {Icon::Pen, ButtonRole::Standard, true}, IDS_SCROLLSHOT_EDIT},
+    {kScrollshotSave, WS_TABSTOP | BS_PUSHBUTTON, IDS_SCROLLSHOT_SAVE, {Icon::Save, ButtonRole::Standard, true}, IDS_SCROLLSHOT_SAVE},
+    {IDCANCEL, WS_TABSTOP | BS_PUSHBUTTON, IDS_SCROLLSHOT_DISCARD, {Icon::Discard, ButtonRole::Standard, true}, IDS_SCROLLSHOT_DISCARD},
+    // The default button, so Enter copies as it does in the editor.
+    {kScrollshotCopyAlias, WS_TABSTOP | BS_PUSHBUTTON, IDS_SCROLLSHOT_COPY, {Icon::Check, ButtonRole::Success, true}, IDS_SCROLLSHOT_COPY},
+}};
 
 // Metrics in device-independent pixels.
 constexpr float kPreviewWidth = 160.0f;
 constexpr float kPreviewPadding = 4.0f;
 constexpr float kIslandHeight = 72.0f;
 constexpr float kStartHeight = 56.0f;
-constexpr float kGrip = 24.0f;
 constexpr float kButton = 40.0f;
 constexpr float kStatusWidth = 250.0f;
-constexpr float kGap = 12.0f;
 
 /// The height of one line of `font`, as a static label draws it.
 [[nodiscard]] LONG LineHeight(HFONT font) {
@@ -103,12 +121,12 @@ public:
             tooltip_ = nullptr;
         }
         if (preview_ != nullptr) {
-            ::SetWindowLongPtrW(preview_, GWLP_USERDATA, 0);
+            platform::UnbindWindowOwner(preview_);
             ::DestroyWindow(preview_);
             preview_ = nullptr;
         }
         if (island_ != nullptr) {
-            ::SetWindowLongPtrW(island_, GWLP_USERDATA, 0);
+            platform::UnbindWindowOwner(island_);
             ::DestroyWindow(island_);
             island_ = nullptr;
         }
@@ -149,7 +167,7 @@ public:
         const bool start = owner_.view_ == View::Start;
         const LONG padding = theme::Scaled(8, scale);
         const LONG button = theme::Scaled(kButton, scale);
-        const LONG grip = theme::Scaled(kGrip, scale);
+        const LONG grip = theme::Scaled(theme::kIslandGripWidth, scale);
         const LONG height = theme::Scaled(start ? kStartHeight : kIslandHeight, scale);
         const LONG start_width = TextWidth(ui_font_, strings::Get(IDS_SCROLLSHOT_START)) + theme::Scaled(64, scale);
         const LONG status_width = theme::Scaled(kStatusWidth, scale);
@@ -159,7 +177,7 @@ public:
         const LONG preview_width = PreviewPixelWidth(owner_.frame_) + 2 * theme::Scaled(kPreviewPadding, scale);
         const LONG preview_room = std::max<LONG>(preview_width, platform::RectHeight(anchor.work_area));
         const ScrollshotPlacement placement = PlaceScrollshotSurfaces(
-            owner_.frame_, monitors, SIZE{width, height}, preview_width, preview_room, theme::Scaled(kGap, scale));
+            owner_.frame_, monitors, SIZE{width, height}, preview_width, preview_room, theme::Scaled(theme::kIslandMargin, scale));
         owner_.island_over_frame_ = placement.island_over_frame;
         owner_.preview_over_frame_ = placement.preview_over_frame;
         preview_area_ = placement.preview;
@@ -266,43 +284,20 @@ private:
     [[nodiscard]] static bool EnsureWindowClasses() {
         static const bool registered = [] {
             WNDCLASSEXW island{};
-            island.cbSize = sizeof(island);
             island.style = CS_HREDRAW | CS_VREDRAW;
-            island.lpfnWndProc = IslandProc;
+            island.lpfnWndProc = platform::BoundWindowProc<Window, &Window::HandleIsland>;
             island.hInstance = ::GetModuleHandleW(nullptr);
             island.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
             island.lpszClassName = kIslandClassName;
             WNDCLASSEXW preview = island;
-            preview.lpfnWndProc = PreviewProc;
+            preview.lpfnWndProc = platform::BoundWindowProc<Window, &Window::HandlePreview>;
             // Visual only: no class cursor, so it never replaces the cursor of
             // the application underneath.
             preview.hCursor = nullptr;
             preview.lpszClassName = kPreviewClassName;
-            return ::RegisterClassExW(&island) != 0 && ::RegisterClassExW(&preview) != 0;
+            return platform::RegisterWindowClass(island) && platform::RegisterWindowClass(preview);
         }();
         return registered;
-    }
-
-    [[nodiscard]] static Window* FromHandle(HWND hwnd, UINT message, LPARAM lparam) noexcept {
-        if (message == WM_NCCREATE) {
-            const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lparam);
-            ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-        }
-        return reinterpret_cast<Window*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    }
-
-    static LRESULT CALLBACK IslandProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-        if (Window* self = FromHandle(hwnd, message, lparam); self != nullptr) {
-            return self->HandleIsland(hwnd, message, wparam, lparam);
-        }
-        return ::DefWindowProcW(hwnd, message, wparam, lparam);
-    }
-
-    static LRESULT CALLBACK PreviewProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
-        if (Window* self = FromHandle(hwnd, message, lparam); self != nullptr) {
-            return self->HandlePreview(hwnd, message, wparam, lparam);
-        }
-        return ::DefWindowProcW(hwnd, message, wparam, lparam);
     }
 
     void ClearControlHandles() noexcept {
@@ -321,7 +316,7 @@ private:
                 tooltip_ = nullptr;
                 owner_.visible_ = false;
                 ClearControlHandles();
-                ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                platform::UnbindWindowOwner(hwnd);
                 break;
             case theme::kChangedMessage:
                 ::RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
@@ -337,9 +332,9 @@ private:
                 ::GetClientRect(hwnd, &client);
                 const float scale = static_cast<float>(::GetDpiForWindow(hwnd)) / 96.0f;
                 {
-                    PaintBuffer buffer(dc, client);
+                    platform::PaintBuffer buffer(dc, client);
                     theme::DrawPanel(buffer.dc(), client, scale);
-                    theme::DrawGrip(buffer.dc(), {0, 0, theme::Scaled(kGrip, scale), client.bottom}, scale);
+                    theme::DrawGrip(buffer.dc(), {0, 0, theme::Scaled(theme::kIslandGripWidth, scale), client.bottom}, scale);
                 }
                 if (message == WM_PAINT) { ::EndPaint(hwnd, &paint); }
                 return 0;
@@ -377,9 +372,9 @@ private:
                 switch (LOWORD(wparam)) {
                     case IDOK: owner_.Dispatch(owner_.view_ == View::Start ? Action::Start : Action::Copy); break;
                     case IDCANCEL: owner_.Dispatch(Action::Discard); break;
-                    case kIdHelp: owner_.Dispatch(Action::Help); break;
-                    case kIdEdit: owner_.Dispatch(Action::Edit); break;
-                    case kIdSave: owner_.Dispatch(Action::Save); break;
+                    case kScrollshotHelp: owner_.Dispatch(Action::Help); break;
+                    case kScrollshotEdit: owner_.Dispatch(Action::Edit); break;
+                    case kScrollshotSave: owner_.Dispatch(Action::Save); break;
                     default: break;
                 }
                 return 0;
@@ -412,7 +407,7 @@ private:
         switch (message) {
             case WM_NCDESTROY:
                 preview_ = nullptr;
-                ::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+                platform::UnbindWindowOwner(hwnd);
                 break;
             case WM_NCHITTEST:
                 return HTTRANSPARENT;  // Never takes the pointer or the wheel.
@@ -429,7 +424,7 @@ private:
                 RECT client{};
                 ::GetClientRect(hwnd, &client);
                 {
-                    PaintBuffer buffer(dc, client);
+                    platform::PaintBuffer buffer(dc, client);
                     PaintPreview(buffer.dc(), client, static_cast<float>(::GetDpiForWindow(hwnd)) / 96.0f);
                 }
                 ::EndPaint(hwnd, &paint);
@@ -484,12 +479,17 @@ private:
         }
     }
 
-    [[nodiscard]] HWND CreateControl(const wchar_t* class_name, const wchar_t* text, DWORD style, int id) const {
-        HWND control = ::CreateWindowExW(0, class_name, text, WS_CHILD | style, 0, 0, 1, 1, island_,
+    /// A hidden styled button of the island, as its kScrollshotButtons row says.
+    [[nodiscard]] HWND CreateButton(ScrollshotButton button) const {
+        return CreateStyledButton(island_, kScrollshotButtons[button], 0);
+    }
+
+    /// A hidden, empty buffered STATIC of the island.
+    [[nodiscard]] HWND CreateLabel(DWORD style, int id) const {
+        HWND control = ::CreateWindowExW(0, L"STATIC", L"", WS_CHILD | style, 0, 0, 1, 1, island_,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                                          ::GetModuleHandleW(nullptr), nullptr);
-        const bool button = ::lstrcmpW(class_name, L"BUTTON") == 0;
-        if (control != nullptr && !(button ? StyleButton(control) : StyleLabel(control))) {
+        if (control != nullptr && !StyleLabel(control)) {
             ::DestroyWindow(control);
             return nullptr;
         }
@@ -497,46 +497,33 @@ private:
     }
 
     [[nodiscard]] bool CreateControls() {
-        start_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_START), WS_TABSTOP | WS_GROUP | BS_DEFPUSHBUTTON, IDOK);
-        help_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_HELP), WS_TABSTOP | BS_PUSHBUTTON, kIdHelp);
-        size_ = CreateControl(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, kIdSize);
-        message_ = CreateControl(L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, kIdMessage);
-        edit_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_EDIT), WS_TABSTOP | WS_GROUP | BS_PUSHBUTTON, kIdEdit);
-        save_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_SAVE), WS_TABSTOP | BS_PUSHBUTTON, kIdSave);
-        discard_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_DISCARD), WS_TABSTOP | BS_PUSHBUTTON, IDCANCEL);
-        // The default button, so Enter copies as it does in the editor.
-        copy_ = CreateControl(L"BUTTON", strings::Get(IDS_SCROLLSHOT_COPY), WS_TABSTOP | BS_PUSHBUTTON, kIdCopyAlias);
+        // Creation order is tab and z-order: the labels sit between the views.
+        start_ = CreateButton(kStartButton);
+        help_ = CreateButton(kHelpButton);
+        size_ = CreateLabel(SS_LEFT | SS_NOPREFIX | SS_ENDELLIPSIS, kScrollshotSize);
+        message_ = CreateLabel(SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, kScrollshotMessage);
+        edit_ = CreateButton(kEditButton);
+        save_ = CreateButton(kSaveButton);
+        discard_ = CreateButton(kDiscardButton);
+        copy_ = CreateButton(kCopyButton);
         for (HWND control : {start_, help_, size_, message_, edit_, save_, discard_, copy_}) {
             if (control == nullptr) { return false; }
         }
-        UpdateButtonStyle(start_, {Icon::Scissors, ButtonRole::Primary});
-        UpdateButtonStyle(help_, {Icon::Help, ButtonRole::Standard, true});
-        UpdateButtonStyle(edit_, {Icon::Pen, ButtonRole::Standard, true});
-        UpdateButtonStyle(save_, {Icon::Save, ButtonRole::Standard, true});
-        UpdateButtonStyle(discard_, {Icon::Discard, ButtonRole::Standard, true});
-        UpdateButtonStyle(copy_, {Icon::Check, ButtonRole::Success, true});
 
         tooltip_ = ::CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, TOOLTIPS_CLASSW, nullptr,
                                      WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, 0, 0, 0, 0, island_, nullptr, ::GetModuleHandleW(nullptr), nullptr);
         if (tooltip_ != nullptr) {
-            const std::pair<HWND, UINT> tips[] = {
-                {help_, IDS_SCROLLSHOT_HELP}, {edit_, IDS_SCROLLSHOT_EDIT}, {save_, IDS_SCROLLSHOT_SAVE}, {discard_, IDS_SCROLLSHOT_DISCARD}, {copy_, IDS_SCROLLSHOT_COPY}};
-            for (const auto& [control, id] : tips) {
-                TOOLINFOW info{sizeof(info)};
-                info.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
-                info.hwnd = island_;
-                info.uId = reinterpret_cast<UINT_PTR>(control);
-                info.lpszText = const_cast<wchar_t*>(strings::Get(id));
-                ::SendMessageW(tooltip_, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&info));
-            }
+            // In ScrollshotButton order.
+            const std::array<HWND, kScrollshotButtonCount> buttons{start_, help_, edit_, save_, discard_, copy_};
+            for (size_t i = 0; i < buttons.size(); ++i) { AddButtonTooltip(tooltip_, island_, buttons[i], kScrollshotButtons[i]); }
             StyleTooltip(tooltip_);
         }
         return true;
     }
 
     void RebuildFonts(float scale) {
-        HFONT ui = theme::CreateUiFont(13.0f, scale, false);
-        HFONT strong = theme::CreateUiFont(13.0f, scale, true);
+        HFONT ui = theme::CreateUiFont(theme::kBodyFontSize, scale, false);
+        HFONT strong = theme::CreateUiFont(theme::kBodyFontSize, scale, true);
         if (ui == nullptr || strong == nullptr) {
             if (ui != nullptr) { ::DeleteObject(ui); }
             if (strong != nullptr) { ::DeleteObject(strong); }
@@ -552,9 +539,6 @@ private:
         strong_font_ = strong;
         scale_ = scale;
     }
-
-    /// IDOK is taken by Start in the Start view; the handler maps it by view.
-    static constexpr int kIdCopyAlias = IDOK;
 
     ScrollshotControls& owner_;
     HWND island_{nullptr};

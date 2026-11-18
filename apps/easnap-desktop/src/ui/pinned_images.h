@@ -1,7 +1,8 @@
 // Easnap - screenshots pinned to the screen (ADR-038).
 #pragma once
 
-#include "platform/platform_utils.h"
+#include "platform/bgra_image.h"
+#include "ui/control_ids.h"
 
 #include <cstddef>
 #include <memory>
@@ -12,13 +13,6 @@ struct AppSettings;
 } // namespace easnap::app
 
 namespace easnap::ui {
-
-// Commands of a pin's menu. A pin window also accepts them as WM_COMMAND.
-inline constexpr UINT kPinCommandCopy = 0xE501;
-inline constexpr UINT kPinCommandSave = 0xE502;
-inline constexpr UINT kPinCommandOriginalSize = 0xE503;
-inline constexpr UINT kPinCommandClose = 0xE504;
-inline constexpr UINT kPinCommandCloseAll = 0xE505;
 
 /// Finished screenshots kept on the desktop as small topmost windows. They
 /// outlive the capture session that made them and are screen content: later

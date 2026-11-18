@@ -29,7 +29,10 @@
 #include "media/audio_queue.h"
 #include "media/media_preview.h"
 #include "media/temp_session.h"
+#include "platform/files.h"
+#include "platform/graphics_device.h"
 #include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 #include "recording/recording_session.h"
 
 namespace {

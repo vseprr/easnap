@@ -16,6 +16,7 @@
 #include "media/frame_queue.h"
 #include "media/media_interfaces.h"
 #include "media/temp_session.h"
+#include "platform/saturating_counter.h"
 #include "recording/audio_timeline.h"
 
 namespace easnap::recording {
@@ -252,10 +253,10 @@ private:
     std::atomic<RecordingStartFailure> start_failure_{RecordingStartFailure::None};
 
     std::thread consumer_thread_;
-    capture::SaturatingCounter written_frames_;
-    capture::SaturatingCounter written_audio_packets_;
-    capture::SaturatingCounter written_audio_frames_;
-    capture::SaturatingCounter silence_writes_;
+    platform::SaturatingCounter written_frames_;
+    platform::SaturatingCounter written_audio_packets_;
+    platform::SaturatingCounter written_audio_frames_;
+    platform::SaturatingCounter silence_writes_;
     capture::TimingAccumulator writer_submission_timing_;
     capture::TimingAccumulator audio_writer_submission_timing_;
     capture::TimingAccumulator silence_write_submission_timing_;

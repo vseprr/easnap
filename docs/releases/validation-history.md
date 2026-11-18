@@ -3,10 +3,7 @@
 The release notes of each version (listed in the
 [documentation index](../README.md)) say what changed and summarize how it was
 checked. This file keeps the detail behind those summaries: the individual
-runs, the ones that failed, and what was not validated. The records of v1.0.1
-and v1.0.2 were part of the project status until 2026-10-13, those of
-[v1.1.0-beta.1](#validation-of-v110-beta1) until 2026-10-30 and those of
-[v1.1.0-beta.2](#validation-of-v110-beta2) until 2026-11-07. This file is a
+runs, the ones that failed, and what was not validated. This file is a
 record, not a task list. The current state is in
 [project status](../project-status.md).
 
@@ -304,7 +301,9 @@ at 125%; visible-desktop tests and manual checks ran on the secondary display.
   integration and private-desktop tests that hosted CI runs passed without a
   report. The crash-report test is excluded: the sanitizer takes its
   deliberate failures first. Preview and visible-desktop tests were not run
-  under it.
+  under it. In one AddressSanitizer run on the hosted runner
+  `incremental_test_selection` (5 to 7 s there) hit its 30 s timeout and passed
+  when the job was repeated; the cause is not known.
 - **Packaging.** `package-release.ps1` produced the ZIP, the installer, the
   symbols ZIP and their checksum files from this build, after checking that
   both executables report 1.1.0-beta.1 with the prerelease flag and name their
@@ -364,6 +363,18 @@ beta.2 tag (run 41123963572: `diagnostics_log_and_crash_reports` in the Debug
 and AddressSanitizer jobs), and at `42b3efa` (run 41126325105:
 `mp4_trim_export_backend` in the Release job, in an export with audio). The
 Release workflow run 41123994750 at `a5293c8` succeeded.
+
+Triage (2026-11-07): the trim export with audio failed in 2 of 10 Release
+runs since the MP4 writer change of 2026-10-19 and in none of 26 before, on
+the runner's software encoder. The exporter's reason was not visible because
+the test showed no log; it now prints it. 50 repeated runs in the lab VM did
+not fail, so the cause is still unknown. The crash-report test failed in 2 of
+40 jobs, most likely because a report could replace an earlier one with the
+same name; report names were made unique
+([ADR-030](../decisions/ADR-030-log-file-and-crash-reports.md)). With both
+changes, both tests passed in the Release, Debug and AddressSanitizer jobs of
+the run for pull request #17, of the release run of v1.1.0 and of the run for
+pull request #19.
 
 ### Stabilization baseline (2026-11-07)
 
@@ -437,7 +448,11 @@ Duplication or Windows Graphics Capture (`VM-ok`, no fallback).
 |---|---|---|
 | Trim flow S2 (`feature/v1.3`) | `20261108-201007-full`, `20261108-202202-soak` | Full 51 of 51, Soak 57 of 57 (`trim_timeline_seek_stress` on retry, pointer on the caption) |
 | Screenshot shading fix | `20261108-234453-full` | Full 51 of 51 |
+| Starting tree (`eedf148`) | `20261109-020041-standard` | Standard 42 of 42 |
+| Findings batch 1, first try | `20261109-030303-full` | 50 of 51: `ui_modernization_native` assumed a notice would wrap below the trim window's new 512 DIP minimum; the test was corrected in `4862bc7` |
 | Findings batch 1 (`4862bc7`) | `20261109-044659-full` | Full 51 of 51 |
+| Realistic application, export job, frame cost (`dd78926`) | `20261109-051443-full` | Full 56 of 56, no fallback |
+| `b9b3f77` | `20261109-054120-soak` | 67 of 68: `scrollshot_realistic_desktop` (oracle defects, [ADR-041](../decisions/ADR-041-scrollshot-realistic-test-application.md#validation)) |
 | Findings batch 2, V1 (`e048f3e`) | `20261109-095512-full` | Full 62 of 62 |
 | V2, picture pool (`c0ae38a`) | `20261109-101913-full` | 64 of 66: `mfplay_preview_stress_0` (the preview race, fixed below) and `scrollshot_realistic_desktop` (test oracle, corrected in `bd10347`) |
 | Oracle fix (`bd10347`) | `20261109-103322-soak` | 73 of 74: `scrollshot_realistic_desktop` on torn pictures, a real engine weakness ([ADR-027](../decisions/ADR-027-scrollshot-stitching-engine.md#known-weakness-2026-11-09)) |
@@ -463,6 +478,9 @@ Duplication or Windows Graphics Capture (`VM-ok`, no fallback).
   of the branch's checklist, including the external video feature with the
   installer's "Open with" entries. No problem found. The packaged installer
   of v1.3.0 was not installed by the owner before publication.
+- **On the host** (2026-11-09) `trim_flow_production` reached its 180 s limit
+  once while cancelling an export, run in parallel with three other Standard
+  tests; it passed alone and in a second parallel run.
 - **Static checks:** every C++ file passes `scripts/format.ps1 -Check`;
   clang-tidy without findings on the changed sources in every slice and in
   the CI job; the hygiene check green.

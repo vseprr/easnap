@@ -159,3 +159,5 @@ document. The rest of the repository:
 Before adding or changing any window, follow the
 [window implementation guide](ui/window-implementation-guide.md). It records the
 shared frame, layout, painting and validation requirements.
+
+Where to make a common change (colours, icons, buttons, tools, shortcuts, messages, identifiers, new files): the [change map](ui/change-map.md).

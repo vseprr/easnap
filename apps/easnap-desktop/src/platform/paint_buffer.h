@@ -1,7 +1,7 @@
 #pragma once
 #include <windows.h>
 
-namespace easnap::ui {
+namespace easnap::platform {
 // A complete paint is presented in one blit, including material and separators.
 class PaintBuffer final {
 public:
@@ -60,4 +60,4 @@ inline PaintBuffer::~PaintBuffer() {
     if (buffer_) { ::DeleteDC(buffer_); }
 }
 
-} // namespace easnap::ui
+} // namespace easnap::platform

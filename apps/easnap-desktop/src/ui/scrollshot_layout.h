@@ -8,7 +8,7 @@
 
 #include <vector>
 
-#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
 
 namespace easnap::ui {
 

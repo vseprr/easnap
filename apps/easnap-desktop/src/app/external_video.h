@@ -18,12 +18,9 @@
 #include "app/trim_workflow.h"
 #include "media/media_interfaces.h"
 #include "media/video_probe.h"
+#include "platform/app_messages.h"
 
 namespace easnap::app {
-
-/// Posted by the probe worker when its result can be taken on the UI thread.
-/// WPARAM carries the probe's generation.
-inline constexpr UINT kMsgVideoProbeCompleted = WM_APP + 18;
 
 /// How long the probe may take before a file counts as unreadable (ADR-040).
 inline constexpr std::chrono::seconds kVideoProbeDeadline{5};

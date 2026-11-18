@@ -22,6 +22,8 @@
 #include <thread>
 #include <utility>
 
+#include "platform/bgra_image.h"
+
 namespace easnap::media {
 namespace {
 

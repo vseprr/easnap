@@ -28,7 +28,8 @@
 #include "app/trim_flow.h"
 #include "media/temp_session.h"
 #include "media/video_probe.h"
-#include "platform/platform_utils.h"
+#include "platform/files.h"
+#include "platform/screen_geometry.h"
 #include "strings/strings.h"
 #include "ui/native_controls.h"
 

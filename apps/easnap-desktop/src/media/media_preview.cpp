@@ -19,12 +19,23 @@
 #include <optional>
 
 #include "media/mf_video_aperture.h"
-#include "ui/paint_buffer.h"
+#include "platform/app_messages.h"
+#include "platform/bgra_image.h"
+#include "platform/paint_buffer.h"
 #include "media/preview_transport.h"
 #include "media/preview_video_endpoint.h"
+#include "platform/platform_utils.h"
+#include "platform/window_class.h"
 
 namespace easnap::media {
 namespace {
+
+/// Timer on the preview's own message-only window: polls the transport.
+constexpr UINT_PTR kOwnerPollTimer = 1;
+/// Letterbox around the video and around a still frame, black in every theme
+/// (media does not depend on the UI theme). The still frame paints it with the
+/// stock BLACK_BRUSH.
+constexpr COLORREF kVideoLetterbox = RGB(0, 0, 0);
 
 using Microsoft::WRL::ComPtr;
 
@@ -288,7 +299,7 @@ public:
             ClosePlayerResources();
             return false;
         }
-        static_cast<void>(player_->SetBorderColor(RGB(0, 0, 0)));
+        static_cast<void>(player_->SetBorderColor(kVideoLetterbox));
         static_cast<void>(player_->SetAspectRatioMode(MFVideoARMode_PreservePicture));
         return true;
     }
@@ -485,11 +496,7 @@ private:
 
     static LRESULT CALLBACK NativeVideoWindowProc(HWND window, UINT message,
                                                   WPARAM wparam, LPARAM lparam) noexcept {
-        auto* self = reinterpret_cast<MfPlayPreview*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (message == WM_NCCREATE) {
-            self = static_cast<MfPlayPreview*>(reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
-            ::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        }
+        auto* self = platform::BindWindowOwner<MfPlayPreview>(window, message, lparam);
         if (message == WM_NCHITTEST) return HTTRANSPARENT;
         if (message == WM_ERASEBKGND) return 1;
         if (message == WM_SIZE) {
@@ -511,11 +518,11 @@ private:
 
     bool CreateNativeVideoWindow() noexcept {
         constexpr wchar_t name[] = L"EasnapPreviewNativeVideo";
-        WNDCLASSW cls{};
+        WNDCLASSEXW cls{};
         cls.hInstance = ::GetModuleHandleW(nullptr);
         cls.lpfnWndProc = NativeVideoWindowProc;
         cls.lpszClassName = name;
-        if (!::RegisterClassW(&cls) && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
+        if (!platform::RegisterWindowClass(cls)) return false;
         RECT bounds{};
         ::GetClientRect(video_window_, &bounds);
         native_video_window_ = ::CreateWindowExW(0, name, nullptr,
@@ -526,12 +533,7 @@ private:
 
     static LRESULT CALLBACK StillFrameWindowProc(HWND window, UINT message,
                                                  WPARAM wparam, LPARAM lparam) noexcept {
-        auto* self = reinterpret_cast<MfPlayPreview*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (message == WM_NCCREATE) {
-            const auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
-            self = static_cast<MfPlayPreview*>(create->lpCreateParams);
-            ::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
-        }
+        auto* self = platform::BindWindowOwner<MfPlayPreview>(window, message, lparam);
         if (message == WM_NCHITTEST) return HTTRANSPARENT;
         if (message == WM_ERASEBKGND) return 1;
         if (message == WM_SIZE) {
@@ -561,7 +563,7 @@ private:
             Notify();
             return false;
         }
-        ui::PaintBuffer paint(dc, client);
+        platform::PaintBuffer paint(dc, client);
         dc = paint.dc();
         ::FillRect(dc, &client, static_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH)));
         const double scale = (std::min)(static_cast<double>(client.right) / frame.width,
@@ -610,11 +612,11 @@ private:
 
     bool CreateStillFrameWindow() noexcept {
         constexpr wchar_t class_name[] = L"EasnapPreviewStillFrame";
-        WNDCLASSW window_class{};
+        WNDCLASSEXW window_class{};
         window_class.hInstance = ::GetModuleHandleW(nullptr);
         window_class.lpfnWndProc = StillFrameWindowProc;
         window_class.lpszClassName = class_name;
-        if (!::RegisterClassW(&window_class) && ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
+        if (!platform::RegisterWindowClass(window_class)) return false;
         RECT bounds{};
         ::GetClientRect(video_window_, &bounds);
         // A separate opaque surface prevents the native/GDI handoff from
@@ -903,51 +905,12 @@ private:
             ~CallbackScope() { --depth_; }
             unsigned& depth_;
         } callback_scope(callback_depth_);
-        {
-            const std::scoped_lock lock(state_mutex_);
-            if (generation != player_generation_) {
-                LogTransportLocked(L"stale-generation", event->eEventType,
-                                   event->hrEvent, event->eState);
-                return;
-            }
-            if (state_ == MediaPreviewState::Failed ||
-                state_ == MediaPreviewState::Closed) return;
+        if (!AcceptPlayerEvent(event, generation)) {
+            return;
         }
         LogTransportEvent(event->eEventType, event->hrEvent, event->eState);
         if (FAILED(event->hrEvent)) {
-            if (event->eEventType == MFP_EVENT_TYPE_PAUSE &&
-                event->hrEvent == MF_E_SESSION_PAUSEWHILESTOPPED) {
-                bool reconciled = false;
-                {
-                    const std::scoped_lock lock(state_mutex_);
-                    reconciled = transport_.ReconcilePauseWhileStopped();
-                    if (reconciled) {
-                        state_ = MediaPreviewState::Paused;
-                    }
-                }
-                if (reconciled) {
-                    platform::LogMessage(
-                        L"[Preview] Reconciled failed Pause event because MFPlay was already stopped");
-                    static_cast<void>(DriveTransport());
-                    Notify();
-                    return;
-                }
-            }
-            MediaPreviewOperation operation;
-            {
-                const std::scoped_lock lock(state_mutex_);
-                operation = state_ == MediaPreviewState::Opening
-                                ? MediaPreviewOperation::Open
-                                : OperationForEventFailure(event->eEventType);
-            }
-            SetFailure(event->hrEvent, operation);
-            platform::LogMessage(
-                L"[Preview] MFPlay event %u failed during operation %u",
-                static_cast<unsigned>(event->eEventType),
-                static_cast<unsigned>(operation));
-            platform::LogHresult(L"Processing an MP4 preview event",
-                                 event->hrEvent);
-            Notify();
+            OnFailedPlayerEvent(event);
             return;
         }
 
@@ -961,146 +924,19 @@ private:
         }
         bool hold_natural_end = false;
         switch (event->eEventType) {
-            case MFP_EVENT_TYPE_MEDIAITEM_SET: {
-                const auto* media_event = MFP_GET_MEDIAITEM_SET_EVENT(event);
-                IMFPMediaItem* media_item =
-                    media_event != nullptr ? media_event->pMediaItem : nullptr;
-                PROPVARIANT value;
-                ::PropVariantInit(&value);
-                BOOL has_video = FALSE;
-                BOOL video_selected = FALSE;
-                HRESULT result =
-                    media_item != nullptr
-                        ? media_item->HasVideo(&has_video, &video_selected)
-                        : E_UNEXPECTED;
-                if (SUCCEEDED(result) && (!has_video || !video_selected)) {
-                    result = MF_E_INVALIDMEDIATYPE;
-                }
-                if (SUCCEEDED(result)) {
-                    result = media_item->GetDuration(MFP_POSITIONTYPE_100NS,
-                                                     &value);
-                }
-                const auto duration = SUCCEEDED(result)
-                                          ? MediaTimeFromVariant(value)
-                                          : std::nullopt;
-                ::PropVariantClear(&value);
-                if (!duration.has_value() ||
-                    *duration <= MediaTime::zero()) {
-                    SetFailure(FAILED(result) ? result : MF_E_INVALIDMEDIATYPE,
-                               MediaPreviewOperation::Open);
-                } else {
-                    if (!video_endpoint_) {
-                        PreviewVideoEndpoint endpoint;
-                        result = ReadPreviewVideoEndpoint(source_path_, *duration, endpoint);
-                        if (FAILED(result)) {
-                            SetFailure(result, MediaPreviewOperation::Open);
-                            break;
-                        }
-                        video_endpoint_ = endpoint;
-                    }
-                    {
-                        MediaTime decoded_position;
-                        result = DecodePreviewFrame(source_path_, video_endpoint_->last_frame_position,
-                                                    false, endpoint_frame_, decoded_position);
-                        if (SUCCEEDED(result) && decoded_position != video_endpoint_->last_frame_position)
-                            result = MF_E_INVALID_FILE_FORMAT;
-                        if (SUCCEEDED(result) && !CreateStillFrameWindow()) {
-                            result = HRESULT_FROM_WIN32(::GetLastError());
-                            if (SUCCEEDED(result)) result = E_FAIL;
-                        }
-                        if (FAILED(result)) {
-                            SetFailure(result, MediaPreviewOperation::Open);
-                            break;
-                        }
-                        if (video_endpoint_->last_frame_position == MediaTime::zero()) ShowStillFrame(true);
-                    }
-                    {
-                        const std::scoped_lock lock(state_mutex_);
-                        duration_ = *duration;
-                        state_ = MediaPreviewState::Opening;
-                        error_ = S_OK;
-                        failed_operation_ = MediaPreviewOperation::None;
-                        transport_.Reset();
-                        first_frame_pending_ = true;
-                        ++command_sequence_;
-                        command_started_ms_ = ::GetTickCount64();
-                        LogTransportLocked(L"first-frame-step", event->eEventType, S_OK, event->eState);
-                    }
-                    // MFPlay's native frame-step command decodes one frame and
-                    // settles paused; opening never starts timed playback.
-                    // https://github.com/microsoft/Windows-classic-samples/tree/main/Samples/Win7Samples/multimedia/mediafoundation/MFPlayer2
-                    result = player_->FrameStep();
-                    if (FAILED(result)) SetFailure(result, MediaPreviewOperation::Open);
-                }
+            case MFP_EVENT_TYPE_MEDIAITEM_SET:
+                OnMediaItemSet(event);
                 break;
-            }
-            case MFP_EVENT_TYPE_FRAME_STEP: {
-                if (!first_frame_pending_) break;
-                MFP_MEDIAPLAYER_STATE native = MFP_MEDIAPLAYER_STATE_EMPTY;
-                HRESULT result = player_->GetState(&native);
-                PROPVARIANT value{};
-                if (SUCCEEDED(result)) result = player_->GetPosition(MFP_POSITIONTYPE_100NS, &value);
-                const auto position = SUCCEEDED(result) ? MediaTimeFromVariant(value) : std::nullopt;
-                ::PropVariantClear(&value);
-                if (FAILED(result) || native != MFP_MEDIAPLAYER_STATE_PAUSED ||
-                    position != MediaTime::zero()) {
-                    SetFailure(FAILED(result) ? result : MF_E_INVALIDREQUEST, MediaPreviewOperation::Open);
-                    break;
-                }
-                const std::scoped_lock lock(state_mutex_);
-                first_frame_pending_ = false;
-                transport_.Observe(PreviewNativeState::Paused);
-                state_ = MediaPreviewState::Ready;
-                LogTransportLocked(L"first-frame-ready", event->eEventType, S_OK, native);
+            case MFP_EVENT_TYPE_FRAME_STEP:
+                OnFirstFrameStep(event);
                 break;
-            }
             case MFP_EVENT_TYPE_PLAY:
             case MFP_EVENT_TYPE_PAUSE:
             case MFP_EVENT_TYPE_POSITION_SET:
             case MFP_EVENT_TYPE_STOP:
-            case MFP_EVENT_TYPE_PLAYBACK_ENDED: {
-                const std::scoped_lock lock(state_mutex_);
-                if (state_ == MediaPreviewState::Failed) break;
-                // Event headers are historical. Read current native state under
-                // the same lock that protects intent and command ownership.
-                MFP_MEDIAPLAYER_STATE native = MFP_MEDIAPLAYER_STATE_EMPTY;
-                const HRESULT result = event->pMediaPlayer->GetState(&native);
-                if (FAILED(result) ||
-                    (native != MFP_MEDIAPLAYER_STATE_PLAYING &&
-                     native != MFP_MEDIAPLAYER_STATE_PAUSED &&
-                     native != MFP_MEDIAPLAYER_STATE_STOPPED)) {
-                    transport_.Failed();
-                    state_ = MediaPreviewState::Failed;
-                    error_ = FAILED(result) ? result
-                             : native == MFP_MEDIAPLAYER_STATE_SHUTDOWN
-                                 ? MF_E_SHUTDOWN
-                                 : MF_E_INVALIDREQUEST;
-                    failed_operation_ = MediaPreviewOperation::Playback;
-                    break;
-                }
-                if (event->eEventType == MFP_EVENT_TYPE_STOP ||
-                    event->eEventType == MFP_EVENT_TYPE_PLAYBACK_ENDED) {
-                    transport_.Ended(NativeState(native),
-                                     event->eEventType == MFP_EVENT_TYPE_PLAYBACK_ENDED
-                                         ? std::optional<MediaTime>{duration_}
-                                         : std::nullopt);
-                    hold_natural_end = event->eEventType == MFP_EVENT_TYPE_PLAYBACK_ENDED &&
-                                       transport_.ended() && !transport_.command_pending() && !transport_.play_requested();
-                } else {
-                    const auto type = event->eEventType == MFP_EVENT_TYPE_PLAY
-                                          ? PreviewTransportCommandType::Play
-                                      : event->eEventType == MFP_EVENT_TYPE_PAUSE
-                                          ? PreviewTransportCommandType::Pause
-                                          : PreviewTransportCommandType::Seek;
-                    const bool accepted = transport_.Complete(type, NativeState(native));
-                    LogTransportLocked(accepted ? L"accepted" : L"unmatched", event->eEventType,
-                                       event->hrEvent, event->eState);
-                }
-                state_ = transport_.playing() ? MediaPreviewState::Playing
-                         : transport_.ended() ? MediaPreviewState::Ended
-                                              : MediaPreviewState::Paused;
+            case MFP_EVENT_TYPE_PLAYBACK_ENDED:
+                hold_natural_end = OnTransportEvent(event);
                 break;
-            }
 
             case MFP_EVENT_TYPE_ERROR:
                 SetFailure(event->hrEvent == S_OK ? E_FAIL : event->hrEvent,
@@ -1120,6 +956,220 @@ private:
             static_cast<void>(DriveTransport());
         }
         Notify();
+    }
+
+    // False for an event of a retired player generation or after the preview
+    // failed or closed; a stale event is traced.
+    bool AcceptPlayerEvent(MFP_EVENT_HEADER* event, uint64_t generation) noexcept {
+        const std::scoped_lock lock(state_mutex_);
+        if (generation != player_generation_) {
+            LogTransportLocked(L"stale-generation", event->eEventType,
+                               event->hrEvent, event->eState);
+            return false;
+        }
+        if (state_ == MediaPreviewState::Failed ||
+            state_ == MediaPreviewState::Closed) return false;
+        return true;
+    }
+
+    // Handles an event that reports a failure: reconciles a Pause sent while
+    // MFPlay was already stopped, or fails the preview and notifies.
+    void OnFailedPlayerEvent(MFP_EVENT_HEADER* event) noexcept {
+        if (event->eEventType == MFP_EVENT_TYPE_PAUSE &&
+            event->hrEvent == MF_E_SESSION_PAUSEWHILESTOPPED) {
+            bool reconciled = false;
+            {
+                const std::scoped_lock lock(state_mutex_);
+                reconciled = transport_.ReconcilePauseWhileStopped();
+                if (reconciled) {
+                    state_ = MediaPreviewState::Paused;
+                }
+            }
+            if (reconciled) {
+                platform::LogMessage(
+                    L"[Preview] Reconciled failed Pause event because MFPlay was already stopped");
+                static_cast<void>(DriveTransport());
+                Notify();
+                return;
+            }
+        }
+        MediaPreviewOperation operation;
+        {
+            const std::scoped_lock lock(state_mutex_);
+            operation = state_ == MediaPreviewState::Opening
+                            ? MediaPreviewOperation::Open
+                            : OperationForEventFailure(event->eEventType);
+        }
+        SetFailure(event->hrEvent, operation);
+        platform::LogMessage(
+            L"[Preview] MFPlay event %u failed during operation %u",
+            static_cast<unsigned>(event->eEventType),
+            static_cast<unsigned>(operation));
+        platform::LogHresult(L"Processing an MP4 preview event",
+                             event->hrEvent);
+        Notify();
+    }
+
+    // Validates the opened media item, prepares its endpoint frame and asks
+    // MFPlay to step to the first frame.
+    void OnMediaItemSet(MFP_EVENT_HEADER* event) noexcept {
+        HRESULT result = S_OK;
+        const auto duration = ReadMediaItemDuration(event, result);
+        if (!duration.has_value() ||
+            *duration <= MediaTime::zero()) {
+            SetFailure(FAILED(result) ? result : MF_E_INVALIDMEDIATYPE,
+                       MediaPreviewOperation::Open);
+        } else {
+            result = PrepareEndpointStillFrame(*duration);
+            if (FAILED(result)) {
+                SetFailure(result, MediaPreviewOperation::Open);
+                return;
+            }
+            {
+                const std::scoped_lock lock(state_mutex_);
+                duration_ = *duration;
+                state_ = MediaPreviewState::Opening;
+                error_ = S_OK;
+                failed_operation_ = MediaPreviewOperation::None;
+                transport_.Reset();
+                first_frame_pending_ = true;
+                ++command_sequence_;
+                command_started_ms_ = ::GetTickCount64();
+                LogTransportLocked(L"first-frame-step", event->eEventType, S_OK, event->eState);
+            }
+            // MFPlay's native frame-step command decodes one frame and
+            // settles paused; opening never starts timed playback.
+            // https://github.com/microsoft/Windows-classic-samples/tree/main/Samples/Win7Samples/multimedia/mediafoundation/MFPlayer2
+            result = player_->FrameStep();
+            if (FAILED(result)) SetFailure(result, MediaPreviewOperation::Open);
+        }
+    }
+
+    // Reads the duration of a media item whose video stream is selected;
+    // `result` keeps the first failure.
+    static std::optional<MediaTime> ReadMediaItemDuration(MFP_EVENT_HEADER* event,
+                                                          HRESULT& result) noexcept {
+        const auto* media_event = MFP_GET_MEDIAITEM_SET_EVENT(event);
+        IMFPMediaItem* media_item =
+            media_event != nullptr ? media_event->pMediaItem : nullptr;
+        PROPVARIANT value;
+        ::PropVariantInit(&value);
+        BOOL has_video = FALSE;
+        BOOL video_selected = FALSE;
+        result =
+            media_item != nullptr
+                ? media_item->HasVideo(&has_video, &video_selected)
+                : E_UNEXPECTED;
+        if (SUCCEEDED(result) && (!has_video || !video_selected)) {
+            result = MF_E_INVALIDMEDIATYPE;
+        }
+        if (SUCCEEDED(result)) {
+            result = media_item->GetDuration(MFP_POSITIONTYPE_100NS,
+                                             &value);
+        }
+        const auto duration = SUCCEEDED(result)
+                                  ? MediaTimeFromVariant(value)
+                                  : std::nullopt;
+        ::PropVariantClear(&value);
+        return duration;
+    }
+
+    // Reads the video endpoint once, decodes its last frame into the still
+    // frame window and shows it at once for a one-frame source.
+    HRESULT PrepareEndpointStillFrame(MediaTime duration) noexcept {
+        HRESULT result = S_OK;
+        if (!video_endpoint_) {
+            PreviewVideoEndpoint endpoint;
+            result = ReadPreviewVideoEndpoint(source_path_, duration, endpoint);
+            if (FAILED(result)) {
+                return result;
+            }
+            video_endpoint_ = endpoint;
+        }
+        {
+            MediaTime decoded_position;
+            result = DecodePreviewFrame(source_path_, video_endpoint_->last_frame_position,
+                                        false, endpoint_frame_, decoded_position);
+            if (SUCCEEDED(result) && decoded_position != video_endpoint_->last_frame_position)
+                result = MF_E_INVALID_FILE_FORMAT;
+            if (SUCCEEDED(result) && !CreateStillFrameWindow()) {
+                result = HRESULT_FROM_WIN32(::GetLastError());
+                if (SUCCEEDED(result)) result = E_FAIL;
+            }
+            if (FAILED(result)) {
+                return result;
+            }
+            if (video_endpoint_->last_frame_position == MediaTime::zero()) ShowStillFrame(true);
+        }
+        return S_OK;
+    }
+
+    // Completes opening once the first frame step settled paused at zero.
+    void OnFirstFrameStep(MFP_EVENT_HEADER* event) noexcept {
+        if (!first_frame_pending_) return;
+        MFP_MEDIAPLAYER_STATE native = MFP_MEDIAPLAYER_STATE_EMPTY;
+        HRESULT result = player_->GetState(&native);
+        PROPVARIANT value{};
+        if (SUCCEEDED(result)) result = player_->GetPosition(MFP_POSITIONTYPE_100NS, &value);
+        const auto position = SUCCEEDED(result) ? MediaTimeFromVariant(value) : std::nullopt;
+        ::PropVariantClear(&value);
+        if (FAILED(result) || native != MFP_MEDIAPLAYER_STATE_PAUSED ||
+            position != MediaTime::zero()) {
+            SetFailure(FAILED(result) ? result : MF_E_INVALIDREQUEST, MediaPreviewOperation::Open);
+            return;
+        }
+        const std::scoped_lock lock(state_mutex_);
+        first_frame_pending_ = false;
+        transport_.Observe(PreviewNativeState::Paused);
+        state_ = MediaPreviewState::Ready;
+        LogTransportLocked(L"first-frame-ready", event->eEventType, S_OK, native);
+    }
+
+    // Applies a play, pause, seek, stop or end event to the transport; returns
+    // whether the natural end frame is to be held.
+    bool OnTransportEvent(MFP_EVENT_HEADER* event) noexcept {
+        const std::scoped_lock lock(state_mutex_);
+        if (state_ == MediaPreviewState::Failed) return false;
+        // Event headers are historical. Read current native state under
+        // the same lock that protects intent and command ownership.
+        MFP_MEDIAPLAYER_STATE native = MFP_MEDIAPLAYER_STATE_EMPTY;
+        const HRESULT result = event->pMediaPlayer->GetState(&native);
+        if (FAILED(result) ||
+            (native != MFP_MEDIAPLAYER_STATE_PLAYING &&
+             native != MFP_MEDIAPLAYER_STATE_PAUSED &&
+             native != MFP_MEDIAPLAYER_STATE_STOPPED)) {
+            transport_.Failed();
+            state_ = MediaPreviewState::Failed;
+            error_ = FAILED(result) ? result
+                     : native == MFP_MEDIAPLAYER_STATE_SHUTDOWN
+                         ? MF_E_SHUTDOWN
+                         : MF_E_INVALIDREQUEST;
+            failed_operation_ = MediaPreviewOperation::Playback;
+            return false;
+        }
+        bool hold_natural_end = false;
+        if (event->eEventType == MFP_EVENT_TYPE_STOP ||
+            event->eEventType == MFP_EVENT_TYPE_PLAYBACK_ENDED) {
+            transport_.Ended(NativeState(native),
+                             event->eEventType == MFP_EVENT_TYPE_PLAYBACK_ENDED
+                                 ? std::optional<MediaTime>{duration_}
+                                 : std::nullopt);
+            hold_natural_end = event->eEventType == MFP_EVENT_TYPE_PLAYBACK_ENDED &&
+                               transport_.ended() && !transport_.command_pending() && !transport_.play_requested();
+        } else {
+            const auto type = event->eEventType == MFP_EVENT_TYPE_PLAY
+                                  ? PreviewTransportCommandType::Play
+                              : event->eEventType == MFP_EVENT_TYPE_PAUSE
+                                  ? PreviewTransportCommandType::Pause
+                                  : PreviewTransportCommandType::Seek;
+            const bool accepted = transport_.Complete(type, NativeState(native));
+            LogTransportLocked(accepted ? L"accepted" : L"unmatched", event->eEventType,
+                               event->hrEvent, event->eState);
+        }
+        state_ = transport_.playing() ? MediaPreviewState::Playing
+                 : transport_.ended() ? MediaPreviewState::Ended
+                                      : MediaPreviewState::Paused;
+        return hold_natural_end;
     }
 
     void LogTransport(const wchar_t* kind, unsigned action, HRESULT result,
@@ -1236,7 +1286,7 @@ private:
         }
         DestroyStillFrameWindow();
         if (owner_window_ != nullptr) {
-            ::KillTimer(owner_window_, 1);
+            ::KillTimer(owner_window_, kOwnerPollTimer);
             ::DestroyWindow(owner_window_);
             owner_window_ = nullptr;
         }
@@ -1267,14 +1317,8 @@ private:
 
     static LRESULT CALLBACK OwnerWindowProc(HWND window, UINT message,
                                             WPARAM wparam, LPARAM lparam) noexcept {
-        auto* owner = reinterpret_cast<MfPlayPreview*>(
-            ::GetWindowLongPtrW(window, GWLP_USERDATA));
-        if (message == WM_NCCREATE) {
-            owner = static_cast<MfPlayPreview*>(
-                reinterpret_cast<CREATESTRUCTW*>(lparam)->lpCreateParams);
-            ::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(owner));
-        }
-        if (owner && message == kPresentationMessage) {
+        auto* owner = platform::BindWindowOwner<MfPlayPreview>(window, message, lparam);
+        if (owner && message == kMsgMediaPreviewPresentation) {
             owner->ScheduleEndpointPresentation();
             return 0;
         }
@@ -1287,12 +1331,11 @@ private:
 
     bool CreateOwnerWindow() noexcept {
         static const bool registered = [] {
-            WNDCLASSW descriptor{};
+            WNDCLASSEXW descriptor{};
             descriptor.lpfnWndProc = OwnerWindowProc;
             descriptor.hInstance = ::GetModuleHandleW(nullptr);
             descriptor.lpszClassName = L"Easnap.PreviewTransportOwner";
-            return ::RegisterClassW(&descriptor) != 0 ||
-                   ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+            return platform::RegisterWindowClass(descriptor);
         }();
         if (!registered) return false;
         owner_window_ = ::CreateWindowExW(0, L"Easnap.PreviewTransportOwner", L"", 0,
@@ -1308,11 +1351,11 @@ private:
         if (!presentation_timer_) return false;
         presentation_wait_ = ::CreateThreadpoolWait(
             [](PTP_CALLBACK_INSTANCE, void* context, PTP_WAIT, TP_WAIT_RESULT) noexcept {
-                ::PostMessageW(static_cast<HWND>(context), kPresentationMessage, 0, 0);
+                ::PostMessageW(static_cast<HWND>(context), kMsgMediaPreviewPresentation, 0, 0);
             },
             owner_window_, nullptr);
         if (!presentation_wait_) return false;
-        return ::SetTimer(owner_window_, 1, 100, nullptr) != 0;
+        return ::SetTimer(owner_window_, kOwnerPollTimer, 100, nullptr) != 0;
     }
 
     void CheckLiveness() noexcept {
@@ -1437,7 +1480,6 @@ private:
     MediaPreviewOperation failed_operation_{MediaPreviewOperation::None};
     PreviewTransport transport_;
     bool first_frame_pending_{false};
-    static constexpr UINT kPresentationMessage = WM_APP + 17;
     HANDLE presentation_timer_{nullptr};
     PTP_WAIT presentation_wait_{nullptr};
     HWND native_video_window_{nullptr};

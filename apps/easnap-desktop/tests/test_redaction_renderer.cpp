@@ -6,6 +6,7 @@
 // rectangle moved. No window, device or desktop is used.
 
 #include "editor/redaction_renderer.h"
+#include "platform/bgra_image.h"
 
 #include <algorithm>
 #include <cstdint>

@@ -1,6 +1,6 @@
 # Easnap delivery roadmap
 
-**Updated:** 2026-11-17
+**Updated:** 2026-11-18
 
 Read this with [project status](docs/project-status.md). This file records the
 phase boundaries; what is implemented and validated belongs in project status,
@@ -9,26 +9,10 @@ and what each release contained in its release notes, listed in the
 
 ## Current: v1.3.1 published
 
-The first beta of v1.1 was published on 2026-10-13 as a prerelease of
-[`vseprr/easnap`](https://github.com/vseprr/easnap): Scrollshot in the
-application and the work a public beta needs. The second beta, with the
-corrections from testing the first, was published on 2026-10-30. The
-stabilization toward v1.1.0 ran on 2026-11-07 on the branch
-`stabilize/v1.1.0`. Its release candidate v1.1.0-rc.1 was checked by the
-owner and not published; the two problems the check found were corrected, and
-v1.1.0 was published on 2026-11-08. v1.2 followed on the branch
-`feature/v1.2`: Pin to screen and the sturdiness slices. Its release
-candidate v1.2.0-rc.1 was checked by the owner and not published, and v1.2.0
-was published on 2026-11-08 as the latest stable version. v1.3 ran on the
-branch `feature/v1.3`, created on 2026-11-08 from `main` at `68e34c5` (S2 of
-the coordinator split, merged by pull request #21), and on
-`feature/v1.3-findings` (the audit findings, the external video feature and
-the preview clock check, merged by pull request #22 on 2026-11-09). v1.3.0
-was published on 2026-11-09 from `main` without a release candidate, at the
-owner's request after their check of the branch's build. v1.3.1, a
-maintenance release of three corrections the owner reported on v1.3.0
-(branch `fix/v1.3.1`, pull request #25), was published on 2026-11-17; it is
-the latest stable version.
+v1.3.1 (2026-11-17) is the latest stable release; every release and its notes
+are listed in the [documentation index](docs/README.md). The structure
+refactor ([ADR-043](docs/decisions/ADR-043-structure-for-cheap-changes.md))
+is merged by pull request #27.
 
 | Phase | State |
 |---|---|
@@ -40,15 +24,17 @@ the latest stable version.
 | Scrollshot | Implemented, including editing of the stitched image; released in v1.1.0-beta.1 |
 | Beta readiness | Implemented; v1.1.0-beta.1 and v1.1.0-beta.2 published as prereleases |
 | Isolated test lab | Implemented 2026-10-19: Hyper-V VM driven by winlab, direct build, capture-path reporting ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md)) |
-| v1.1.0 stable | Stabilization on `stabilize/v1.1.0` (2026-11-07): audit, documentation, formatting, static analysis, code fixes; rc.1 checked by the owner, not published; v1.1.0 published 2026-11-08 |
-| v1.2 | On `feature/v1.2` (from 2026-11-08): Pin to screen ([ADR-038](docs/decisions/ADR-038-pinned-images.md)), audio exception boundary, undo limit, clipboard formats first, the session state machine and a required clang-tidy job; release candidate rc.1 checked by the owner, not published; v1.2.0 published 2026-11-08 |
-| v1.3 | On `feature/v1.3` (from 2026-11-08): S2 of the coordinator split, the trim flow with its own test ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)), implemented and checked by the owner; recording stays in the coordinator. Then, on `feature/v1.3-findings` (2026-11-09): the 2026-11-07 audit findings closed in one pass (copy and save on a worker, recording on Desktop Duplication, crash report line, settings notice and small clean-ups, editor repaint of what a move changed, trim window minimum and text fit, test rename, function splits, documentation tidy-up), the Scrollshot realistic test application ([ADR-041](docs/decisions/ADR-041-scrollshot-realistic-test-application.md)) and the frame-cost measurement and the recording's picture pool ([ADR-042](docs/decisions/ADR-042-recording-frame-buffer-cost.md)); the external video feature ([ADR-040](docs/decisions/ADR-040-external-video-in-the-trim-view.md)) is implemented (media layer, flow and tray entry, command line, hand-over to the running Easnap, installer "Open with") and checked by the owner in the running application; the trim preview's clock check ([ADR-010](docs/decisions/ADR-010-trim-view-ownership-and-orchestration.md), amended) closes the preview transport race seen in the lab |
-| v1.3.1 | Maintenance on `fix/v1.3.1` (2026-11-17): no flash when a screenshot is fixed, the watermark field, no pointer flicker while typing ([project status](docs/project-status.md#v131)); published 2026-11-17 |
+| v1.1.0 stable | Published 2026-11-08 after stabilization on `stabilize/v1.1.0`; [notes](docs/releases/v1.1.0.md) |
+| v1.2 | Published 2026-11-08: Pin to screen ([ADR-038](docs/decisions/ADR-038-pinned-images.md)) and the first slice of the coordinator split ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)); [notes](docs/releases/v1.2.0.md) |
+| v1.3 | Published 2026-11-09: the trim flow ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md)), external videos in the trim view ([ADR-040](docs/decisions/ADR-040-external-video-in-the-trim-view.md)), the Scrollshot realistic test application ([ADR-041](docs/decisions/ADR-041-scrollshot-realistic-test-application.md)), the recording's picture pool ([ADR-042](docs/decisions/ADR-042-recording-frame-buffer-cost.md)), the preview clock check ([ADR-010](docs/decisions/ADR-010-trim-view-ownership-and-orchestration.md), amended); [notes](docs/releases/v1.3.0.md) |
+| v1.3.1 | Published 2026-11-17: no flash when a screenshot is fixed, the watermark field, no pointer flicker while typing; [notes](docs/releases/v1.3.1.md) |
+| Structure refactor | Merged (PR #27): layer order checked, one message table and one identifier header, platform and editor split into units, one table row per button, theme-owned shared values, window class helper, shorter audio and media thread functions ([ADR-043](docs/decisions/ADR-043-structure-for-cheap-changes.md), [project status](docs/project-status.md#structure-refactor-branch-refactorstructure)) |
 | OCR | Planned after v1; not implemented and no date committed |
 
 ## Next bounded slices
 
-In this order (details in [project status](docs/project-status.md#next-slice)):
+Open; the owner will set the order (details in
+[project status](docs/project-status.md#next-slice)):
 
 1. The Scrollshot engine amendment for pictures torn between two presents
    ([ADR-027](docs/decisions/ADR-027-scrollshot-stitching-engine.md#known-weakness-2026-11-09)),
@@ -56,14 +42,13 @@ In this order (details in [project status](docs/project-status.md#next-slice)):
    input as `KNOWN_WEAKNESS`
    ([ADR-041](docs/decisions/ADR-041-scrollshot-realistic-test-application.md#validation)).
 2. The remaining editor costs (first spotlight frame, blur closure).
+3. The files still large after the structure refactor.
+4. Notifications turned off in winlab's guest provisioning.
 
-Then the other v1.3 candidates under [other deferred work](#other-deferred-work),
+Then the deferred candidates under [other deferred work](#other-deferred-work),
 one bounded slice each; the Scrollshot fractional scroll offsets need an
 engine change of their own. Recording stays in the coordinator
 ([ADR-039](docs/decisions/ADR-039-coordinator-trim-flow.md#recording-decided-after-s2)).
-The recording's picture pool is validated in the lab
-([ADR-042](docs/decisions/ADR-042-recording-frame-buffer-cost.md)); NV12
-sample reuse waits for a hardware-encoder run.
 
 Open on the owner's side: the host Full run for the writer fix, since the host
 desktop is used only when the owner asks. Not covered yet: Windows 11, an N
@@ -105,13 +90,10 @@ included in v1 and has no promised release date.
 Camera, Mouse Effects, device pickers, GPU-native recording, a single muxing
 thread for audio and video, and long-video trim optimization remain outside
 this release. Code signing is not in place; binaries are unsigned, and the
-owner decided on 2026-11-07 to publish v1.1.0 unsigned. Candidates from the
-2026-11-07 audit left for v1.3 (v1.2 took the exception boundary for the audio
-threads, the required clang-tidy job and the first slice of the coordinator
-split; v1.3 began with the trim flow out of `CaptureCoordinator`): shorter
-audio and editor functions, a golden corpus of recorded frames for Scrollshot, and copying and
-saving off the interface thread; for the lab, an image at the development PC's
-update revision, one of the two differences left that could explain why the lab
-missed the caption the owner saw ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md#not-validated)). Codec
+owner decided on 2026-11-07 to publish v1.1.0 unsigned. Left from the
+2026-11-07 audit: a golden corpus of recorded frames for Scrollshot; for the
+lab, an image at the development PC's update revision, one of the two
+differences left that could explain why the lab missed the caption the owner
+saw ([ADR-037](docs/decisions/ADR-037-isolated-test-lab.md#not-validated)). Codec
 cut-point granularity, GIF palette/timing limits and source-start decoding for
 late trims are documented implementation limits, not unimplemented v1 features.

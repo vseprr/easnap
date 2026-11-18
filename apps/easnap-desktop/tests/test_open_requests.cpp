@@ -18,6 +18,7 @@
 #include "app/video_handover.h"
 #include "media/video_probe.h"
 #include "media/video_support.h"
+#include "platform/platform_utils.h"
 #include "platform/startup_entry.h"
 #include "temp_folder.h"
 

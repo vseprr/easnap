@@ -1,8 +1,7 @@
 # Troubleshooting
 
 Answers to what comes up most often. What Easnap does in detail is in
-[user flows](user-flows.md). Entries marked *beta* apply to v1.1.0-beta.1 and
-later, not to v1.0.2.
+[user flows](user-flows.md).
 
 ## Starting and installing
 
@@ -15,9 +14,9 @@ know yet; Easnap has not been tested on Windows 11.
 
 **Nothing appears after starting Easnap.** It has no main window. Its icon is
 in the notification area, possibly among the hidden icons behind the arrow.
-The first start on a computer says so in a notification (*beta*).
+The first start on a computer says so in a notification.
 
-**"Easnap needs Windows 10 version 2004 (build 19041) or later."** (*beta*)
+**"Easnap needs Windows 10 version 2004 (build 19041) or later."**
 Earlier builds cannot keep Easnap's own windows out of a recording or a
 scrolling screenshot. There is no workaround.
 
@@ -29,18 +28,16 @@ product removed it, the preview of a recording cannot open; see below.
 
 **Ctrl+Shift+A does nothing, or a notification says another application uses
 it.** Click the Easnap icon to capture, and choose another combination under
-**Settings...** in the menu of the icon (*beta*). In v1.0.2, exit the other
-application or change `HotkeyModifiers` and `HotkeyVirtualKey` in
-`%LOCALAPPDATA%\Easnap\settings.ini` while Easnap is not running.
+**Settings...** in the menu of the icon.
 
-**Settings does not accept my combination.** (*beta*) It needs Ctrl, Alt or
+**Settings does not accept my combination.** It needs Ctrl, Alt or
 the Windows key; Shift alone is refused. A combination that another
 application or Windows itself holds is refused with its name.
 
-**The shortcut does nothing while a dialog of Easnap is open.** (*beta*) That
+**The shortcut does nothing while a dialog of Easnap is open.** That
 is intended: the dialog comes forward and has to be answered first.
 
-## Scrollshot (*beta*)
+## Scrollshot
 
 **The image stops growing, or the island says "Easnap lost track".** Scroll
 back up a little until the picture in the frame matches the end of the image,
@@ -61,22 +58,21 @@ island says so: click inside the frame once.
 
 ## Recording
 
-**Record says it needs the Media Feature Pack.** (*beta*) You are on an N or KN
+**Record says it needs the Media Feature Pack.** You are on an N or KN
 edition of Windows, which comes without Media Foundation. Install the Media
 Feature Pack from the optional features in Windows Settings and start Easnap
-again. Screenshots and Scrollshot work without it. v1.0.2 does not start on
-these editions without the pack.
+again. Screenshots and Scrollshot work without it.
 
-**"This region is larger than H.264 video allows."** (*beta*) H.264 limits the
+**"This region is larger than H.264 video allows."** H.264 limits the
 picture size; the message shows the size of your region. Choose a smaller one.
 
 **The preview does not open after Stop.** The recording is finished and kept.
-In the beta, close the window: Easnap offers to save the recording as it is,
+Close the window: Easnap offers to save the recording as it is,
 as an MP4 file. If the message names `EasnapPreviewHost.exe`, that file is
 missing from the Easnap folder: extract the ZIP again or reinstall.
 
 **Easnap closed, crashed or the PC shut down before I saved a recording.**
-(*beta*) A recording that was already finished is offered at the next start:
+A recording that was already finished is offered at the next start:
 Save, Delete or Not now. A recording that was still running when Easnap
 stopped cannot be recovered.
 
@@ -94,11 +90,11 @@ sizes.
 
 ## Reporting a problem
 
-1. **About, then Copy details** (*beta*) puts the version, Windows build,
+1. **About, then Copy details** puts the version, Windows build,
    language, shortcut and display layout on the clipboard. Paste that into the
    issue.
 2. **Open data folder** in the menu of the icon leads to the log
-   (`logs\easnap.log`) and, after a crash, to `crashes\*.dmp` (*beta*). The
+   (`logs\easnap.log`) and, after a crash, to `crashes\*.dmp`. The
    log holds no file name, window title or typed text. A crash report holds
    the call stacks of the program and can contain fragments of what was being
    handled: look at it before you attach it.
@@ -116,5 +112,5 @@ Everything is under `%LOCALAPPDATA%\Easnap`: `settings.ini`, `logs`,
 - To start over, exit Easnap and delete `settings.ini`.
 - Edit `settings.ini` only while Easnap is not running; Easnap writes the file
   when a setting changes and would overwrite your edit.
-- Uninstalling the beta asks whether settings, log and crash reports should be
+- Uninstalling asks whether settings, log and crash reports should be
   removed. Recordings that were not saved are kept.

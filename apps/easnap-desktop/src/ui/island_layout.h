@@ -6,7 +6,7 @@
 // mode island.
 #pragma once
 
-#include "platform/platform_utils.h"
+#include <windows.h>
 
 namespace easnap::ui {
 

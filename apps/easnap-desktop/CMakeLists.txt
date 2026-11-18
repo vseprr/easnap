@@ -28,6 +28,10 @@ set(EASNAP_SOURCES
     src/app/recording_completion.cpp
     src/app/recording_finalizer.h
     src/app/recording_finalizer.cpp
+    src/app/scrollshot_status.h
+    src/app/scrollshot_status.cpp
+    src/app/display_change.h
+    src/app/display_change.cpp
     src/app/trim_workflow.h
     src/app/trim_workflow.cpp
     src/app/trim_flow.h
@@ -43,11 +47,29 @@ set(EASNAP_SOURCES
     src/app/app_settings.cpp
     src/app/session_state.h
     src/app/session_state.cpp
+    src/app/tray_shell.h
+    src/app/tray_shell.cpp
+    src/ui/capture_mode.h
+    src/ui/control_ids.h
     src/ui/ui_theme.h
     src/ui/ui_theme.cpp
     src/ui/native_controls.cpp
     src/ui/native_controls.h
-    src/ui/paint_buffer.h
+    src/ui/image_export_outcome.h
+    src/ui/image_export_outcome.cpp
+    src/ui/icons.h
+    src/ui/icons.cpp
+    src/ui/message_dialog.h
+    src/ui/message_dialog.cpp
+    src/ui/window_chrome.h
+    src/ui/window_chrome.cpp
+    src/ui/tray_icon.h
+    src/ui/tray_icon.cpp
+    src/ui/tray_menu.h
+    src/ui/tray_menu.cpp
+    src/ui/about_dialog.h
+    src/ui/about_dialog.cpp
+    src/platform/paint_buffer.h
     src/ui/overlay.h
     src/ui/overlay.cpp
     src/ui/capture_magnifier.h
@@ -75,12 +97,33 @@ set(EASNAP_SOURCES
     src/ui/trim_layout.cpp
     src/ui/region_selector.h
     src/ui/region_selector.cpp
+    src/editor/annotation_document.h
+    src/editor/annotation_document.cpp
+    src/editor/annotation_renderer.h
+    src/editor/annotation_renderer.cpp
+    src/editor/annotation_tools.h
+    src/editor/annotation_palette.h
     src/editor/screenshot_editor.h
     src/editor/screenshot_editor.cpp
+    src/editor/toolbar_item.h
+    src/editor/toolbar_item.cpp
+    src/editor/editor_toolbar.h
+    src/editor/editor_toolbar.cpp
+    src/editor/editor_context_panel.h
+    src/editor/editor_context_panel.cpp
+    src/editor/text_annotation_editor.h
+    src/editor/text_annotation_editor.cpp
+    src/editor/key_commands.h
+    src/editor/editor_export.h
+    src/editor/editor_export.cpp
+    src/editor/context_panel_layout.h
+    src/editor/context_panel_layout.cpp
     src/editor/image_viewport.h
     src/editor/image_viewport.cpp
     src/editor/redaction_renderer.h
     src/editor/redaction_renderer.cpp
+    src/editor/mosaic.h
+    src/editor/mosaic.cpp
     src/capture/capture_provider.h
     src/capture/capture_provider.cpp
     src/capture/recording_capture_worker.h
@@ -125,6 +168,8 @@ set(EASNAP_SOURCES
     src/recording/recording_session.cpp
     src/recording/audio_timeline.h
     src/recording/audio_timeline.cpp
+    src/platform/app_messages.h
+    src/platform/window_class.h
     src/platform/diagnostics.h
     src/platform/diagnostics.cpp
     src/platform/image_export.h
@@ -133,6 +178,19 @@ set(EASNAP_SOURCES
     src/platform/startup_entry.cpp
     src/ui/settings_dialog.h
     src/ui/settings_dialog.cpp
+    src/platform/saturating_counter.h
+    src/platform/bgra_image.h
+    src/platform/bgra_image.cpp
+    src/platform/files.h
+    src/platform/files.cpp
+    src/platform/graphics_device.h
+    src/platform/graphics_device.cpp
+    src/platform/image_output.h
+    src/platform/image_output.cpp
+    src/platform/screen_geometry.h
+    src/platform/screen_geometry.cpp
+    src/platform/system_info.h
+    src/platform/system_info.cpp
     src/platform/platform_utils.h
     src/platform/platform_utils.cpp)
 
@@ -149,11 +207,19 @@ add_executable(EasnapPreviewHost WIN32
     src/media/preview_host_main.cpp
     src/media/preview_host_protocol.h
     src/media/media_preview.cpp
+    src/platform/app_messages.h
+    src/platform/window_class.h
     src/media/mf_video_aperture.h
-    src/ui/paint_buffer.h
+    src/platform/paint_buffer.h
     src/media/preview_video_endpoint.cpp
     src/media/preview_transport.cpp
     src/platform/diagnostics.cpp
+    src/platform/bgra_image.cpp
+    src/platform/files.cpp
+    src/platform/graphics_device.cpp
+    src/platform/image_output.cpp
+    src/platform/screen_geometry.cpp
+    src/platform/system_info.cpp
     src/platform/platform_utils.cpp)
 target_include_directories(EasnapPreviewHost PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"

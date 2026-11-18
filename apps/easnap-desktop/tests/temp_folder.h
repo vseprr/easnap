@@ -2,7 +2,10 @@
 // reading such a file back.
 #pragma once
 
+#include "platform/bgra_image.h"
 #include "platform/platform_utils.h"
+
+#include <wincodec.h>
 
 #include <string>
 #include <vector>

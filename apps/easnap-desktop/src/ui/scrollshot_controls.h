@@ -4,11 +4,12 @@
 // this class shows what it is told and forwards commands.
 #pragma once
 
+#include <windows.h>
+
 #include <functional>
 #include <memory>
 #include <string>
 
-#include "platform/platform_utils.h"
 #include "scrollshot/scrollshot_session.h"
 
 namespace easnap::ui {

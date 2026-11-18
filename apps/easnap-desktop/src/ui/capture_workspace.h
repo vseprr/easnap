@@ -1,6 +1,8 @@
 // Capture-workspace interaction policy; independent of recording lifecycle.
 #pragma once
-#include "app/session_state.h"
+#include <string>
+
+#include "ui/capture_mode.h"
 #include "ui/ui_theme.h"
 
 namespace easnap::ui {
@@ -16,7 +18,7 @@ class CaptureWorkspace {
 public:
     void Reset() noexcept { *this = {}; }
     void EnterEditing() noexcept { interaction_ = WorkspaceInteraction::Editing; }
-    void SetMode(app::CaptureMode mode) noexcept;
+    void SetMode(CaptureMode mode) noexcept;
     void EditorFeatureUsed() noexcept;
     void FixScreenshot() noexcept {
         if (screenshot_visible()) { screenshot_fixed_ = true; }
@@ -41,21 +43,21 @@ public:
     // Consumes the automatic attempt before publication, including failures.
     [[nodiscard]] bool DocumentCommitted() noexcept;
     [[nodiscard]] WorkspaceInteraction interaction() const noexcept { return interaction_; }
-    [[nodiscard]] app::CaptureMode mode() const noexcept { return mode_; }
+    [[nodiscard]] CaptureMode mode() const noexcept { return mode_; }
     [[nodiscard]] bool editing() const noexcept { return interaction_ == WorkspaceInteraction::Editing; }
     [[nodiscard]] bool magnifier_visible() const noexcept { return !editing(); }
-    [[nodiscard]] bool screenshot_visible() const noexcept { return editing() && mode_ == app::CaptureMode::Screenshot; }
-    [[nodiscard]] bool recording_visible() const noexcept { return editing() && mode_ == app::CaptureMode::Record; }
-    [[nodiscard]] bool scrollshot_visible() const noexcept { return editing() && mode_ == app::CaptureMode::Scrollshot; }
+    [[nodiscard]] bool screenshot_visible() const noexcept { return editing() && mode_ == CaptureMode::Screenshot; }
+    [[nodiscard]] bool recording_visible() const noexcept { return editing() && mode_ == CaptureMode::Record; }
+    [[nodiscard]] bool scrollshot_visible() const noexcept { return editing() && mode_ == CaptureMode::Scrollshot; }
     [[nodiscard]] bool quick_return_armed() const noexcept { return quick_return_armed_; }
     [[nodiscard]] bool automatic_attempt_consumed() const noexcept { return automatic_attempt_consumed_; }
     [[nodiscard]] COLORREF accent() const noexcept {
-        return mode_ == app::CaptureMode::Record ? theme::Current().record_border : theme::Current().screenshot_border;
+        return mode_ == CaptureMode::Record ? theme::Current().record_border : theme::Current().screenshot_border;
     }
 
 private:
     WorkspaceInteraction interaction_{WorkspaceInteraction::Standby};
-    app::CaptureMode mode_{app::CaptureMode::Screenshot};
+    CaptureMode mode_{CaptureMode::Screenshot};
     ScrollshotPhase scrollshot_{ScrollshotPhase::Idle};
     bool editor_feature_used_{false};
     bool quick_return_armed_{false};

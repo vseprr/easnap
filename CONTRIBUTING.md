@@ -50,6 +50,9 @@ Before changing a window's layout, painting or lifetime, read
 [the native-frame decision](docs/decisions/ADR-024-native-trim-frame.md). Preserve
 the shared window paths and the application/preview-helper boundary.
 
+The [change map](docs/ui/change-map.md) names the file and symbol for common
+changes; when a change moves one of them, update its row.
+
 Do not commit captures, recordings, build output or local settings. Approved
 documentation images use exact paths in both `.gitignore` and
 `scripts/repository-media-allowlist.txt`. Run the repository checks before a PR:
@@ -60,7 +63,10 @@ python scripts/test_repository_hygiene.py
 ```
 
 The first also reports relative links between documents that lead nowhere: to
-a file that is not tracked, or to a heading that does not exist.
+a file that is not tracked, or to a heading that does not exist. It also
+reports an `#include` in `apps/easnap-desktop/src` that points against the
+layer order (platform; media, capture; recording, scrollshot; editor, ui; app;
+`main.cpp`), named in `LAYER_TIERS` and `APP_VALUE_HEADERS` of the script.
 
 For sensitive reports, follow [SECURITY.md](SECURITY.md).
 

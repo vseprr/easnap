@@ -4,7 +4,7 @@
 #include <cwchar>
 
 #include "app/recording_workflow.h"
-#include "platform/platform_utils.h"
+#include "platform/files.h"
 
 namespace easnap::app {
 namespace {

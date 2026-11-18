@@ -38,7 +38,9 @@ declares a `platform::ModalLoopScope`, so that Exit, the capture shortcut and
 deferred cleanup know it is open.
 
 Bind each custom window procedure to its real owner during creation
-(`CreateWindowExW` creation parameter and the existing `WM_NCCREATE` pattern).
+(`CreateWindowExW` creation parameter bound on `WM_NCCREATE` through
+`platform/window_class.h`: `RegisterWindowClass`, `BindWindowOwner`,
+`BoundWindowProc`).
 Verify that paint, erase and size messages actually reach that owner; a generic
 control factory with a null parameter previously bypassed the video handlers.
 
@@ -49,20 +51,21 @@ Paths in this table are relative to `apps/easnap-desktop/src`.
 | Surface | Creation and state/layout entry points to inspect together |
 |---|---|
 | Trim and timeline/video children | `ui/trim_window.cpp`: `TrimWindow::Open`, `CreateControls`, `CreateControl`, `RebuildFonts`, `LayoutControls`, `UpdateLabels`, `UpdateStatusLayout`, `HandleMessage`, `HandleVideoMessage`, `Hide`, `ReleaseMedia`, `Destroy`; `ui/trim_layout.cpp`: `InitialTrimWindowSize`, `CalculateTrimWindowLayout`, `FitTrimVideo` |
-| Shared caption and controls | `ui/native_controls.cpp`: `StyleWindowChrome`, `WindowChrome::Layout`, `PaintResize`, `ChromeParentProc`, `NativeRedrawGuard`, styled control procedures; `ui/paint_buffer.h`: `PaintBuffer`; `ui/ui_theme.cpp`: `DrawMaterial` |
-| Fixed About/error/confirmation dialog | `ui/native_controls.cpp`: `ShowMessage`, `ShowChoice`, `ConfirmDestructive`, `MessageDialogProc`; callers in `main.cpp` and the coordinator. Retain modal default/cancel and native PMv2 dialog behavior. A dialog with named answers sizes its button row to the text; the destructive answer is never the default. |
-| Settings dialog | `ui/settings_dialog.cpp`: `ShowSettingsDialog` on the same fixed-dialog path, with shared chrome and styled controls. It edits a copy of the values; the shell in `main.cpp` applies them. The shortcut button reads keys through a subclass while it waits. |
+| Shared caption and controls | `ui/window_chrome.cpp`: `StyleWindowChrome`, `WindowChrome::Layout`, `PaintResize`, `ChromeParentProc`; `ui/native_controls.cpp`: `NativeRedrawGuard`, styled control procedures; `platform/paint_buffer.h`: `PaintBuffer`; `ui/ui_theme.cpp`: `DrawMaterial` |
+| Fixed About/error/confirmation dialog | `ui/message_dialog.cpp`: `ShowMessage`, `ShowChoice`, `ConfirmDestructive`, `MessageDialogProc`; `ui/about_dialog.cpp`: `ShowAboutDialog`; callers in `app/tray_shell.cpp`, `main.cpp` and the coordinator. Retain modal default/cancel and native PMv2 dialog behavior. A dialog with named answers sizes its button row to the text; the destructive answer is never the default. |
+| Settings dialog | `ui/settings_dialog.cpp`: `ShowSettingsDialog` on the same fixed-dialog path, with shared chrome and styled controls. It edits a copy of the values; the shell in `app/tray_shell.cpp` applies them. The shortcut button reads keys through a subclass while it waits. |
 | Scrollshot island and preview | `ui/scrollshot_controls.cpp`: the Start/help island, the four-action island with status, and the live preview; placement in `ui/scrollshot_layout.cpp`. Capture-excluded like every surface that is visible during a capture. |
 | Pinned images | `ui/pinned_images.cpp`: `PinnedImages::Pin`, `CloseAll`, `Window::Create`, `Handle`, `PaintTo`, `Zoom`, `ShowMenu`, `RequestClose`, `EndBusy`; placement and zoom in `ui/pin_layout.cpp`. A pin asked to close during its own menu or Save dialog closes when that returns. |
 | Capture overlay, image, shade, palette and magnifier | `ui/overlay.cpp`: `OverlayController::Show`, `OverlayWindow::Create`/`Destroy` and their window procedures. Region clipping and layered-image submission here are intentional overlay behavior. |
-| Editor tools, context, brush and native text host | `editor/screenshot_editor.cpp`: `CreateToolbarControls`, `SyncContext`, `PlaceContext`, `SetFrameInteracting`, `WindowProc`, and the native EDIT/text-host creation path. Preserve temporary tool hiding during capture-frame interaction. |
+| Editor tools, context, brush and native text host | `editor/screenshot_editor.cpp`: `CreateToolbarControls`, `SetFrameInteracting`, `HandleMessage`, `CreateTextHost`; `editor/editor_toolbar.cpp`: `EditorToolbar::Build`, `CreateButtons`, `SyncButtons`; `editor/editor_context_panel.cpp`: `EditorContextPanel::Build`, `CreateControls`, `Sync`, `Place`, `ShowBrushPopup`; `editor/text_annotation_editor.cpp`: `TextAnnotationEditor::Start` (creates the native EDIT), `Layout`. Preserve temporary tool hiding during capture-frame interaction. |
 | Recording configuration/active/paused/finalizing island and boundary HWNDs | `ui/recording_controls.cpp`: `RecordingControls::ShowConfiguring`, `RetireWorkspace`, nested `Window::Create`, `UpdateForState`, `Layout`, `HandlePanelMessage`, `Destroy` |
 | Preview process and native/still children | `media/preview_process.cpp`: `ProcessMediaPreview::UpdateVideo`, `SendResize`, `Poll`, `Close`; `media/preview_host_main.cpp`: host creation/resize dispatch; `media/media_preview.cpp`: `MfPlayPreview::UpdateVideo`, `NativeVideoWindowProc`, `StillFrameWindowProc`, `ShowStillFrame`, `PresentStillFrame` |
 | Timeline input and preview health | `ui/trim_window.cpp`: `HandleTimelineMessage`, `UpdateTimelineFromPoint`, `SeekTo`, `SetAccessibleTimelineValue`; `media/preview_transport.cpp`: `PreviewTransport::TakeNext`/`Complete`, `PreviewLiveness::Observe`; `media/media_preview.cpp`: `MfPlayPreview::DriveTransport`, `CheckLiveness`, `RequestRecovery` |
 | Session retirement and shutdown | `app/session_state.cpp`: `CaptureCoordinator::EndSession`, `OnDeferredCleanup`, `Shutdown`; the trim view through `app/trim_flow.cpp`: `TrimFlow::RetireWindow`, `DestroyRetired`, `Destroy`; check owner relationships before changing teardown order. |
 
 Implement in this order: choose the existing surface type and owner; establish
-its initial monitor/DPI and native styles; bind the native procedure; create and
+its initial monitor/DPI and native styles; register the class and bind the
+native procedure to its owner through `platform/window_class.h`; create and
 style actual controls; install fonts and complete measured layout before first
 exposure; initialize asynchronous work at its existing boundary; then show the
 surface and validate its first usable state. Treat creation failure, hide,
@@ -73,7 +76,7 @@ dialogs/menu windows do not become custom resizable content windows.
 ## 2. Preserve the native resize frame
 
 The reference is `WindowChrome::Layout` / `ChromeParentProc` in
-`apps/easnap-desktop/src/ui/native_controls.cpp`.
+`apps/easnap-desktop/src/ui/window_chrome.cpp`.
 
 - Let the default native handler calculate left, right and bottom nonclient
   insets. Customize only the caption allocation. When maximized, retain the

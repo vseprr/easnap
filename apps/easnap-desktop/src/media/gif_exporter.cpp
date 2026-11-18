@@ -2,6 +2,8 @@
 // Easnap - finalized-MP4 adapter for the presentation-independent GIF encoder.
 #include "media/gif_encoder.h"
 #include "media/video_support.h"
+#include "platform/bgra_image.h"
+#include "platform/platform_utils.h"
 
 #include <algorithm>
 #include <cstring>

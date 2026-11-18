@@ -1,5 +1,7 @@
 #include "ui/ui_theme.h"
+#include "ui/image_export_outcome.h"
 #include "ui/native_controls.h"
+#include "ui/message_dialog.h"
 // Easnap - session state machine and capture coordinator implementation.
 #include "app/session_state.h"
 #include <dwmapi.h>
@@ -14,6 +16,12 @@
 #include "app/recording_workflow.h"
 #include "editor/screenshot_editor.h"
 #include "media/temp_session.h"
+#include "platform/bgra_image.h"
+#include "platform/files.h"
+#include "platform/image_output.h"
+#include "platform/platform_utils.h"
+#include "platform/screen_geometry.h"
+#include "platform/system_info.h"
 #include "recording/recording_session.h"
 #include "scrollshot/scrollshot_session.h"
 #include "strings/strings.h"
@@ -425,7 +433,7 @@ bool CaptureCoordinator::BeginCaptureSession() {
 void CaptureCoordinator::EnsureOverlay() {
     if (!overlay_) {
         ui::OverlayController::Callbacks callbacks;
-        callbacks.on_editing_changed = [this](CaptureMode mode, const RECT& region) {
+        callbacks.on_editing_changed = [this](ui::CaptureMode mode, const RECT& region) {
             OnWorkspaceEditingChanged(mode, region);
         };
         callbacks.on_cancelled = [this]() { OnOverlayCancelled(); };
@@ -466,7 +474,7 @@ void CaptureCoordinator::EnsureOverlay() {
     overlay_retired_ = false;
 }
 
-void CaptureCoordinator::OnWorkspaceEditingChanged(CaptureMode mode, const RECT& region) {
+void CaptureCoordinator::OnWorkspaceEditingChanged(ui::CaptureMode mode, const RECT& region) {
     if (!overlay_ || !overlay_->visible() ||
         (state() != SessionState::RegionSelecting && state() != SessionState::ScreenshotEditing &&
          state() != SessionState::RecordingConfiguring && state() != SessionState::ScrollshotConfiguring)) { return; }
@@ -474,13 +482,13 @@ void CaptureCoordinator::OnWorkspaceEditingChanged(CaptureMode mode, const RECT&
         return;
     }
 
-    if (mode == CaptureMode::Record) {
+    if (mode == ui::CaptureMode::Record) {
         if (editor_) { editor_->Hide(); }
         if (scrollshot_controls_) { scrollshot_controls_->Hide(); }
         BeginRecordingConfiguration(region);
         return;
     }
-    if (mode == CaptureMode::Scrollshot) {
+    if (mode == ui::CaptureMode::Scrollshot) {
         if (editor_) { editor_->Hide(); }
         if (recording_controls_) { recording_controls_->Hide(); }
         BeginScrollshotConfiguration(region);
@@ -509,7 +517,7 @@ void CaptureCoordinator::OnWorkspaceRegionChanged(const RECT& region) {
 }
 
 void CaptureCoordinator::CompleteWorkspaceScreenshot() {
-    if (!overlay_ || !overlay_->visible() || overlay_->mode() != CaptureMode::Screenshot) { return; }
+    if (!overlay_ || !overlay_->visible() || overlay_->mode() != ui::CaptureMode::Screenshot) { return; }
     overlay_->EnterEditing();
     if (state() == SessionState::ScreenshotEditing && editor_) { editor_->CompleteCopy(); }
 }
@@ -1197,54 +1205,17 @@ void CaptureCoordinator::UpdateScrollshotStatus() {
     const bool capturing = state() == SessionState::ScrollshotCapturing && scrollshot_session_ != nullptr;
     int width = scrollshot_image_ ? scrollshot_image_->width : 0;
     int height = scrollshot_image_ ? scrollshot_image_->height : 0;
-    UINT message = capturing ? IDS_SCROLLSHOT_STATUS_SCROLL : IDS_SCROLLSHOT_STATUS_READY;
-    bool warning = false;
-    bool following = true;
+    std::optional<scrollshot::ScrollshotCondition> condition;
     if (capturing) {
         const scrollshot::ScrollshotProgress progress = scrollshot_session_->progress();
         width = progress.width;
         height = progress.height;
-        following = progress.condition == scrollshot::ScrollshotCondition::Following;
-        switch (progress.condition) {
-            case scrollshot::ScrollshotCondition::Lost:
-                message = IDS_SCROLLSHOT_STATUS_LOST;
-                warning = true;
-                break;
-            case scrollshot::ScrollshotCondition::AtLimit:
-                message = IDS_SCROLLSHOT_STATUS_LIMIT;
-                break;
-            case scrollshot::ScrollshotCondition::CaptureFailed:
-                message = IDS_SCROLLSHOT_STATUS_CAPTURE_FAILED;
-                warning = true;
-                break;
-            case scrollshot::ScrollshotCondition::Following:
-                break;
-        }
+        condition = progress.condition;
     }
-    switch (scrollshot_notice_) {
-        case ScrollshotNotice::WheelBlocked:
-            if (capturing && following) { message = IDS_SCROLLSHOT_STATUS_WHEEL; }
-            break;
-        case ScrollshotNotice::DisplayChanged: message = IDS_SCROLLSHOT_STATUS_DISPLAY_CHANGED; break;
-        case ScrollshotNotice::Stopping:
-            message = IDS_SCROLLSHOT_STATUS_STOPPING;
-            warning = true;
-            break;
-        case ScrollshotNotice::Copying: message = IDS_SCROLLSHOT_STATUS_COPYING; break;
-        case ScrollshotNotice::Saving: message = IDS_SCROLLSHOT_STATUS_SAVING; break;
-        case ScrollshotNotice::CopyFailed:
-            message = IDS_SCROLLSHOT_STATUS_COPY_FAILED;
-            warning = true;
-            break;
-        case ScrollshotNotice::SaveFailed:
-            message = IDS_SCROLLSHOT_STATUS_SAVE_FAILED;
-            warning = true;
-            break;
-        case ScrollshotNotice::None: break;
-    }
+    const ScrollshotStatus status = ChooseScrollshotStatus(condition, scrollshot_notice_);
     scrollshot_controls_->SetStatus(
         strings::Format(IDS_SCROLLSHOT_SIZE, {std::to_wstring(width), std::to_wstring(height)}),
-        strings::Get(message), warning);
+        strings::Get(status.message), status.warning);
 }
 
 void CaptureCoordinator::ShowScrollshotNotice(ScrollshotNotice notice) {
@@ -1309,7 +1280,7 @@ void CaptureCoordinator::CopyScrollshot() {
     const HCURSOR previous_cursor = ::SetCursor(::LoadCursorW(nullptr, IDC_WAIT));
     const bool stopped = StopScrollshotCapture();
     ::SetCursor(previous_cursor);
-    if (stopped && StartScrollshotExport(platform::ImageExportTarget::Clipboard, {}, false)) {
+    if (stopped && StartScrollshotExport(platform::ImageExportTarget::Clipboard, {})) {
         return;  // Busy until OnImageExportCompleted.
     }
     scrollshot_busy_ = false;
@@ -1356,20 +1327,20 @@ bool CaptureCoordinator::StartScrollshotSave(bool allow_quick) {
     }
     if (dialog && scrollshot_controls_) { scrollshot_controls_->SetFrame(scrollshot_region_); }
     return destination.has_value() &&
-           StartScrollshotExport(platform::ImageExportTarget::File, std::move(destination->path), destination->quick);
+           StartScrollshotExport(platform::ImageExportTarget::File, std::move(*destination));
 }
 
-bool CaptureCoordinator::StartScrollshotExport(platform::ImageExportTarget target, std::wstring path, bool quick) {
+bool CaptureCoordinator::StartScrollshotExport(platform::ImageExportTarget target,
+                                               ui::ImageSaveDestination destination) {
     if (!scrollshot_image_ || scrollshot_image_->empty()) {
         return false;
     }
-    platform::ImageExportRequest request{scrollshot_image_, target, path};
+    platform::ImageExportRequest request{scrollshot_image_, target, destination.path};
     if (!scrollshot_export_.Start(host_window_, platform::kMsgImageExportCompleted, std::move(request))) {
         ::MessageBeep(MB_ICONWARNING);  // Another export of Easnap is still running.
         return false;
     }
-    scrollshot_save_path_ = std::move(path);
-    scrollshot_save_quick_ = quick;
+    scrollshot_save_ = std::move(destination);
     ShowScrollshotNotice(target == platform::ImageExportTarget::Clipboard ? ScrollshotNotice::Copying
                                                                           : ScrollshotNotice::Saving);
     return true;
@@ -1380,17 +1351,17 @@ void CaptureCoordinator::OnImageExportCompleted(platform::ImageExportJob::Genera
     if (!result) {
         return;  // From an export the session dropped.
     }
-    const ui::ImageSaveDestination destination{std::move(scrollshot_save_path_), scrollshot_save_quick_};
-    scrollshot_save_path_.clear();
-    scrollshot_save_quick_ = false;
+    const ui::ImageSaveDestination destination = std::exchange(scrollshot_save_, {});
     if (!initialized_ || state() != SessionState::ScrollshotReview) {
         return;  // Nothing changes a session under its export; only its end drops it.
     }
     const bool copy = result->target == platform::ImageExportTarget::Clipboard;
-    const bool succeeded = result->status == platform::ImageExportStatus::Succeeded &&
-                           (!copy || platform::PublishClipboardImage(host_window_, result->clipboard));
-    if (succeeded) {
-        if (copy) {
+    const bool published = result->status == platform::ImageExportStatus::Succeeded && copy &&
+                           platform::PublishClipboardImage(host_window_, result->clipboard);
+    const ui::ImageExportOutcome outcome =
+        ui::ChooseImageExportOutcome(result->status, result->target, published, destination.quick, true);
+    if (outcome == ui::ImageExportOutcome::Copied || outcome == ui::ImageExportOutcome::Saved) {
+        if (outcome == ui::ImageExportOutcome::Copied) {
             platform::LogMessage(L"Scrollshot copied to the clipboard");
             ui::ShowCaptureCopiedNotice(scrollshot_region_);
         } else {
@@ -1402,7 +1373,7 @@ void CaptureCoordinator::OnImageExportCompleted(platform::ImageExportJob::Genera
         EndSession();
         return;
     }
-    if (!copy && result->status == platform::ImageExportStatus::Failed && destination.quick) {
+    if (outcome == ui::ImageExportOutcome::RetryWithDialog) {
         // The screenshots folder could not be written: the dialog offers
         // every other place for the same image.
         scrollshot_notice_ = ScrollshotNotice::None;
@@ -1413,12 +1384,13 @@ void CaptureCoordinator::OnImageExportCompleted(platform::ImageExportJob::Genera
         if (!initialized_ || state() != SessionState::ScrollshotReview) {
             return;
         }
-    } else if (result->status == platform::ImageExportStatus::Cancelled) {
+    } else if (outcome == ui::ImageExportOutcome::Cancelled) {
         scrollshot_notice_ = ScrollshotNotice::None;
     } else {
         // A very tall image can exceed what the clipboard accepts. The image
         // stays, and the status points to Save.
-        scrollshot_notice_ = copy ? ScrollshotNotice::CopyFailed : ScrollshotNotice::SaveFailed;
+        scrollshot_notice_ =
+            outcome == ui::ImageExportOutcome::CopyFailed ? ScrollshotNotice::CopyFailed : ScrollshotNotice::SaveFailed;
     }
     scrollshot_busy_ = false;
     if (scrollshot_controls_) { scrollshot_controls_->SetBusy(false); }
@@ -1641,107 +1613,103 @@ bool SameDisplayLayout(const std::vector<platform::MonitorInfo>& before,
 }
 }  // namespace
 
+DisplayChangeFacts CaptureCoordinator::CurrentDisplayChangeFacts() const {
+    DisplayChangeFacts facts;
+    facts.state = state();
+    facts.export_running = SessionExportRunning();
+    facts.layout_changed = !SameDisplayLayout(session_monitors_, platform::EnumerateMonitors());
+    facts.editing_document = editor_ && editor_->document_mode();
+    facts.workspace_visible = overlay_ && overlay_->visible();
+    const RECT visible = platform::IntersectRects(recording_region_, platform::VirtualScreenBounds());
+    facts.recording_region_on_desktop = ::EqualRect(&visible, &recording_region_) != FALSE;
+    facts.trim_window_visible = trim_flow_ && trim_flow_->window_visible();
+    return facts;
+}
+
 void CaptureCoordinator::OnDisplayChanged() {
-    if (state() == SessionState::Idle) {
-        return;
-    }
-    if (SessionExportRunning()) {
-        // The image is being copied or saved: the session must not change
-        // under it. Looked at again when the export has ended.
-        recheck_display_after_export_ = true;
-        return;
-    }
-    if (state() == SessionState::ScrollshotCapturing || state() == SessionState::ScrollshotReview) {
-        if (SameDisplayLayout(session_monitors_, platform::EnumerateMonitors())) {
+    switch (DecideDisplayChange(CurrentDisplayChangeFacts())) {
+        case DisplayChangeAction::None: return;
+        case DisplayChangeAction::RecheckAfterExport:
+            // The image is being copied or saved: the session must not change
+            // under it. Looked at again when the export has ended.
+            recheck_display_after_export_ = true;
             return;
-        }
-        // The frame no longer describes a place on the desktop, but what was
-        // stitched is the user's work. Stop capturing and keep the image; the
-        // island moves to a monitor that exists and all four actions remain.
-        platform::LogMessage(L"Display layout changed during a Scrollshot - capture stopped, image kept");
-        if (state() == SessionState::ScrollshotCapturing && !StopScrollshotCapture()) {
-            return;  // Still stopping, or the session ended without an image.
-        }
-        session_monitors_ = platform::EnumerateMonitors();
-        scrollshot_notice_ = ScrollshotNotice::DisplayChanged;
-        if (overlay_) { overlay_->Hide(); }
-        if (scrollshot_controls_) {
-            scrollshot_controls_->SetFrame(scrollshot_region_);
-            UpdateScrollshotStatus();
-            scrollshot_controls_->Activate();
-        }
-        return;
-    }
-    if (state() == SessionState::ScreenshotEditing && editor_ && editor_->document_mode()) {
-        if (SameDisplayLayout(session_monitors_, platform::EnumerateMonitors())) {
-            return;
-        }
-        // A stitched image does not depend on the desktop it was taken from.
-        // Its annotations are drawn into it and it goes back to review, where
-        // it can be copied, saved or opened for editing again.
-        platform::LogMessage(L"Display layout changed while editing a Scrollshot - image kept");
-        platform::BgraImage image = editor_->CompositeCommitted();
-        if (image.empty()) { image = editor_->TakeImage(); }
-        editor_->Hide();
-        editor_retired_ = true;
-        if (image.empty() || !RequestTransition(SessionState::ScrollshotReview)) {
+        case DisplayChangeAction::KeepScrollshotImage: KeepScrollshotAfterDisplayChange(); return;
+        case DisplayChangeAction::ReturnDocumentToReview: ReturnScrollshotDocumentToReview(); return;
+        case DisplayChangeAction::CancelSession:
+            // Work-area notifications (taskbar auto-hide, a docked app bar) arrive
+            // here too and leave the frozen snapshot valid. Only a changed monitor
+            // layout or scale makes it stale; cancelling then is the one outcome
+            // that cannot show the user outdated pixels.
+            platform::LogMessage(L"Display layout changed during selection - cancelling the session");
             OnOverlayCancelled();
             return;
-        }
-        scrollshot_image_ = std::make_shared<platform::BgraImage>(std::move(image));
-        session_monitors_ = platform::EnumerateMonitors();
-        scrollshot_notice_ = ScrollshotNotice::DisplayChanged;
-        if (overlay_) { overlay_->Hide(); }
-        EnsureScrollshotControls();
-        if (scrollshot_controls_->Show(ui::ScrollshotControls::View::Capture, scrollshot_region_,
-                                       overlay_ ? overlay_->panel_owner_window() : nullptr)) {
-            UpdateScrollshotStatus();
-            scrollshot_controls_->Activate();
-        }
-        ScheduleCleanup();
-        return;
-    }
-    if (overlay_ && overlay_->visible()) {
-        // Work-area notifications (taskbar auto-hide, a docked app bar) arrive
-        // here too and leave the frozen snapshot valid. Only a changed monitor
-        // layout or scale makes it stale; cancelling then is the one outcome
-        // that cannot show the user outdated pixels.
-        if (SameDisplayLayout(session_monitors_, platform::EnumerateMonitors())) {
+        case DisplayChangeAction::StopRecording:
+            // The capture provider rejects a region that left the virtual screen
+            // and the worker would repeat the last frame until Stop. End the
+            // recording instead so the user keeps what was really captured.
+            // Once trimming, nothing is captured any more; an opened video
+            // never had a region.
+            platform::LogMessage(L"The recording region left the desktop - ending the recording");
+            OnRecordingStop();
             return;
-        }
-        platform::LogMessage(L"Display layout changed during selection - cancelling the session");
+        case DisplayChangeAction::CancelRecordingConfiguration:
+            platform::LogMessage(L"The recording region left the desktop - ending the recording");
+            OnRecordingCancel();
+            return;
+        case DisplayChangeAction::RefreshTrimLayout:
+            // Otherwise a recording survives display changes. Keep the selected
+            // desktop coordinates and reposition only its user-facing chrome.
+            trim_flow_->RefreshWindowLayout();
+            return;
+        case DisplayChangeAction::RefreshRecordingControlsLayout:
+            if (recording_controls_) { recording_controls_->RefreshLayout(); }
+            return;
+    }
+}
+
+void CaptureCoordinator::KeepScrollshotAfterDisplayChange() {
+    // The frame no longer describes a place on the desktop, but what was
+    // stitched is the user's work. Stop capturing and keep the image; the
+    // island moves to a monitor that exists and all four actions remain.
+    platform::LogMessage(L"Display layout changed during a Scrollshot - capture stopped, image kept");
+    if (state() == SessionState::ScrollshotCapturing && !StopScrollshotCapture()) {
+        return;  // Still stopping, or the session ended without an image.
+    }
+    session_monitors_ = platform::EnumerateMonitors();
+    scrollshot_notice_ = ScrollshotNotice::DisplayChanged;
+    if (overlay_) { overlay_->Hide(); }
+    if (scrollshot_controls_) {
+        scrollshot_controls_->SetFrame(scrollshot_region_);
+        UpdateScrollshotStatus();
+        scrollshot_controls_->Activate();
+    }
+}
+
+void CaptureCoordinator::ReturnScrollshotDocumentToReview() {
+    // A stitched image does not depend on the desktop it was taken from.
+    // Its annotations are drawn into it and it goes back to review, where
+    // it can be copied, saved or opened for editing again.
+    platform::LogMessage(L"Display layout changed while editing a Scrollshot - image kept");
+    platform::BgraImage image = editor_->CompositeCommitted();
+    if (image.empty()) { image = editor_->TakeImage(); }
+    editor_->Hide();
+    editor_retired_ = true;
+    if (image.empty() || !RequestTransition(SessionState::ScrollshotReview)) {
         OnOverlayCancelled();
         return;
     }
-    if (IsRecordingState(state())) {
-        // The capture provider rejects a region that left the virtual screen
-        // and the worker would repeat the last frame until Stop. End the
-        // recording instead so the user keeps what was really captured. Once
-        // trimming, nothing is captured any more; an opened video never had
-        // a region.
-        const bool capturing = state() == SessionState::RecordingConfiguring ||
-                               state() == SessionState::RecordingActive || state() == SessionState::RecordingPaused;
-        const RECT visible = platform::IntersectRects(recording_region_, platform::VirtualScreenBounds());
-        if (capturing && ::EqualRect(&visible, &recording_region_) == FALSE) {
-            platform::LogMessage(L"The recording region left the desktop - ending the recording");
-            if (state() == SessionState::RecordingActive || state() == SessionState::RecordingPaused) {
-                OnRecordingStop();
-                return;
-            }
-            if (state() == SessionState::RecordingConfiguring) {
-                OnRecordingCancel();
-                return;
-            }
-        }
-        // Otherwise a recording survives display changes. Keep the selected
-        // desktop coordinates and reposition only its user-facing chrome.
-        if (trim_flow_ && trim_flow_->window_visible()) {
-            trim_flow_->RefreshWindowLayout();
-        } else if (recording_controls_) {
-            recording_controls_->RefreshLayout();
-        }
-        return;
+    scrollshot_image_ = std::make_shared<platform::BgraImage>(std::move(image));
+    session_monitors_ = platform::EnumerateMonitors();
+    scrollshot_notice_ = ScrollshotNotice::DisplayChanged;
+    if (overlay_) { overlay_->Hide(); }
+    EnsureScrollshotControls();
+    if (scrollshot_controls_->Show(ui::ScrollshotControls::View::Capture, scrollshot_region_,
+                                   overlay_ ? overlay_->panel_owner_window() : nullptr)) {
+        UpdateScrollshotStatus();
+        scrollshot_controls_->Activate();
     }
+    ScheduleCleanup();
 }
 
 void CaptureCoordinator::ScheduleCleanup() {
@@ -1824,8 +1792,7 @@ void CaptureCoordinator::EndSession() {
     scrollshot_session_.reset();
     scrollshot_export_.Discard();
     scrollshot_image_.reset();
-    scrollshot_save_path_.clear();
-    scrollshot_save_quick_ = false;
+    scrollshot_save_ = {};
     recheck_display_after_export_ = false;
     scrollshot_notice_ = ScrollshotNotice::None;
     scrollshot_busy_ = false;
